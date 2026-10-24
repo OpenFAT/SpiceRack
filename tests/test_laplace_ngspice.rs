@@ -41,7 +41,7 @@ impl Deck {
     }
     fn r(&mut self, name: &str, n1: &str, n2: &str, value: f64) {
         self.0.components.push(Component::Resistor {
-            name: name.into(), n1: n1.into(), n2: n2.into(), value: IrValue::Numeric { value }, params: vec![],
+            name: name.into(), n1: n1.into(), n2: n2.into(), value: IrValue::Numeric { value }, model: None, params: vec![],
         });
     }
     fn bv(&mut self, name: &str, np: &str, nm: &str, expression: impl Into<String>) {

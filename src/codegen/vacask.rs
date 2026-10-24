@@ -33,7 +33,7 @@
 
 use std::collections::BTreeSet;
 use crate::ir::*;
-use super::CodeGenError;
+use super::{model_refuse, CodeGenError};
 
 
 /// A device module the deck needs before it can be elaborated.
@@ -896,21 +896,30 @@ fn emit_subcircuit(sc: &Subcircuit, models: &[String]) -> Result<String, CodeGen
 fn emit_component(comp: &Component) -> Result<String, CodeGenError> {
     let auto = |n: Need| n.auto_model();
     let s = match comp {
-        Component::Resistor { name, n1, n2, value, params } => format!(
-            "r{} ({} {}) {} r={}{}",
-            name.to_ascii_lowercase(), n1.to_ascii_lowercase(), n2.to_ascii_lowercase(),
-            auto(Need::Sp("resistor")), val(value), inst_params(params),
-        ),
-        Component::Capacitor { name, n1, n2, value, params } => format!(
-            "c{} ({} {}) {} c={}{}",
-            name.to_ascii_lowercase(), n1.to_ascii_lowercase(), n2.to_ascii_lowercase(),
-            auto(Need::Sp("capacitor")), val(value), inst_params(params),
-        ),
-        Component::Inductor { name, n1, n2, value, params } => format!(
-            "l{} ({} {}) {} l={}{}",
-            name.to_ascii_lowercase(), n1.to_ascii_lowercase(), n2.to_ascii_lowercase(),
-            auto(Need::Sp("inductor")), val(value), inst_params(params),
-        ),
+        Component::Resistor { name, n1, n2, value, model, params } => {
+            model_refuse("vacask", name, model)?;
+            format!(
+                "r{} ({} {}) {} r={}{}",
+                name.to_ascii_lowercase(), n1.to_ascii_lowercase(), n2.to_ascii_lowercase(),
+                auto(Need::Sp("resistor")), val(value), inst_params(params),
+            )
+        }
+        Component::Capacitor { name, n1, n2, value, model, params } => {
+            model_refuse("vacask", name, model)?;
+            format!(
+                "c{} ({} {}) {} c={}{}",
+                name.to_ascii_lowercase(), n1.to_ascii_lowercase(), n2.to_ascii_lowercase(),
+                auto(Need::Sp("capacitor")), val(value), inst_params(params),
+            )
+        }
+        Component::Inductor { name, n1, n2, value, model, params } => {
+            model_refuse("vacask", name, model)?;
+            format!(
+                "l{} ({} {}) {} l={}{}",
+                name.to_ascii_lowercase(), n1.to_ascii_lowercase(), n2.to_ascii_lowercase(),
+                auto(Need::Sp("inductor")), val(value), inst_params(params),
+            )
+        }
         // VACASK's mutual inductance is a device with NO nodes that names
         // the two inductors it couples.
         Component::MutualInductor { name, inductor1, inductor2, coupling } => format!(

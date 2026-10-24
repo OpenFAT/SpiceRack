@@ -245,9 +245,9 @@ fn instance(f: &[String], kinds: &HashMap<String, String>, subckts: &[String]) -
             let (letter, key) = match master.as_str() { "resistor" => ('r', "r"), "capacitor" => ('c', "c"), _ => ('l', "l") };
             let (name, v, params) = (strip(&name, letter), value(get(&p, key)?), kept(&[key]));
             match letter {
-                'r' => Component::Resistor { name, n1, n2, value: v, params },
-                'c' => Component::Capacitor { name, n1, n2, value: v, params },
-                _ => Component::Inductor { name, n1, n2, value: v, params },
+                'r' => Component::Resistor { name, n1, n2, value: v, model: None, params },
+                'c' => Component::Capacitor { name, n1, n2, value: v, model: None, params },
+                _ => Component::Inductor { name, n1, n2, value: v, model: None, params },
             }
         }
         "vsource" | "isource" => {

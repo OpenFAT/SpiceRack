@@ -55,7 +55,7 @@ fn circuit(analyses: Vec<Analysis>) -> CircuitIR {
         n1: "n".into(),
         n2: "0".into(),
         value: IrValue::Expression { expr: "r".into() },
-        params: vec![],
+        model: None, params: vec![],
     }];
 
     let mut top = sub("dialects");
@@ -75,7 +75,7 @@ fn circuit(analyses: Vec<Analysis>) -> CircuitIR {
             n1: "in".into(),
             n2: "mid".into(),
             value: IrValue::Expression { expr: "rv".into() },
-            params: vec![],
+            model: None, params: vec![],
         },
         Component::BehavioralVoltage {
             name: "1".into(),

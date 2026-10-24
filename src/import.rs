@@ -363,8 +363,15 @@ fn element(t: &[String], card: &str, models: &HashSet<String>) -> Option<Compone
         'r' | 'c' | 'l' => {
             let (pos, params) = split_params(&t[3..]);
             let mut params = params?;
+            let mut model = None;
             let v = match pos {
-                [v] if models.contains(&v.to_ascii_lowercase()) => return None,
+                // `R1 a b rmod l=10u w=1u`: a bare word naming a `.model`,
+                // not a value; the value field is left blank (nothing to
+                // write) and the model carries the reference.
+                [v] if models.contains(&v.to_ascii_lowercase()) => {
+                    model = Some(v.clone());
+                    IrValue::Raw { text: String::new() }
+                }
                 [v] => value(v),
                 // ngspice `R1 a b r=1k`
                 [] => {
@@ -376,9 +383,9 @@ fn element(t: &[String], card: &str, models: &HashSet<String>) -> Option<Compone
             };
             let (n1, n2) = (s(1)?, s(2)?);
             match letter {
-                'r' => Component::Resistor { name, n1, n2, value: v, params },
-                'c' => Component::Capacitor { name, n1, n2, value: v, params },
-                _ => Component::Inductor { name, n1, n2, value: v, params },
+                'r' => Component::Resistor { name, n1, n2, value: v, model, params },
+                'c' => Component::Capacitor { name, n1, n2, value: v, model, params },
+                _ => Component::Inductor { name, n1, n2, value: v, model, params },
             }
         }
         'k' if t.len() == 4 => Component::MutualInductor {
@@ -1117,10 +1124,11 @@ Rp p 0 1k
     #[test]
     fn deck_to_ir() {
         let ir = parse(DECK, "divider", Dialect::Ngspice).unwrap().0;
-        // A bare word naming a `.model` is a model reference: raw, not `{rtest}`.
+        // A bare word naming a `.model` is a model reference, not `{rtest}`.
         let m = parse("t\n.model rtest r r=1k\nR1 1 0 rtest\nR2 1 0 rv\n", "t", Dialect::Ngspice).unwrap().0;
-        assert_eq!(m.top.raw_spice, vec!["R1 1 0 rtest".to_string()]);
-        assert!(matches!(&m.top.components[0], Component::Resistor { value: IrValue::Expression { expr }, .. } if expr == "rv"));
+        assert!(m.top.raw_spice.is_empty());
+        assert!(matches!(&m.top.components[0], Component::Resistor { value: IrValue::Raw { text }, model: Some(model), .. } if text.is_empty() && model == "rtest"));
+        assert!(matches!(&m.top.components[1], Component::Resistor { value: IrValue::Expression { expr }, model: None, .. } if expr == "rv"));
         // Nested definitions are local: two `sub`s, hoisted under their parents.
         let sc = parse("t\n.subckt a n\n.subckt sub n\nR1 n 0 1k\n.ends\nX1 n sub\n.ends\n.subckt b n\n.subckt sub n\nR1 n 0 2k\n.ends\nX1 n sub\n.ends\n", "t", Dialect::Ngspice).unwrap().0;
         let names: Vec<&str> = sc.subcircuit_defs.iter().map(|s| s.name.as_str()).collect();

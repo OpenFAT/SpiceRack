@@ -229,9 +229,9 @@ fn instance(f: &[String], kinds: &HashMap<String, String>, subckts: &[String]) -
             let v = value(get(&p, key)?);
             let (name, params) = (strip(&name, letter), kept(&[key]));
             match letter {
-                'r' => Component::Resistor { name, n1, n2, value: v, params },
-                'c' => Component::Capacitor { name, n1, n2, value: v, params },
-                _ => Component::Inductor { name, n1, n2, value: v, params },
+                'r' => Component::Resistor { name, n1, n2, value: v, model: None, params },
+                'c' => Component::Capacitor { name, n1, n2, value: v, model: None, params },
+                _ => Component::Inductor { name, n1, n2, value: v, model: None, params },
             }
         }
         "vsource" | "isource" => {

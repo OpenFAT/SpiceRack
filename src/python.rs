@@ -1004,19 +1004,19 @@ impl PySubcircuit {
             Some(text) => IrValue::Raw { text: text.to_string() },
             None => value.ir(),
         };
-        self.push(Component::Resistor { name: name.into(), n1: self.net(positive), n2: self.net(negative), value, params: kw_params(kwargs)? });
+        self.push(Component::Resistor { name: name.into(), n1: self.net(positive), n2: self.net(negative), value, model: None, params: kw_params(kwargs)? });
         Ok(())
     }
 
     #[pyo3(signature = (name, positive, negative, value, **kwargs))]
     fn C(&mut self, name: &str, positive: &str, negative: &str, value: PyValueArg, kwargs: Option<Bound<'_, PyDict>>) -> PyResult<()> {
-        self.push(Component::Capacitor { name: name.into(), n1: self.net(positive), n2: self.net(negative), value: value.ir(), params: kw_params(kwargs)? });
+        self.push(Component::Capacitor { name: name.into(), n1: self.net(positive), n2: self.net(negative), value: value.ir(), model: None, params: kw_params(kwargs)? });
         Ok(())
     }
 
     #[pyo3(signature = (name, positive, negative, value, **kwargs))]
     fn L(&mut self, name: &str, positive: &str, negative: &str, value: PyValueArg, kwargs: Option<Bound<'_, PyDict>>) -> PyResult<()> {
-        self.push(Component::Inductor { name: name.into(), n1: self.net(positive), n2: self.net(negative), value: value.ir(), params: kw_params(kwargs)? });
+        self.push(Component::Inductor { name: name.into(), n1: self.net(positive), n2: self.net(negative), value: value.ir(), model: None, params: kw_params(kwargs)? });
         Ok(())
     }
 
@@ -1597,12 +1597,12 @@ impl PyTestbench {
 
     #[pyo3(signature = (name, positive, negative, value))]
     fn R(mut slf: PyRefMut<'_, Self>, name: &str, positive: &str, negative: &str, value: PyValueArg) {
-        slf.as_super().stim(Component::Resistor { name: name.into(), n1: positive.into(), n2: negative.into(), value: value.ir(), params: vec![] });
+        slf.as_super().stim(Component::Resistor { name: name.into(), n1: positive.into(), n2: negative.into(), value: value.ir(), model: None, params: vec![] });
     }
 
     #[pyo3(signature = (name, positive, negative, value))]
     fn C(mut slf: PyRefMut<'_, Self>, name: &str, positive: &str, negative: &str, value: PyValueArg) {
-        slf.as_super().stim(Component::Capacitor { name: name.into(), n1: positive.into(), n2: negative.into(), value: value.ir(), params: vec![] });
+        slf.as_super().stim(Component::Capacitor { name: name.into(), n1: positive.into(), n2: negative.into(), value: value.ir(), model: None, params: vec![] });
     }
 
     // ── Config ──

@@ -61,6 +61,15 @@ pub fn card(comp: &Component, d: Dialect) -> Result<String, CodeGenError> {
     }
 }
 
+/// An R/C/L naming a `.model` (ngspice's `R1 a b rmod`) has no spelling in
+/// `backend`'s element line; only spice3-family dialects write it.
+pub(crate) fn model_refuse(backend: &str, name: &str, model: &Option<String>) -> Result<(), CodeGenError> {
+    match model {
+        Some(m) => Err(CodeGenError::UnsupportedComponent { backend: backend.into(), component: format!("{name}: model reference '{m}'") }),
+        None => Ok(()),
+    }
+}
+
 /// `raw_spice` lines are SPICE text; a non-SPICE dialect cannot place them,
 /// and dropping them would be a silently different deck.
 /// Raw lines imported from `backend`'s own language are its text and pass.

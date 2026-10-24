@@ -117,9 +117,9 @@ pub struct ModelDef {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum Component {
-    Resistor { name: String, n1: String, n2: String, value: IrValue, params: Vec<(String, String)> },
-    Capacitor { name: String, n1: String, n2: String, value: IrValue, params: Vec<(String, String)> },
-    Inductor { name: String, n1: String, n2: String, value: IrValue, params: Vec<(String, String)> },
+    Resistor { name: String, n1: String, n2: String, value: IrValue, #[serde(default)] model: Option<String>, params: Vec<(String, String)> },
+    Capacitor { name: String, n1: String, n2: String, value: IrValue, #[serde(default)] model: Option<String>, params: Vec<(String, String)> },
+    Inductor { name: String, n1: String, n2: String, value: IrValue, #[serde(default)] model: Option<String>, params: Vec<(String, String)> },
     MutualInductor { name: String, inductor1: String, inductor2: String, coupling: f64 },
     VoltageSource { name: String, np: String, nm: String, value: IrValue, #[serde(default)] ac_magnitude: Option<f64>, #[serde(default)] ac_phase: Option<f64>, waveform: Option<IrWaveform> },
     CurrentSource { name: String, np: String, nm: String, value: IrValue, #[serde(default)] ac_magnitude: Option<f64>, #[serde(default)] ac_phase: Option<f64>, waveform: Option<IrWaveform> },
@@ -548,14 +548,14 @@ mod tests {
                     n1: "in".into(),
                     n2: "out".into(),
                     value: IrValue::Numeric { value: 1000.0 },
-                    params: Vec::new(),
+                    model: None, params: Vec::new(),
                 },
                 Component::Capacitor {
                     name: "1".into(),
                     n1: "out".into(),
                     n2: "0".into(),
                     value: IrValue::Numeric { value: 10e-12 },
-                    params: Vec::new(),
+                    model: None, params: Vec::new(),
                 },
                 Component::VoltageSource {
                     name: "dd".into(),
@@ -619,7 +619,7 @@ mod tests {
                         n1: "in".into(),
                         n2: "out".into(),
                         value: IrValue::Numeric { value: 1000.0 },
-                        params: Vec::new(),
+                        model: None, params: Vec::new(),
                     },
                     Component::Mosfet {
                         name: "1".into(),
@@ -696,7 +696,7 @@ mod tests {
                         n1: "out".into(),
                         n2: "0".into(),
                         value: IrValue::Numeric { value: 1000.0 },
-                        params: Vec::new(),
+                        model: None, params: Vec::new(),
                     },
                 ],
                 instances: Vec::new(),
@@ -869,7 +869,7 @@ mod tests {
                     n1: "in".into(),
                     n2: "out".into(),
                     value: IrValue::Numeric { value: 1000.0 },
-                    params: Vec::new(),
+                    model: None, params: Vec::new(),
                 }],
                 instances: Vec::new(),
                 models: Vec::new(),
@@ -904,7 +904,7 @@ mod tests {
                         n1: "out".into(),
                         n2: "inv".into(),
                         value: IrValue::Numeric { value: 100e3 },
-                        params: vec![],
+                        model: None, params: vec![],
                     },
                     Component::Mosfet {
                         name: "1".into(),
@@ -1021,7 +1021,7 @@ mod tests {
                         n1: "inp".into(),
                         n2: "out".into(),
                         value: IrValue::Numeric { value: 1e6 },
-                        params: vec![],
+                        model: None, params: vec![],
                     },
                 ],
                 instances: vec![],
@@ -1080,7 +1080,7 @@ mod tests {
             n1: "a".into(),
             n2: "b".into(),
             value: IrValue::Numeric { value: 1000.0 },
-            params: vec![],
+            model: None, params: vec![],
         };
         let json = serde_json::to_string(&r).unwrap();
         assert!(json.contains("\"type\":\"Resistor\""));
@@ -1090,7 +1090,7 @@ mod tests {
             n1: "a".into(),
             n2: "b".into(),
             value: IrValue::Numeric { value: 1e-12 },
-            params: vec![],
+            model: None, params: vec![],
         };
         let json = serde_json::to_string(&c).unwrap();
         assert!(json.contains("\"type\":\"Capacitor\""));
@@ -1100,7 +1100,7 @@ mod tests {
             n1: "a".into(),
             n2: "b".into(),
             value: IrValue::Numeric { value: 1e-6 },
-            params: vec![],
+            model: None, params: vec![],
         };
         let json = serde_json::to_string(&l).unwrap();
         assert!(json.contains("\"type\":\"Inductor\""));
@@ -1436,9 +1436,9 @@ mod tests {
     fn test_all_component_variants_roundtrip() {
         // Build an IR containing every Component variant to ensure full roundtrip coverage
         let all_components = vec![
-            Component::Resistor { name: "1".into(), n1: "a".into(), n2: "b".into(), value: IrValue::Numeric { value: 1e3 }, params: vec![("tc1".into(), "0.001".into())] },
-            Component::Capacitor { name: "1".into(), n1: "a".into(), n2: "b".into(), value: IrValue::Expression { expr: "cap_val".into() }, params: vec![] },
-            Component::Inductor { name: "1".into(), n1: "a".into(), n2: "b".into(), value: IrValue::Raw { text: "10u".into() }, params: vec![] },
+            Component::Resistor { name: "1".into(), n1: "a".into(), n2: "b".into(), value: IrValue::Numeric { value: 1e3 }, model: None, params: vec![("tc1".into(), "0.001".into())] },
+            Component::Capacitor { name: "1".into(), n1: "a".into(), n2: "b".into(), value: IrValue::Expression { expr: "cap_val".into() }, model: None, params: vec![] },
+            Component::Inductor { name: "1".into(), n1: "a".into(), n2: "b".into(), value: IrValue::Raw { text: "10u".into() }, model: None, params: vec![] },
             Component::MutualInductor { name: "1".into(), inductor1: "L1".into(), inductor2: "L2".into(), coupling: 0.95 },
             Component::VoltageSource { name: "1".into(), np: "a".into(), nm: "b".into(), value: IrValue::Numeric { value: 5.0 }, ac_magnitude: None, ac_phase: None, waveform: None },
             Component::CurrentSource { name: "1".into(), np: "a".into(), nm: "b".into(), value: IrValue::Numeric { value: 1e-3 }, ac_magnitude: None, ac_phase: None, waveform: Some(IrWaveform::Pulse { initial: 0.0, pulsed: 1e-3, delay: 0.0, rise_time: 1e-9, fall_time: 1e-9, pulse_width: 5e-6, period: 10e-6 }) },

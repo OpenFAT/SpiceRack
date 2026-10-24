@@ -78,7 +78,7 @@ impl Py {
         let raw = card(c, Dialect::Ngspice).unwrap_or_default();
         let n = |s: &str| py_str(s);
         match c {
-            Component::Resistor { name, n1, n2, value, params } | Component::Capacitor { name, n1, n2, value, params } | Component::Inductor { name, n1, n2, value, params } => {
+            Component::Resistor { name, n1, n2, value, params, .. } | Component::Capacitor { name, n1, n2, value, params, .. } | Component::Inductor { name, n1, n2, value, params, .. } => {
                 let letter = match c { Component::Resistor { .. } => "R", Component::Capacitor { .. } => "C", _ => "L" };
                 match py_value(value) {
                     Some(v) => self.line(format!("{obj}.{letter}(name={}, positive={}, negative={}, value={v}{})", n(name), n(n1), n(n2), py_kwargs(params))),

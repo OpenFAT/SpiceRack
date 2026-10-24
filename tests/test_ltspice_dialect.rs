@@ -173,7 +173,7 @@ fn noise_tb(saves: Vec<String>) -> CircuitIR {
                 n1: "in".into(),
                 n2: "out".into(),
                 value: IrValue::Numeric { value: 10e3 },
-                params: vec![],
+                model: None, params: vec![],
             }],
             instances: vec![],
             models: vec![],
