@@ -69,6 +69,10 @@
             pkgs.pkg-config
           ];
           RUST_SRC_PATH = "${rustToolchain}/lib/rustlib/src/rust/library";
+          # ponytail: venv pip wheels (numpy) are manylinux binaries needing
+          # libstdc++.so.6, which NixOS doesn't expose globally. Upgrade if
+          # the venv ever moves fully onto nixpkgs' python package set.
+          LD_LIBRARY_PATH = "${pkgs.stdenv.cc.cc.lib}/lib";
         };
       in {
         devShells.default = dev;
