@@ -122,7 +122,9 @@ pub enum Component {
     /// `extra_nodes`: the substrate node, then the thermal node (VBIC, HICUM),
     /// written after the emitter in every dialect.
     Bjt { name: String, nc: String, nb: String, ne: String, #[serde(default)] extra_nodes: Vec<String>, model: String, params: Vec<(String, String)> },
-    Mosfet { name: String, nd: String, ng: String, ns: String, nb: String, model: String, params: Vec<(String, String)> },
+    /// `nb`: the bulk node, absent on a 3-terminal VDMOS; `extra_nodes`
+    /// follow it (VDMOS thermal nodes, SOI body/back gate), in card order.
+    Mosfet { name: String, nd: String, ng: String, ns: String, nb: Option<String>, #[serde(default)] extra_nodes: Vec<String>, model: String, params: Vec<(String, String)> },
     Jfet { name: String, nd: String, ng: String, ns: String, model: String, params: Vec<(String, String)> },
     Mesfet { name: String, nd: String, ng: String, ns: String, model: String, params: Vec<(String, String)> },
     VSwitch { name: String, np: String, nm: String, ncp: String, ncm: String, model: String },
@@ -585,7 +587,7 @@ mod tests {
                         nd: "drain".into(),
                         ng: "gate".into(),
                         ns: "source".into(),
-                        nb: "bulk".into(),
+                        nb: Some("bulk".into()), extra_nodes: vec![],
                         model: "nmos".into(),
                         params: vec![("W".into(), "1u".into()), ("L".into(), "180n".into())],
                     },
@@ -870,7 +872,7 @@ mod tests {
                         nd: "out".into(),
                         ng: "inv".into(),
                         ns: "vss".into(),
-                        nb: "vss".into(),
+                        nb: Some("vss".into()), extra_nodes: vec![],
                         model: "nmos_3p3".into(),
                         params: vec![("W".into(), "10u".into()), ("L".into(), "1u".into())],
                     },
@@ -1160,7 +1162,7 @@ mod tests {
             nd: "d".into(),
             ng: "g".into(),
             ns: "s".into(),
-            nb: "b".into(),
+            nb: Some("b".into()), extra_nodes: vec![],
             model: "nmos".into(),
             params: vec![],
         };
@@ -1409,7 +1411,7 @@ mod tests {
             Component::Ccvs { name: "1".into(), np: "a".into(), nm: "b".into(), vsense: "Vs".into(), transresistance: 500.0 },
             Component::Diode { name: "1".into(), np: "a".into(), nm: "b".into(), model: "D1".into(), params: vec![] },
             Component::Bjt { name: "1".into(), nc: "c".into(), nb: "b".into(), ne: "e".into(), extra_nodes: vec![], model: "Q1".into(), params: vec![("area".into(), "2".into())] },
-            Component::Mosfet { name: "1".into(), nd: "d".into(), ng: "g".into(), ns: "s".into(), nb: "b".into(), model: "M1".into(), params: vec![("W".into(), "1u".into()), ("L".into(), "180n".into())] },
+            Component::Mosfet { name: "1".into(), nd: "d".into(), ng: "g".into(), ns: "s".into(), nb: Some("b".into()), extra_nodes: vec![], model: "M1".into(), params: vec![("W".into(), "1u".into()), ("L".into(), "180n".into())] },
             Component::Jfet { name: "1".into(), nd: "d".into(), ng: "g".into(), ns: "s".into(), model: "J1".into(), params: vec![] },
             Component::Mesfet { name: "1".into(), nd: "d".into(), ng: "g".into(), ns: "s".into(), model: "Z1".into(), params: vec![] },
             Component::VSwitch { name: "1".into(), np: "a".into(), nm: "b".into(), ncp: "c".into(), ncm: "d".into(), model: "SW".into() },

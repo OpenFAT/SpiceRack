@@ -62,6 +62,7 @@ pub fn card(comp: &Component, d: Dialect) -> Result<String, CodeGenError> {
 /// `raw_spice` lines are SPICE text; a non-SPICE dialect cannot place them,
 /// and dropping them would be a silently different deck.
 fn refuse_raw_spice(ir: &CircuitIR, backend: &str) -> Result<(), CodeGenError> {
+    refuse_flags(ir, backend)?;
     let sub = std::iter::once(&ir.top).chain(&ir.subcircuit_defs).find(|s| !s.raw_spice.is_empty());
     match sub {
         Some(s) => Err(CodeGenError::UnsupportedComponent {
@@ -91,8 +92,32 @@ pub fn format_spice_number(v: f64) -> String {
 }
 
 /// ` k=v k=v` — instance parameters in SPICE and Spectre alike.
+/// An empty value is a flag (`off`, VDMOS `pchan`), written bare.
 fn params(params: &[(String, String)]) -> String {
-    params.iter().map(|(k, v)| format!(" {k}={v}")).collect()
+    params.iter().map(|(k, v)| if v.is_empty() { format!(" {k}") } else { format!(" {k}={v}") }).collect()
+}
+
+/// Spectre and VACASK have no valueless parameter: refuse a flag rather than
+/// write `off=` or drop it.
+fn refuse_flags(ir: &CircuitIR, backend: &str) -> Result<(), CodeGenError> {
+    for sc in std::iter::once(&ir.top).chain(&ir.subcircuit_defs) {
+        let model_flag = sc.models.iter().flat_map(|m| m.parameters.iter().map(move |(k, v)| (&m.name, k, v))).find(|(_, _, v)| v.is_empty());
+        if let Some((m, k, _)) = model_flag {
+            return Err(CodeGenError::UnsupportedComponent { backend: backend.into(), component: format!("model {m}: flag '{k}' has no {backend} spelling") });
+        }
+        for c in &sc.components {
+            let ps = match c {
+                Component::Resistor { params, .. } | Component::Capacitor { params, .. } | Component::Inductor { params, .. }
+                | Component::Diode { params, .. } | Component::Bjt { params, .. } | Component::Mosfet { params, .. }
+                | Component::Jfet { params, .. } | Component::Mesfet { params, .. } => params,
+                _ => continue,
+            };
+            if let Some((k, _)) = ps.iter().find(|(_, v)| v.is_empty()) {
+                return Err(CodeGenError::UnsupportedComponent { backend: backend.into(), component: format!("{}: flag '{k}' has no {backend} spelling", c.name().unwrap_or("device")) });
+            }
+        }
+    }
+    Ok(())
 }
 
 /// ` a=1 b` — parameter declarations (SPICE `PARAMS:`, Spectre `parameters`).

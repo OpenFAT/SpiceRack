@@ -648,10 +648,13 @@ pub(crate) fn emit_component(comp: &Component) -> Result<String, CodeGenError> {
             s
         }
         // `[CMP]` mos models: `Name d g s b ModelName parameter=value ...`
-        Component::Mosfet { name, nd, ng, ns, nb, model, params } => {
+        Component::Mosfet { name, nd, ng, ns, nb: Some(nb), extra_nodes, model, params } if extra_nodes.is_empty() => {
             let mut s = format!("m{} ({} {} {} {}) {}", name.to_lowercase(), nd, ng, ns, nb, model);
             s.push_str(&emit_params(params));
             s
+        }
+        Component::Mosfet { .. } => {
+            return Err(unsupported_component("MOSFET without a bulk node or with extra nodes (VDMOS, SOI): no mapped Spectre terminal list"));
         }
         // `[CMP]` jfet: `Name d g s ModelName parameter=value ...`
         Component::Jfet { name, nd, ng, ns, model, params } => {
@@ -1130,7 +1133,7 @@ mod tests {
                         nd: "out".into(),
                         ng: "in".into(),
                         ns: "vdd".into(),
-                        nb: "vdd".into(),
+                        nb: Some("vdd".into()), extra_nodes: vec![],
                         model: "pmos_3p3".into(),
                         params: vec![("w".into(), "2u".into()), ("l".into(), "180n".into())],
                     },
@@ -1302,7 +1305,7 @@ mod tests {
                     nd: "out".into(),
                     ng: "in".into(),
                     ns: "vdd".into(),
-                    nb: "vdd".into(),
+                    nb: Some("vdd".into()), extra_nodes: vec![],
                     model: "pmos".into(),
                     params: vec![("w".into(), "wp".into())],
                 },

@@ -878,7 +878,9 @@ fn emit_component(comp: &Component) -> Result<String, CodeGenError> {
             extra_nodes.iter().map(|n| format!(" {}", n.to_ascii_lowercase())).collect::<String>(),
             model.to_ascii_lowercase(), inst_params(params),
         ),
-        Component::Mosfet { name, nd, ng, ns, nb, model, params } => format!(
+        Component::Mosfet { nb: None, .. } => return Err(unsupported_comp("MOSFET without a bulk node (VDMOS): terminal list unverified")),
+        Component::Mosfet { extra_nodes, .. } if !extra_nodes.is_empty() => return Err(unsupported_comp("MOSFET with extra nodes (VDMOS thermal, SOI): terminal list unverified")),
+        Component::Mosfet { name, nd, ng, ns, nb: Some(nb), model, params, .. } => format!(
             "m{} ({} {} {} {}) {}{}",
             name.to_ascii_lowercase(), nd.to_ascii_lowercase(), ng.to_ascii_lowercase(),
             ns.to_ascii_lowercase(), nb.to_ascii_lowercase(),

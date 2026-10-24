@@ -1103,18 +1103,30 @@ impl PySubcircuit {
         self.Q(name, collector, base, emitter, model, substrate, thermal, kwargs)
     }
 
-    #[pyo3(signature = (name, drain, gate, source, bulk, *, model, **kwargs))]
-    fn M(&mut self, name: &str, drain: &str, gate: &str, source: &str, bulk: &str, model: &str, kwargs: Option<Bound<'_, PyDict>>) -> PyResult<()> {
+    /// `bulk=None` is a 3-terminal device (VDMOS); `extra_nodes` follow the
+    /// bulk (VDMOS thermal nodes, SOI body and back gate).
+    #[pyo3(signature = (name, drain, gate, source, bulk=None, *, model, extra_nodes=None, **kwargs))]
+    fn M(
+        &mut self, name: &str, drain: &str, gate: &str, source: &str, bulk: Option<&str>, model: &str,
+        extra_nodes: Option<Vec<String>>, kwargs: Option<Bound<'_, PyDict>>,
+    ) -> PyResult<()> {
+        let extra_nodes: Vec<String> = extra_nodes.unwrap_or_default().iter().map(|n| self.net(n)).collect();
+        if bulk.is_none() && !extra_nodes.is_empty() {
+            return Err(PyValueError::new_err("M: extra_nodes follow the bulk node; give bulk too"));
+        }
         self.push(Component::Mosfet {
-            name: name.into(), nd: self.net(drain), ng: self.net(gate), ns: self.net(source), nb: self.net(bulk),
+            name: name.into(), nd: self.net(drain), ng: self.net(gate), ns: self.net(source), nb: bulk.map(|b| self.net(b)), extra_nodes,
             model: model.into(), params: kw_params(kwargs)?,
         });
         Ok(())
     }
 
-    #[pyo3(signature = (name, drain, gate, source, bulk, *, model, **kwargs))]
-    fn MOSFET(&mut self, name: &str, drain: &str, gate: &str, source: &str, bulk: &str, model: &str, kwargs: Option<Bound<'_, PyDict>>) -> PyResult<()> {
-        self.M(name, drain, gate, source, bulk, model, kwargs)
+    #[pyo3(signature = (name, drain, gate, source, bulk=None, *, model, extra_nodes=None, **kwargs))]
+    fn MOSFET(
+        &mut self, name: &str, drain: &str, gate: &str, source: &str, bulk: Option<&str>, model: &str,
+        extra_nodes: Option<Vec<String>>, kwargs: Option<Bound<'_, PyDict>>,
+    ) -> PyResult<()> {
+        self.M(name, drain, gate, source, bulk, model, extra_nodes, kwargs)
     }
 
     #[pyo3(signature = (name, drain, gate, source, *, model, **kwargs))]

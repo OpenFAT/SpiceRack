@@ -143,7 +143,11 @@ impl Py {
                 let extra: String = ["substrate", "thermal"].iter().zip(extra_nodes).map(|(k, v)| format!(", {k}={}", n(v))).collect();
                 self.line(format!("{obj}.Q(name={}, collector={}, base={}, emitter={}, model={}{extra}{})", n(name), n(nc), n(nb), n(ne), n(model), py_kwargs(params)))
             }
-            Component::Mosfet { name, nd, ng, ns, nb, model, params } => self.line(format!("{obj}.M(name={}, drain={}, gate={}, source={}, bulk={}, model={}{})", n(name), n(nd), n(ng), n(ns), n(nb), n(model), py_kwargs(params))),
+            Component::Mosfet { name, nd, ng, ns, nb, extra_nodes, model, params } => {
+                let bulk = nb.as_deref().map_or("None".into(), n);
+                let extra = if extra_nodes.is_empty() { String::new() } else { format!(", extra_nodes=[{}]", extra_nodes.iter().map(|x| n(x)).collect::<Vec<_>>().join(", ")) };
+                self.line(format!("{obj}.M(name={}, drain={}, gate={}, source={}, bulk={bulk}, model={}{extra}{})", n(name), n(nd), n(ng), n(ns), n(model), py_kwargs(params)))
+            }
             Component::Jfet { name, nd, ng, ns, model, params } => self.line(format!("{obj}.J(name={}, drain={}, gate={}, source={}, model={}{})", n(name), n(nd), n(ng), n(ns), n(model), py_kwargs(params))),
             Component::Mesfet { name, nd, ng, ns, model, params } => self.line(format!("{obj}.Z(name={}, drain={}, gate={}, source={}, model={}{})", n(name), n(nd), n(ng), n(ns), n(model), py_kwargs(params))),
             Component::VSwitch { name, np, nm, ncp, ncm, model } => self.line(format!("{obj}.S(name={}, positive={}, negative={}, control_positive={}, control_negative={}, model={})", n(name), n(np), n(nm), n(ncp), n(ncm), n(model))),

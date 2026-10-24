@@ -119,7 +119,7 @@ fn laplace_source(
 fn model(m: &ModelDef) -> String {
     let mut s = format!(".model {} {}", m.name, m.kind);
     if !m.parameters.is_empty() {
-        let ps: Vec<String> = m.parameters.iter().map(|(k, v)| format!("{}={}", k, v)).collect();
+        let ps: Vec<String> = m.parameters.iter().map(|(k, v)| if v.is_empty() { k.clone() } else { format!("{k}={v}") }).collect();
         s.push_str(&format!("({})", ps.join(" ")));
     }
     s
@@ -412,8 +412,9 @@ pub(crate) fn component(d: Dialect, comp: &Component) -> Result<String, CodeGenE
         Component::Bjt { name, nc, nb, ne, extra_nodes, model, params: p } => {
             format!("Q{} {} {} {}{} {}{}", name, nc, nb, ne, extra_nodes.iter().map(|n| format!(" {n}")).collect::<String>(), model, params(p))
         }
-        Component::Mosfet { name, nd, ng, ns, nb, model, params: p } => {
-            format!("M{} {} {} {} {} {}{}", name, nd, ng, ns, nb, model, params(p))
+        Component::Mosfet { name, nd, ng, ns, nb, extra_nodes, model, params: p } => {
+            let rest: String = nb.iter().chain(extra_nodes).map(|n| format!(" {n}")).collect();
+            format!("M{} {} {} {}{rest} {}{}", name, nd, ng, ns, model, params(p))
         }
         Component::Jfet { name, nd, ng, ns, model, params: p } => format!("J{} {} {} {} {}{}", name, nd, ng, ns, model, params(p)),
         Component::Mesfet { name, nd, ng, ns, model, params: p } => format!("Z{} {} {} {} {}{}", name, nd, ng, ns, model, params(p)),
@@ -667,7 +668,7 @@ mod tests {
                         nd: "out".into(),
                         ng: "in".into(),
                         ns: "vdd".into(),
-                        nb: "vdd".into(),
+                        nb: Some("vdd".into()), extra_nodes: vec![],
                         model: "pmos_3p3".into(),
                         params: vec![("W".into(), "2u".into()), ("L".into(), "180n".into())],
                     },
@@ -676,7 +677,7 @@ mod tests {
                         nd: "out".into(),
                         ng: "in".into(),
                         ns: "0".into(),
-                        nb: "0".into(),
+                        nb: Some("0".into()), extra_nodes: vec![],
                         model: "nmos_3p3".into(),
                         params: vec![("W".into(), "1u".into()), ("L".into(), "180n".into())],
                     },
@@ -786,7 +787,7 @@ mod tests {
                             nd: "out".into(),
                             ng: "in".into(),
                             ns: "vdd".into(),
-                            nb: "vdd".into(),
+                            nb: Some("vdd".into()), extra_nodes: vec![],
                             model: "pmos".into(),
                             params: vec![("W".into(), "{wp}".into()), ("L".into(), "180n".into())],
                         },
@@ -795,7 +796,7 @@ mod tests {
                             nd: "out".into(),
                             ng: "in".into(),
                             ns: "gnd".into(),
-                            nb: "gnd".into(),
+                            nb: Some("gnd".into()), extra_nodes: vec![],
                             model: "nmos".into(),
                             params: vec![("W".into(), "{wn}".into()), ("L".into(), "180n".into())],
                         },
@@ -1416,7 +1417,7 @@ mod tests {
                     },
                     Component::Mosfet {
                         name: "n1".into(), nd: "vout".into(), ng: "vin".into(),
-                        ns: "0".into(), nb: "0".into(),
+                        ns: "0".into(), nb: Some("0".into()), extra_nodes: vec![],
                         model: "sky130_fd_pr__nfet_01v8".into(),
                         params: vec![],
                     },

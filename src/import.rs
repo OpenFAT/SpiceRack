@@ -256,9 +256,14 @@ fn pairs(toks: &[String]) -> Option<Vec<(String, String)>> {
 }
 
 /// Splits `toks` into positional tokens and trailing `k=v` pairs.
+/// `k=v` pairs where a bare word is a flag: `(word, "")` (`off`, `pchan`).
+fn flag_pairs(toks: &[String]) -> Vec<(String, String)> {
+    toks.iter().map(|t| t.split_once('=').map_or((t.clone(), String::new()), |(k, v)| (k.to_string(), v.to_string()))).collect()
+}
+
 fn split_params(toks: &[String]) -> (&[String], Option<Vec<(String, String)>>) {
     let at = toks.iter().position(|t| t.contains('=')).unwrap_or(toks.len());
-    (&toks[..at], pairs(&toks[at..]))
+    (&toks[..at], Some(flag_pairs(&toks[at..])))
 }
 
 /// `name(a b, c)` -> numbers, or `None` if any is not a plain number.
@@ -266,6 +271,9 @@ fn args(tok: &str) -> Option<Vec<f64>> {
     let inner = tok.split_once('(')?.1.strip_suffix(')')?;
     inner.split(|c: char| c.is_whitespace() || c == ',').filter(|s| !s.is_empty()).map(num).collect()
 }
+
+/// Words an element card may carry after its model as flags.
+const INSTANCE_FLAGS: &[&str] = &["off", "on", "thermal"];
 
 /// Independent-source waveform keywords.
 const WAVEFORMS: &[&str] = &["pulse", "sin", "sine", "pwl", "exp", "sffm", "am"];
@@ -447,6 +455,13 @@ fn element(t: &[String], models: &HashSet<String>) -> Option<Component> {
         'd' | 'q' | 'm' | 'j' | 'z' => {
             let (pos, params) = split_params(&t[1..]);
             let params = params?;
+            // Instance flags after the model (`off`, VDMOS `thermal`) are
+            // parameters with no value.
+            let mut params = params;
+            let mut pos = pos.to_vec();
+            while pos.len() > 2 && pos.last().is_some_and(|w| INSTANCE_FLAGS.contains(&w.to_ascii_lowercase().as_str())) {
+                params.insert(0, (pos.pop()?, String::new()));
+            }
             let model = pos.last()?.clone();
             let n: Vec<String> = pos[..pos.len() - 1].to_vec();
             match (letter, n.as_slice()) {
@@ -455,7 +470,17 @@ fn element(t: &[String], models: &HashSet<String>) -> Option<Component> {
                 ('q', [nc, nb, ne, extra @ ..]) if extra.len() <= 2 => {
                     Component::Bjt { name, nc: nc.clone(), nb: nb.clone(), ne: ne.clone(), extra_nodes: extra.to_vec(), model, params }
                 }
-                ('m', [nd, ng, ns, nb]) => Component::Mosfet { name, nd: nd.clone(), ng: ng.clone(), ns: ns.clone(), nb: nb.clone(), model, params },
+                // `M d g s [b [more...]] model`: 3 nodes (VDMOS) to 7 (SOI).
+                ('m', [nd, ng, ns, rest @ ..]) if rest.len() <= 4 => Component::Mosfet {
+                    name,
+                    nd: nd.clone(),
+                    ng: ng.clone(),
+                    ns: ns.clone(),
+                    nb: rest.first().cloned(),
+                    extra_nodes: rest.iter().skip(1).cloned().collect(),
+                    model,
+                    params,
+                },
                 ('j', [nd, ng, ns]) => Component::Jfet { name, nd: nd.clone(), ng: ng.clone(), ns: ns.clone(), model, params },
                 ('z', [nd, ng, ns]) => Component::Mesfet { name, nd: nd.clone(), ng: ng.clone(), ns: ns.clone(), model, params },
                 _ => return None,
@@ -639,7 +664,18 @@ fn model(t: &[String]) -> Option<ModelDef> {
     rest.extend(t[3..].iter().cloned());
     let body = rest.join(" ");
     let body = body.trim().trim_start_matches('(').trim_end_matches(')');
-    let parameters = pairs(&tokens(&format!("x {body}"))[1..])?;
+    // A bare number continues the previous value: a CPL/W model's matrices
+    // are blank-separated (`R=0.03 0 0 0.03`). A bare word is a flag.
+    let mut parameters: Vec<(String, String)> = Vec::new();
+    for (k, v) in flag_pairs(&tokens(&format!("x {body}"))[1..]) {
+        match parameters.last_mut() {
+            Some((_, prev)) if v.is_empty() && !prev.is_empty() && num(&k).is_some() => {
+                prev.push(' ');
+                prev.push_str(&k);
+            }
+            _ => parameters.push((k, v)),
+        }
+    }
     Some(ModelDef { name, kind, parameters })
 }
 
@@ -880,6 +916,15 @@ Rp p 0 1k
         // `.control` analyses become dot cards; the scripting goes.
         let c = parse("t\nR1 a 0 1k\n.control\nTRAN 1n 10n\nplot v(a)\n.endc\n", "t", Dialect::Ngspice).unwrap().0;
         assert!(matches!(c.testbench.as_ref().unwrap().analyses[..], [Analysis::Transient { stop, .. }] if stop == 10e-9));
+        // A 3-terminal VDMOS, a model flag and an instance flag.
+        let v = parse("t\n.model vdm vdmos pchan vto=1\n.model nch nmos level=1\nM1 d g s vdm\nM2 d g s b nch w=1u off\n", "t", Dialect::Ngspice).unwrap().0;
+        assert!(v.top.raw_spice.is_empty(), "{:?}", v.top.raw_spice);
+        assert_eq!(v.top.models[0].parameters[0], ("pchan".to_string(), String::new()));
+        assert!(matches!(&v.top.components[0], Component::Mosfet { nb: None, .. }));
+        assert!(matches!(&v.top.components[1], Component::Mosfet { params, .. } if params.contains(&("off".into(), String::new()))));
+        let text = netlist(&v, Dialect::Ngspice).unwrap();
+        assert!(text.contains("M1 d g s vdm\n") && text.contains("M2 d g s b nch w=1u off") && text.contains("vdmos(pchan vto=1)"), "{text}");
+        assert!(netlist(&v, Dialect::Spectre).is_err());
         // Optional waveform parentheses, `sine`, `.pz`, `.sens`.
         let w = parse("t\nV1 a 0 pulse 0 5 1n 1n 1n 5n 10n\nV2 b 0 dc 0 Sine(0 1 1k)\nR1 a 0 1k\n.pz a 0 b 0 vol pz\n.sens v(a) ac dec 10 1 1meg\n", "t", Dialect::Ngspice).unwrap().0;
         assert!(w.top.raw_spice.is_empty(), "{:?}", w.top.raw_spice);

@@ -390,7 +390,7 @@ fn a_level_1_mosfet_runs() {
         r("d", "vdd", "drain", 1000.0),
         Component::Mosfet {
             name: "1".into(), nd: "drain".into(), ng: "gate".into(),
-            ns: "0".into(), nb: "0".into(), model: "nm".into(),
+            ns: "0".into(), nb: Some("0".into()), extra_nodes: vec![], model: "nm".into(),
             params: vec![("W".into(), "10u".into()), ("L".into(), "1u".into())],
         },
     ];
