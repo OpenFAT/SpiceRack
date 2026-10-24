@@ -285,7 +285,7 @@ fn caret_meaning_refused_across_dialects() {
         n1: "a".into(),
         n2: "0".into(),
         value: IrValue::Expression { expr: "a^b".into() },
-        params: vec![],
+        model: None, params: vec![],
     }];
     let ir = CircuitIR { raw_dialect: Some("ltspice".into()), top, ..Default::default() };
 
