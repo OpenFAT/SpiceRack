@@ -169,13 +169,13 @@ fn spice_kind(master: &str, ty: Option<&str>) -> (String, Option<&'static str>) 
 /// The SPICE letter a primitive's instance name starts with, when it is the
 /// one `codegen::spectre` adds back: `r1 resistor` reads as `1`, which
 /// writes as `r1` again; `load resistor` stays `load` (written `rload`).
-/// Lowercased: codegen::spectre writes instance names lowercase, since the
-/// IR's SPICE names are case-blind (an F card may sense `Vin` as `vin`).
+/// Spectre is case-sensitive (`[KUN]` B.2), so the name's case is kept as
+/// written; only the leading letter is matched case-insensitively, since
+/// `codegen::spectre` always writes it lowercase.
 fn strip(name: &str, letter: char) -> String {
-    let name = name.to_lowercase();
     match name.chars().next() {
         Some(c) if c.eq_ignore_ascii_case(&letter) && name.len() > 1 => name[c.len_utf8()..].to_string(),
-        _ => name,
+        _ => name.to_string(),
     }
 }
 
@@ -471,7 +471,7 @@ pub(super) fn parse(src: &str, name: &str, g: &super::Grammars) -> Result<(Circu
                 _ => raw(here, &mut report, line),
             },
             "save" => tb.saves.extend(f[1..].iter().map(|s| match s.split_once(':') {
-                Some((dev, "p")) => format!("i({})", dev.to_lowercase()),
+                Some((dev, "p")) => format!("i({})", dev),
                 _ => s.clone(),
             })),
             "ic" | "nodeset" => {

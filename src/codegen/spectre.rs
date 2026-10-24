@@ -85,13 +85,22 @@ fn spectre_num(v: f64) -> String {
     }
 }
 
+thread_local! {
+    // Set by `netlist()` for the duration of one deck: whether the IR being
+    // written is Spectre-origin (keep instance-name case) or SPICE-origin
+    // (fold it, since SPICE identifiers are case-insensitive). Defaults to
+    // folding, which is what every direct `emit_*` unit test expects.
+    static KEEP_CASE: std::cell::Cell<bool> = std::cell::Cell::new(false);
+}
+
 /// Reference to another instance in the deck (probe, swept device, ...).
 ///
-/// `[KUN]` B.2: "The language becomes case-sensitive". Every instance this file
-/// emits is lowercased, so references to them must be lowercased identically.
-/// The IR carries SPICE names (`Vin`, `R1`), which are case-insensitive there.
+/// `[KUN]` B.2: "The language becomes case-sensitive". A SPICE-origin IR's
+/// names are case-insensitive (`Vin`, `R1`), so every instance this file
+/// emits is lowercased and references to them must match; a Spectre-origin
+/// IR already carries the exact case Spectre used and keeps it.
 fn inst_ref(name: &str) -> String {
-    name.to_lowercase()
+    if KEEP_CASE.with(|c| c.get()) { name.to_string() } else { name.to_lowercase() }
 }
 
 /// Strip a SPICE `V(x)` / `I(x)` wrapper down to the bare name.
@@ -364,7 +373,9 @@ fn emit_model(m: &ModelDef) -> Result<String, CodeGenError> {
 /// (instance name, node list, subcircuit master, parameters). Parentheses
 /// around the node list are accepted and used throughout `[CMP]`.
 fn emit_instance(inst: &Instance) -> String {
-    let mut s = format!("x{} (", inst.name.to_lowercase());
+    // `inst.name` already carries the right case: `escaped()` folds it for
+    // a SPICE-origin IR and leaves a Spectre-origin IR's case alone.
+    let mut s = format!("x{} (", inst.name);
     for (i, port) in inst.port_mapping.iter().enumerate() {
         if i > 0 {
             s.push(' ');
@@ -445,6 +456,24 @@ fn escape(name: &str) -> String {
 fn escaped(ir: &CircuitIR) -> CircuitIR {
     let mut ir = ir.clone();
     let esc = |s: &mut String| *s = escape(s);
+    // `[KUN]` B.2: Spectre is case-sensitive. A SPICE-origin IR's device
+    // identifiers are case-blind (an F card may sense `Vin` as `vin`), so
+    // every instance/device name and reference to one is folded to
+    // lowercase to stay consistent with `inst_ref`/emission below; a
+    // Spectre-origin IR already carries the exact case Spectre used.
+    let keep_case = ir.raw_dialect.as_deref() == Some("spectre");
+    let fold = |s: &mut String| if !keep_case { *s = s.to_lowercase() };
+    let fold_comp = |c: &mut Component| {
+        if let Some(n) = c.names_mut().into_iter().next() {
+            fold(n);
+        }
+        match c {
+            Component::MutualInductor { inductor1, inductor2, .. } => { fold(inductor1); fold(inductor2); }
+            Component::Cccs { vsense, .. } | Component::Ccvs { vsense, .. } => fold(vsense),
+            Component::Poly { letter, controls, .. } if matches!(letter, 'F' | 'H') => controls.iter_mut().for_each(fold),
+            _ => {}
+        }
+    };
     let tb_comps = ir.testbench.iter_mut().flat_map(|tb| tb.stimulus.iter_mut());
     // The top's name is the title comment; definitions are identifiers.
     ir.subcircuit_defs.iter_mut().for_each(|sc| esc(&mut sc.name));
@@ -452,13 +481,14 @@ fn escaped(ir: &CircuitIR) -> CircuitIR {
         sc.ports.iter_mut().for_each(|p| esc(&mut p.name));
         sc.models.iter_mut().for_each(|m| esc(&mut m.name));
         for i in &mut sc.instances {
+            fold(&mut i.name);
             esc(&mut i.name);
             esc(&mut i.subcircuit);
             i.port_mapping.iter_mut().for_each(esc);
         }
-        sc.components.iter_mut().for_each(|c| c.names_mut().into_iter().for_each(esc));
+        sc.components.iter_mut().for_each(|c| { fold_comp(c); c.names_mut().into_iter().for_each(esc); });
     }
-    tb_comps.for_each(|c| c.names_mut().into_iter().for_each(esc));
+    tb_comps.for_each(|c| { fold_comp(c); c.names_mut().into_iter().for_each(esc); });
     ir.globals.iter_mut().for_each(esc);
     // A signal (`v(x)`, `i(x)`, bare `x`) keeps its wrapper; the name inside
     // is escaped.
@@ -478,6 +508,7 @@ fn escaped(ir: &CircuitIR) -> CircuitIR {
 
 pub(super) fn netlist(ir: &CircuitIR) -> Result<String, CodeGenError> {
     super::refuse_raw_spice(ir, "spectre")?;
+    KEEP_CASE.with(|c| c.set(ir.raw_dialect.as_deref() == Some("spectre")));
     let ir = &escaped(ir);
     let mut lines = Vec::new();
 
@@ -637,34 +668,34 @@ pub(crate) fn emit_component(comp: &Component) -> Result<String, CodeGenError> {
         // `[CMP]` p.628 `r1 (1 2) resistor r=1.2K m=2`
         Component::Resistor { name, n1, n2, value, model, params } => {
             model_refuse("spectre", name, model)?;
-            let mut s = format!("r{} ({} {}) resistor r={}", name.to_lowercase(), n1, n2, emit_value(value));
+            let mut s = format!("r{} ({} {}) resistor r={}", name, n1, n2, emit_value(value));
             s.push_str(&emit_params(params));
             s
         }
         // `[CMP]` p.283 `c2 (1 0) capacitor c=2.5u tc1=1e-8`
         Component::Capacitor { name, n1, n2, value, model, params } => {
             model_refuse("spectre", name, model)?;
-            let mut s = format!("c{} ({} {}) capacitor c={}", name.to_lowercase(), n1, n2, emit_value(value));
+            let mut s = format!("c{} ({} {}) capacitor c={}", name, n1, n2, emit_value(value));
             s.push_str(&emit_params(params));
             s
         }
         // `[CMP]` p.372 `l33 (0 net29) inductor l=10e-9 r=1 m=1`
         Component::Inductor { name, n1, n2, value, model, params } => {
             model_refuse("spectre", name, model)?;
-            let mut s = format!("l{} ({} {}) inductor l={}", name.to_lowercase(), n1, n2, emit_value(value));
+            let mut s = format!("l{} ({} {}) inductor l={}", name, n1, n2, emit_value(value));
             s.push_str(&emit_params(params));
             s
         }
         // `[CMP]` p.577 `ml1 mutual_inductor coupling=1 ind1=l1 ind2=l2`
         Component::MutualInductor { name, inductor1, inductor2, coupling } => {
             format!("k{} mutual_inductor coupling={} ind1=l{} ind2=l{}",
-                name.to_lowercase(), coupling, inductor1.to_lowercase(), inductor2.to_lowercase())
+                name, coupling, inductor1, inductor2)
         }
         // `[CMP]` p.683 `Name p n vsource parameter=value ...`; `dc` is
         // instance parameter #1, `mag`/`phase` are the small-signal
         // parameters #39/#40 (p.685).
         Component::VoltageSource { name, np, nm, value, ac_magnitude, ac_phase, waveform } => {
-            let mut s = format!("v{} ({} {}) vsource dc={}", name.to_lowercase(), np, nm, emit_value(value));
+            let mut s = format!("v{} ({} {}) vsource dc={}", name, np, nm, emit_value(value));
             if let Some(mag) = ac_magnitude {
                 s.push_str(&format!(" mag={}", spectre_num(*mag)));
                 if let Some(phase) = ac_phase {
@@ -678,7 +709,7 @@ pub(crate) fn emit_component(comp: &Component) -> Result<String, CodeGenError> {
         }
         // `[CMP]` p.380 `i1 (in 0) isource dc=0 type=pulse delay=10n ...`
         Component::CurrentSource { name, np, nm, value, ac_magnitude, ac_phase, waveform } => {
-            let mut s = format!("i{} ({} {}) isource dc={}", name.to_lowercase(), np, nm, emit_value(value));
+            let mut s = format!("i{} ({} {}) isource dc={}", name, np, nm, emit_value(value));
             if let Some(mag) = ac_magnitude {
                 s.push_str(&format!(" mag={}", spectre_num(*mag)));
                 if let Some(phase) = ac_phase {
@@ -705,15 +736,15 @@ pub(crate) fn emit_component(comp: &Component) -> Result<String, CodeGenError> {
         }
         // `[CMP]` p.680 `e1 (out1 0 pos neg) vcvs gain=10`
         Component::Vcvs { name, np, nm, ncp, ncm, gain } => {
-            format!("e{} ({} {} {} {}) vcvs gain={}", name.to_lowercase(), np, nm, ncp, ncm, gain)
+            format!("e{} ({} {} {} {}) vcvs gain={}", name, np, nm, ncp, ncm, gain)
         }
         // `[CMP]` p.678 `Name sink src ps ns ... vccs`, parameter `gm`
         Component::Vccs { name, np, nm, ncp, ncm, transconductance } => {
-            format!("g{} ({} {} {} {}) vccs gm={}", name.to_lowercase(), np, nm, ncp, ncm, transconductance)
+            format!("g{} ({} {} {} {}) vccs gm={}", name, np, nm, ncp, ncm, transconductance)
         }
         // `[CMP]` p.286 `vcs (pos gnd) cccs gain=2.5 probe=v1`
         Component::Cccs { name, np, nm, vsense, gain } => {
-            format!("f{} ({} {}) cccs probe={} gain={}", name.to_lowercase(), np, nm, inst_ref(vsense), gain)
+            format!("f{} ({} {}) cccs probe={} gain={}", name, np, nm, vsense, gain)
         }
         // R5 pp.590-616: `pvcvs`/`pvccs` take the controlling pairs as
         // terminals, `pcccs`/`pccvs` the sensing sources as `probes`; both
@@ -723,33 +754,32 @@ pub(crate) fn emit_component(comp: &Component) -> Result<String, CodeGenError> {
             let master = match letter { 'E' => "pvcvs", 'G' => "pvccs", 'F' => "pcccs", _ => "pccvs" };
             let l = letter.to_ascii_lowercase();
             if matches!(letter, 'E' | 'G') {
-                format!("{l}{} ({np} {nm} {}) {master} coeffs=[{}]", name.to_lowercase(), controls.join(" "), k.join(" "))
+                format!("{l}{} ({np} {nm} {}) {master} coeffs=[{}]", name, controls.join(" "), k.join(" "))
             } else {
-                let probes: Vec<String> = controls.iter().map(|c| inst_ref(c)).collect();
-                format!("{l}{} ({np} {nm}) {master} probes=[{}] coeffs=[{}]", name.to_lowercase(), probes.join(" "), k.join(" "))
+                format!("{l}{} ({np} {nm}) {master} probes=[{}] coeffs=[{}]", name, controls.join(" "), k.join(" "))
             }
         }
         // `[CMP]` p.288 `vvs (pos gnd) ccvs rm=1 probe=v1`
         Component::Ccvs { name, np, nm, vsense, transresistance } => {
-            format!("h{} ({} {}) ccvs probe={} rm={}", name.to_lowercase(), np, nm, inst_ref(vsense), transresistance)
+            format!("h{} ({} {}) ccvs probe={} rm={}", name, np, nm, vsense, transresistance)
         }
         // `[CMP]` p.302 `Name a c ModelName parameter=value ...`,
         // `d0 (dp dn) pdiode l=3e-4 w=2.5e-4 area=1`
         Component::Diode { name, np, nm, model, params } => {
-            let mut s = format!("d{} ({} {}) {}", name.to_lowercase(), np, nm, model);
+            let mut s = format!("d{} ({} {}) {}", name, np, nm, model);
             s.push_str(&emit_params(params));
             s
         }
         // `[CMP]` bjt models: `Name c b e [s] ModelName parameter=value ...`
         Component::Bjt { name, nc, nb, ne, extra_nodes, model, params } => {
             let extra: String = extra_nodes.iter().map(|n| format!(" {n}")).collect();
-            let mut s = format!("q{} ({} {} {}{extra}) {}", name.to_lowercase(), nc, nb, ne, model);
+            let mut s = format!("q{} ({} {} {}{extra}) {}", name, nc, nb, ne, model);
             s.push_str(&emit_params(params));
             s
         }
         // `[CMP]` mos models: `Name d g s b ModelName parameter=value ...`
         Component::Mosfet { name, nd, ng, ns, nb: Some(nb), extra_nodes, model, params } if extra_nodes.is_empty() => {
-            let mut s = format!("m{} ({} {} {} {}) {}", name.to_lowercase(), nd, ng, ns, nb, model);
+            let mut s = format!("m{} ({} {} {} {}) {}", name, nd, ng, ns, nb, model);
             s.push_str(&emit_params(params));
             s
         }
@@ -758,12 +788,12 @@ pub(crate) fn emit_component(comp: &Component) -> Result<String, CodeGenError> {
         }
         // `[CMP]` jfet: `Name d g s ModelName parameter=value ...`
         Component::Jfet { name, nd, ng, ns, model, params } => {
-            let mut s = format!("j{} ({} {} {}) {}", name.to_lowercase(), nd, ng, ns, model);
+            let mut s = format!("j{} ({} {} {}) {}", name, nd, ng, ns, model);
             s.push_str(&emit_params(params));
             s
         }
         Component::Mesfet { name, nd, ng, ns, model, params } => {
-            let mut s = format!("z{} ({} {} {}) {}", name.to_lowercase(), nd, ng, ns, model);
+            let mut s = format!("z{} ({} {} {}) {}", name, nd, ng, ns, model);
             s.push_str(&emit_params(params));
             s
         }
@@ -774,7 +804,7 @@ pub(crate) fn emit_component(comp: &Component) -> Result<String, CodeGenError> {
         // `model <name> relay ...`; a SPICE `.model <name> sw` carried
         // through the IR names a primitive Spectre does not have.
         Component::VSwitch { name, np, nm, ncp, ncm, model } => {
-            format!("s{} ({} {} {} {}) {}", name.to_lowercase(), np, nm, ncp, ncm, model)
+            format!("s{} ({} {} {} {}) {}", name, np, nm, ncp, ncm, model)
         }
         // `relay` is voltage controlled only; `switch` (`[CMP]` p.643) is a
         // multi-throw switch whose position only changes between analyses.
@@ -788,7 +818,7 @@ pub(crate) fn emit_component(comp: &Component) -> Result<String, CodeGenError> {
         // `[CMP]` p.644-645 `t1 (1 0 2 0) tline z0=100`, instance params
         // `z0` (#1) and `td` (#2).
         Component::TLine { name, inp, inm, outp, outm, z0, td } => {
-            format!("t{} ({} {} {} {}) tline z0={} td={}", name.to_lowercase(), inp, inm, outp, outm, z0, td)
+            format!("t{} ({} {} {} {}) tline z0={} td={}", name, inp, inm, outp, outm, z0, td)
         }
         Component::Xspice { .. } => {
             return Err(unsupported_component(
