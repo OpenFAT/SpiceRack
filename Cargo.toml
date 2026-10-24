@@ -17,18 +17,28 @@ crate-type = ["cdylib", "rlib"]
 pyo3 = { version = "0.24", features = ["extension-module"], optional = true }
 num-complex = "0.4"
 thiserror = "2"
-tempfile = "3"
+tempfile = { version = "3", optional = true }
 serde = { version = "1", features = ["derive"] }
-serde_json = { version = "1", features = ["float_roundtrip"] }
-regex = "1"
+serde_json = { version = "1", features = ["float_roundtrip"], optional = true }
+regex = { version = "1", optional = true }
 
 [dev-dependencies]
 pretty_assertions = "1"
+serde_json = { version = "1", features = ["float_roundtrip"] }
+tempfile = "3"
 
 [features]
 default = ["python"]
-python = ["dep:pyo3"]
+# `backend`: the simulator backends (processes, temp files), `simulation`, the
+# Verilog tools (OpenVAF, Icarus, Yosys) and `CircuitIR::check_backend`.
+# Without it the crate is the IR, the codegens and the result readers: pure,
+# no I/O, and it builds for wasm32-unknown-unknown.
+backend = ["dep:tempfile", "dep:regex"]
+# `json`: IR <-> JSON (float_roundtrip: an f64 reads back as written).
+json = ["dep:serde_json"]
+python = ["dep:pyo3", "json", "backend"]
 
 [[bin]]
 name = "spice2rack"
 path = "tools/spice2rack.rs"
+required-features = ["json"]

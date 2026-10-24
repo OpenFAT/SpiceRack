@@ -5,7 +5,9 @@ pub mod rawfile;
 pub mod psf;
 pub mod normalize;
 pub mod result;
+#[cfg(feature = "backend")]
 pub mod backend;
+#[cfg(feature = "backend")]
 pub mod simulation;
 pub mod measure_parse;
 pub mod lint;

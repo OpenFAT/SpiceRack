@@ -967,7 +967,7 @@ mod tests {
     fn emit_analysis(a: &Analysis) -> Result<String, CodeGenError> {
         Ok(analysis_block(0, a)?.join("\n"))
     }
-    use std::collections::HashMap;
+    use std::collections::BTreeMap;
 
     fn sub(name: &str) -> Subcircuit {
         Subcircuit {
@@ -1081,7 +1081,7 @@ mod tests {
 
     #[test]
     fn model_library_uses_the_vacask_path() {
-        let mut backend_paths = HashMap::new();
+        let mut backend_paths = BTreeMap::new();
         backend_paths.insert("ngspice".into(), "/pdk/ngspice/sky130.lib.spice".into());
         backend_paths.insert("vacask".into(), "/pdk/vacask/sky130.sim".into());
         let ir = CircuitIR {
@@ -1102,7 +1102,7 @@ mod tests {
             top: sub("fallback"), testbench: None, subcircuit_defs: vec![],
             model_libraries: vec![ModelLibrary {
                 name: "custom".into(), path: "/models/custom.sim".into(), corner: None,
-                backend_paths: HashMap::new(), setup_includes: vec![],
+                backend_paths: BTreeMap::new(), setup_includes: vec![],
             }],
         };
         let n = netlist(&ir).unwrap();

@@ -539,7 +539,7 @@ fn analysis(d: Dialect, a: &Analysis) -> Result<String, CodeGenError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
+    use std::collections::BTreeMap;
 
     fn sample_resistor_divider() -> CircuitIR {
         CircuitIR {
@@ -952,7 +952,7 @@ mod tests {
                 ("reltol".into(), "1e-3".into()),
                 ("max_iterations".into(), "200".into()),
             ],
-            backend_specific: HashMap::new(),
+            backend_specific: BTreeMap::new(),
         };
 
         // Ngspice
@@ -970,7 +970,7 @@ mod tests {
 
     #[test]
     fn test_options_backend_specific() {
-        let mut backend_specific = HashMap::new();
+        let mut backend_specific = BTreeMap::new();
         backend_specific.insert("ngspice".into(), vec![("SEED".into(), "42".into())]);
 
         let opts = SimOptions {
@@ -1128,7 +1128,7 @@ mod tests {
 
     #[test]
     fn test_model_library_backend_path_ngspice() {
-        let mut backend_paths = HashMap::new();
+        let mut backend_paths = BTreeMap::new();
         backend_paths.insert("ngspice".into(), "/pdk/ngspice/sky130.lib".into());
         backend_paths.insert("spectre".into(), "/pdk/spectre/sky130.scs".into());
 
@@ -1187,7 +1187,7 @@ mod tests {
                 name: "sky130".into(),
                 path: "/pdk/sky130.lib".into(),
                 corner: Some("tt".into()),
-                backend_paths: HashMap::new(),
+                backend_paths: BTreeMap::new(),
                 setup_includes: vec![],
             }],
         };
@@ -1220,7 +1220,7 @@ mod tests {
                 name: "custom".into(),
                 path: "/models/custom.lib".into(),
                 corner: None,
-                backend_paths: HashMap::new(),
+                backend_paths: BTreeMap::new(),
                 setup_includes: vec![],
             }],
         };
@@ -1400,7 +1400,7 @@ mod tests {
                 name: "sky130".into(),
                 path: "/pdk/sky130.lib.spice".into(),
                 corner: Some("tt".into()),
-                backend_paths: HashMap::new(),
+                backend_paths: BTreeMap::new(),
                 setup_includes: vec![],
             }],
         };
@@ -1451,7 +1451,7 @@ mod tests {
                 name: "gf180".into(),
                 path: "/pdk/gf180/sm141064.ngspice".into(),
                 corner: Some("typical".into()),
-                backend_paths: HashMap::new(),
+                backend_paths: BTreeMap::new(),
                 setup_includes: vec!["/pdk/gf180/design.ngspice".into()],
             }],
         };

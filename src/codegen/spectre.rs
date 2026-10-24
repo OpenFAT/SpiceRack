@@ -483,7 +483,7 @@ fn emit_subcircuit(sc: &Subcircuit) -> Result<String, CodeGenError> {
     Ok(format!("{}\n{}\nends {}", header, body, sc.name))
 }
 
-fn emit_component(comp: &Component) -> Result<String, CodeGenError> {
+pub(crate) fn emit_component(comp: &Component) -> Result<String, CodeGenError> {
     let s = match comp {
         // `[CMP]` p.628 `r1 (1 2) resistor r=1.2K m=2`
         Component::Resistor { name, n1, n2, value, params } => {
@@ -969,7 +969,7 @@ fn dc_sweep_selector(source: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
+    use std::collections::BTreeMap;
 
     fn sample_resistor_divider() -> CircuitIR {
         CircuitIR {
@@ -1166,7 +1166,7 @@ mod tests {
                 ("reltol".into(), "1e-3".into()),
                 ("max_iterations".into(), "200".into()),
             ],
-            backend_specific: HashMap::new(),
+            backend_specific: BTreeMap::new(),
         };
         let s = emit_options(&opts).unwrap();
         assert!(s.contains("myopts options"), "opts header: {}", s);
@@ -1286,7 +1286,7 @@ mod tests {
 
     #[test]
     fn test_spectre_model_library_uses_spectre_path() {
-        let mut backend_paths = HashMap::new();
+        let mut backend_paths = BTreeMap::new();
         backend_paths.insert("ngspice".into(), "/pdk/ngspice/sky130.lib".into());
         backend_paths.insert("spectre".into(), "/pdk/spectre/sky130.scs".into());
 

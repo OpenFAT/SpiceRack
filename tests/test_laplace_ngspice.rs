@@ -1,3 +1,4 @@
+#![cfg(feature = "backend")]
 //! Laplace-domain sources, end to end, against real ngspice 44.2.
 //!
 //! Every assertion here is a closed-form number, not "it exited 0". The deck

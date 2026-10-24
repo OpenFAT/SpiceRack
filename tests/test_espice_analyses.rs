@@ -1,3 +1,4 @@
+#![cfg(feature = "backend")]
 //! End-to-end coverage of the analyses the ESPice backend exposes, mirroring
 //! tests/test_ngspice_analyses.rs: each test runs a real deck through
 //! `BackendKind::Espice` and asserts a closed-form number.

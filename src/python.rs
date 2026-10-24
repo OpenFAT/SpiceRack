@@ -923,7 +923,7 @@ fn verilog_block(
             )));
         }
     };
-    let mut conns = HashMap::new();
+    let mut conns = std::collections::BTreeMap::new();
     for (port, obj) in connections {
         let conn = if let Ok(s) = obj.extract::<String>(py) {
             VerilogConnection::Single(s)
@@ -1717,7 +1717,7 @@ impl PyModelLibrary {
     #[new]
     #[pyo3(signature = (path, corner=None, setup_includes=None, **backend_paths))]
     fn new(path: &str, corner: Option<&str>, setup_includes: Option<Vec<String>>, backend_paths: Option<Bound<'_, PyDict>>) -> PyResult<Self> {
-        let mut bp = HashMap::new();
+        let mut bp = std::collections::BTreeMap::new();
         if let Some(dict) = backend_paths {
             for (k, v) in dict.iter() {
                 bp.insert(k.extract::<String>()?, v.extract::<String>()?);
