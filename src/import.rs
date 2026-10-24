@@ -572,9 +572,10 @@ fn control_card(tb: &mut Testbench, card: &str, t: &[String], d: Dialect) -> boo
         // A lone `.save all` is what no save list means.
         ".save" if t[1..].iter().all(|x| x.eq_ignore_ascii_case("all")) => {}
         ".save" => tb.saves.extend(t[1..].iter().cloned()),
-        // `.probe v(a)` selects outputs. `.print`/`.plot` only print (ngspice
-        // batch mode): no IR field, so they stay raw rather than vanish.
-        ".probe" => tb.saves.extend(card.split_whitespace().skip(1).filter(|x| !matches!(x.to_ascii_lowercase().as_str(), "op" | "dc" | "ac" | "tran" | "noise")).map(String::from)),
+        // HSPICE `.probe v(a)` selects outputs, as `.save` does elsewhere.
+        // ngspice's `.probe` inserts current probes instead, and `.print`/
+        // `.plot` only print: no IR field, so they stay raw rather than vanish.
+        ".probe" if d == Dialect::Hspice => tb.saves.extend(card.split_whitespace().skip(1).filter(|x| !matches!(x.to_ascii_lowercase().as_str(), "op" | "dc" | "ac" | "tran" | "noise")).map(String::from)),
         ".meas" | ".measure" => tb.measures.push(card.to_string()),
         _ => return false,
     }
