@@ -91,14 +91,14 @@ fn empty_tb(analyses: Vec<Analysis>) -> Testbench {
 fn r(name: &str, n1: &str, n2: &str, v: f64) -> Component {
     Component::Resistor {
         name: name.into(), n1: n1.into(), n2: n2.into(),
-        value: IrValue::Numeric { value: v }, params: vec![],
+        value: IrValue::Numeric { value: v }, model: None, params: vec![],
     }
 }
 
 fn c(name: &str, n1: &str, n2: &str, v: f64) -> Component {
     Component::Capacitor {
         name: name.into(), n1: n1.into(), n2: n2.into(),
-        value: IrValue::Numeric { value: v }, params: vec![],
+        value: IrValue::Numeric { value: v }, model: None, params: vec![],
     }
 }
 
@@ -440,8 +440,8 @@ fn a_jfet_runs() {
 fn an_inductor_and_its_mutual_coupling_run() {
     let mut top = empty_sub("xfmr");
     top.components = vec![
-        Component::Inductor { name: "1".into(), n1: "p".into(), n2: "0".into(), value: IrValue::Numeric { value: 1e-3 }, params: vec![] },
-        Component::Inductor { name: "2".into(), n1: "s".into(), n2: "0".into(), value: IrValue::Numeric { value: 4e-3 }, params: vec![] },
+        Component::Inductor { name: "1".into(), n1: "p".into(), n2: "0".into(), value: IrValue::Numeric { value: 1e-3 }, model: None, params: vec![] },
+        Component::Inductor { name: "2".into(), n1: "s".into(), n2: "0".into(), value: IrValue::Numeric { value: 4e-3 }, model: None, params: vec![] },
         Component::MutualInductor { name: "1".into(), inductor1: "1".into(), inductor2: "2".into(), coupling: 0.99 },
         r("1", "drive", "p", 1.0),
         r("2", "s", "0", 1e6),
@@ -502,8 +502,8 @@ fn subcircuits_and_their_instances_run() {
         ParamDef { name: "rbot".into(), default: Some("1k".into()) },
     ];
     divider.components = vec![
-        Component::Resistor { name: "1".into(), n1: "in".into(), n2: "out".into(), value: IrValue::Expression { expr: "rtop".into() }, params: vec![] },
-        Component::Resistor { name: "2".into(), n1: "out".into(), n2: "0".into(), value: IrValue::Expression { expr: "rbot".into() }, params: vec![] },
+        Component::Resistor { name: "1".into(), n1: "in".into(), n2: "out".into(), value: IrValue::Expression { expr: "rtop".into() }, model: None, params: vec![] },
+        Component::Resistor { name: "2".into(), n1: "out".into(), n2: "0".into(), value: IrValue::Expression { expr: "rbot".into() }, model: None, params: vec![] },
     ];
 
     let mut top = empty_sub("with_subckt");
@@ -529,7 +529,7 @@ fn step_params_sweep_a_netlist_variable() {
     let mut top = empty_sub("stepped");
     top.parameters = vec![ParamDef { name: "rtop".into(), default: Some("1k".into()) }];
     top.components = vec![
-        Component::Resistor { name: "1".into(), n1: "vdd".into(), n2: "out".into(), value: IrValue::Expression { expr: "rtop".into() }, params: vec![] },
+        Component::Resistor { name: "1".into(), n1: "vdd".into(), n2: "out".into(), value: IrValue::Expression { expr: "rtop".into() }, model: None, params: vec![] },
         r("2", "out", "0", 1000.0),
     ];
     let mut tb = empty_tb(vec![Analysis::Op]);

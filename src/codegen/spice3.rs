@@ -36,6 +36,21 @@ fn value(d: Dialect, v: &IrValue) -> String {
     }
 }
 
+/// R/C/L value field, with an optional `.model` reference after it:
+/// ` [value] model`. The import side leaves `value` an empty `Raw` when the
+/// bare word was a model name, so an empty text is skipped rather than
+/// written as a blank field.
+fn rclvalue(d: Dialect, v: &IrValue, model: &Option<String>) -> String {
+    let val = match v {
+        IrValue::Raw { text } if text.is_empty() => String::new(),
+        v => format!(" {}", value(d, v)),
+    };
+    match model {
+        Some(m) => format!("{val} {m}"),
+        None => val,
+    }
+}
+
 fn waveform(wf: &IrWaveform) -> String {
     match wf {
         IrWaveform::Sin { offset, amplitude, frequency, delay, damping, phase } => {
@@ -458,9 +473,24 @@ pub(super) fn netlist(d: Dialect, ir: &CircuitIR) -> Result<String, CodeGenError
 
 pub(crate) fn component(d: Dialect, comp: &Component) -> Result<String, CodeGenError> {
     Ok(match comp {
-        Component::Resistor { name, n1, n2, value: v, params: p } => format!("R{} {} {} {}{}", name, n1, n2, value(d, v), params(p)),
-        Component::Capacitor { name, n1, n2, value: v, params: p } => format!("C{} {} {} {}{}", name, n1, n2, value(d, v), params(p)),
-        Component::Inductor { name, n1, n2, value: v, params: p } => format!("L{} {} {} {}{}", name, n1, n2, value(d, v), params(p)),
+        Component::Resistor { name, n1, n2, value: v, model, params: p } => {
+            if model.is_some() && d == Dialect::Ltspice {
+                return Err(CodeGenError::UnsupportedComponent { backend: "ltspice".into(), component: format!("R{name}: model reference") });
+            }
+            format!("R{} {} {}{}{}", name, n1, n2, rclvalue(d, v, model), params(p))
+        }
+        Component::Capacitor { name, n1, n2, value: v, model, params: p } => {
+            if model.is_some() && d == Dialect::Ltspice {
+                return Err(CodeGenError::UnsupportedComponent { backend: "ltspice".into(), component: format!("C{name}: model reference") });
+            }
+            format!("C{} {} {}{}{}", name, n1, n2, rclvalue(d, v, model), params(p))
+        }
+        Component::Inductor { name, n1, n2, value: v, model, params: p } => {
+            if model.is_some() && d == Dialect::Ltspice {
+                return Err(CodeGenError::UnsupportedComponent { backend: "ltspice".into(), component: format!("L{name}: model reference") });
+            }
+            format!("L{} {} {}{}{}", name, n1, n2, rclvalue(d, v, model), params(p))
+        }
         Component::MutualInductor { name, inductor1, inductor2, coupling } => {
             format!("K{} L{} L{} {}", name, inductor1, inductor2, coupling)
         }
@@ -705,6 +735,7 @@ mod tests {
                         n1: "input".into(),
                         n2: "output".into(),
                         value: IrValue::Numeric { value: 10000.0 },
+                        model: None,
                         params: vec![],
                     },
                     Component::Resistor {
@@ -712,6 +743,7 @@ mod tests {
                         n1: "output".into(),
                         n2: "0".into(),
                         value: IrValue::Numeric { value: 10000.0 },
+                        model: None,
                         params: vec![],
                     },
                 ],
@@ -1192,6 +1224,7 @@ mod tests {
                         n1: "a".into(),
                         n2: "0".into(),
                         value: IrValue::Expression { expr: "rval".into() },
+                        model: None,
                         params: vec![],
                     },
                 ],
@@ -1526,7 +1559,7 @@ mod tests {
                 components: vec![
                     Component::Resistor {
                         name: "drain".into(), n1: "vdd".into(), n2: "vout".into(),
-                        value: IrValue::Numeric { value: 5e3 }, params: vec![],
+                        value: IrValue::Numeric { value: 5e3 }, model: None, params: vec![],
                     },
                     Component::Mosfet {
                         name: "n1".into(), nd: "vout".into(), ng: "vin".into(),

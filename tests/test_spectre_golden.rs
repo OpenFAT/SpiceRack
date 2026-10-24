@@ -245,7 +245,7 @@ fn spectre_primitives_match_documented_instance_forms() {
     assert_eq!(
         component(Component::Resistor {
             name: "1".into(), n1: "a".into(), n2: "b".into(),
-            value: IrValue::Numeric { value: 1200.0 }, params: vec![("m".into(), "2".into())],
+            value: IrValue::Numeric { value: 1200.0 }, model: None, params: vec![("m".into(), "2".into())],
         }),
         "r1 (a b) resistor r=1.2k m=2",
     );
@@ -256,14 +256,14 @@ fn spectre_primitives_match_documented_instance_forms() {
     assert_eq!(
         component(Component::Capacitor {
             name: "2".into(), n1: "1".into(), n2: "0".into(),
-            value: IrValue::Numeric { value: 2e-6 }, params: vec![],
+            value: IrValue::Numeric { value: 2e-6 }, model: None, params: vec![],
         }),
         "c2 (1 0) capacitor c=2u",
     );
     assert_eq!(
         component(Component::Inductor {
             name: "33".into(), n1: "0".into(), n2: "net29".into(),
-            value: IrValue::Numeric { value: 10e-9 }, params: vec![],
+            value: IrValue::Numeric { value: 10e-9 }, model: None, params: vec![],
         }),
         "l33 (0 net29) inductor l=10n",
     );
@@ -680,7 +680,7 @@ fn spectre_refuses_foreign_analyses() {
 fn spectre_numbers_use_si_scale_factors() {
     let r = |v: f64| component(Component::Resistor {
         name: "1".into(), n1: "a".into(), n2: "b".into(),
-        value: IrValue::Numeric { value: v }, params: vec![],
+        value: IrValue::Numeric { value: v }, model: None, params: vec![],
     });
     assert!(r(1e6).ends_with("r=1M"), "{}", r(1e6));
     assert!(r(1e9).ends_with("r=1G"), "{}", r(1e9));

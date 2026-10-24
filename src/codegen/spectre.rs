@@ -32,7 +32,7 @@
 
 use super::format_spice_number;
 use crate::ir::*;
-use super::CodeGenError;
+use super::{model_refuse, CodeGenError};
 
 /// A SPICE number in a parameter value, spelled without its scale factor:
 /// Spectre reads `M` as mega where SPICE reads milli (`IKF=30M` is 30e-3),
@@ -635,19 +635,22 @@ fn emit_subcircuit(sc: &Subcircuit) -> Result<String, CodeGenError> {
 pub(crate) fn emit_component(comp: &Component) -> Result<String, CodeGenError> {
     let s = match comp {
         // `[CMP]` p.628 `r1 (1 2) resistor r=1.2K m=2`
-        Component::Resistor { name, n1, n2, value, params } => {
+        Component::Resistor { name, n1, n2, value, model, params } => {
+            model_refuse("spectre", name, model)?;
             let mut s = format!("r{} ({} {}) resistor r={}", name.to_lowercase(), n1, n2, emit_value(value));
             s.push_str(&emit_params(params));
             s
         }
         // `[CMP]` p.283 `c2 (1 0) capacitor c=2.5u tc1=1e-8`
-        Component::Capacitor { name, n1, n2, value, params } => {
+        Component::Capacitor { name, n1, n2, value, model, params } => {
+            model_refuse("spectre", name, model)?;
             let mut s = format!("c{} ({} {}) capacitor c={}", name.to_lowercase(), n1, n2, emit_value(value));
             s.push_str(&emit_params(params));
             s
         }
         // `[CMP]` p.372 `l33 (0 net29) inductor l=10e-9 r=1 m=1`
-        Component::Inductor { name, n1, n2, value, params } => {
+        Component::Inductor { name, n1, n2, value, model, params } => {
+            model_refuse("spectre", name, model)?;
             let mut s = format!("l{} ({} {}) inductor l={}", name.to_lowercase(), n1, n2, emit_value(value));
             s.push_str(&emit_params(params));
             s
@@ -1172,14 +1175,14 @@ mod tests {
                         n1: "input".into(),
                         n2: "output".into(),
                         value: IrValue::Numeric { value: 10000.0 },
-                        params: vec![],
+                        model: None, params: vec![],
                     },
                     Component::Resistor {
                         name: "2".into(),
                         n1: "output".into(),
                         n2: "0".into(),
                         value: IrValue::Numeric { value: 10000.0 },
-                        params: vec![],
+                        model: None, params: vec![],
                     },
                 ],
                 instances: vec![],
