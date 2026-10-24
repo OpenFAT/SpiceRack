@@ -441,18 +441,18 @@ impl PySimulator {
     // ── Analyses ──
 
     fn operating_point(&self) -> PyResult<PyOperatingPoint> {
-        Ok(PyOperatingPoint { inner: OperatingPoint::from_raw(self.run(Analysis::Op)?) })
+        Ok(PyOperatingPoint { inner: Results::from_raw(self.run(Analysis::Op)?) })
     }
 
     #[pyo3(signature = (**kwargs))]
     fn dc(&self, kwargs: Option<Bound<'_, PyDict>>) -> PyResult<PyDcAnalysis> {
-        Ok(PyDcAnalysis { inner: DcAnalysis::from_raw(self.run(dc_sweeps(kwargs)?)?) })
+        Ok(PyDcAnalysis { inner: Results::from_raw(self.run(dc_sweeps(kwargs)?)?) })
     }
 
     #[pyo3(signature = (variation="dec", number_of_points=10, start_frequency=1.0, stop_frequency=1e9))]
     fn ac(&self, variation: &str, number_of_points: u32, start_frequency: f64, stop_frequency: f64) -> PyResult<PyAcAnalysis> {
         let a = Analysis::Ac { variation: variation.into(), points: number_of_points, start: start_frequency, stop: stop_frequency };
-        Ok(PyAcAnalysis { inner: AcAnalysis::from_raw(self.run(a)?) })
+        Ok(PyAcAnalysis { inner: Results::from_raw(self.run(a)?) })
     }
 
     #[pyo3(signature = (step_time, end_time, start_time=None, max_time=None, use_initial_condition=false))]
@@ -461,7 +461,7 @@ impl PySimulator {
         use_initial_condition: bool,
     ) -> PyResult<PyTransientAnalysis> {
         let a = Analysis::Transient { step: step_time, stop: end_time, start: start_time, max_step: max_time, uic: use_initial_condition };
-        Ok(PyTransientAnalysis { inner: TransientAnalysis::from_raw(self.run(a)?) })
+        Ok(PyTransientAnalysis { inner: Results::from_raw(self.run(a)?) })
     }
 
     #[pyo3(signature = (output_node, ref_node, src, variation="dec", points=10, start_frequency=1e3, stop_frequency=1e8, points_per_summary=None))]
@@ -473,13 +473,13 @@ impl PySimulator {
             output: output_node.into(), reference: ref_node.into(), source: src.into(),
             variation: variation.into(), points, start: start_frequency, stop: stop_frequency, points_per_summary,
         };
-        Ok(PyNoiseAnalysis { inner: NoiseAnalysis::from_raw(self.run(a)?) })
+        Ok(PyNoiseAnalysis { inner: Results::from_raw(self.run(a)?) })
     }
 
     #[pyo3(signature = (outvar, insrc))]
     fn transfer_function(&self, outvar: &str, insrc: &str) -> PyResult<PyTransferFunctionAnalysis> {
         let a = Analysis::Tf { output: outvar.into(), source: insrc.into() };
-        Ok(PyTransferFunctionAnalysis { inner: TransferFunctionAnalysis::from_raw(self.run(a)?) })
+        Ok(PyTransferFunctionAnalysis { inner: Results::from_raw(self.run(a)?) })
     }
 
     #[pyo3(signature = (outvar, insrc))]
@@ -490,7 +490,7 @@ impl PySimulator {
     #[pyo3(signature = (output_variable))]
     fn dc_sensitivity(&self, output_variable: &str) -> PyResult<PySensitivityAnalysis> {
         let a = Analysis::Sensitivity { output: output_variable.into(), ac: None };
-        Ok(PySensitivityAnalysis { inner: SensitivityAnalysis::from_raw(self.run(a)?) })
+        Ok(PySensitivityAnalysis { inner: Results::from_raw(self.run(a)?) })
     }
 
     #[pyo3(signature = (output_variable, variation="dec", number_of_points=10, start_frequency=100.0, stop_frequency=1e5))]
@@ -500,7 +500,7 @@ impl PySimulator {
     ) -> PyResult<PySensitivityAnalysis> {
         let ac = ir::AcSweepParams { variation: variation.into(), points: number_of_points, start: start_frequency, stop: stop_frequency };
         let a = Analysis::Sensitivity { output: output_variable.into(), ac: Some(ac) };
-        Ok(PySensitivityAnalysis { inner: SensitivityAnalysis::from_raw(self.run(a)?) })
+        Ok(PySensitivityAnalysis { inner: Results::from_raw(self.run(a)?) })
     }
 
     #[pyo3(signature = (node1, node2, node3, node4, tf_type, pz_type))]
@@ -511,7 +511,7 @@ impl PySimulator {
             node1: node1.into(), node2: node2.into(), node3: node3.into(), node4: node4.into(),
             tf_type: tf_type.into(), pz_type: pz_type.into(),
         };
-        Ok(PyPoleZeroAnalysis { inner: PoleZeroAnalysis::from_raw(self.run(a)?) })
+        Ok(PyPoleZeroAnalysis { inner: Results::from_raw(self.run(a)?) })
     }
 
     #[pyo3(signature = (variation="dec", points=10, start_frequency=100.0, stop_frequency=1e8, f2overf1=None))]
@@ -519,7 +519,7 @@ impl PySimulator {
         &self, variation: &str, points: u32, start_frequency: f64, stop_frequency: f64, f2overf1: Option<f64>,
     ) -> PyResult<PyDistortionAnalysis> {
         let a = Analysis::Distortion { variation: variation.into(), points, start: start_frequency, stop: stop_frequency, f2overf1 };
-        Ok(PyDistortionAnalysis { inner: DistortionAnalysis::from_raw(self.run(a)?) })
+        Ok(PyDistortionAnalysis { inner: Results::from_raw(self.run(a)?) })
     }
 
     #[pyo3(signature = (fundamental_frequency, stabilization_time, observe_node, points_per_period=128, harmonics=10))]
@@ -531,13 +531,13 @@ impl PySimulator {
             fundamental: fundamental_frequency, stabilization: stabilization_time,
             observe_node: observe_node.into(), points_per_period, harmonics,
         };
-        Ok(PyPssAnalysis { inner: PssAnalysis::from_raw(self.run(a)?) })
+        Ok(PyPssAnalysis { inner: Results::from_raw(self.run(a)?) })
     }
 
     #[pyo3(signature = (variation="dec", number_of_points=10, start_frequency=1e6, stop_frequency=1e10))]
     fn s_param(&self, variation: &str, number_of_points: u32, start_frequency: f64, stop_frequency: f64) -> PyResult<PySParamAnalysis> {
         let a = Analysis::SPar { variation: variation.into(), points: number_of_points, start: start_frequency, stop: stop_frequency };
-        Ok(PySParamAnalysis { inner: SParamAnalysis::from_raw(self.run(a)?) })
+        Ok(PySParamAnalysis { inner: Results::from_raw(self.run(a)?) })
     }
 
     /// LTspice `.net` network-parameter analysis over an AC sweep.
@@ -550,14 +550,14 @@ impl PySimulator {
         if let Some(tb) = &mut ir.testbench {
             tb.extra_lines.push(format!(".net {output_current} {input_source} Rout={z_out} Rin={z_in}"));
         }
-        Ok(PySParamAnalysis { inner: SParamAnalysis::from_raw(run_deck(ir, self.backend.as_deref())?) })
+        Ok(PySParamAnalysis { inner: Results::from_raw(run_deck(ir, self.backend.as_deref())?) })
     }
 
     #[pyo3(signature = (fundamental_frequencies, num_harmonics=None))]
     fn harmonic_balance(&self, fundamental_frequencies: Vec<f64>, num_harmonics: Option<Vec<u32>>) -> PyResult<PyHarmonicBalanceAnalysis> {
         let harmonics = num_harmonics.unwrap_or_else(|| vec![7; fundamental_frequencies.len()]);
         let a = Analysis::HarmonicBalance { frequencies: fundamental_frequencies, harmonics };
-        Ok(PyHarmonicBalanceAnalysis { inner: HarmonicBalanceAnalysis::from_raw(self.run(a)?) })
+        Ok(PyHarmonicBalanceAnalysis { inner: Results::from_raw(self.run(a)?) })
     }
 
     #[pyo3(signature = (probe, variation="dec", number_of_points=10, start_frequency=1.0, stop_frequency=1e10))]
@@ -567,13 +567,13 @@ impl PySimulator {
         let a = Analysis::Stability {
             probe: probe.into(), variation: variation.into(), points: number_of_points, start: start_frequency, stop: stop_frequency,
         };
-        Ok(PyStabilityAnalysis { inner: StabilityAnalysis::from_raw(self.run(a)?) })
+        Ok(PyStabilityAnalysis { inner: Results::from_raw(self.run(a)?) })
     }
 
     #[pyo3(signature = (step_time, end_time))]
     fn transient_noise(&self, step_time: f64, end_time: f64) -> PyResult<PyTransientNoiseAnalysis> {
         let a = Analysis::TransientNoise { step: step_time, stop: end_time };
-        Ok(PyTransientNoiseAnalysis { inner: TransientNoiseAnalysis::from_raw(self.run(a)?) })
+        Ok(PyTransientNoiseAnalysis { inner: Results::from_raw(self.run(a)?) })
     }
 
     // ── Spectre-specific analyses ──
@@ -608,7 +608,7 @@ impl PySimulator {
             pss_fundamental, pss_stabilization, pss_harmonics, variation: variation.into(), points,
             start: start_freq, stop: stop_freq, sweep_type: sweep_type.into(),
         };
-        Ok(PyAcAnalysis { inner: AcAnalysis::from_raw(self.run_spectre(a)?) })
+        Ok(PyAcAnalysis { inner: Results::from_raw(self.run_spectre(a)?) })
     }
 
     /// SpectreRF Periodic Noise (PNoise) analysis with automatic PSS prerequisite.
@@ -621,7 +621,7 @@ impl PySimulator {
             pss_fundamental, pss_stabilization, pss_harmonics, output: output_node.into(), reference: ref_node.into(),
             variation: variation.into(), points, start: start_freq, stop: stop_freq,
         };
-        Ok(PyNoiseAnalysis { inner: NoiseAnalysis::from_raw(self.run_spectre(a)?) })
+        Ok(PyNoiseAnalysis { inner: Results::from_raw(self.run_spectre(a)?) })
     }
 
     /// SpectreRF Periodic Transfer Function (PXF) analysis with automatic PSS prerequisite.
@@ -634,7 +634,7 @@ impl PySimulator {
             pss_fundamental, pss_stabilization, pss_harmonics, output: output_node.into(), source: source.into(),
             variation: variation.into(), points, start: start_freq, stop: stop_freq,
         };
-        Ok(PyAcAnalysis { inner: AcAnalysis::from_raw(self.run_spectre(a)?) })
+        Ok(PyAcAnalysis { inner: Results::from_raw(self.run_spectre(a)?) })
     }
 
     /// SpectreRF Periodic Stability (PSTB) analysis with automatic PSS prerequisite.
@@ -647,7 +647,7 @@ impl PySimulator {
             pss_fundamental, pss_stabilization, pss_harmonics, probe: probe.into(),
             variation: variation.into(), points, start: start_freq, stop: stop_freq,
         };
-        Ok(PyStabilityAnalysis { inner: StabilityAnalysis::from_raw(self.run_spectre(a)?) })
+        Ok(PyStabilityAnalysis { inner: Results::from_raw(self.run_spectre(a)?) })
     }
 
     /// List all available simulator backends on this system
@@ -703,7 +703,7 @@ impl PyRawData {
 
 #[pyclass(name = "OperatingPoint")]
 struct PyOperatingPoint {
-    inner: crate::result::Analysis,
+    inner: crate::result::Results,
 }
 
 #[pymethods]
@@ -729,7 +729,7 @@ impl PyOperatingPoint {
 
 /// Per-point transform of a complex waveform, for `magnitude`/`magnitude_db`/`phase`.
 fn complex_part(
-    a: &crate::result::Analysis,
+    a: &crate::result::Results,
     name: &str,
     f: fn(num_complex::Complex64) -> f64,
 ) -> PyResult<Vec<f64>> {
@@ -743,13 +743,13 @@ fn complex_part(
     Ok(c.iter().map(|&v| f(v)).collect())
 }
 
-/// Every swept analysis is the same `result::Analysis`; each Python class differs only
+/// Every swept analysis is the same `result::Results`; each Python class differs only
 /// in its name and the name of its axis getter (`sweep`, `frequency`, `time`).
 macro_rules! analysis_class {
     ($ty:ident, $name:literal $(, $axis:ident)?) => {
         #[pyclass(name = $name)]
         struct $ty {
-            inner: crate::result::Analysis,
+            inner: crate::result::Results,
         }
 
         #[pymethods]

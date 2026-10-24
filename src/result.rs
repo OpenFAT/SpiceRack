@@ -59,29 +59,14 @@ impl RawData {
 /// Every analysis kind is this one type; the sweep axis (time, frequency, DC sweep)
 /// is column 0.
 #[derive(Debug, Clone)]
-pub struct Analysis {
+pub struct Results {
     pub raw: RawData,
     pub nodes: HashMap<String, usize>,
     pub branches: HashMap<String, usize>,
 }
 
-pub type OperatingPoint = Analysis;
-pub type DcAnalysis = Analysis;
-pub type AcAnalysis = Analysis;
-pub type TransientAnalysis = Analysis;
-pub type NoiseAnalysis = Analysis;
-pub type TransferFunctionAnalysis = Analysis;
-pub type SensitivityAnalysis = Analysis;
-pub type PoleZeroAnalysis = Analysis;
-pub type DistortionAnalysis = Analysis;
-pub type PssAnalysis = Analysis;
-pub type SParamAnalysis = Analysis;
-pub type HarmonicBalanceAnalysis = Analysis;
-pub type StabilityAnalysis = Analysis;
-pub type TransientNoiseAnalysis = Analysis;
-pub type SamplingAnalysis = Analysis;
 
-impl Analysis {
+impl Results {
     pub fn from_raw(raw: RawData) -> Self {
         use crate::normalize::{is_current_name, normalize_var_name};
         let backend = if raw.backend_hint.is_empty() { "ngspice" } else { &raw.backend_hint };
