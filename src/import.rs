@@ -551,8 +551,12 @@ fn control_card(tb: &mut Testbench, card: &str, t: &[String], d: Dialect) -> boo
         return true;
     }
     match kind.as_str() {
-        ".option" | ".options" | ".opt" if t[1..].iter().all(|x| x.contains('=')) => {
-            tb.options.portable.extend(pairs(&t[1..]).unwrap_or_default());
+        // A bare word is a flag (`noacct`): an empty value.
+        ".option" | ".options" | ".opt" | ".opts" => {
+            tb.options.portable.extend(t[1..].iter().map(|x| match x.split_once('=') {
+                Some((k, v)) => (k.to_string(), v.to_string()),
+                None => (x.clone(), String::new()),
+            }));
         }
         ".temp" | ".temperature" if t.len() == 2 && n(1).is_some() => tb.temperature = n(1),
         ".ic" | ".nodeset" => match node_values(&t[1..]) {

@@ -169,6 +169,19 @@ fn raw_spice_is_refused_not_dropped() {
     }
 }
 
+/// An empty option value is a flag: bare in SPICE, refused by Spectre, whose
+/// `options` statement takes `name=value` only.
+#[test]
+fn option_flags() {
+    let mut ir = circuit(vec![Analysis::Op]);
+    ir.top.components.retain(|c| !matches!(c, Component::BehavioralVoltage { .. }));
+    let tb = ir.testbench.as_mut().unwrap();
+    tb.options.portable = vec![("noacct".into(), String::new()), ("reltol".into(), "1e-4".into())];
+    assert!(netlist(&ir, Dialect::Ngspice).unwrap().contains(".options noacct reltol=1e-4"));
+    let e = netlist(&ir, Dialect::Spectre).unwrap_err().to_string();
+    assert!(e.contains("option flag 'noacct'"), "{e}");
+}
+
 // ── ESPice as the reader ──
 
 fn espice() -> Option<String> {

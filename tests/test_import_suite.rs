@@ -42,13 +42,17 @@ struct Run {
     measures: Vec<(String, f64)>,
 }
 
-/// Runs `deck` (text) with ngspice from `dir` so relative includes resolve.
+/// Runs `deck` (text) with ngspice from `dir` so relative includes resolve,
+/// with the random seed pinned.
 /// `-r` turns `.meas` off in batch mode ("No .measure possible in batch mode
 /// (-b) with -r rawfile set!"), so a deck with `.meas` runs twice.
 /// `Err` carries why; `Ok(None)` is a timeout.
 fn ngspice(dir: &Path, deck: &str, secs: u64) -> Result<Option<Run>, String> {
     let file = tempfile::Builder::new().suffix(".sp").tempfile_in(dir).map_err(|e| e.to_string())?;
-    std::fs::write(file.path(), deck).map_err(|e| e.to_string())?;
+    // A pinned seed: models with `agauss` mismatch (gf180) draw a fresh
+    // value every run otherwise, so the same deck disagrees with itself.
+    let (title, body) = deck.split_once('\n').unwrap_or((deck, ""));
+    std::fs::write(file.path(), format!("{title}\n.option seed=1\n{body}")).map_err(|e| e.to_string())?;
     let tmp = tempfile::TempDir::new().map_err(|e| e.to_string())?;
     let raw = tmp.path().join("out.raw");
     let run = |with_raw: bool| {
@@ -144,7 +148,10 @@ fn compare(a: &Run, b: &Run) -> Result<(), String> {
     for (pa, pb) in a.plots.iter().zip(&b.plots) {
         let transient = pa.variables.first().is_some_and(|v| v.name.eq_ignore_ascii_case("time"));
         let (xa, xb) = (pa.re(0), pb.re(0));
-        if !transient && (xa.len() != xb.len() || xa.iter().zip(&xb).any(|(x, y)| !close(*x, *y))) {
+        // Span-relative: a sweep crossing zero lands within an ulp of it, and
+        // `-50m` and `-0.05` are two such ulps in ngspice's number parser.
+        let span = xa.iter().fold(0.0f64, |m, x| m.max(x.abs()));
+        if !transient && (xa.len() != xb.len() || xa.iter().zip(&xb).any(|(x, y)| (x - y).abs() > 1e-9 * span)) {
             return Err(format!("{}: sweep grid changed ({} -> {} points)", pa.plot_name, xa.len(), xb.len()));
         }
         if transient && !close(*xa.last().unwrap(), *xb.last().unwrap()) {

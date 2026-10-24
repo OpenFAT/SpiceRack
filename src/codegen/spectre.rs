@@ -420,7 +420,7 @@ pub(super) fn netlist(ir: &CircuitIR) -> Result<String, CodeGenError> {
             lines.push(emit_component(comp)?);
         }
 
-        let opts = emit_options(&tb.options);
+        let opts = emit_options(&tb.options)?;
         if !opts.is_empty() {
             lines.push(opts);
         }
@@ -937,9 +937,13 @@ fn emit_analysis(analysis: &Analysis) -> Result<String, CodeGenError> {
 
 /// `[REF]` p.236 verbatim: `o1 options scale=1.2 subckt=chip1`,
 /// `myopt options temp=27`.
-fn emit_options(opts: &SimOptions) -> String {
+fn emit_options(opts: &SimOptions) -> Result<String, CodeGenError> {
+    // Spectre's `options` statement takes `name=value` only.
+    if let Some((k, _)) = opts.portable.iter().find(|(_, v)| v.is_empty()) {
+        return Err(CodeGenError::UnsupportedAnalysis { backend: "spectre".into(), analysis: format!("option flag '{k}' (Spectre options take name=value)") });
+    }
     let parts = super::option_pairs(opts, "spectre", map_option_name);
-    if parts.is_empty() { String::new() } else { format!("myopts options {}", parts.join(" ")) }
+    Ok(if parts.is_empty() { String::new() } else { format!("myopts options {}", parts.join(" ")) })
 }
 
 /// Pick the Spectre sweep-variable spelling for a SPICE `.dc` first argument.
@@ -1164,7 +1168,7 @@ mod tests {
             ],
             backend_specific: HashMap::new(),
         };
-        let s = emit_options(&opts);
+        let s = emit_options(&opts).unwrap();
         assert!(s.contains("myopts options"), "opts header: {}", s);
         assert!(s.contains("reltol=1e-3"), "reltol: {}", s);
         assert!(s.contains("dcmaxiters=200"), "dcmaxiters: {}", s);

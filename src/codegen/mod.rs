@@ -90,8 +90,9 @@ fn param_defs(defs: &[ParamDef]) -> String {
 
 /// `key=value` pairs of an options card: portable names through `map`, then
 /// the ones only `backend` understands, verbatim.
+/// `key=value`, or the bare `key` of a flag (an empty value: `.options noacct`).
 fn option_pairs(opts: &SimOptions, backend: &str, map: fn(&str) -> &str) -> Vec<String> {
-    let portable = opts.portable.iter().map(|(k, v)| format!("{}={}", map(k), v));
+    let portable = opts.portable.iter().map(|(k, v)| if v.is_empty() { map(k).to_string() } else { format!("{}={}", map(k), v) });
     let specific = opts.backend_specific.get(backend).into_iter().flatten().map(|(k, v)| format!("{k}={v}"));
     portable.chain(specific).collect()
 }
