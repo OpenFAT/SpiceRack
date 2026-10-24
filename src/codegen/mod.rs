@@ -77,3 +77,4 @@ fn option_pairs(opts: &SimOptions, backend: &str, map: fn(&str) -> &str) -> Vec<
     let specific = opts.backend_specific.get(backend).into_iter().flatten().map(|(k, v)| format!("{k}={v}"));
     portable.chain(specific).collect()
 }
+

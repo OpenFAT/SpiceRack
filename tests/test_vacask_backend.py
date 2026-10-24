@@ -153,15 +153,3 @@ class TestRun:
         out = tr["out"]
         i = min(range(len(t)), key=lambda k: abs(t[k] - 1e-3))
         assert out[i] == pytest.approx(1.0 - math.exp(-1.0), rel=5e-3)
-
-    def test_a_spice_string_deck_is_refused_rather_than_mistranslated(self):
-        needs_vacask()
-        mod = ps()
-        c = mod.Circuit("spice_string")
-        c.V(name="dd", positive="vdd", negative=c.gnd, value=3.0)
-        c.R(name="1", positive="vdd", negative="out", value=1e3)
-        c.R(name="2", positive="out", negative=c.gnd, value=1e3)
-        sim = c.simulator(simulator="vacask")
-        with pytest.raises(Exception) as err:
-            sim.operating_point()
-        assert "netlist language" in str(err.value)

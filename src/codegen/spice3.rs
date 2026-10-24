@@ -1112,26 +1112,6 @@ mod tests {
         assert!(netlist.contains(".meas tran vmax MAX V(output)"), "measure: {}", netlist);
     }
 
-    #[test]
-    fn test_roundtrip_from_circuit() {
-        use crate::circuit::{Circuit, Param};
-
-        let mut c = Circuit::new("Roundtrip");
-        c.r("1", "in", "out", 1000.0);
-        c.v("dd", "vdd", "0", 3.3);
-        c.model("nmod", "NMOS", vec![Param::new("VTO", "0.7")]);
-
-        let ir = CircuitIR::from_circuit(&c);
-        let cg = Dialect::Ngspice;
-        let emitted = netlist(cg, &ir).unwrap();
-
-        // Compare key lines against Circuit::to_string
-        let original = c.to_string();
-        assert!(emitted.contains("R1 in out 1k"), "emitted R1: {}", emitted);
-        assert!(original.contains("R1 in out 1k"), "original R1: {}", original);
-        assert!(emitted.contains(".model nmod NMOS(VTO=0.7)"), "emitted model: {}", emitted);
-        assert!(original.contains(".model nmod NMOS(VTO=0.7)"), "original model: {}", original);
-    }
 
     // ── Issue 03: ModelLibrary per-backend path + corner ──
 

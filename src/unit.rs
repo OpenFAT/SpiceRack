@@ -81,7 +81,7 @@ pub struct UnitValue {
 impl UnitValue {
     /// SPICE number text: "1k", "10p", "3.3".
     pub fn str_spice(&self) -> String {
-        crate::circuit::format_spice_number(self.value)
+        crate::codegen::format_spice_number(self.value)
     }
 }
 

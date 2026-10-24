@@ -4,7 +4,7 @@ use serde::{Serialize, Deserialize};
 // ── Core IR types ──
 
 /// Backend-neutral intermediate representation for a complete simulation
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct CircuitIR {
     pub top: Subcircuit,
     pub testbench: Option<Testbench>,
@@ -13,7 +13,7 @@ pub struct CircuitIR {
 }
 
 /// Named, parameterized, composable circuit fragment -- the unit of reuse
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Subcircuit {
     pub name: String,
     pub ports: Vec<Port>,
@@ -122,6 +122,22 @@ pub enum Component {
     RawSpice { line: String },
 }
 
+impl Component {
+    /// Instance name without its SPICE letter; `None` for a raw line.
+    pub fn name(&self) -> Option<&str> {
+        use Component::*;
+        match self {
+            Resistor { name, .. } | Capacitor { name, .. } | Inductor { name, .. }
+            | MutualInductor { name, .. } | VoltageSource { name, .. } | CurrentSource { name, .. }
+            | BehavioralVoltage { name, .. } | BehavioralCurrent { name, .. } | Vcvs { name, .. }
+            | Vccs { name, .. } | Cccs { name, .. } | Ccvs { name, .. } | Diode { name, .. }
+            | Bjt { name, .. } | Mosfet { name, .. } | Jfet { name, .. } | Mesfet { name, .. }
+            | VSwitch { name, .. } | ISwitch { name, .. } | TLine { name, .. } | Xspice { name, .. } => Some(name),
+            RawSpice { .. } => None,
+        }
+    }
+}
+
 // ── Value and waveform types ──
 
 /// Component value in the IR -- numeric, expression, or raw
@@ -148,7 +164,7 @@ pub enum IrWaveform {
 // ── Testbench ──
 
 /// Testbench -- wraps a DUT with stimulus + analysis
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Testbench {
     pub dut: String,
     pub stimulus: Vec<Component>,
@@ -449,386 +465,11 @@ impl CircuitIR {
 
         issues
     }
-
-    /// Convert from the existing Circuit struct to IR
-    pub fn from_circuit(circuit: &crate::circuit::Circuit) -> Self {
-        let top = convert_circuit_to_subcircuit(circuit);
-        let subcircuit_defs = circuit
-            .subcircuits()
-            .iter()
-            .map(convert_subcircuit_def)
-            .collect();
-
-        CircuitIR {
-            top,
-            testbench: None,
-            subcircuit_defs,
-            model_libraries: Vec::new(),
-        }
-    }
 }
-
-// ── Conversion helpers: Circuit -> IR ──
-
-fn convert_circuit_to_subcircuit(circuit: &crate::circuit::Circuit) -> Subcircuit {
-    let mut components = Vec::new();
-    let mut instances = Vec::new();
-
-    for elem in circuit.elements() {
-        match elem {
-            crate::circuit::Element::X(xi) => {
-                instances.push(Instance {
-                    name: xi.name.clone(),
-                    subcircuit: xi.subcircuit_name.clone(),
-                    port_mapping: xi.nodes.iter().map(|n| n.spice_name().to_string()).collect(),
-                    parameters: xi.params.iter().map(|p| (p.name.clone(), p.value.clone())).collect(),
-                });
-            }
-            other => {
-                components.push(convert_element(other));
-            }
-        }
-    }
-
-    let models = circuit
-        .models()
-        .iter()
-        .map(|m| ModelDef {
-            name: m.name.clone(),
-            kind: m.kind.clone(),
-            parameters: m.params.iter().map(|p| (p.name.clone(), p.value.clone())).collect(),
-        })
-        .collect();
-
-    let parameters = circuit
-        .parameters()
-        .iter()
-        .map(|p| ParamDef {
-            name: p.name.clone(),
-            default: Some(p.value.clone()),
-        })
-        .collect();
-
-    Subcircuit {
-        name: circuit.title.clone(),
-        ports: Vec::new(),
-        parameters,
-        components,
-        instances,
-        models,
-        raw_spice: circuit.raw_lines().to_vec(),
-        includes: circuit.includes().to_vec(),
-        libs: circuit.libs().to_vec(),
-        osdi_loads: circuit.osdi_loads().to_vec(),
-        verilog_blocks: vec![],
-    }
-}
-
-fn convert_subcircuit_def(sub: &crate::circuit::SubCircuitDef) -> Subcircuit {
-    let mut components = Vec::new();
-    let mut instances = Vec::new();
-
-    for elem in &sub.elements {
-        match elem {
-            crate::circuit::Element::X(xi) => {
-                instances.push(Instance {
-                    name: xi.name.clone(),
-                    subcircuit: xi.subcircuit_name.clone(),
-                    port_mapping: xi.nodes.iter().map(|n| n.spice_name().to_string()).collect(),
-                    parameters: xi.params.iter().map(|p| (p.name.clone(), p.value.clone())).collect(),
-                });
-            }
-            other => {
-                components.push(convert_element(other));
-            }
-        }
-    }
-
-    let models = sub
-        .models
-        .iter()
-        .map(|m| ModelDef {
-            name: m.name.clone(),
-            kind: m.kind.clone(),
-            parameters: m.params.iter().map(|p| (p.name.clone(), p.value.clone())).collect(),
-        })
-        .collect();
-
-    let ports = sub
-        .pins
-        .iter()
-        .map(|pin| Port {
-            name: pin.clone(),
-            direction: PortDirection::InOut,
-        })
-        .collect();
-
-    let parameters = sub
-        .params
-        .iter()
-        .map(|p| ParamDef {
-            name: p.name.clone(),
-            default: Some(p.value.clone()),
-        })
-        .collect();
-
-    Subcircuit {
-        name: sub.name.clone(),
-        ports,
-        parameters,
-        components,
-        instances,
-        models,
-        raw_spice: Vec::new(),
-        includes: Vec::new(),
-        libs: Vec::new(),
-        osdi_loads: Vec::new(),
-        verilog_blocks: vec![],
-    }
-}
-
-fn convert_element(elem: &crate::circuit::Element) -> Component {
-    use crate::circuit::Element;
-
-    match elem {
-        Element::R(r) => Component::Resistor {
-            name: r.name.clone(),
-            n1: r.n1.spice_name().to_string(),
-            n2: r.n2.spice_name().to_string(),
-            value: convert_value(&r.value),
-            params: convert_params(&r.params),
-        },
-        Element::C(c) => Component::Capacitor {
-            name: c.name.clone(),
-            n1: c.n1.spice_name().to_string(),
-            n2: c.n2.spice_name().to_string(),
-            value: convert_value(&c.value),
-            params: convert_params(&c.params),
-        },
-        Element::L(l) => Component::Inductor {
-            name: l.name.clone(),
-            n1: l.n1.spice_name().to_string(),
-            n2: l.n2.spice_name().to_string(),
-            value: convert_value(&l.value),
-            params: convert_params(&l.params),
-        },
-        Element::K(k) => Component::MutualInductor {
-            name: k.name.clone(),
-            inductor1: k.inductor1.clone(),
-            inductor2: k.inductor2.clone(),
-            coupling: k.coupling,
-        },
-        Element::V(v) => Component::VoltageSource {
-            name: v.name.clone(),
-            np: v.np.spice_name().to_string(),
-            nm: v.nm.spice_name().to_string(),
-            value: convert_value(&v.value),
-            ac_magnitude: None,
-            ac_phase: None,
-            waveform: v.waveform.as_ref().map(convert_waveform),
-        },
-        Element::I(i) => Component::CurrentSource {
-            name: i.name.clone(),
-            np: i.np.spice_name().to_string(),
-            nm: i.nm.spice_name().to_string(),
-            value: convert_value(&i.value),
-            ac_magnitude: None,
-            ac_phase: None,
-            waveform: i.waveform.as_ref().map(convert_waveform),
-        },
-        Element::BV(bv) => Component::BehavioralVoltage {
-            name: bv.name.clone(),
-            np: bv.np.spice_name().to_string(),
-            nm: bv.nm.spice_name().to_string(),
-            expression: bv.expression.clone(),
-        },
-        Element::BI(bi) => Component::BehavioralCurrent {
-            name: bi.name.clone(),
-            np: bi.np.spice_name().to_string(),
-            nm: bi.nm.spice_name().to_string(),
-            expression: bi.expression.clone(),
-        },
-        Element::E(e) => Component::Vcvs {
-            name: e.name.clone(),
-            np: e.np.spice_name().to_string(),
-            nm: e.nm.spice_name().to_string(),
-            ncp: e.ncp.spice_name().to_string(),
-            ncm: e.ncm.spice_name().to_string(),
-            gain: e.gain,
-        },
-        Element::G(g) => Component::Vccs {
-            name: g.name.clone(),
-            np: g.np.spice_name().to_string(),
-            nm: g.nm.spice_name().to_string(),
-            ncp: g.ncp.spice_name().to_string(),
-            ncm: g.ncm.spice_name().to_string(),
-            transconductance: g.transconductance,
-        },
-        Element::F(f) => Component::Cccs {
-            name: f.name.clone(),
-            np: f.np.spice_name().to_string(),
-            nm: f.nm.spice_name().to_string(),
-            vsense: f.vsense.clone(),
-            gain: f.gain,
-        },
-        Element::H(h) => Component::Ccvs {
-            name: h.name.clone(),
-            np: h.np.spice_name().to_string(),
-            nm: h.nm.spice_name().to_string(),
-            vsense: h.vsense.clone(),
-            transresistance: h.transresistance,
-        },
-        Element::D(d) => Component::Diode {
-            name: d.name.clone(),
-            np: d.np.spice_name().to_string(),
-            nm: d.nm.spice_name().to_string(),
-            model: d.model.clone(),
-            params: convert_params(&d.params),
-        },
-        Element::Q(q) => Component::Bjt {
-            name: q.name.clone(),
-            nc: q.nc.spice_name().to_string(),
-            nb: q.nb.spice_name().to_string(),
-            ne: q.ne.spice_name().to_string(),
-            model: q.model.clone(),
-            params: convert_params(&q.params),
-        },
-        Element::M(m) => Component::Mosfet {
-            name: m.name.clone(),
-            nd: m.nd.spice_name().to_string(),
-            ng: m.ng.spice_name().to_string(),
-            ns: m.ns.spice_name().to_string(),
-            nb: m.nb.spice_name().to_string(),
-            model: m.model.clone(),
-            params: convert_params(&m.params),
-        },
-        Element::J(j) => Component::Jfet {
-            name: j.name.clone(),
-            nd: j.nd.spice_name().to_string(),
-            ng: j.ng.spice_name().to_string(),
-            ns: j.ns.spice_name().to_string(),
-            model: j.model.clone(),
-            params: convert_params(&j.params),
-        },
-        Element::Z(z) => Component::Mesfet {
-            name: z.name.clone(),
-            nd: z.nd.spice_name().to_string(),
-            ng: z.ng.spice_name().to_string(),
-            ns: z.ns.spice_name().to_string(),
-            model: z.model.clone(),
-            params: convert_params(&z.params),
-        },
-        Element::S(s) => Component::VSwitch {
-            name: s.name.clone(),
-            np: s.np.spice_name().to_string(),
-            nm: s.nm.spice_name().to_string(),
-            ncp: s.ncp.spice_name().to_string(),
-            ncm: s.ncm.spice_name().to_string(),
-            model: s.model.clone(),
-        },
-        Element::W(w) => Component::ISwitch {
-            name: w.name.clone(),
-            np: w.np.spice_name().to_string(),
-            nm: w.nm.spice_name().to_string(),
-            vcontrol: w.vcontrol.clone(),
-            model: w.model.clone(),
-        },
-        Element::T(t) => Component::TLine {
-            name: t.name.clone(),
-            inp: t.inp.spice_name().to_string(),
-            inm: t.inm.spice_name().to_string(),
-            outp: t.outp.spice_name().to_string(),
-            outm: t.outm.spice_name().to_string(),
-            z0: t.z0,
-            td: t.td,
-        },
-        Element::X(_) => {
-            // Subcircuit instances are handled separately as Instance, not Component.
-            // This branch should not be reached in normal usage since the caller
-            // filters X-elements into instances.
-            unreachable!("SubcircuitInstance should be converted to Instance, not Component")
-        }
-        Element::A(a) => Component::Xspice {
-            name: a.name.clone(),
-            connections: a.connections.clone(),
-            model: a.model.clone(),
-        },
-        Element::RawSpice(s) => Component::RawSpice {
-            line: s.clone(),
-        },
-    }
-}
-
-fn convert_value(cv: &crate::circuit::ComponentValue) -> IrValue {
-    use crate::circuit::ComponentValue;
-
-    match cv {
-        ComponentValue::Numeric(v) => IrValue::Numeric { value: *v },
-        ComponentValue::Unit(uv) => IrValue::Numeric { value: uv.value },
-        ComponentValue::Expression(e) => IrValue::Expression { expr: e.clone() },
-        ComponentValue::Raw(r) => IrValue::Raw { text: r.clone() },
-    }
-}
-
-fn convert_waveform(wf: &crate::circuit::Waveform) -> IrWaveform {
-    use crate::circuit::Waveform;
-
-    match wf {
-        Waveform::Sin(w) => IrWaveform::Sin {
-            offset: w.offset,
-            amplitude: w.amplitude,
-            frequency: w.frequency,
-            delay: w.delay,
-            damping: w.damping,
-            phase: w.phase,
-        },
-        Waveform::Pulse(w) => IrWaveform::Pulse {
-            initial: w.initial,
-            pulsed: w.pulsed,
-            delay: w.delay,
-            rise_time: w.rise_time,
-            fall_time: w.fall_time,
-            pulse_width: w.pulse_width,
-            period: w.period,
-        },
-        Waveform::Pwl(w) => IrWaveform::Pwl {
-            values: w.values.clone(),
-        },
-        Waveform::Exp(w) => IrWaveform::Exp {
-            initial: w.initial,
-            pulsed: w.pulsed,
-            rise_delay: w.rise_delay,
-            rise_tau: w.rise_tau,
-            fall_delay: w.fall_delay,
-            fall_tau: w.fall_tau,
-        },
-        Waveform::Sffm(w) => IrWaveform::Sffm {
-            offset: w.offset,
-            amplitude: w.amplitude,
-            carrier_freq: w.carrier_freq,
-            modulation_index: w.modulation_index,
-            signal_freq: w.signal_freq,
-        },
-        Waveform::Am(w) => IrWaveform::Am {
-            amplitude: w.amplitude,
-            offset: w.offset,
-            modulating_freq: w.modulating_freq,
-            carrier_freq: w.carrier_freq,
-            delay: w.delay,
-        },
-    }
-}
-
-fn convert_params(params: &[crate::circuit::Param]) -> Vec<(String, String)> {
-    params.iter().map(|p| (p.name.clone(), p.value.clone())).collect()
-}
-
-// ── Tests ──
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::circuit::{Circuit, Param, SubCircuitDef, Node, Mosfet, Element};
 
     #[test]
     fn test_ir_construction() {
@@ -1178,107 +819,6 @@ mod tests {
 
         for backend in &["ngspice", "ltspice", "vacask", "spectre"] {
             assert!(ir.check_backend(backend).is_empty(), "Expected no issues for {}", backend);
-        }
-    }
-
-    #[test]
-    fn test_from_circuit_basic() {
-        let mut c = Circuit::new("test_conversion");
-        c.r("1", "in", "out", 1000.0);
-        c.c("1", "out", Node::Ground, 10e-12);
-        c.v("dd", "vdd", Node::Ground, 3.3);
-        c.model("nmos_3p3", "NMOS", vec![
-            Param::new("LEVEL", "1"),
-            Param::new("VTO", "0.7"),
-        ]);
-        c.parameter("vdd_val", "3.3");
-        c.include("/path/to/model.lib");
-        c.lib("/path/to/pdk.lib", "tt");
-        c.raw_spice(".global vdd gnd");
-
-        let ir = CircuitIR::from_circuit(&c);
-
-        assert_eq!(ir.top.name, "test_conversion");
-        assert_eq!(ir.top.components.len(), 3);
-        assert_eq!(ir.top.models.len(), 1);
-        assert_eq!(ir.top.parameters.len(), 1);
-        assert_eq!(ir.top.includes.len(), 1);
-        assert_eq!(ir.top.libs.len(), 1);
-        assert_eq!(ir.top.raw_spice.len(), 1);
-
-        // Check resistor conversion
-        match &ir.top.components[0] {
-            Component::Resistor { name, n1, n2, value, .. } => {
-                assert_eq!(name, "1");
-                assert_eq!(n1, "in");
-                assert_eq!(n2, "out");
-                assert_eq!(*value, IrValue::Numeric { value: 1000.0 });
-            }
-            other => panic!("Expected Resistor, got {:?}", other),
-        }
-
-        // Check capacitor - node Ground becomes "0"
-        match &ir.top.components[1] {
-            Component::Capacitor { n2, value, .. } => {
-                assert_eq!(n2, "0");
-                assert_eq!(*value, IrValue::Numeric { value: 10e-12 });
-            }
-            other => panic!("Expected Capacitor, got {:?}", other),
-        }
-
-        // Check model
-        assert_eq!(ir.top.models[0].name, "nmos_3p3");
-        assert_eq!(ir.top.models[0].kind, "NMOS");
-        assert_eq!(ir.top.models[0].parameters.len(), 2);
-    }
-
-    #[test]
-    fn test_from_circuit_with_subcircuit() {
-        let mut c = Circuit::new("subckt_test");
-        c.subcircuit(SubCircuitDef {
-            name: "MyBuf".into(),
-            pins: vec!["in".into(), "out".into(), "vdd".into(), "gnd".into()],
-            elements: vec![Element::M(Mosfet {
-                name: "1".into(),
-                nd: Node::named("out"),
-                ng: Node::named("in"),
-                ns: Node::named("vdd"),
-                nb: Node::named("vdd"),
-                model: "pmos".into(),
-                params: vec![],
-            })],
-            models: vec![],
-            params: vec![Param::new("wp", "1u")],
-        });
-        c.x("1", "MyBuf", vec!["in", "out", "vdd", "gnd"]);
-
-        let ir = CircuitIR::from_circuit(&c);
-
-        // SubcircuitInstance becomes an Instance on the top-level subcircuit
-        assert_eq!(ir.top.instances.len(), 1);
-        assert_eq!(ir.top.instances[0].subcircuit, "MyBuf");
-        assert_eq!(ir.top.instances[0].port_mapping, vec!["in", "out", "vdd", "0"]);
-
-        // SubCircuitDef becomes a subcircuit_defs entry
-        assert_eq!(ir.subcircuit_defs.len(), 1);
-        assert_eq!(ir.subcircuit_defs[0].name, "MyBuf");
-        assert_eq!(ir.subcircuit_defs[0].ports.len(), 4);
-        assert_eq!(ir.subcircuit_defs[0].components.len(), 1);
-        assert_eq!(ir.subcircuit_defs[0].parameters.len(), 1);
-        assert_eq!(ir.subcircuit_defs[0].parameters[0].name, "wp");
-        assert_eq!(ir.subcircuit_defs[0].parameters[0].default, Some("1u".into()));
-
-        // The MOSFET in the subcircuit definition
-        match &ir.subcircuit_defs[0].components[0] {
-            Component::Mosfet { name, nd, ng, ns, nb, model, .. } => {
-                assert_eq!(name, "1");
-                assert_eq!(nd, "out");
-                assert_eq!(ng, "in");
-                assert_eq!(ns, "vdd");
-                assert_eq!(nb, "vdd");
-                assert_eq!(model, "pmos");
-            }
-            other => panic!("Expected Mosfet, got {:?}", other),
         }
     }
 
@@ -1937,85 +1477,6 @@ mod tests {
         let json = serde_json::to_string_pretty(&ir).unwrap();
         let ir2: CircuitIR = serde_json::from_str(&json).unwrap();
         assert_eq!(ir, ir2);
-    }
-
-    #[test]
-    fn test_from_circuit_xspice() {
-        let mut c = Circuit::new("xspice_test");
-        c.a("1", vec!["in".into(), "out".into()], "d_and");
-        c.osdi("my_model.osdi");
-
-        let ir = CircuitIR::from_circuit(&c);
-
-        let features = ir.compute_features();
-        assert!(features.has_xspice);
-        assert!(features.has_osdi);
-        assert_eq!(features.element_count, 1);
-
-        match &ir.top.components[0] {
-            Component::Xspice { name, connections, model } => {
-                assert_eq!(name, "1");
-                assert_eq!(connections, &vec!["in".to_string(), "out".to_string()]);
-                assert_eq!(model, "d_and");
-            }
-            other => panic!("Expected Xspice, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_from_circuit_waveforms() {
-        let mut c = Circuit::new("waveform_test");
-        c.sinusoidal_voltage_source("1", "in", Node::Ground, 0.0, 0.0, 1.0, 1e6);
-        c.pulse_voltage_source("2", "clk", Node::Ground, 0.0, 3.3, 5e-9, 10e-9, 0.1e-9, 0.1e-9);
-
-        let ir = CircuitIR::from_circuit(&c);
-        assert_eq!(ir.top.components.len(), 2);
-
-        match &ir.top.components[0] {
-            Component::VoltageSource { waveform: Some(IrWaveform::Sin { frequency, amplitude, .. }), .. } => {
-                assert_eq!(*frequency, 1e6);
-                assert_eq!(*amplitude, 1.0);
-            }
-            other => panic!("Expected VoltageSource with Sin, got {:?}", other),
-        }
-
-        match &ir.top.components[1] {
-            Component::VoltageSource { waveform: Some(IrWaveform::Pulse { initial, pulsed, period, .. }), .. } => {
-                assert_eq!(*initial, 0.0);
-                assert_eq!(*pulsed, 3.3);
-                assert_eq!(*period, 10e-9);
-            }
-            other => panic!("Expected VoltageSource with Pulse, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_from_circuit_controlled_sources() {
-        let mut c = Circuit::new("ctrl_test");
-        c.e("1", "out_p", "out_m", "in_p", "in_m", 10.0);
-        c.g("1", "out_p", "out_m", "in_p", "in_m", 1e-3);
-        c.f("1", "out_p", "out_m", "Vsense", 100.0);
-        c.h("1", "out_p", "out_m", "Vsense", 1e3);
-
-        let ir = CircuitIR::from_circuit(&c);
-        assert_eq!(ir.top.components.len(), 4);
-
-        match &ir.top.components[0] {
-            Component::Vcvs { gain, .. } => assert_eq!(*gain, 10.0),
-            other => panic!("Expected Vcvs, got {:?}", other),
-        }
-        match &ir.top.components[1] {
-            Component::Vccs { transconductance, .. } => assert_eq!(*transconductance, 1e-3),
-            other => panic!("Expected Vccs, got {:?}", other),
-        }
-        match &ir.top.components[2] {
-            Component::Cccs { gain, .. } => assert_eq!(*gain, 100.0),
-            other => panic!("Expected Cccs, got {:?}", other),
-        }
-        match &ir.top.components[3] {
-            Component::Ccvs { transresistance, .. } => assert_eq!(*transresistance, 1e3),
-            other => panic!("Expected Ccvs, got {:?}", other),
-        }
     }
 
     // ── Issue 02: Analysis::kind_str() ──
