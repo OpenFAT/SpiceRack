@@ -1,496 +1,197 @@
-//! SPICE netlist linter with backend-specific recommendations.
+//! SPICE netlist linter: common mistakes plus backend-specific card warnings.
 //!
-//! Checks for common issues that cause simulation failures or convergence problems,
-//! plus backend-specific syntax warnings.
+//! The netlist is tokenised once into [`Row`]s; every check is a pass over them.
 
 use std::collections::{HashMap, HashSet};
 
-/// Linting result containing warnings and errors.
-#[derive(Debug, Clone)]
+/// Warnings may still simulate; errors likely fail.
+#[derive(Debug, Clone, Default)]
 pub struct LintResult {
-    pub warnings: Vec<LintWarning>,
-    pub errors: Vec<LintError>,
+    pub warnings: Vec<Finding>,
+    pub errors: Vec<Finding>,
 }
 
-/// A lint warning: may not prevent simulation but is suspicious.
+/// One finding. Errors carry no suggestion and no backend list.
 #[derive(Debug, Clone)]
-pub struct LintWarning {
+pub struct Finding {
+    /// 1-based; 0 means "the whole netlist".
     pub line: usize,
     pub message: String,
     pub suggestion: Option<String>,
-    pub backends_affected: Vec<String>,
+    pub backends: &'static [&'static str],
 }
 
-/// A lint error: likely to cause simulation failure.
-#[derive(Debug, Clone)]
-pub struct LintError {
-    pub line: usize,
-    pub message: String,
+struct Row<'a> {
+    no: usize,
+    text: &'a str,
+    toks: Vec<&'a str>,
 }
 
-/// Lint a SPICE netlist. If `target_backend` is provided, include
-/// backend-specific checks.
-pub fn lint_netlist(netlist: &str, target_backend: Option<&str>) -> LintResult {
-    let mut result = LintResult {
-        warnings: Vec::new(),
-        errors: Vec::new(),
+impl Row<'_> {
+    /// Element card: not blank, comment, dot-card or `+` continuation.
+    fn is_elem(&self) -> bool {
+        !self.text.is_empty() && !self.text.starts_with(['*', '.', '+'])
+    }
+    fn kind(&self) -> char {
+        self.text.chars().next().unwrap_or(' ').to_ascii_uppercase()
+    }
+    /// Case-insensitive prefix match on a dot-card (`.MODEL`, `.PZ`, ...).
+    fn card(&self, card: &str) -> bool {
+        self.text.get(..card.len()).is_some_and(|p| p.eq_ignore_ascii_case(card))
+    }
+}
+
+/// Backend family, card prefix, message, suggestion (`None` = error).
+type BackendCard = (&'static str, &'static str, &'static str, Option<&'static str>);
+const BACKEND_CARDS: &[BackendCard] = &[
+    ("ngspice", ".MEAS", ".meas only produces output in batch mode (ngspice -b)", Some("Run with ngspice -b, not interactive mode")),
+    ("ltspice", ".PZ", ".pz analysis is not supported by LTspice", Some("Use .ac analysis instead")),
+    ("ltspice", ".DISTO", ".disto analysis is not supported by LTspice", Some("Use .tran with .four or .FFT instead")),
+    ("ltspice", ".SENS", ".sens analysis is not supported by LTspice", Some("Use parametric sweeps with .step instead")),
+    ("ltspice", ".CONTROL", ".control blocks are not supported by LTspice", None),
+    ("spectre", ".CONTROL", ".control blocks are not supported by Spectre", None),
+    ("spectre", ".PZ", ".pz analysis is not supported by Spectre", Some("Use stb or ac analysis for stability/poles")),
+    ("spectre", ".DISTO", ".disto analysis is not supported by Spectre", Some("Use HB (harmonic balance) analysis for distortion")),
+];
+
+fn is_ground(t: &str) -> bool {
+    t == "0" || t.eq_ignore_ascii_case("gnd")
+}
+
+fn is_zero_value(s: &str) -> bool {
+    s.parse::<f64>() == Ok(0.0)
+}
+
+/// Lint a SPICE netlist; `backend` adds that simulator's card checks.
+pub fn lint_netlist(netlist: &str, backend: Option<&str>) -> LintResult {
+    let rows: Vec<Row> = netlist
+        .lines()
+        .enumerate()
+        .map(|(i, l)| {
+            let text = l.trim();
+            Row { no: i + 1, text, toks: text.split_whitespace().collect() }
+        })
+        .collect();
+    let elems = || rows.iter().filter(|r| r.is_elem());
+    let mut out = LintResult::default();
+    let err = |out: &mut LintResult, line, message| out.errors.push(Finding { line, message, suggestion: None, backends: &[] });
+    let warn = |out: &mut LintResult, line, message, suggestion: String, backends| {
+        out.warnings.push(Finding { line, message, suggestion: Some(suggestion), backends })
     };
 
-    let lines: Vec<&str> = netlist.lines().collect();
-
-    check_missing_end(&lines, &mut result);
-    check_missing_ground(&lines, &mut result);
-    check_duplicate_elements(&lines, &mut result);
-    check_floating_nodes(&lines, &mut result);
-    check_zero_value_components(&lines, &mut result);
-    check_missing_model_references(&lines, &mut result);
-    check_undefined_parameters(&lines, &mut result);
-
-    if let Some(backend) = target_backend {
-        check_backend_specific(&lines, backend, &mut result);
+    if !rows.iter().any(|r| r.text.eq_ignore_ascii_case(".end")) {
+        err(&mut out, rows.len(), "Netlist does not end with .end".into());
     }
 
-    result
-}
-
-/// Check that the netlist ends with .end
-fn check_missing_end(lines: &[&str], result: &mut LintResult) {
-    let has_end = lines.iter().any(|l| {
-        let t = l.trim().to_lowercase();
-        t == ".end"
-    });
-
-    if !has_end {
-        result.errors.push(LintError {
-            line: lines.len(),
-            message: "Netlist does not end with .end".to_string(),
-        });
-    }
-}
-
-/// Check that node "0" or "gnd" is referenced somewhere
-fn check_missing_ground(lines: &[&str], result: &mut LintResult) {
-    let mut has_ground = false;
-
-    for line in lines {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('*') || trimmed.starts_with('.') {
-            continue;
-        }
-        for token in trimmed.split_whitespace() {
-            let lower = token.to_lowercase();
-            if lower == "0" || lower == "gnd" {
-                has_ground = true;
-                break;
-            }
-        }
-        if has_ground {
-            break;
-        }
+    // Ground may sit on a `+` continuation line too.
+    let ground = rows
+        .iter()
+        .filter(|r| !r.text.is_empty() && !r.text.starts_with(['*', '.']))
+        .any(|r| r.toks.iter().any(|t| is_ground(t)));
+    if !ground {
+        err(&mut out, 0, "No ground node (0 or gnd) found in netlist".into());
     }
 
-    if !has_ground {
-        result.errors.push(LintError {
-            line: 0,
-            message: "No ground node (0 or gnd) found in netlist".to_string(),
-        });
-    }
-}
-
-/// Check for duplicate element names
-fn check_duplicate_elements(lines: &[&str], result: &mut LintResult) {
     let mut seen: HashMap<String, usize> = HashMap::new();
-
-    for (idx, line) in lines.iter().enumerate() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('*') || trimmed.starts_with('.')
-            || trimmed.starts_with('+')
-        {
-            continue;
-        }
-
-        let first_token = trimmed.split_whitespace().next().unwrap_or("");
-        if first_token.is_empty() {
-            continue;
-        }
-
-        let first_char = first_token.chars().next().unwrap_or(' ');
-        if !first_char.is_ascii_alphabetic() {
-            continue;
-        }
-
-        let name_lower = first_token.to_lowercase();
-        let line_num = idx + 1;
-
-        if let Some(&prev_line) = seen.get(&name_lower) {
-            result.errors.push(LintError {
-                line: line_num,
-                message: format!(
-                    "Duplicate element name '{}' (first defined on line {})",
-                    first_token, prev_line
-                ),
-            });
-        } else {
-            seen.insert(name_lower, line_num);
+    for r in elems().filter(|r| r.text.starts_with(|c: char| c.is_ascii_alphabetic())) {
+        match seen.get(&r.toks[0].to_lowercase()) {
+            Some(prev) => err(&mut out, r.no, format!("Duplicate element name '{}' (first defined on line {})", r.toks[0], prev)),
+            None => {
+                seen.insert(r.toks[0].to_lowercase(), r.no);
+            }
         }
     }
-}
 
-/// Check for floating nodes (connected to only one terminal)
-fn check_floating_nodes(lines: &[&str], result: &mut LintResult) {
-    let mut node_connections: HashMap<String, Vec<usize>> = HashMap::new();
-
-    for (idx, line) in lines.iter().enumerate() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('*') || trimmed.starts_with('+') {
-            continue;
-        }
-
-        if trimmed.starts_with('.') {
-            continue;
-        }
-
-        let parts: Vec<&str> = trimmed.split_whitespace().collect();
-        if parts.is_empty() {
-            continue;
-        }
-
-        let first_char = parts[0].chars().next().unwrap_or(' ').to_ascii_uppercase();
-
-        let node_indices = match first_char {
-            'R' | 'C' | 'L' | 'V' | 'I' | 'D' => {
-                if parts.len() >= 3 { vec![1, 2] } else { vec![] }
-            }
-            'Q' | 'J' | 'Z' => {
-                if parts.len() >= 4 { vec![1, 2, 3] } else { vec![] }
-            }
-            'M' | 'E' | 'G' | 'S' => {
-                if parts.len() >= 5 { vec![1, 2, 3, 4] } else { vec![] }
-            }
-            'F' | 'H' => {
-                if parts.len() >= 3 { vec![1, 2] } else { vec![] }
-            }
-            'X' => {
-                let mut nodes = Vec::new();
-                for (i, p) in parts.iter().enumerate().skip(1) {
-                    if p.contains('=') {
-                        break;
-                    }
-                    nodes.push(i);
-                }
-                if !nodes.is_empty() {
-                    nodes.pop();
-                }
-                nodes
-            }
-            'T' => {
-                if parts.len() >= 5 { vec![1, 2, 3, 4] } else { vec![] }
-            }
-            'K' => vec![],
-            'B' | 'W' => {
-                if parts.len() >= 3 { vec![1, 2] } else { vec![] }
-            }
-            _ => vec![],
+    // Floating nodes: (node, first line, terminal count) in first-seen order.
+    let mut nodes: Vec<(String, usize, usize)> = Vec::new();
+    let mut index: HashMap<String, usize> = HashMap::new();
+    for r in elems() {
+        let t = &r.toks;
+        let n = match r.kind() {
+            'R' | 'C' | 'L' | 'V' | 'I' | 'D' | 'F' | 'H' | 'B' | 'W' => 2,
+            'Q' | 'J' | 'Z' => 3,
+            'M' | 'E' | 'G' | 'S' | 'T' => 4,
+            // Subcircuit: tokens before the first `k=v`, minus the subckt name.
+            'X' => t.iter().skip(1).take_while(|p| !p.contains('=')).count().max(1) - 1,
+            _ => 0,
         };
-
-        let line_num = idx + 1;
-        for &ni in &node_indices {
-            if ni < parts.len() {
-                let node = parts[ni].to_lowercase();
-                if node == "0" || node == "gnd" {
-                    continue;
+        for node in t.get(1..=n).unwrap_or(&[]).iter().filter(|n| !is_ground(n)).map(|n| n.to_lowercase()) {
+            match index.get(&node) {
+                Some(&i) => nodes[i].2 += 1,
+                None => {
+                    index.insert(node.clone(), nodes.len());
+                    nodes.push((node, r.no, 1));
                 }
-                node_connections.entry(node).or_default().push(line_num);
             }
         }
     }
-
-    for (node, lines_vec) in &node_connections {
-        if lines_vec.len() == 1 {
-            result.warnings.push(LintWarning {
-                line: lines_vec[0],
-                message: format!("Node '{}' is connected to only one element (floating node)", node),
-                suggestion: Some("Add another connection or remove the node".to_string()),
-                backends_affected: vec![],
-            });
-        }
+    for (node, line, _) in nodes.into_iter().filter(|n| n.2 == 1) {
+        let msg = format!("Node '{}' is connected to only one element (floating node)", node);
+        warn(&mut out, line, msg, "Add another connection or remove the node".into(), &[]);
     }
-}
 
-/// Check for zero-value components that could cause convergence issues
-fn check_zero_value_components(lines: &[&str], result: &mut LintResult) {
-    for (idx, line) in lines.iter().enumerate() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('*') || trimmed.starts_with('.')
-            || trimmed.starts_with('+')
-        {
-            continue;
-        }
-
-        let parts: Vec<&str> = trimmed.split_whitespace().collect();
-        if parts.is_empty() {
-            continue;
-        }
-
-        let first_char = parts[0].chars().next().unwrap_or(' ').to_ascii_uppercase();
-        let line_num = idx + 1;
-
-        match first_char {
-            'R'
-                if parts.len() >= 4 && is_zero_value(parts[3]) => {
-                    result.warnings.push(LintWarning {
-                        line: line_num,
-                        message: format!("Resistor '{}' has zero resistance", parts[0]),
-                        suggestion: Some("Use a small value (e.g., 1m) or a voltage source instead".to_string()),
-                        backends_affected: vec!["ngspice".to_string(), "ltspice".to_string()],
-                    });
-                }
-            'C'
-                if parts.len() >= 4 && is_zero_value(parts[3]) => {
-                    result.warnings.push(LintWarning {
-                        line: line_num,
-                        message: format!("Capacitor '{}' has zero capacitance", parts[0]),
-                        suggestion: Some("Remove the capacitor or use a small value".to_string()),
-                        backends_affected: vec!["ngspice".to_string()],
-                    });
-                }
+    for r in elems().filter(|r| r.toks.get(3).is_some_and(|v| is_zero_value(v))) {
+        match r.kind() {
+            'R' => warn(&mut out, r.no, format!("Resistor '{}' has zero resistance", r.toks[0]), "Use a small value (e.g., 1m) or a voltage source instead".into(), &["ngspice", "ltspice"]),
+            'C' => warn(&mut out, r.no, format!("Capacitor '{}' has zero capacitance", r.toks[0]), "Remove the capacitor or use a small value".into(), &["ngspice"]),
             _ => {}
         }
     }
-}
 
-/// Check for model references and missing definitions
-fn check_missing_model_references(lines: &[&str], result: &mut LintResult) {
-    let mut defined_models: HashSet<String> = HashSet::new();
-    let mut has_include = false;
-
-    for line in lines {
-        let trimmed = line.trim();
-        let upper = trimmed.to_uppercase();
-
-        if upper.starts_with(".MODEL") {
-            let parts: Vec<&str> = trimmed.split_whitespace().collect();
-            if parts.len() >= 2 {
-                defined_models.insert(parts[1].to_lowercase());
-            }
-        }
-        if upper.starts_with(".INCLUDE") || upper.starts_with(".LIB") {
-            has_include = true;
-        }
-    }
-
-    if has_include {
-        return;
-    }
-
-    for (idx, line) in lines.iter().enumerate() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('*') || trimmed.starts_with('.')
-            || trimmed.starts_with('+')
-        {
-            continue;
-        }
-
-        let parts: Vec<&str> = trimmed.split_whitespace().collect();
-        if parts.is_empty() {
-            continue;
-        }
-
-        let first_char = parts[0].chars().next().unwrap_or(' ').to_ascii_uppercase();
-        let line_num = idx + 1;
-
-        let model_pos = match first_char {
-            'D' => if parts.len() >= 4 { Some(3) } else { None },
-            'Q' | 'J' | 'Z' => if parts.len() >= 5 { Some(4) } else { None },
-            'M' => if parts.len() >= 6 { Some(5) } else { None },
-            _ => None,
-        };
-
-        if let Some(pos) = model_pos {
-            let model_name = parts[pos].to_lowercase();
-            if !defined_models.contains(&model_name) {
-                result.warnings.push(LintWarning {
-                    line: line_num,
-                    message: format!(
-                        "Element '{}' references model '{}' which is not defined in this netlist",
-                        parts[0], parts[pos]
-                    ),
-                    suggestion: Some("Add a .model definition or .include the model file".to_string()),
-                    backends_affected: vec![],
-                });
-            }
-        }
-    }
-}
-
-/// Check for {expression} parameters without .param definitions
-fn check_undefined_parameters(lines: &[&str], result: &mut LintResult) {
-    let mut defined_params: HashSet<String> = HashSet::new();
-
-    for line in lines {
-        let trimmed = line.trim();
-        let upper = trimmed.to_uppercase();
-
-        if upper.starts_with(".PARAM") {
-            let rest = &trimmed[6..];
-            for part in rest.split_whitespace() {
-                if let Some((name, _)) = part.split_once('=') {
-                    defined_params.insert(name.trim().to_lowercase());
-                }
+    // Model references; any .include/.lib may define them, so skip then.
+    if !rows.iter().any(|r| r.card(".INCLUDE") || r.card(".LIB")) {
+        let models: HashSet<String> = rows.iter().filter(|r| r.card(".MODEL")).filter_map(|r| r.toks.get(1)).map(|m| m.to_lowercase()).collect();
+        for r in elems() {
+            let pos = match r.kind() {
+                'D' => 3,
+                'Q' | 'J' | 'Z' => 4,
+                'M' => 5,
+                _ => continue,
+            };
+            if let Some(m) = r.toks.get(pos)
+                && !models.contains(&m.to_lowercase())
+            {
+                let msg = format!("Element '{}' references model '{}' which is not defined in this netlist", r.toks[0], m);
+                warn(&mut out, r.no, msg, "Add a .model definition or .include the model file".into(), &[]);
             }
         }
     }
 
-    for (idx, line) in lines.iter().enumerate() {
-        let trimmed = line.trim();
-        if trimmed.starts_with('*') || trimmed.starts_with('.') {
-            continue;
+    // `{name}` with no `.param name=...`; expressions are not checked.
+    let params: HashSet<String> = rows
+        .iter()
+        .filter(|r| r.card(".PARAM"))
+        .flat_map(|r| r.text[6..].split_whitespace()) // card() matched 6 ASCII bytes
+        .filter_map(|p| p.split_once('=').map(|(n, _)| n.trim().to_lowercase()))
+        .collect();
+    for r in rows.iter().filter(|r| !r.text.starts_with(['*', '.'])) {
+        let mut rest = r.text;
+        while let Some(s) = rest.find('{') {
+            let Some(e) = rest[s..].find('}') else { break };
+            let expr = &rest[s + 1..s + e];
+            let name = expr.trim().to_lowercase();
+            if !name.is_empty() && !name.contains(['+', '-', '*', '/', '(']) && !params.contains(&name) && name.parse::<f64>().is_err() {
+                let msg = format!("Parameter '{{{}}}' used but not defined with .param", expr);
+                warn(&mut out, r.no, msg, format!("Add: .param {} = <value>", expr), &[]);
+            }
+            rest = &rest[s + e + 1..];
         }
+    }
 
-        let line_num = idx + 1;
-        let mut i = 0;
-        let bytes = trimmed.as_bytes();
-        while i < bytes.len() {
-            if bytes[i] == b'{' {
-                if let Some(end) = trimmed[i..].find('}') {
-                    let expr = &trimmed[i + 1..i + end];
-                    let expr_lower = expr.trim().to_lowercase();
-                    if !expr_lower.is_empty()
-                        && !expr_lower.contains('+')
-                        && !expr_lower.contains('-')
-                        && !expr_lower.contains('*')
-                        && !expr_lower.contains('/')
-                        && !expr_lower.contains('(')
-                        && !defined_params.contains(&expr_lower)
-                        && expr_lower.parse::<f64>().is_err() {
-                            result.warnings.push(LintWarning {
-                                line: line_num,
-                                message: format!(
-                                    "Parameter '{{{}}}' used but not defined with .param",
-                                    expr
-                                ),
-                                suggestion: Some(format!("Add: .param {} = <value>", expr)),
-                                backends_affected: vec![],
-                            });
-                        }
-                    i += end + 1;
-                } else {
-                    break;
-                }
-            } else {
-                i += 1;
+    let family = match backend {
+        Some("ngspice" | "ngspice-subprocess" | "ngspice-shared") => "ngspice",
+        Some(b) => b,
+        None => "",
+    };
+    for r in &rows {
+        for (fam, _, msg, sugg) in BACKEND_CARDS.iter().filter(|c| c.0 == family && r.card(c.1)) {
+            match sugg {
+                Some(s) => warn(&mut out, r.no, msg.to_string(), s.to_string(), std::slice::from_ref(fam)),
+                None => err(&mut out, r.no, msg.to_string()),
             }
         }
     }
-}
-
-/// Backend-specific checks
-fn check_backend_specific(lines: &[&str], backend: &str, result: &mut LintResult) {
-    match backend {
-        "ngspice" | "ngspice-subprocess" | "ngspice-shared" => {
-            check_ngspice_specific(lines, result);
-        }
-        "ltspice" => {
-            check_ltspice_specific(lines, result);
-        }
-        "spectre" => {
-            check_spectre_specific(lines, result);
-        }
-        _ => {}
-    }
-}
-
-fn check_ngspice_specific(lines: &[&str], result: &mut LintResult) {
-    for (idx, line) in lines.iter().enumerate() {
-        let upper = line.trim().to_uppercase();
-        let line_num = idx + 1;
-
-        if upper.starts_with(".MEAS") {
-            result.warnings.push(LintWarning {
-                line: line_num,
-                message: ".meas only produces output in batch mode (ngspice -b)".to_string(),
-                suggestion: Some("Run with ngspice -b, not interactive mode".to_string()),
-                backends_affected: vec!["ngspice".to_string()],
-            });
-        }
-    }
-}
-
-fn check_ltspice_specific(lines: &[&str], result: &mut LintResult) {
-    for (idx, line) in lines.iter().enumerate() {
-        let upper = line.trim().to_uppercase();
-        let line_num = idx + 1;
-
-        if upper.starts_with(".PZ") {
-            result.warnings.push(LintWarning {
-                line: line_num,
-                message: ".pz analysis is not supported by LTspice".to_string(),
-                suggestion: Some("Use .ac analysis instead".to_string()),
-                backends_affected: vec!["ltspice".to_string()],
-            });
-        }
-        if upper.starts_with(".DISTO") {
-            result.warnings.push(LintWarning {
-                line: line_num,
-                message: ".disto analysis is not supported by LTspice".to_string(),
-                suggestion: Some("Use .tran with .four or .FFT instead".to_string()),
-                backends_affected: vec!["ltspice".to_string()],
-            });
-        }
-        if upper.starts_with(".SENS") {
-            result.warnings.push(LintWarning {
-                line: line_num,
-                message: ".sens analysis is not supported by LTspice".to_string(),
-                suggestion: Some("Use parametric sweeps with .step instead".to_string()),
-                backends_affected: vec!["ltspice".to_string()],
-            });
-        }
-        if upper.starts_with(".CONTROL") {
-            result.errors.push(LintError {
-                line: line_num,
-                message: ".control blocks are not supported by LTspice".to_string(),
-            });
-        }
-    }
-}
-
-fn check_spectre_specific(lines: &[&str], result: &mut LintResult) {
-    for (idx, line) in lines.iter().enumerate() {
-        let upper = line.trim().to_uppercase();
-        let line_num = idx + 1;
-
-        if upper.starts_with(".CONTROL") {
-            result.errors.push(LintError {
-                line: line_num,
-                message: ".control blocks are not supported by Spectre".to_string(),
-            });
-        }
-        if upper.starts_with(".PZ") {
-            result.warnings.push(LintWarning {
-                line: line_num,
-                message: ".pz analysis is not supported by Spectre".to_string(),
-                suggestion: Some("Use stb or ac analysis for stability/poles".to_string()),
-                backends_affected: vec!["spectre".to_string()],
-            });
-        }
-        if upper.starts_with(".DISTO") {
-            result.warnings.push(LintWarning {
-                line: line_num,
-                message: ".disto analysis is not supported by Spectre".to_string(),
-                suggestion: Some("Use HB (harmonic balance) analysis for distortion".to_string()),
-                backends_affected: vec!["spectre".to_string()],
-            });
-        }
-    }
-}
-
-/// Check if a value string represents zero
-fn is_zero_value(s: &str) -> bool {
-    if let Ok(v) = s.parse::<f64>() {
-        return v == 0.0;
-    }
-    let trimmed = s.trim().to_lowercase();
-    trimmed == "0" || trimmed == "0.0"
+    out
 }
 
 #[cfg(test)]

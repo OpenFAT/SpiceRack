@@ -77,7 +77,8 @@ fn ir_waveform_to_cir(wf: &crate::ir::IrWaveform) -> cir::Waveform {
 #[pyclass(name = "Unit")]
 #[derive(Clone)]
 struct PyUnit {
-    inner: u::Unit,
+    mult: f64,
+    symbol: &'static str,
 }
 
 #[pyclass(name = "UnitValue")]
@@ -89,13 +90,11 @@ struct PyUnitValue {
 #[pymethods]
 impl PyUnit {
     fn __rmatmul__(&self, value: f64) -> PyUnitValue {
-        PyUnitValue {
-            inner: u::UnitValue::new(value, self.inner),
-        }
+        PyUnitValue { inner: u::UnitValue { value: value * self.mult, symbol: self.symbol } }
     }
 
     fn __repr__(&self) -> String {
-        format!("Unit({:?}, {:?})", self.inner.prefix, self.inner.kind)
+        format!("Unit({}, {:?})", self.mult, self.symbol)
     }
 }
 
@@ -115,11 +114,11 @@ impl PyUnitValue {
     }
 
     fn __repr__(&self) -> String {
-        format!("{}", self.inner)
+        self.inner.to_string()
     }
 
     fn __str__(&self) -> String {
-        format!("{}", self.inner)
+        self.inner.to_string()
     }
 }
 
@@ -424,10 +423,8 @@ impl PyCircuit {
         liberty: Option<&str>,
         spice_models: Option<&str>,
     ) -> PyResult<()> {
-        verilog_impl_circuit(
-            &mut self.inner, py, source, mode, instance_name,
-            &connections, pdk, liberty, spice_models,
-        )
+        let vb = verilog_block(py, source, mode, instance_name, &connections, pdk, liberty, spice_models)?;
+        apply_verilog_block_to_circuit(&mut self.inner, &vb).map_err(pyo3::exceptions::PyRuntimeError::new_err)
     }
 
     // ── High-level waveform sources ──
@@ -1723,340 +1720,53 @@ impl PySamplingAnalysis {
 /// Returns a dict with "warnings" and "errors" lists.
 #[pyfunction]
 #[pyo3(signature = (netlist, backend=None))]
-fn lint(netlist: &str, backend: Option<&str>) -> HashMap<String, Vec<HashMap<String, pyo3::PyObject>>> {
-    pyo3::Python::with_gil(|py| {
-        let result = crate::lint::lint_netlist(netlist, backend);
-
-        let warnings: Vec<HashMap<String, pyo3::PyObject>> = result.warnings.iter().map(|w| {
-            let mut map = HashMap::new();
-            map.insert("line".to_string(), w.line.into_pyobject(py).unwrap().into_any().unbind());
-            map.insert("message".to_string(), w.message.clone().into_pyobject(py).unwrap().into_any().unbind());
-            if let Some(ref s) = w.suggestion {
-                map.insert("suggestion".to_string(), s.clone().into_pyobject(py).unwrap().into_any().unbind());
-            }
-            let backends: Vec<String> = w.backends_affected.clone();
-            map.insert("backends_affected".to_string(), backends.into_pyobject(py).unwrap().into_any().unbind());
-            map
-        }).collect();
-
-        let errors: Vec<HashMap<String, pyo3::PyObject>> = result.errors.iter().map(|e| {
-            let mut map = HashMap::new();
-            map.insert("line".to_string(), e.line.into_pyobject(py).unwrap().into_any().unbind());
-            map.insert("message".to_string(), e.message.clone().into_pyobject(py).unwrap().into_any().unbind());
-            map
-        }).collect();
-
-        let mut out = HashMap::new();
-        out.insert("warnings".to_string(), warnings);
-        out.insert("errors".to_string(), errors);
-        out
-    })
+fn lint<'py>(py: Python<'py>, netlist: &str, backend: Option<&str>) -> PyResult<Bound<'py, pyo3::types::PyDict>> {
+    let r = crate::lint::lint_netlist(netlist, backend);
+    let rows = |fs: &[crate::lint::Finding], warn: bool| -> PyResult<Vec<Bound<'py, pyo3::types::PyDict>>> {
+        fs.iter()
+            .map(|f| {
+                let d = pyo3::types::PyDict::new(py);
+                d.set_item("line", f.line)?;
+                d.set_item("message", &f.message)?;
+                if let Some(s) = &f.suggestion {
+                    d.set_item("suggestion", s)?;
+                }
+                if warn {
+                    d.set_item("backends_affected", f.backends)?;
+                }
+                Ok(d)
+            })
+            .collect()
+    };
+    let out = pyo3::types::PyDict::new(py);
+    out.set_item("warnings", rows(&r.warnings, true)?)?;
+    out.set_item("errors", rows(&r.errors, false)?)?;
+    Ok(out)
 }
 
-// ── Verilog-A compilation ──
-
-/// Compile Verilog-A source to OSDI. Accepts a .va file path or inline source.
-/// Returns the path to the compiled .osdi file.
-fn compile_veriloga_impl(source_or_path: &str) -> Result<String, String> {
-    crate::veriloga::compile_osdi(&crate::veriloga::resolve(source_or_path)?)
-}
-
-/// Compile a Verilog-A source file or inline source to OSDI.
+/// Compile a Verilog-A file path or inline source to OSDI with OpenVAF.
 ///
 /// Returns the path to the compiled .osdi file.
 ///
 /// ```python
 /// from spicerack import compile_veriloga
 ///
-/// # From file:
 /// osdi_path = compile_veriloga("models/comparator.va")
-///
-/// # From inline source:
-/// osdi_path = compile_veriloga('''
-/// `include "disciplines.vams"
-/// module myres(a, b);
-///     inout a, b; electrical a, b;
-///     parameter real r = 1000.0;
-///     analog V(a,b) <+ r * I(a,b);
-/// endmodule
-/// ''')
 /// circuit.osdi(osdi_path)
 /// ```
 #[pyfunction]
 fn compile_veriloga(source_or_path: &str) -> PyResult<String> {
-    compile_veriloga_impl(source_or_path)
-        .map_err(pyo3::exceptions::PyRuntimeError::new_err)
+    compile_veriloga_impl(source_or_path).map_err(pyo3::exceptions::PyRuntimeError::new_err)
 }
 
-// ── Verilog compilation / synthesis helpers ──
-
-/// Resolve a Verilog source string to a file path.
-/// If `source_or_path` looks like a file path (.v extension, no newlines), return it directly.
-/// Otherwise treat as inline source, write to a temp file, and return that path.
-fn resolve_verilog_source(source_or_path: &str) -> Result<std::path::PathBuf, String> {
-    let trimmed = source_or_path.trim();
-
-    if trimmed.ends_with(".v") && !trimmed.contains('\n') {
-        let p = std::path::Path::new(trimmed);
-        if !p.exists() {
-            return Err(format!("Verilog file not found: {}", trimmed));
-        }
-        Ok(std::path::PathBuf::from(trimmed))
-    } else {
-        let dir = std::env::temp_dir().join("spicerack_verilog");
-        std::fs::create_dir_all(&dir)
-            .map_err(|e| format!("Failed to create temp dir: {}", e))?;
-
-        let hash = {
-            use std::collections::hash_map::DefaultHasher;
-            use std::hash::{Hash, Hasher};
-            let mut h = DefaultHasher::new();
-            trimmed.hash(&mut h);
-            h.finish()
-        };
-        let v_file = dir.join(format!("inline_{:016x}.v", hash));
-        std::fs::write(&v_file, trimmed)
-            .map_err(|e| format!("Failed to write temp .v file: {}", e))?;
-        Ok(v_file)
-    }
+fn compile_veriloga_impl(source_or_path: &str) -> Result<String, String> {
+    crate::veriloga::compile_osdi(&crate::veriloga::resolve(source_or_path)?)
 }
 
-/// Extract the top-level module name from Verilog source.
-fn extract_verilog_module_name(source: &str) -> Result<String, String> {
-    // Match `module <name>` possibly followed by `(`, `;`, `#`, or whitespace
-    let re = regex::Regex::new(r"(?m)^\s*module\s+(\w+)")
-        .map_err(|e| format!("Regex error: {}", e))?;
-    re.captures(source)
-        .and_then(|c| c.get(1))
-        .map(|m| m.as_str().to_string())
-        .ok_or_else(|| "Could not extract module name from Verilog source. \
-            Ensure source contains `module <name>`.".to_string())
-}
-
-/// Compile Verilog source to VVP using Icarus Verilog (iverilog).
-/// Returns the path to the compiled .vvp file.
-fn compile_verilog_iverilog(source_or_path: &str) -> Result<String, String> {
-    use std::process::Command;
-
-    let v_path = resolve_verilog_source(source_or_path)?;
-    let vvp_path = v_path.with_extension("vvp");
-
-    // Skip compilation if .vvp is newer than .v
-    if vvp_path.exists()
-        && let (Ok(v_meta), Ok(vvp_meta)) = (v_path.metadata(), vvp_path.metadata())
-            && let (Ok(v_time), Ok(vvp_time)) = (v_meta.modified(), vvp_meta.modified())
-                && vvp_time > v_time {
-                    return Ok(vvp_path.to_string_lossy().to_string());
-                }
-
-    let output = Command::new("iverilog")
-        .arg("-o")
-        .arg(&vvp_path)
-        .arg(&v_path)
-        .output()
-        .map_err(|e| {
-            if e.kind() == std::io::ErrorKind::NotFound {
-                "iverilog not found on $PATH. Install Icarus Verilog for co-simulation.\n\
-                 Install: sudo apt install iverilog (Debian/Ubuntu) or brew install icarus-verilog (macOS)".to_string()
-            } else {
-                format!("Failed to run iverilog: {}", e)
-            }
-        })?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        return Err(format!(
-            "iverilog compilation failed (exit {}):\n{}\n{}",
-            output.status, stderr, stdout
-        ));
-    }
-
-    Ok(vvp_path.to_string_lossy().to_string())
-}
-
-/// Resolve PDK liberty and SPICE model paths from $PDK_ROOT.
-/// Returns (liberty_path, spice_models_path).
-fn resolve_pdk_paths(pdk: &str) -> Result<(String, String), String> {
-    let pdk_root = std::env::var("PDK_ROOT")
-        .map_err(|_| "PDK_ROOT environment variable not set. Set it to your PDK installation root, \
-            or provide explicit liberty= and spice_models= paths.".to_string())?;
-
-    // Try with 'A' suffix first (e.g., sky130_fd_sc_hdA), then without
-    let suffixes = ["A", ""];
-    let mut liberty_path = None;
-    let mut spice_path = None;
-
-    for suffix in &suffixes {
-        let base = format!("{}/{}{}/libs.ref/{}", pdk_root, pdk, suffix, pdk);
-
-        // Look for liberty file (prefer tt corner)
-        let lib_dir = format!("{}/lib", base);
-        if let Ok(entries) = std::fs::read_dir(&lib_dir) {
-            // Prefer tt corner, then any .lib file
-            let mut found_lib = None;
-            let mut tt_lib = None;
-            for entry in entries.flatten() {
-                let name = entry.file_name().to_string_lossy().to_string();
-                if name.ends_with(".lib") {
-                    if name.contains("tt") && tt_lib.is_none() {
-                        tt_lib = Some(entry.path().to_string_lossy().to_string());
-                    }
-                    if found_lib.is_none() {
-                        found_lib = Some(entry.path().to_string_lossy().to_string());
-                    }
-                }
-            }
-            if liberty_path.is_none() {
-                liberty_path = tt_lib.or(found_lib);
-            }
-        }
-
-        // Look for SPICE models
-        let spice_dir = format!("{}/spice", base);
-        if let Ok(entries) = std::fs::read_dir(&spice_dir) {
-            for entry in entries.flatten() {
-                let name = entry.file_name().to_string_lossy().to_string();
-                if name.ends_with(".spice") {
-                    if spice_path.is_none() {
-                        spice_path = Some(entry.path().to_string_lossy().to_string());
-                    }
-                    break;
-                }
-            }
-        }
-
-        if liberty_path.is_some() && spice_path.is_some() {
-            break;
-        }
-    }
-
-    let liberty = liberty_path.ok_or_else(|| format!(
-        "Could not find liberty (.lib) file for PDK '{}' under $PDK_ROOT={}. \
-         Searched: {}/{pdk}A/libs.ref/{pdk}/lib/ and {}/{pdk}/libs.ref/{pdk}/lib/",
-        pdk, pdk_root, pdk_root, pdk_root, pdk = pdk
-    ))?;
-
-    let spice_models = spice_path.ok_or_else(|| format!(
-        "Could not find SPICE model (.spice) file for PDK '{}' under $PDK_ROOT={}. \
-         Searched: {}/{pdk}A/libs.ref/{pdk}/spice/ and {}/{pdk}/libs.ref/{pdk}/spice/",
-        pdk, pdk_root, pdk_root, pdk_root, pdk = pdk
-    ))?;
-
-    Ok((liberty, spice_models))
-}
-
-/// Synthesize Verilog to gate-level netlist using Yosys.
-/// Returns the path to the synthesized Verilog netlist file.
-fn synthesize_verilog_yosys(
-    source_or_path: &str,
-    liberty: &str,
-    module_name: &str,
-) -> Result<String, String> {
-    use std::process::Command;
-
-    let v_path = resolve_verilog_source(source_or_path)?;
-    let synth_path = v_path.with_extension("synth.v");
-
-    // Skip synthesis if output is newer than source
-    if synth_path.exists()
-        && let (Ok(v_meta), Ok(s_meta)) = (v_path.metadata(), synth_path.metadata())
-            && let (Ok(v_time), Ok(s_time)) = (v_meta.modified(), s_meta.modified())
-                && s_time > v_time {
-                    return Ok(synth_path.to_string_lossy().to_string());
-                }
-
-    let script = format!(
-        "read_verilog {v}; synth -top {top}; dfflibmap -liberty {lib}; abc -liberty {lib}; write_verilog {out}",
-        v = v_path.display(),
-        top = module_name,
-        lib = liberty,
-        out = synth_path.display(),
-    );
-
-    let output = Command::new("yosys")
-        .arg("-p")
-        .arg(&script)
-        .output()
-        .map_err(|e| {
-            if e.kind() == std::io::ErrorKind::NotFound {
-                "yosys not found on $PATH. Install Yosys for Verilog synthesis.\n\
-                 Install: sudo apt install yosys (Debian/Ubuntu) or brew install yosys (macOS)".to_string()
-            } else {
-                format!("Failed to run yosys: {}", e)
-            }
-        })?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        return Err(format!(
-            "yosys synthesis failed (exit {}):\n{}\n{}",
-            output.status, stderr, stdout
-        ));
-    }
-
-    Ok(synth_path.to_string_lossy().to_string())
-}
-
-/// One synthesized cell: (instance_name, cell_name, port connections).
-type CellInstance = (String, String, Vec<(String, String)>);
-
-/// Parse a Yosys-synthesized Verilog netlist into cell instances.
-/// Returns vec of (instance_name, cell_name, port_connections as ".<port>(<net>)" pairs).
-fn parse_synthesized_netlist(netlist_path: &str) -> Result<Vec<CellInstance>, String> {
-    let content = std::fs::read_to_string(netlist_path)
-        .map_err(|e| format!("Failed to read synthesized netlist: {}", e))?;
-
-    let mut instances = Vec::new();
-
-    // Match Yosys output patterns like: <cell> <instance> ( .<port>(<net>), ... );
-    // Yosys writes: `  sky130_fd_sc_hd__and2_1 _0_ ( .A(\a ), .B(\b ), .X(\out ) );`
-    let inst_re = regex::Regex::new(r"(?m)^\s+(\w+)\s+(\w+)\s*\(([^;]+)\);")
-        .map_err(|e| format!("Regex error: {}", e))?;
-    let port_re = regex::Regex::new(r"\.\s*(\w+)\s*\(\s*\\?([^\s)]+)\s*\)")
-        .map_err(|e| format!("Regex error: {}", e))?;
-
-    for cap in inst_re.captures_iter(&content) {
-        let cell_name = cap[1].to_string();
-        let inst_name = cap[2].to_string();
-
-        // Skip `wire`, `assign`, `input`, `output`, `module`, `endmodule`
-        if matches!(cell_name.as_str(), "wire" | "assign" | "input" | "output" | "module" | "endmodule" | "reg") {
-            continue;
-        }
-
-        let port_str = &cap[3];
-        let mut ports = Vec::new();
-        for pcap in port_re.captures_iter(port_str) {
-            ports.push((pcap[1].to_string(), pcap[2].to_string()));
-        }
-
-        instances.push((inst_name, cell_name, ports));
-    }
-
-    Ok(instances)
-}
-
-/// Extract connection values from a PyObject (either a string or list of strings).
-fn extract_connection(py: pyo3::Python<'_>, obj: &pyo3::PyObject) -> PyResult<Vec<String>> {
-    // Try extracting as a single string first
-    if let Ok(s) = obj.extract::<String>(py) {
-        return Ok(vec![s]);
-    }
-    // Try extracting as a list of strings
-    if let Ok(v) = obj.extract::<Vec<String>>(py) {
-        return Ok(v);
-    }
-    Err(pyo3::exceptions::PyTypeError::new_err(
-        "Connection value must be a string or list of strings"
-    ))
-}
-
-/// Core implementation of the verilog() method for PyCircuit.
-/// Modifies the circuit in-place by adding appropriate elements depending on mode.
-fn verilog_impl_circuit(
-    circuit: &mut cir::Circuit,
+/// The IR block for a `verilog(...)` call; connection values are a net name
+/// or a list of net names (a bus).
+#[allow(clippy::too_many_arguments)]
+fn verilog_block(
     py: pyo3::Python<'_>,
     source: &str,
     mode: &str,
@@ -2065,174 +1775,38 @@ fn verilog_impl_circuit(
     pdk: Option<&str>,
     liberty: Option<&str>,
     spice_models: Option<&str>,
-) -> PyResult<()> {
-    match mode {
-        "simulate" => {
-            verilog_simulate_circuit(circuit, py, source, instance_name, connections)
-        }
-        "synthesize" => {
-            verilog_synthesize_circuit(circuit, py, source, instance_name, connections, pdk, liberty, spice_models)
-        }
-        _ => Err(pyo3::exceptions::PyValueError::new_err(
-            format!("Invalid mode '{}'. Must be 'simulate' or 'synthesize'.", mode)
-        )),
-    }
-}
-
-/// Implement mode="simulate" for the circuit-level verilog() method.
-/// Compiles with iverilog and emits d_cosim XSPICE model + A-element.
-fn verilog_simulate_circuit(
-    circuit: &mut cir::Circuit,
-    py: pyo3::Python<'_>,
-    source: &str,
-    instance_name: &str,
-    connections: &HashMap<String, pyo3::PyObject>,
-) -> PyResult<()> {
-    // Compile the Verilog source with iverilog
-    let vvp_path = compile_verilog_iverilog(source)
-        .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
-
-    // Build the connection list for the A-element.
-    // For d_cosim, connections are grouped as digital port vectors.
-    let mut conn_parts = Vec::new();
-    for (port_name, obj) in connections {
-        let nets = extract_connection(py, obj)?;
-        if nets.len() == 1 {
-            conn_parts.push(format!("[{}]", nets[0]));
-        } else {
-            // Bus: [bit0 bit1 bit2 ...]
-            conn_parts.push(format!("[{}]", nets.join(" ")));
-        }
-        let _ = port_name; // Port name ordering handled by Verilog module definition
-    }
-
-    // Add ADC/DAC bridge models if not already present
-    let has_adc_bridge = circuit.models().iter().any(|m| m.kind == "adc_bridge");
-    if !has_adc_bridge {
-        circuit.model(
-            "adc_buf",
-            "adc_bridge",
-            vec![cir::Param::new("in_low", "0.5"), cir::Param::new("in_high", "0.5")],
-        );
-    }
-    let has_dac_bridge = circuit.models().iter().any(|m| m.kind == "dac_bridge");
-    if !has_dac_bridge {
-        circuit.model(
-            "dac_buf",
-            "dac_bridge",
-            vec![cir::Param::new("out_low", "0.0"), cir::Param::new("out_high", "1.8")],
-        );
-    }
-
-    // Emit the d_cosim model
-    let model_name = format!("cosim_{}", instance_name);
-    circuit.raw_spice(format!(
-        ".model {} d_cosim(delay=1n simulation_id=\"{}\")",
-        model_name, vvp_path
-    ));
-
-    // Emit the A-element instance
-    circuit.a(instance_name, conn_parts, &model_name);
-
-    Ok(())
-}
-
-/// Implement mode="synthesize" for the circuit-level verilog() method.
-/// Synthesizes with Yosys and emits subcircuit instances for each gate.
-fn verilog_synthesize_circuit(
-    circuit: &mut cir::Circuit,
-    py: pyo3::Python<'_>,
-    source: &str,
-    instance_name: &str,
-    connections: &HashMap<String, pyo3::PyObject>,
-    pdk: Option<&str>,
-    liberty: Option<&str>,
-    spice_models: Option<&str>,
-) -> PyResult<()> {
-    // Resolve liberty file
-    let (lib_path, spice_path) = match (liberty, pdk) {
-        (Some(lib), Some(_pdk)) => {
-            // liberty provided explicitly; try pdk for spice_models if not given
-            let sp = match spice_models {
-                Some(sp) => sp.to_string(),
-                None => resolve_pdk_paths(_pdk)
-                    .map_err(pyo3::exceptions::PyRuntimeError::new_err)?
-                    .1,
-            };
-            (lib.to_string(), sp)
-        }
-        (Some(lib), None) => {
-            let sp = spice_models.ok_or_else(|| pyo3::exceptions::PyValueError::new_err(
-                "mode='synthesize' requires either pdk= or both liberty= and spice_models="
-            ))?.to_string();
-            (lib.to_string(), sp)
-        }
-        (None, Some(pdk_name)) => {
-            let (lib, sp) = resolve_pdk_paths(pdk_name)
-                .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
-            let sp = spice_models.map(|s| s.to_string()).unwrap_or(sp);
-            (lib, sp)
-        }
-        (None, None) => {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "mode='synthesize' requires either pdk= or liberty= (and spice_models=) to be specified"
-            ));
+) -> PyResult<crate::ir::VerilogBlock> {
+    use crate::ir::{VerilogConnection, VerilogMode};
+    let mode = match mode {
+        "simulate" => VerilogMode::Simulate,
+        "synthesize" => VerilogMode::Synthesize,
+        _ => {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "Invalid mode '{}'. Must be 'simulate' or 'synthesize'.",
+                mode
+            )));
         }
     };
-
-    // Read source to extract module name
-    let source_text = if source.trim().ends_with(".v") && !source.contains('\n') {
-        std::fs::read_to_string(source.trim())
-            .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("Failed to read {}: {}", source, e)))?
-    } else {
-        source.to_string()
-    };
-
-    let module_name = extract_verilog_module_name(&source_text)
-        .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
-
-    // Synthesize
-    let synth_path = synthesize_verilog_yosys(source, &lib_path, &module_name)
-        .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
-
-    // Include the SPICE cell models
-    circuit.include(&spice_path);
-
-    // Parse the synthesized netlist
-    let gate_instances = parse_synthesized_netlist(&synth_path)
-        .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
-
-    // Build a connection map from the user's connections dict
-    let mut conn_map: HashMap<String, Vec<String>> = HashMap::new();
+    let mut conns = HashMap::new();
     for (port, obj) in connections {
-        let nets = extract_connection(py, obj)?;
-        conn_map.insert(port.clone(), nets);
+        let conn = if let Ok(s) = obj.extract::<String>(py) {
+            VerilogConnection::Single(s)
+        } else if let Ok(v) = obj.extract::<Vec<String>>(py) {
+            VerilogConnection::Bus(v)
+        } else {
+            return Err(pyo3::exceptions::PyTypeError::new_err("Connection value must be a string or list of strings"));
+        };
+        conns.insert(port.clone(), conn);
     }
-
-    // For each gate instance, emit an X (subcircuit call)
-    for (gate_inst, cell_name, ports) in &gate_instances {
-        let mut node_list: Vec<String> = Vec::new();
-        for (port_name, net_name) in ports {
-            // Map synthesized net names back to user-provided connections where possible
-            let resolved = conn_map.get(net_name)
-                .and_then(|v| v.first())
-                .cloned()
-                .unwrap_or_else(|| {
-                    // Prefix internal nets with instance name to avoid collisions
-                    format!("{}_{}", instance_name, net_name)
-                });
-            node_list.push(resolved);
-            let _ = port_name;
-        }
-        let node_refs: Vec<&str> = node_list.iter().map(|s| s.as_str()).collect();
-        circuit.x(
-            format!("{}_{}", instance_name, gate_inst),
-            cell_name,
-            node_refs,
-        );
-    }
-
-    Ok(())
+    Ok(crate::ir::VerilogBlock {
+        source: source.to_string(),
+        mode,
+        instance_name: instance_name.to_string(),
+        connections: conns,
+        pdk: pdk.map(str::to_string),
+        liberty: liberty.map(str::to_string),
+        spice_models: spice_models.map(str::to_string),
+    })
 }
 
 // ── IR type bindings: Subcircuit, Testbench, ModelLibrary ──
@@ -2240,7 +1814,7 @@ fn verilog_synthesize_circuit(
 fn py_value_to_ir(v: PyValueArg) -> crate::ir::IrValue {
     match v {
         PyValueArg::Float(f) => crate::ir::IrValue::Numeric { value: f },
-        PyValueArg::Unit(uv) => crate::ir::IrValue::Numeric { value: uv.inner.as_f64() },
+        PyValueArg::Unit(uv) => crate::ir::IrValue::Numeric { value: uv.inner.value },
     }
 }
 
@@ -2488,122 +2062,27 @@ fn ir_to_circuit(
 }
 
 /// Apply a VerilogBlock from IR to a Circuit.
-/// Handles both "simulate" (iverilog/d_cosim) and "synthesize" (yosys) modes.
-fn apply_verilog_block_to_circuit(
-    circuit: &mut cir::Circuit,
-    vb: &crate::ir::VerilogBlock,
-) -> Result<(), String> {
-    match vb.mode {
-        crate::ir::VerilogMode::Simulate => {
-            let vvp_path = compile_verilog_iverilog(&vb.source)?;
-
-            // Build connection list for A-element
-            let mut conn_parts = Vec::new();
-            for conn in vb.connections.values() {
-                match conn {
-                    crate::ir::VerilogConnection::Single(net) => {
-                        conn_parts.push(format!("[{}]", net));
-                    }
-                    crate::ir::VerilogConnection::Bus(nets) => {
-                        conn_parts.push(format!("[{}]", nets.join(" ")));
-                    }
-                }
-            }
-
-            // Add bridge models if not present
+fn apply_verilog_block_to_circuit(circuit: &mut cir::Circuit, vb: &crate::ir::VerilogBlock) -> Result<(), String> {
+    match crate::veriloga::lower(vb)? {
+        crate::veriloga::Lowered::Cosim { vvp, ports } => {
             if !circuit.models().iter().any(|m| m.kind == "adc_bridge") {
-                circuit.model(
-                    "adc_buf", "adc_bridge",
-                    vec![cir::Param::new("in_low", "0.5"), cir::Param::new("in_high", "0.5")],
-                );
+                circuit.model("adc_buf", "adc_bridge", vec![cir::Param::new("in_low", "0.5"), cir::Param::new("in_high", "0.5")]);
             }
             if !circuit.models().iter().any(|m| m.kind == "dac_bridge") {
-                circuit.model(
-                    "dac_buf", "dac_bridge",
-                    vec![cir::Param::new("out_low", "0.0"), cir::Param::new("out_high", "1.8")],
-                );
+                circuit.model("dac_buf", "dac_bridge", vec![cir::Param::new("out_low", "0.0"), cir::Param::new("out_high", "1.8")]);
             }
-
-            let model_name = format!("cosim_{}", vb.instance_name);
-            circuit.raw_spice(format!(
-                ".model {} d_cosim(delay=1n simulation_id=\"{}\")",
-                model_name, vvp_path
-            ));
-            circuit.a(&vb.instance_name, conn_parts, &model_name);
-            Ok(())
+            let model = format!("cosim_{}", vb.instance_name);
+            circuit.raw_spice(format!(".model {} d_cosim(delay=1n simulation_id=\"{}\")", model, vvp));
+            circuit.a(&vb.instance_name, ports, &model);
         }
-        crate::ir::VerilogMode::Synthesize => {
-            // Resolve liberty and spice model paths
-            let (lib_path, spice_path) = match (&vb.liberty, &vb.pdk) {
-                (Some(lib), Some(pdk)) => {
-                    let sp = vb.spice_models.as_ref()
-                        .map(|s| Ok(s.clone()))
-                        .unwrap_or_else(|| resolve_pdk_paths(pdk).map(|p| p.1))?;
-                    (lib.clone(), sp)
-                }
-                (Some(lib), None) => {
-                    let sp = vb.spice_models.as_ref()
-                        .ok_or("mode='synthesize' requires either pdk or both liberty and spice_models")?;
-                    (lib.clone(), sp.clone())
-                }
-                (None, Some(pdk)) => {
-                    let (lib, sp) = resolve_pdk_paths(pdk)?;
-                    let sp = vb.spice_models.as_ref().cloned().unwrap_or(sp);
-                    (lib, sp)
-                }
-                (None, None) => {
-                    return Err("mode='synthesize' requires either pdk or liberty".to_string());
-                }
-            };
-
-            // Get source text for module name extraction
-            let source_text = if vb.source.trim().ends_with(".v") && !vb.source.contains('\n') {
-                std::fs::read_to_string(vb.source.trim())
-                    .map_err(|e| format!("Failed to read {}: {}", vb.source, e))?
-            } else {
-                vb.source.clone()
-            };
-
-            let module_name = extract_verilog_module_name(&source_text)?;
-            let synth_path = synthesize_verilog_yosys(&vb.source, &lib_path, &module_name)?;
-
-            circuit.include(&spice_path);
-
-            let gate_instances = parse_synthesized_netlist(&synth_path)?;
-
-            // Build connection map
-            let mut conn_map: HashMap<String, Vec<String>> = HashMap::new();
-            for (port, conn) in &vb.connections {
-                match conn {
-                    crate::ir::VerilogConnection::Single(net) => {
-                        conn_map.insert(port.clone(), vec![net.clone()]);
-                    }
-                    crate::ir::VerilogConnection::Bus(nets) => {
-                        conn_map.insert(port.clone(), nets.clone());
-                    }
-                }
+        crate::veriloga::Lowered::Gates { spice_models, cells } => {
+            circuit.include(&spice_models);
+            for c in cells {
+                circuit.x(c.name, c.cell, c.nodes.iter().map(String::as_str).collect());
             }
-
-            for (gate_inst, cell_name, ports) in &gate_instances {
-                let mut node_list: Vec<String> = Vec::new();
-                for (_port_name, net_name) in ports {
-                    let resolved = conn_map.get(net_name)
-                        .and_then(|v| v.first())
-                        .cloned()
-                        .unwrap_or_else(|| format!("{}_{}", vb.instance_name, net_name));
-                    node_list.push(resolved);
-                }
-                let node_refs: Vec<&str> = node_list.iter().map(|s| s.as_str()).collect();
-                circuit.x(
-                    format!("{}_{}", vb.instance_name, gate_inst),
-                    cell_name,
-                    node_refs,
-                );
-            }
-
-            Ok(())
         }
     }
+    Ok(())
 }
 
 /// Convert IR components to circuit Element vec (for subcircuit definitions)
@@ -3317,36 +2796,8 @@ impl PySubcircuit {
         liberty: Option<&str>,
         spice_models: Option<&str>,
     ) -> PyResult<()> {
-        let verilog_mode = match mode {
-            "simulate" => crate::ir::VerilogMode::Simulate,
-            "synthesize" => crate::ir::VerilogMode::Synthesize,
-            _ => return Err(pyo3::exceptions::PyValueError::new_err(
-                format!("Invalid mode '{}'. Must be 'simulate' or 'synthesize'.", mode)
-            )),
-        };
-
-        // Convert connections to IR representation
-        let mut ir_connections = HashMap::new();
-        for (port, obj) in &connections {
-            let nets = extract_connection(py, obj)?;
-            let conn = if nets.len() == 1 {
-                crate::ir::VerilogConnection::Single(nets.into_iter().next().unwrap())
-            } else {
-                crate::ir::VerilogConnection::Bus(nets)
-            };
-            ir_connections.insert(port.clone(), conn);
-        }
-
-        self.inner.verilog_blocks.push(crate::ir::VerilogBlock {
-            source: source.to_string(),
-            mode: verilog_mode,
-            instance_name: instance_name.to_string(),
-            connections: ir_connections,
-            pdk: pdk.map(|s| s.to_string()),
-            liberty: liberty.map(|s| s.to_string()),
-            spice_models: spice_models.map(|s| s.to_string()),
-        });
-
+        let vb = verilog_block(py, source, mode, instance_name, &connections, pdk, liberty, spice_models)?;
+        self.inner.verilog_blocks.push(vb);
         Ok(())
     }
 
@@ -4192,66 +3643,9 @@ impl PyModelLibrary {
 
 fn create_unit_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let unit_mod = PyModule::new(m.py(), "unit")?;
-
-    macro_rules! add_unit {
-        ($name:ident, $val:expr) => {
-            unit_mod.add(stringify!($name), PyUnit { inner: $val })?;
-        };
+    for &(name, mult, symbol) in u::UNITS {
+        unit_mod.add(name, PyUnit { mult, symbol })?;
     }
-
-    // Volts
-    add_unit!(u_V, u::U_V);
-    add_unit!(u_mV, u::U_MV);
-    add_unit!(u_uV, u::U_UV);
-    // Amperes
-    add_unit!(u_A, u::U_A);
-    add_unit!(u_mA, u::U_MA);
-    add_unit!(u_uA, u::U_UA);
-    add_unit!(u_nA, u::U_NA);
-    // Ohms
-    add_unit!(u_Ohm, u::U_OHM);
-    add_unit!(u_kOhm, u::U_KOHM);
-    add_unit!(u_MOhm, u::U_MOHM);
-    // Farads
-    add_unit!(u_F, u::U_F);
-    add_unit!(u_mF, u::U_MF);
-    add_unit!(u_uF, u::U_UF);
-    add_unit!(u_nF, u::U_NF);
-    add_unit!(u_pF, u::U_PF);
-    add_unit!(u_fF, u::U_FF);
-    // Henrys
-    add_unit!(u_H, u::U_H);
-    add_unit!(u_mH, u::U_MH);
-    add_unit!(u_uH, u::U_UH);
-    add_unit!(u_nH, u::U_NH);
-    // Hertz
-    add_unit!(u_Hz, u::U_HZ);
-    add_unit!(u_kHz, u::U_KHZ);
-    add_unit!(u_MHz, u::U_MHZ);
-    add_unit!(u_GHz, u::U_GHZ);
-    // Seconds
-    add_unit!(u_s, u::U_S);
-    add_unit!(u_ms, u::U_MS);
-    add_unit!(u_us, u::U_US);
-    add_unit!(u_ns, u::U_NS);
-    add_unit!(u_ps, u::U_PS);
-    // Watts
-    add_unit!(u_W, u::U_W);
-    add_unit!(u_mW, u::U_MW);
-    add_unit!(u_uW, u::U_UW);
-    // Degrees
-    add_unit!(u_Degree, u::U_DEGREE);
-
-    // Unicode aliases (PySpice compat)
-    unit_mod.add("u_Ω", PyUnit { inner: u::U_OHM })?;
-    unit_mod.add("u_kΩ", PyUnit { inner: u::U_KOHM })?;
-    unit_mod.add("u_MΩ", PyUnit { inner: u::U_MOHM })?;
-    unit_mod.add("u_µF", PyUnit { inner: u::U_UF })?;
-    unit_mod.add("u_µH", PyUnit { inner: u::U_UH })?;
-    unit_mod.add("u_µA", PyUnit { inner: u::U_UA })?;
-    unit_mod.add("u_µV", PyUnit { inner: u::U_UV })?;
-    unit_mod.add("u_µW", PyUnit { inner: u::U_UW })?;
-    unit_mod.add("u_µs", PyUnit { inner: u::U_US })?;
 
     m.add_submodule(&unit_mod)?;
 

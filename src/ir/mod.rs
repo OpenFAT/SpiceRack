@@ -764,7 +764,7 @@ fn convert_value(cv: &crate::circuit::ComponentValue) -> IrValue {
 
     match cv {
         ComponentValue::Numeric(v) => IrValue::Numeric { value: *v },
-        ComponentValue::Unit(uv) => IrValue::Numeric { value: uv.as_f64() },
+        ComponentValue::Unit(uv) => IrValue::Numeric { value: uv.value },
         ComponentValue::Expression(e) => IrValue::Expression { expr: e.clone() },
         ComponentValue::Raw(r) => IrValue::Raw { text: r.clone() },
     }
