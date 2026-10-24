@@ -272,3 +272,25 @@ fn espice_reads_each_dialect_to_the_same_op() {
         }
     }
 }
+
+/// `^` is power in ngspice but XOR in LTspice. An expression imported from
+/// LTspice carries that XOR meaning; emitting it as ngspice (power) would
+/// silently change the deck, so codegen refuses. Emitting it back to
+/// LTspice, where it came from, is fine.
+#[test]
+fn caret_meaning_refused_across_dialects() {
+    let mut top = sub("dialects");
+    top.components = vec![Component::Resistor {
+        name: "1".into(),
+        n1: "a".into(),
+        n2: "0".into(),
+        value: IrValue::Expression { expr: "a^b".into() },
+        params: vec![],
+    }];
+    let ir = CircuitIR { raw_dialect: Some("ltspice".into()), top, ..Default::default() };
+
+    let err = netlist(&ir, Dialect::Ngspice).unwrap_err();
+    assert!(err.to_string().contains("a^b"), "{err}");
+
+    netlist(&ir, Dialect::Ltspice).expect("same dialect's own meaning is fine");
+}
