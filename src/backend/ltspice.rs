@@ -66,10 +66,8 @@ impl Backend for LtspiceSubprocess {
         }
     }
 
-    fn codegen(&self) -> Box<dyn crate::codegen::CodeGen> {
-        Box::new(crate::codegen::spice3::Spice3CodeGen {
-            dialect: crate::codegen::spice3::Spice3Dialect::Ltspice,
-        })
+    fn dialect(&self) -> crate::codegen::Dialect {
+        crate::codegen::Dialect::Ltspice
     }
 
     fn run(&self, netlist: &str) -> Result<RawData, BackendError> {

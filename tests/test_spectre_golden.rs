@@ -17,9 +17,30 @@
 //! These tests prove only "we emit what the manual describes". They do NOT
 //! prove any simulation result.
 
-use spicerack::codegen::{CodeGen, CodeGenError};
-use spicerack::codegen::spectre::SpectreCodeGen;
+use spicerack::codegen::{netlist, CodeGenError, Dialect};
 use spicerack::ir::*;
+
+fn spectre(ir: &CircuitIR) -> Result<String, CodeGenError> {
+    netlist(ir, Dialect::Spectre)
+}
+
+/// The deck's last section: the analyses, or the components when there is no
+/// testbench. Neither contains a blank line.
+fn last_block(ir: &CircuitIR) -> Result<String, CodeGenError> {
+    Ok(spectre(ir)?.rsplit("\n\n").next().unwrap_or_default().to_string())
+}
+
+fn try_analysis(a: &Analysis) -> Result<String, CodeGenError> {
+    let mut tb = empty_tb();
+    tb.analyses.push(a.clone());
+    last_block(&ir_with(empty_top("t"), Some(tb)))
+}
+
+fn try_component(c: &Component) -> Result<String, CodeGenError> {
+    let mut top = empty_top("t");
+    top.components.push(c.clone());
+    last_block(&ir_with(top, None))
+}
 
 fn empty_top(name: &str) -> Subcircuit {
     Subcircuit {
@@ -59,11 +80,11 @@ fn ir_with(top: Subcircuit, tb: Option<Testbench>) -> CircuitIR {
 }
 
 fn analysis(a: Analysis) -> String {
-    SpectreCodeGen.emit_analysis(&a).unwrap()
+    try_analysis(&a).unwrap()
 }
 
 fn component(c: Component) -> String {
-    SpectreCodeGen.emit_component(&c).unwrap()
+    try_component(&c).unwrap()
 }
 
 // ── Deck structure ──
@@ -81,7 +102,7 @@ fn spectre_deck_preamble_matches_documented_statements() {
     top.libs.push(("/pdk/corners.scs".into(), "tt".into()));
     top.parameters.push(ParamDef { name: "vdd".into(), default: Some("1.8".into()) });
 
-    let netlist = SpectreCodeGen.emit_netlist(&ir_with(top, None)).unwrap();
+    let netlist = spectre(&ir_with(top, None)).unwrap();
 
     assert!(netlist.starts_with("// Preamble\n"), "{netlist}");
     assert!(netlist.contains("\nsimulator lang=spectre\n"), "{netlist}");
@@ -118,8 +139,10 @@ fn spectre_subckt_and_instance_match_documented_forms() {
         osdi_loads: vec![],
         verilog_blocks: vec![],
     };
-    let emitted = SpectreCodeGen.emit_subcircuit(&sc).unwrap();
-    assert_eq!(emitted, "subckt coax (i1 o1)\nparameters zin=50\nends coax");
+    let mut ir = ir_with(empty_top("defs"), None);
+    ir.subcircuit_defs.push(sc);
+    let emitted = spectre(&ir).unwrap();
+    assert!(emitted.contains("\n\nsubckt coax (i1 o1)\nparameters zin=50\nends coax\n"), "{emitted}");
 
     let mut top = empty_top("inst");
     top.instances.push(Instance {
@@ -128,7 +151,7 @@ fn spectre_subckt_and_instance_match_documented_forms() {
         port_mapping: vec!["pin".into(), "nin".into()],
         parameters: vec![("zin".into(), "75".into())],
     });
-    let netlist = SpectreCodeGen.emit_netlist(&ir_with(top, None)).unwrap();
+    let netlist = spectre(&ir_with(top, None)).unwrap();
     assert!(netlist.contains("xcoax1 (pin nin) coax zin=75"), "{netlist}");
 }
 
@@ -143,7 +166,7 @@ fn spectre_model_statement_has_no_parentheses() {
         kind: "bsim3v3".into(),
         parameters: vec![("type".into(), "n".into()), ("version".into(), "3.1".into())],
     });
-    let netlist = SpectreCodeGen.emit_netlist(&ir_with(top, None)).unwrap();
+    let netlist = spectre(&ir_with(top, None)).unwrap();
     assert!(netlist.contains("model nch bsim3v3 type=n version=3.1"), "{netlist}");
     assert!(!netlist.contains("bsim3v3 ("), "model params must not be parenthesised: {netlist}");
 }
@@ -157,7 +180,7 @@ fn spectre_ic_nodeset_save_use_bare_signal_names() {
     tb.node_sets.push(("mid".into(), 0.5));
     tb.saves.push("V(out)".into());
 
-    let netlist = SpectreCodeGen.emit_netlist(&ir_with(empty_top("t"), Some(tb))).unwrap();
+    let netlist = spectre(&ir_with(empty_top("t"), Some(tb))).unwrap();
     assert!(netlist.contains("\nic out=1.2\n"), "{netlist}");
     assert!(netlist.contains("\nnodeset mid=500m\n"), "{netlist}");
     assert!(netlist.contains("\nsave out\n"), "{netlist}");
@@ -170,7 +193,7 @@ fn spectre_ic_nodeset_save_use_bare_signal_names() {
 fn spectre_measure_is_fenced_by_language_switches() {
     let mut tb = empty_tb();
     tb.measures.push(".meas tran vmax MAX V(out)".into());
-    let netlist = SpectreCodeGen.emit_netlist(&ir_with(empty_top("t"), Some(tb))).unwrap();
+    let netlist = spectre(&ir_with(empty_top("t"), Some(tb))).unwrap();
     assert!(
         netlist.contains("simulator lang=spice\n.meas tran vmax MAX V(out)\nsimulator lang=spectre"),
         "{netlist}",
@@ -192,7 +215,10 @@ fn spectre_options_use_documented_parameter_names() {
         ],
         backend_specific: Default::default(),
     };
-    let s = SpectreCodeGen.emit_options(&opts).unwrap();
+    let mut tb = empty_tb();
+    tb.options = opts;
+    let deck = spectre(&ir_with(empty_top("t"), Some(tb))).unwrap();
+    let s = deck.lines().find(|l| l.starts_with("myopts")).unwrap();
     assert_eq!(
         s,
         "myopts options reltol=1e-4 iabstol=1e-13 vabstol=1e-7 gmin=1e-13 dcmaxiters=150",
@@ -390,7 +416,7 @@ fn spectre_refuses_constructs_without_a_documented_spelling() {
     ];
 
     for c in cases {
-        let r = SpectreCodeGen.emit_component(&c);
+        let r = try_component(&c);
         assert!(
             matches!(r, Err(CodeGenError::UnsupportedComponent { .. })),
             "expected UnsupportedComponent, got {r:?}",
@@ -442,7 +468,7 @@ fn spectre_ac_and_tran_match_documented_parameters() {
 /// sweep, so SPICE's `oct` must be refused rather than emitted.
 #[test]
 fn spectre_rejects_octave_frequency_sweeps() {
-    let r = SpectreCodeGen.emit_analysis(&Analysis::Ac {
+    let r = try_analysis(&Analysis::Ac {
         variation: "oct".into(), points: 10, start: 1.0, stop: 1e6,
     });
     assert!(matches!(r, Err(CodeGenError::UnsupportedAnalysis { .. })), "{r:?}");
@@ -633,14 +659,14 @@ fn spectre_fourier_is_emitted_as_a_component() {
 /// bandwidth, so there is nothing faithful to emit.
 #[test]
 fn spectre_refuses_transient_noise() {
-    let r = SpectreCodeGen.emit_analysis(&Analysis::TransientNoise { step: 1e-9, stop: 1e-6 });
+    let r = try_analysis(&Analysis::TransientNoise { step: 1e-9, stop: 1e-6 });
     assert!(matches!(r, Err(CodeGenError::UnsupportedAnalysis { .. })), "{r:?}");
 }
 
 /// Analyses belonging to other simulators' dialects must be refused.
 #[test]
 fn spectre_refuses_foreign_analyses() {
-    let r = SpectreCodeGen.emit_analysis(&Analysis::PoleZero {
+    let r = try_analysis(&Analysis::PoleZero {
         node1: "1".into(), node2: "0".into(), node3: "3".into(), node4: "0".into(),
         tf_type: "vol".into(), pz_type: "pz".into(),
     });

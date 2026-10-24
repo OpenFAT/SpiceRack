@@ -44,8 +44,8 @@ impl Backend for VacaskSubprocess {
 
     fn capabilities(&self) -> BackendCapabilities { VACASK_CAPS }
 
-    fn codegen(&self) -> Box<dyn crate::codegen::CodeGen> {
-        Box::new(crate::codegen::vacask::VacaskCodeGen)
+    fn dialect(&self) -> crate::codegen::Dialect {
+        crate::codegen::Dialect::Vacask
     }
 
     fn run(&self, _netlist: &str) -> Result<RawData, BackendError> {
@@ -848,8 +848,8 @@ impl Backend for VacaskLibrary {
 
     fn capabilities(&self) -> BackendCapabilities { VACASK_CAPS }
 
-    fn codegen(&self) -> Box<dyn crate::codegen::CodeGen> {
-        Box::new(crate::codegen::vacask::VacaskCodeGen)
+    fn dialect(&self) -> crate::codegen::Dialect {
+        crate::codegen::Dialect::Vacask
     }
 
     fn run(&self, _netlist: &str) -> Result<RawData, BackendError> {

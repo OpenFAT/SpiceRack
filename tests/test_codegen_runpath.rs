@@ -11,8 +11,7 @@ use spicerack::backend::spectre::SpectreSubprocess;
 use spicerack::backend::vacask::VacaskSubprocess;
 use spicerack::backend::Backend;
 use spicerack::circuit::Circuit;
-use spicerack::codegen::spice3::{Spice3CodeGen, Spice3Dialect};
-use spicerack::codegen::CodeGen;
+use spicerack::codegen::{netlist, Dialect};
 use spicerack::ir::*;
 
 /// Minimal IR: a resistor divider driven by a DC source, operating point.
@@ -80,7 +79,7 @@ fn rc_op_ir() -> CircuitIR {
 #[test]
 fn ngspice_backend_names_its_codegen() {
     let ng = NgspiceSubprocess;
-    assert_eq!(ng.codegen().backend_name(), "ngspice");
+    assert_eq!(ng.dialect(), Dialect::Ngspice);
 }
 
 #[test]
@@ -95,8 +94,7 @@ fn run_path_netlist_comes_from_codegen_not_display() {
     let ng = NgspiceSubprocess;
     let produced = sim.netlist_to_run(&ng).expect("emit netlist for backend");
 
-    let expected = Spice3CodeGen { dialect: Spice3Dialect::Ngspice }
-        .emit_netlist(&ir)
+    let expected = netlist(&ir, Dialect::Ngspice)
         .expect("codegen emit");
 
     assert_eq!(produced, expected);
@@ -114,13 +112,13 @@ fn ltspice_backend_names_its_codegen() {
         use_wine: false,
         fast_access: false,
     };
-    assert_eq!(lt.codegen().backend_name(), "ltspice");
+    assert_eq!(lt.dialect(), Dialect::Ltspice);
 }
 
 #[test]
 fn spectre_backend_names_its_codegen() {
     let sp = SpectreSubprocess;
-    assert_eq!(sp.codegen().backend_name(), "spectre");
+    assert_eq!(sp.dialect(), Dialect::Spectre);
 }
 
 // ── RED: same IR → dialect-different netlists ──
@@ -137,9 +135,9 @@ fn same_ir_produces_different_dialect_netlists() {
     };
     let sp = SpectreSubprocess;
 
-    let ng_netlist = ng.codegen().emit_netlist(&ir).unwrap();
-    let lt_netlist = lt.codegen().emit_netlist(&ir).unwrap();
-    let sp_netlist = sp.codegen().emit_netlist(&ir).unwrap();
+    let ng_netlist = netlist(&ir, ng.dialect()).unwrap();
+    let lt_netlist = netlist(&ir, lt.dialect()).unwrap();
+    let sp_netlist = netlist(&ir, sp.dialect()).unwrap();
 
     // All must be valid netlists containing the resistors + analysis
     assert!(ng_netlist.contains("R1 vdd out"), "ngspice R1");
@@ -183,14 +181,14 @@ fn run_path_spectre_uses_spectre_codegen() {
 #[test]
 fn vacask_backend_names_its_codegen() {
     let vk = VacaskSubprocess;
-    assert_eq!(vk.codegen().backend_name(), "vacask");
+    assert_eq!(vk.dialect(), Dialect::Vacask);
 }
 
 #[test]
 fn vacask_codegen_emits_native_syntax() {
     let ir = rc_op_ir();
     let vk = VacaskSubprocess;
-    let netlist = vk.codegen().emit_netlist(&ir).unwrap();
+    let netlist = netlist(&ir, vk.dialect()).unwrap();
 
     // Vacask uses Spectre-like syntax
     assert!(netlist.contains("r1 (vdd out) resistor r="), "vacask r1");
@@ -221,7 +219,7 @@ fn vacask_codegen_osdi_uses_load() {
     };
 
     let vk = VacaskSubprocess;
-    let netlist = vk.codegen().emit_netlist(&ir).unwrap();
+    let netlist = netlist(&ir, vk.dialect()).unwrap();
 
     // Vacask uses `load`, not `ahdl_include` or `.pre_osdi`
     assert!(netlist.contains("load \"/models/bsim4.osdi\""), "load: {}", netlist);
@@ -266,7 +264,7 @@ fn vacask_codegen_subcircuit_ends_has_name() {
     };
 
     let vk = VacaskSubprocess;
-    let netlist = vk.codegen().emit_netlist(&ir).unwrap();
+    let netlist = netlist(&ir, vk.dialect()).unwrap();
 
     assert!(netlist.contains("subckt mybuf (in out)"), "subckt header: {}", netlist);
     assert!(netlist.contains("\nends"), "ends with name: {}", netlist);

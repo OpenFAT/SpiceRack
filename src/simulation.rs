@@ -79,7 +79,7 @@ impl CircuitSimulator {
     /// replaces string translation.
     pub fn netlist_to_run(&self, backend: &dyn Backend) -> Result<String, CodeGenError> {
         match &self.ir {
-            Some(ir) => backend.codegen().emit_netlist(ir),
+            Some(ir) => crate::codegen::netlist(ir, backend.dialect()),
             None => Err(CodeGenError::Other("no IR attached to simulator".into())),
         }
     }
@@ -659,19 +659,9 @@ impl CircuitSimulator {
         // it verbatim. No IR → legacy SPICE string, and run() applies any
         // backend-specific translation (e.g. spice_to_vacask).
         let mut raw = if self.ir.is_some() {
-            let netlist = match self.netlist_to_run(backend.as_ref()) {
-                Ok(n) => n,
-                // Analyses whose `emit_analysis` arm is not yet implemented
-                // (Pss/HB/SPar/Stability/TransientNoise/Spectre*) fall back to
-                // the legacy single-dialect string so they don't regress.
-                Err(CodeGenError::UnsupportedAnalysis { .. }) => {
-                    self.build_netlist(analysis_stmt)
-                }
-                // Anything else (e.g. a component this backend cannot express)
-                // must surface — falling back would silently simulate a
-                // different netlist than the user built.
-                Err(e) => return Err(BackendError::SimulationError(e.to_string())),
-            };
+            let netlist = self
+                .netlist_to_run(backend.as_ref())
+                .map_err(|e| BackendError::SimulationError(e.to_string()))?;
             backend.run_netlist(&netlist)?
         } else {
             // `Circuit::Display` cannot return an error, so a Laplace source it

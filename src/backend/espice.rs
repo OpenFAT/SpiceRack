@@ -40,8 +40,8 @@ impl Backend for EspiceSubprocess {
         ESPICE_CAPS
     }
 
-    fn codegen(&self) -> Box<dyn crate::codegen::CodeGen> {
-        Box::new(crate::codegen::espice::EspiceCodeGen)
+    fn dialect(&self) -> crate::codegen::Dialect {
+        crate::codegen::Dialect::Espice
     }
 
     /// A finished SPICE string from the legacy `Circuit` path. Its OSDI

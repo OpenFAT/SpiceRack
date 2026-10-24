@@ -71,8 +71,8 @@ impl Backend for SpectreSubprocess {
         }
     }
 
-    fn codegen(&self) -> Box<dyn crate::codegen::CodeGen> {
-        Box::new(crate::codegen::spectre::SpectreCodeGen)
+    fn dialect(&self) -> crate::codegen::Dialect {
+        crate::codegen::Dialect::Spectre
     }
 
     /// Legacy path: `netlist` is a SPICE string, so fence it in SPICE mode.

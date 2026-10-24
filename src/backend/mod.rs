@@ -7,8 +7,6 @@ pub mod detect;
 
 use crate::result::RawData;
 use crate::rawfile;
-use crate::codegen::CodeGen;
-use crate::codegen::spice3::{Spice3CodeGen, Spice3Dialect};
 
 #[derive(Debug, thiserror::Error)]
 pub enum BackendError {
@@ -46,8 +44,8 @@ pub trait Backend: Send + Sync {
     /// The `CodeGen` that turns backend-neutral IR into this backend's netlist
     /// dialect. This is the only path from IR to text. The default
     /// emits the SPICE3/ngspice dialect; backends override to name their own.
-    fn codegen(&self) -> Box<dyn CodeGen> {
-        Box::new(Spice3CodeGen { dialect: Spice3Dialect::Ngspice })
+    fn dialect(&self) -> crate::codegen::Dialect {
+        crate::codegen::Dialect::Ngspice
     }
 
     /// Execute an already-emitted netlist with no further string translation.

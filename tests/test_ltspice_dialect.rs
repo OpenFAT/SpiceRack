@@ -5,16 +5,62 @@
 //! against LTspice's *documented* syntax. Nothing below was run through
 //! LTspice.
 
-use spicerack::codegen::CodeGen;
-use spicerack::codegen::spice3::{Spice3CodeGen, Spice3Dialect};
+use spicerack::codegen::{netlist, CodeGenError, Dialect};
 use spicerack::ir::*;
 
-fn lt() -> Spice3CodeGen {
-    Spice3CodeGen { dialect: Spice3Dialect::Ltspice }
+/// One dialect, probed one piece at a time through a minimal deck.
+struct Cg(Dialect);
+
+fn lt() -> Cg {
+    Cg(Dialect::Ltspice)
 }
 
-fn ng() -> Spice3CodeGen {
-    Spice3CodeGen { dialect: Spice3Dialect::Ngspice }
+fn ng() -> Cg {
+    Cg(Dialect::Ngspice)
+}
+
+impl Cg {
+    fn emit_netlist(&self, ir: &CircuitIR) -> Result<String, CodeGenError> {
+        netlist(ir, self.0)
+    }
+
+    /// The deck minus its `* t` title and `.end`.
+    fn body(&self, component: Option<&Component>, tb: Testbench) -> Result<String, CodeGenError> {
+        let top = Subcircuit {
+            name: "t".into(), ports: vec![], parameters: vec![],
+            components: component.into_iter().cloned().collect(), instances: vec![], models: vec![],
+            raw_spice: vec![], includes: vec![], libs: vec![], osdi_loads: vec![], verilog_blocks: vec![],
+        };
+        let ir = CircuitIR { top, testbench: Some(tb), subcircuit_defs: vec![], model_libraries: vec![] };
+        let n = self.emit_netlist(&ir)?;
+        Ok(n.strip_prefix("* t\n").unwrap().strip_suffix("\n.end").unwrap().to_string())
+    }
+
+    fn emit_step_param(&self, sp: &StepParam) -> Result<String, CodeGenError> {
+        self.body(None, Testbench { step_params: vec![sp.clone()], ..tb() })
+    }
+
+    /// The last line: ngspice puts `.save all` ahead of a noise card.
+    fn emit_analysis(&self, a: &Analysis) -> Result<String, CodeGenError> {
+        let b = self.body(None, Testbench { analyses: vec![a.clone()], ..tb() })?;
+        Ok(b.lines().last().unwrap().to_string())
+    }
+
+    fn emit_component(&self, c: &Component) -> Result<String, CodeGenError> {
+        self.body(Some(c), tb())
+    }
+
+    fn emit_options(&self, o: &SimOptions) -> Result<String, CodeGenError> {
+        self.body(None, Testbench { options: o.clone(), ..tb() })
+    }
+}
+
+fn tb() -> Testbench {
+    Testbench {
+        dut: "t".into(), stimulus: vec![], analyses: vec![], options: SimOptions::default(),
+        saves: vec![], measures: vec![], temperature: None, nominal_temperature: None,
+        initial_conditions: vec![], node_sets: vec![], step_params: vec![], extra_lines: vec![],
+    }
 }
 
 // ── .step ──

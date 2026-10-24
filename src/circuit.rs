@@ -64,20 +64,7 @@ impl ComponentValue {
     }
 }
 
-/// Format f64 in SPICE notation (use SI prefix when clean)
-pub fn format_spice_number(v: f64) -> String {
-    use crate::unit::SiPrefix;
-    let prefix = SiPrefix::best_for(v);
-    let mantissa = v / prefix.multiplier();
-    let suffix = prefix.spice_suffix();
-    // Round to avoid floating point artifacts (10e-6/1e-6 = 10.000000000000002)
-    let rounded = mantissa.round();
-    if (mantissa - rounded).abs() < 1e-9 && rounded.abs() < 1e15 {
-        format!("{}{}", rounded as i64, suffix)
-    } else {
-        format!("{}{}", mantissa, suffix)
-    }
-}
+use crate::codegen::format_spice_number;
 
 impl From<f64> for ComponentValue {
     fn from(v: f64) -> Self {
@@ -415,7 +402,7 @@ impl fmt::Display for BehavioralVoltage {
 fn emit_laplace_ngspice(
     name: &str, np: &Node, nm: &Node, expression: &str, current_output: bool,
 ) -> Option<String> {
-    use crate::codegen::CodeGen;
+
     if !crate::codegen::laplace::is_laplace(expression) {
         return None;
     }
@@ -430,9 +417,7 @@ fn emit_laplace_ngspice(
             expression: expression.into(),
         }
     };
-    crate::codegen::spice3::Spice3CodeGen { dialect: crate::codegen::spice3::Spice3Dialect::Ngspice }
-        .emit_component(&comp)
-        .ok()
+    crate::codegen::spice3::component(crate::codegen::Dialect::Ngspice, &comp).ok()
 }
 
 #[derive(Debug, Clone)]

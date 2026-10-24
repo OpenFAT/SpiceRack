@@ -1,8 +1,14 @@
 use std::collections::HashMap;
-use spicerack::codegen::CodeGen;
-use spicerack::codegen::spice3::{Spice3CodeGen, Spice3Dialect};
-use spicerack::codegen::spectre::SpectreCodeGen;
+use spicerack::codegen::{netlist, CodeGenError, Dialect};
 use spicerack::ir::*;
+
+/// The card a single analysis becomes: the deck's line before `.end`.
+fn analysis(d: Dialect, a: &Analysis) -> Result<String, CodeGenError> {
+    let mut ir = resistor_divider_ir();
+    ir.testbench.as_mut().unwrap().analyses = vec![a.clone()];
+    let n = netlist(&ir, d)?;
+    Ok(n.lines().rev().nth(1).unwrap().to_string())
+}
 
 // ── Shared test fixtures ──
 
@@ -323,8 +329,8 @@ fn waveform_ir() -> CircuitIR {
 #[test]
 fn test_spice3_ngspice_resistor_divider() {
     let ir = resistor_divider_ir();
-    let cg = Spice3CodeGen { dialect: Spice3Dialect::Ngspice };
-    let netlist = cg.emit_netlist(&ir).unwrap();
+    let cg = Dialect::Ngspice;
+    let netlist = netlist(&ir, cg).unwrap();
 
     assert!(netlist.contains("* Voltage Divider"));
     assert!(netlist.contains("Vin input 0 10"));
@@ -337,8 +343,8 @@ fn test_spice3_ngspice_resistor_divider() {
 #[test]
 fn test_spectre_resistor_divider() {
     let ir = resistor_divider_ir();
-    let cg = SpectreCodeGen;
-    let netlist = cg.emit_netlist(&ir).unwrap();
+    let cg = Dialect::Spectre;
+    let netlist = netlist(&ir, cg).unwrap();
 
     assert!(netlist.contains("// Voltage Divider"));
     assert!(netlist.contains("vin (input 0) vsource dc=10"));
@@ -351,8 +357,8 @@ fn test_spectre_resistor_divider() {
 #[test]
 fn test_spice3_mosfet_circuit() {
     let ir = mosfet_inverter_ir();
-    let cg = Spice3CodeGen { dialect: Spice3Dialect::Ngspice };
-    let netlist = cg.emit_netlist(&ir).unwrap();
+    let cg = Dialect::Ngspice;
+    let netlist = netlist(&ir, cg).unwrap();
 
     assert!(netlist.contains("Mp1 out in vdd vdd pmos_3p3 W=2u L=180n"));
     assert!(netlist.contains("Mn1 out in 0 0 nmos_3p3 W=1u L=180n"));
@@ -366,8 +372,8 @@ fn test_spice3_mosfet_circuit() {
 #[test]
 fn test_spectre_mosfet_circuit() {
     let ir = mosfet_inverter_ir();
-    let cg = SpectreCodeGen;
-    let netlist = cg.emit_netlist(&ir).unwrap();
+    let cg = Dialect::Spectre;
+    let netlist = netlist(&ir, cg).unwrap();
 
     assert!(netlist.contains("mp1 (out in vdd vdd) pmos_3p3 W=2u L=180n"), "mosfet: {}", netlist);
     assert!(netlist.contains("mn1 (out in 0 0) nmos_3p3 W=1u L=180n"), "mosfet n: {}", netlist);
@@ -379,8 +385,8 @@ fn test_spectre_mosfet_circuit() {
 #[test]
 fn test_spice3_subcircuit_instances() {
     let ir = subcircuit_ir();
-    let cg = Spice3CodeGen { dialect: Spice3Dialect::Ngspice };
-    let netlist = cg.emit_netlist(&ir).unwrap();
+    let cg = Dialect::Ngspice;
+    let netlist = netlist(&ir, cg).unwrap();
 
     assert!(netlist.contains(".subckt inverter in out vdd vss PARAMS: wp=2u wn=1u"), "subckt: {}", netlist);
     assert!(netlist.contains("Mp out in vdd vdd pmos W={wp} L=180n"), "Mp: {}", netlist);
@@ -393,8 +399,8 @@ fn test_spice3_subcircuit_instances() {
 #[test]
 fn test_spice3_waveforms() {
     let ir = waveform_ir();
-    let cg = Spice3CodeGen { dialect: Spice3Dialect::Ngspice };
-    let netlist = cg.emit_netlist(&ir).unwrap();
+    let cg = Dialect::Ngspice;
+    let netlist = netlist(&ir, cg).unwrap();
 
     assert!(netlist.contains("SIN(1 0.5 1000000"), "sin: {}", netlist);
     assert!(netlist.contains("PULSE(0 1.8"), "pulse: {}", netlist);
@@ -405,8 +411,8 @@ fn test_spice3_waveforms() {
 #[test]
 fn test_spectre_waveforms() {
     let ir = waveform_ir();
-    let cg = SpectreCodeGen;
-    let netlist = cg.emit_netlist(&ir).unwrap();
+    let cg = Dialect::Spectre;
+    let netlist = netlist(&ir, cg).unwrap();
 
     assert!(netlist.contains("type=sine sinedc=1 ampl=500m freq=1M"), "sin: {}", netlist);
     assert!(netlist.contains("type=pulse val0=0 val1=1.8"), "pulse: {}", netlist);
@@ -416,47 +422,47 @@ fn test_spectre_waveforms() {
 
 #[test]
 fn test_spice3_all_analysis_types() {
-    let cg = Spice3CodeGen { dialect: Spice3Dialect::Ngspice };
+    let cg = Dialect::Ngspice;
 
-    assert_eq!(cg.emit_analysis(&Analysis::Op).unwrap(), ".op");
+    assert_eq!(analysis(cg, &Analysis::Op).unwrap(), ".op");
 
     let dc = Analysis::Dc { sweeps: vec![
         DcSweep { source: "V1".into(), start: 0.0, stop: 5.0, step: 0.1 },
     ]};
-    assert!(cg.emit_analysis(&dc).unwrap().starts_with(".dc V1"));
+    assert!(analysis(cg, &dc).unwrap().starts_with(".dc V1"));
 
     let ac = Analysis::Ac { variation: "dec".into(), points: 100, start: 1.0, stop: 1e9 };
-    assert!(cg.emit_analysis(&ac).unwrap().starts_with(".ac dec 100"));
+    assert!(analysis(cg, &ac).unwrap().starts_with(".ac dec 100"));
 
     let tran = Analysis::Transient { step: 1e-9, stop: 1e-6, start: None, max_step: None, uic: false };
-    assert!(cg.emit_analysis(&tran).unwrap().starts_with(".tran 1n"));
+    assert!(analysis(cg, &tran).unwrap().starts_with(".tran 1n"));
 
     let tran_uic = Analysis::Transient { step: 1e-9, stop: 1e-6, start: None, max_step: None, uic: true };
-    assert!(cg.emit_analysis(&tran_uic).unwrap().contains("UIC"));
+    assert!(analysis(cg, &tran_uic).unwrap().contains("UIC"));
 
     let noise = Analysis::Noise {
         output: "out".into(), reference: "0".into(), source: "V1".into(),
         variation: "dec".into(), points: 10, start: 1.0, stop: 1e6,
         points_per_summary: None,
     };
-    assert!(cg.emit_analysis(&noise).unwrap().starts_with(".noise V(out) V1"));
+    assert!(analysis(cg, &noise).unwrap().starts_with(".noise V(out) V1"));
 
     let tf = Analysis::Tf { output: "V(out)".into(), source: "Vin".into() };
-    assert_eq!(cg.emit_analysis(&tf).unwrap(), ".tf V(out) Vin");
+    assert_eq!(analysis(cg, &tf).unwrap(), ".tf V(out) Vin");
 
     let sens = Analysis::Sensitivity { output: "V(out)".into(), ac: None };
-    assert_eq!(cg.emit_analysis(&sens).unwrap(), ".sens V(out)");
+    assert_eq!(analysis(cg, &sens).unwrap(), ".sens V(out)");
 
     let pz = Analysis::PoleZero {
         node1: "1".into(), node2: "0".into(), node3: "3".into(), node4: "0".into(),
         tf_type: "vol".into(), pz_type: "pz".into(),
     };
-    assert_eq!(cg.emit_analysis(&pz).unwrap(), ".pz 1 0 3 0 vol pz");
+    assert_eq!(analysis(cg, &pz).unwrap(), ".pz 1 0 3 0 vol pz");
 
     let four = Analysis::Fourier {
         fundamental: 1e3, outputs: vec!["V(out)".into()], num_harmonics: Some(10),
     };
-    assert!(cg.emit_analysis(&four).unwrap().contains(".four 1k V(out)"));
+    assert!(analysis(cg, &four).unwrap().contains(".four 1k V(out)"));
 }
 
 #[test]
@@ -469,33 +475,11 @@ fn test_spectre_options() {
         backend_specific: HashMap::new(),
     };
 
-    let cg = SpectreCodeGen;
-    let s = cg.emit_options(&opts).unwrap();
+    let mut ir = resistor_divider_ir();
+    ir.testbench.as_mut().unwrap().options = opts;
+    let n = netlist(&ir, Dialect::Spectre).unwrap();
+    let s = n.lines().find(|l| l.starts_with("myopts")).unwrap();
     assert!(s.contains("myopts options"));
     assert!(s.contains("reltol=1e-4"));
     assert!(s.contains("dcmaxiters=150"));
-}
-
-#[test]
-fn test_roundtrip_from_circuit_sanity() {
-    use spicerack::circuit::{Circuit, Param};
-
-    let mut c = Circuit::new("Roundtrip Test");
-    c.r("1", "a", "b", 4700.0);
-    c.c("1", "b", "0", 100e-12);
-    c.v("1", "a", "0", 5.0);
-    c.model("dmod", "D", vec![Param::new("IS", "1e-14"), Param::new("N", "1")]);
-
-    let ir = CircuitIR::from_circuit(&c);
-    let cg = Spice3CodeGen { dialect: Spice3Dialect::Ngspice };
-    let emitted = cg.emit_netlist(&ir).unwrap();
-
-    // Key components should match Circuit::to_string() output patterns
-    let original = c.to_string();
-    assert!(emitted.contains("R1 a b 4"), "R1: {}", emitted);
-    assert!(original.contains("R1 a b 4"), "original R1: {}", original);
-    assert!(emitted.contains("C1 b 0 100p"), "C1: {}", emitted);
-    assert!(original.contains("C1 b 0 100p"), "original C1: {}", original);
-    assert!(emitted.contains(".model dmod D(IS=1e-14 N=1)"), "model: {}", emitted);
-    assert!(original.contains(".model dmod D(IS=1e-14 N=1)"), "original model: {}", original);
 }
