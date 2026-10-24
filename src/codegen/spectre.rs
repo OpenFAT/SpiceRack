@@ -351,6 +351,7 @@ fn map_option_name(canonical: &str) -> &str {
 }
 
 pub(super) fn netlist(ir: &CircuitIR) -> Result<String, CodeGenError> {
+    super::refuse_raw_spice(ir, "spectre")?;
     let mut lines = Vec::new();
 
     // `[KUN]` B.2: `//` is a Spectre comment; "all Spectre netlists must

@@ -28,7 +28,7 @@ fn convert(deck: &Path, out: &Path) -> std::io::Result<()> {
     let src = std::fs::read_to_string(deck)?;
     let stem = deck.file_stem().and_then(|s| s.to_str()).unwrap_or("deck");
     let ir = parse(&src, stem);
-    let raw = ir.top.raw_spice.len() + ir.subcircuit_defs.iter().map(|s| s.raw_spice.len()).sum::<usize>() + ir.testbench.as_ref().map_or(0, |t| t.extra_lines.len());
+    let raw = ir.top.raw_spice.len() + ir.subcircuit_defs.iter().map(|s| s.raw_spice.len()).sum::<usize>();
     if raw > 0 {
         eprintln!("{}: {raw} card(s) kept verbatim (no IR form)", deck.display());
     }

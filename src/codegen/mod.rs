@@ -42,6 +42,19 @@ pub fn netlist(ir: &CircuitIR, d: Dialect) -> Result<String, CodeGenError> {
     }
 }
 
+/// `raw_spice` lines are SPICE text; a non-SPICE dialect cannot place them,
+/// and dropping them would be a silently different deck.
+fn refuse_raw_spice(ir: &CircuitIR, backend: &str) -> Result<(), CodeGenError> {
+    let sub = std::iter::once(&ir.top).chain(&ir.subcircuit_defs).find(|s| !s.raw_spice.is_empty());
+    match sub {
+        Some(s) => Err(CodeGenError::UnsupportedComponent {
+            backend: backend.into(),
+            component: format!("raw SPICE line '{}' in {}", s.raw_spice[0].trim(), s.name),
+        }),
+        None => Ok(()),
+    }
+}
+
 /// Format f64 in SPICE notation (use SI prefix when clean)
 pub fn format_spice_number(v: f64) -> String {
     let (mult, suffix) = crate::unit::si_prefix(v);

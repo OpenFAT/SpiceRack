@@ -565,6 +565,7 @@ fn sanitize(s: &str) -> String {
 }
 
 pub(super) fn netlist(ir: &CircuitIR) -> Result<String, CodeGenError> {
+    super::refuse_raw_spice(ir, "vacask")?;
     let mut loads: BTreeSet<String> = BTreeSet::new();
     let mut needs: BTreeSet<Need> = BTreeSet::new();
 
@@ -686,9 +687,6 @@ pub(super) fn netlist(ir: &CircuitIR) -> Result<String, CodeGenError> {
     }
     for inst in &ir.top.instances {
         lines.push(emit_instance(inst));
-    }
-    for raw in &ir.top.raw_spice {
-        lines.push(raw.clone());
     }
 
     if let Some(tb) = &ir.testbench {
@@ -892,9 +890,8 @@ fn emit_component(comp: &Component) -> Result<String, CodeGenError> {
             name.to_ascii_lowercase(), nd.to_ascii_lowercase(), ng.to_ascii_lowercase(),
             ns.to_ascii_lowercase(), model.to_ascii_lowercase(), inst_params(params),
         ),
-        // Raw text is passed through verbatim: it is the escape hatch for
-        // native VACASK statements, and VACASK rejects anything else loudly.
-        Component::RawSpice { line } => line.clone(),
+        // SPICE text; native VACASK statements go in `Testbench::extra_lines`.
+        Component::RawSpice { line } => return Err(unsupported_comp(format!("raw SPICE line '{}'", line.trim()))),
 
         Component::BehavioralVoltage { name, .. } | Component::BehavioralCurrent { name, .. } => {
             return Err(unsupported_comp(format!(

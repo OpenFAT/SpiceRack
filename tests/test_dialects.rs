@@ -153,6 +153,22 @@ fn hspice_card_forms() {
     assert!(netlist(&with_a, Dialect::Hspice).is_err());
 }
 
+/// Raw SPICE text, at the top or inside a subcircuit, is refused by the
+/// non-SPICE dialects rather than dropped, and kept by the SPICE ones.
+#[test]
+fn raw_spice_is_refused_not_dropped() {
+    for at_top in [true, false] {
+        let mut ir = circuit(vec![Analysis::Op]);
+        let line = "Gp 0 p poly(1) mid 0 0 1m".to_string();
+        if at_top { ir.top.raw_spice.push(line.clone()) } else { ir.subcircuit_defs[0].raw_spice.push(line.clone()) }
+        for d in [Dialect::Spectre, Dialect::Vacask] {
+            let e = netlist(&ir, d).unwrap_err().to_string();
+            assert!(e.contains("raw SPICE line"), "{d:?}: {e}");
+        }
+        assert!(netlist(&ir, Dialect::Ngspice).unwrap().contains(&line));
+    }
+}
+
 // ── ESPice as the reader ──
 
 fn espice() -> Option<String> {

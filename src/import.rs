@@ -549,9 +549,8 @@ pub fn parse(src: &str, name: &str) -> CircuitIR {
                 lib_block = true;
             }
             _ if !inside && control(&mut tb, &card, &t) => {}
-            // Analyses this IR has no form for (.pz, .step, .hb, ...) stay
-            // with the testbench so they keep their place after the circuit.
-            _ if !inside => tb.extra_lines.push(card),
+            // SPICE text the IR has no form for (.pz, .step, .hb, ...);
+            // `extra_lines` is for target-native text, not this.
             _ => here.raw_spice.push(card),
         }
     }
