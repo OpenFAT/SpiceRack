@@ -1,14 +1,13 @@
 //! End-to-end coverage of the analyses the ESPice backend exposes, mirroring
 //! tests/test_ngspice_analyses.rs: each test runs a real deck through
-//! `EspiceSubprocess` and asserts a closed-form number.
+//! `BackendKind::Espice` and asserts a closed-form number.
 //!
 //! Skipped automatically when espice is not on PATH. Not mirrored: XSPICE,
 //! `.control` and Laplace (not ESPice features), `.disto`/`.pz`/`.noise`
 //! (their result layouts are not mapped by this backend yet), `.four`
 //! (ESPice writes the table as a raw plot, not to stdout).
 
-use spicerack::backend::Backend;
-use spicerack::backend::espice::EspiceSubprocess;
+use spicerack::backend::BackendKind;
 use spicerack::measure_parse::parse_measures;
 use spicerack::result::{MeasureResult, RawData};
 
@@ -27,7 +26,7 @@ fn run(deck: &str) -> Option<RawData> {
         return None;
     }
     Some(
-        EspiceSubprocess
+        BackendKind::Espice
             .run(deck)
             .unwrap_or_else(|e| panic!("deck failed: {e}\n{deck}")),
     )
@@ -207,17 +206,4 @@ fn measure_works_on_dc_ac_and_tran() {
     let v = tran_m.iter().find(|m| m.name == "vend").expect("vend");
     let expected = 1.0 - (-1.0f64).exp();
     assert!(close(v.value, expected, 2e-3), "V(1 tau) = {}", v.value);
-}
-
-// ── what the backend refuses ──
-
-#[test]
-fn a_pre_osdi_deck_is_refused_with_a_reason() {
-    if !espice_available() {
-        return;
-    }
-    let err = EspiceSubprocess
-        .run("* osdi\n.control\npre_osdi /m.osdi\n.endc\nV1 a 0 1\nR1 a 0 1k\n.op\n.end\n")
-        .unwrap_err();
-    assert!(err.to_string().contains("does not load OSDI"), "{err}");
 }

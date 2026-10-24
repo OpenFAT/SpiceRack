@@ -2061,29 +2061,6 @@ mod tests {
         );
     }
 
-    // ── Issue 02: FeatureFlags → CircuitFeatures ──
-
-    #[test]
-    fn test_feature_flags_to_circuit_features() {
-        let flags = FeatureFlags {
-            has_xspice: true,
-            has_osdi: false,
-            has_measures: true,
-            has_step_params: false,
-            has_control_blocks: false,
-            has_laplace_sources: true,
-            has_verilog_cosim: false,
-            element_count: 42,
-        };
-        let cf: crate::backend::CircuitFeatures = (&flags).into();
-        assert!(cf.has_xspice);
-        assert!(!cf.has_osdi);
-        assert!(cf.has_measures);
-        assert!(!cf.has_step_params);
-        assert!(cf.has_laplace_sources);
-        assert_eq!(cf.element_count, 42);
-    }
-
     #[test]
     fn test_ac_magnitude_serde_roundtrip() {
         let v_with_ac = Component::VoltageSource {

@@ -373,16 +373,6 @@ fn test_fft_metrics_empty() {
 // ── Spectre sweep/montecarlo/SpectreRF netlist tests ──
 
 #[test]
-fn test_spectre_sweep_netlist_build() {
-    // Test the internal Spectre sweep netlist builder
-    use spicerack::backend::spectre::SpectreSubprocess;
-
-    let backend = SpectreSubprocess;
-    // Just verify the struct exists and the backend name is correct
-    assert_eq!(spicerack::backend::Backend::name(&backend), "spectre");
-}
-
-#[test]
 fn test_spectre_pac_method_exists() {
     // Verify the spectre_pac method is reachable on CircuitSimulator
     let mut c = Circuit::new("pac_test");
