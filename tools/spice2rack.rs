@@ -16,7 +16,9 @@
 //! same cards as the `.ngspice.sp` written beside it (`--check` runs it and
 //! compares them as a multiset: a `raw_spice()` fallback moves its card into
 //! the raw block, after the components).
-//! `--dialect hspice` reads HSPICE decks (default ngspice).
+//! `--check` also requires each deck to be a fixpoint: written in its own
+//! dialect and read back, it gives the same IR. `--dialect hspice` reads
+//! HSPICE decks (default ngspice).
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -317,6 +319,15 @@ fn convert(deck: &Path, o: &Opts) -> std::io::Result<Vec<&'static str>> {
             Err(e) => eprintln!("{}: {d:?} skipped: {e}", deck.display()),
         }
     }
+    // Fixpoint: what SpiceRack writes in the deck's own dialect, it reads
+    // back as the same IR, and writes back as the same text.
+    if o.check {
+        let text = netlist(&ir, o.dialect).map_err(std::io::Error::other)?;
+        let (again, _) = parse(&text, stem, o.dialect).map_err(std::io::Error::other)?;
+        if again != ir || netlist(&again, o.dialect).ok().as_ref() != Some(&text) {
+            return Err(std::io::Error::other(format!("not a fixpoint in {:?}: re-reading the emitted deck changes the IR", o.dialect)));
+        }
+    }
     if !o.python {
         return Ok(vec![]);
     }
@@ -364,7 +375,7 @@ fn main() {
         std::process::exit(2);
     }
     std::fs::create_dir_all(&out).expect("output directory");
-    let o = Opts { out, dialect, python: python || check, check };
+    let o = Opts { out, dialect, python, check };
     let (mut failed, mut tally) = (0, BTreeMap::<&str, (usize, usize)>::new());
     for deck in &args {
         match convert(Path::new(deck), &o) {

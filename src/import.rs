@@ -267,12 +267,15 @@ fn args(tok: &str) -> Option<Vec<f64>> {
     inner.split(|c: char| c.is_whitespace() || c == ',').filter(|s| !s.is_empty()).map(num).collect()
 }
 
+/// Independent-source waveform keywords.
+const WAVEFORMS: &[&str] = &["pulse", "sin", "sine", "pwl", "exp", "sffm", "am"];
+
 fn waveform(tok: &str) -> Option<IrWaveform> {
     let kind = tok.split_once('(')?.0.trim().to_ascii_lowercase(); // `pwl (0 0 ...)`: one group, blank before `(`
     let a = args(tok)?;
     let g = |i: usize, d: f64| a.get(i).copied().unwrap_or(d);
     Some(match kind.as_str() {
-        "sin" => IrWaveform::Sin { offset: g(0, 0.0), amplitude: g(1, 0.0), frequency: g(2, 0.0), delay: g(3, 0.0), damping: g(4, 0.0), phase: g(5, 0.0) },
+        "sin" | "sine" => IrWaveform::Sin { offset: g(0, 0.0), amplitude: g(1, 0.0), frequency: g(2, 0.0), delay: g(3, 0.0), damping: g(4, 0.0), phase: g(5, 0.0) },
         "pulse" => IrWaveform::Pulse { initial: g(0, 0.0), pulsed: g(1, 0.0), delay: g(2, 0.0), rise_time: g(3, 0.0), fall_time: g(4, 0.0), pulse_width: g(5, 0.0), period: g(6, 0.0) },
         "pwl" if a.len() % 2 == 0 => IrWaveform::Pwl { values: a.chunks(2).map(|p| (p[0], p[1])).collect() },
         "exp" => IrWaveform::Exp { initial: g(0, 0.0), pulsed: g(1, 0.0), rise_delay: g(2, 0.0), rise_tau: g(3, 0.0), fall_delay: g(4, 0.0), fall_tau: g(5, 0.0) },
@@ -332,7 +335,23 @@ fn element(t: &[String], models: &HashSet<String>) -> Option<Component> {
                     Some((k, v)) if matches!(k.to_ascii_lowercase().as_str(), "dc" | "ac") => vec![k.to_string(), v.to_string()],
                     _ => vec![x.clone()],
                 }))
-                .collect();
+                .collect::<Vec<String>>();
+            // `pulse 0 5 1n ...`: the parentheses are optional (ngspice ch.3),
+            // so a bare waveform word takes the numbers after it as its group.
+            let mut t2: Vec<String> = Vec::new();
+            let mut k = 0;
+            while k < t.len() {
+                let w = t[k].to_ascii_lowercase();
+                if k >= 3 && WAVEFORMS.contains(&w.as_str()) {
+                    let args: Vec<String> = t[k + 1..].iter().take_while(|x| num(x).is_some()).cloned().collect();
+                    k += 1 + args.len();
+                    t2.push(format!("{w}({})", args.join(" ")));
+                } else {
+                    t2.push(t[k].clone());
+                    k += 1;
+                }
+            }
+            let t = t2;
             // A DC value: a number, an expression or a parameter, not a group.
             let is_value = |x: &String| !x.contains('(') || x.starts_with(['{', '\'']);
             let mut i = 3;
@@ -505,6 +524,11 @@ fn node_values(toks: &[String]) -> Option<Vec<(String, f64)>> {
 }
 
 /// A dot card that is an analysis or testbench setting; `false` if not.
+/// A point count: `10`, or a number written as one (`1e2`).
+fn count(tok: &str) -> Option<u32> {
+    num(tok).filter(|v| *v >= 0.0 && v.fract() == 0.0).map(|v| v as u32)
+}
+
 fn control_card(tb: &mut Testbench, card: &str, t: &[String], d: Dialect) -> bool {
     let n = |i: usize| t.get(i).and_then(|x| num(x));
     let kind = t[0].to_ascii_lowercase();
@@ -515,7 +539,22 @@ fn control_card(tb: &mut Testbench, card: &str, t: &[String], d: Dialect) -> boo
             .map(|c| Some(DcSweep { source: c[0].clone(), start: num(&c[1])?, stop: num(&c[2])?, step: num(&c[3])? }))
             .collect::<Option<Vec<_>>>()
             .map(|sweeps| Analysis::Dc { sweeps }),
-        ".ac" if t.len() == 5 => (|| Some(Analysis::Ac { variation: t[1].to_ascii_lowercase(), points: t[2].parse().ok()?, start: n(3)?, stop: n(4)? }))(),
+        ".ac" if t.len() == 5 => (|| Some(Analysis::Ac { variation: t[1].to_ascii_lowercase(), points: count(&t[2])?, start: n(3)?, stop: n(4)? }))(),
+        // `.pz n1 n2 n3 n4 vol|cur pol|zer|pz`
+        ".pz" if t.len() == 7 => Some(Analysis::PoleZero {
+            node1: t[1].clone(),
+            node2: t[2].clone(),
+            node3: t[3].clone(),
+            node4: t[4].clone(),
+            tf_type: t[5].to_ascii_lowercase(),
+            pz_type: t[6].to_ascii_lowercase(),
+        }),
+        // `.sens out [dc]` / `.sens out ac dec|oct|lin n f1 f2`
+        ".sens" if t.len() == 2 || (t.len() == 3 && t[2].eq_ignore_ascii_case("dc")) => Some(Analysis::Sensitivity { output: t[1].clone(), ac: None }),
+        ".sens" if t.len() == 7 && t[2].eq_ignore_ascii_case("ac") => (|| {
+            let ac = AcSweepParams { variation: t[3].to_ascii_lowercase(), points: count(&t[4])?, start: n(5)?, stop: n(6)? };
+            Some(Analysis::Sensitivity { output: t[1].clone(), ac: Some(ac) })
+        })(),
         ".tran" => (|| {
             let uic = t.last()?.eq_ignore_ascii_case("uic");
             let body = &t[1..t.len() - uic as usize];
@@ -541,7 +580,7 @@ fn control_card(tb: &mut Testbench, card: &str, t: &[String], d: Dialect) -> boo
                 reference,
                 source: t[2].clone(),
                 variation: t[3].to_ascii_lowercase(),
-                points: t[4].parse().ok()?,
+                points: count(&t[4])?,
                 start: n(5)?,
                 stop: n(6)?,
                 points_per_summary: t.get(7).and_then(|x| x.parse().ok()),
@@ -829,6 +868,13 @@ Rp p 0 1k
         // `.control` analyses become dot cards; the scripting goes.
         let c = parse("t\nR1 a 0 1k\n.control\nTRAN 1n 10n\nplot v(a)\n.endc\n", "t", Dialect::Ngspice).unwrap().0;
         assert!(matches!(c.testbench.as_ref().unwrap().analyses[..], [Analysis::Transient { stop, .. }] if stop == 10e-9));
+        // Optional waveform parentheses, `sine`, `.pz`, `.sens`.
+        let w = parse("t\nV1 a 0 pulse 0 5 1n 1n 1n 5n 10n\nV2 b 0 dc 0 Sine(0 1 1k)\nR1 a 0 1k\n.pz a 0 b 0 vol pz\n.sens v(a) ac dec 10 1 1meg\n", "t", Dialect::Ngspice).unwrap().0;
+        assert!(w.top.raw_spice.is_empty(), "{:?}", w.top.raw_spice);
+        assert!(matches!(&w.top.components[0], Component::VoltageSource { waveform: Some(IrWaveform::Pulse { pulsed, .. }), .. } if *pulsed == 5.0));
+        assert!(matches!(&w.top.components[1], Component::VoltageSource { waveform: Some(IrWaveform::Sin { frequency, .. }), .. } if *frequency == 1e3));
+        let a = &w.testbench.as_ref().unwrap().analyses;
+        assert!(matches!(a[..], [Analysis::PoleZero { .. }, Analysis::Sensitivity { ac: Some(_), .. }]), "{a:?}");
         // A blank before the waveform's `(` is still the waveform.
         let b = parse("t\nV1 a 0 pwl (0 0 1n 1)\n", "t", Dialect::Ngspice).unwrap().0;
         assert!(matches!(&b.top.components[0], Component::VoltageSource { waveform: Some(IrWaveform::Pwl { .. }), .. }), "{:?}", b.top);
