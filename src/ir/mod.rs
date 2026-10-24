@@ -10,6 +10,11 @@ pub struct CircuitIR {
     pub testbench: Option<Testbench>,
     pub subcircuit_defs: Vec<Subcircuit>,
     pub model_libraries: Vec<ModelLibrary>,
+    /// The dialect the `raw_spice` lines are written in, when known (the
+    /// importer sets it: "ngspice", "hspice"). Such lines reach only that
+    /// dialect; `None` means generic SPICE, which every SPICE dialect takes.
+    #[serde(default)]
+    pub raw_dialect: Option<String>,
 }
 
 /// Named, parameterized, composable circuit fragment -- the unit of reuse
@@ -530,7 +535,7 @@ mod tests {
             verilog_blocks: vec![],
         };
 
-        let ir = CircuitIR {
+        let ir = CircuitIR { raw_dialect: None,
             top: sub.clone(),
             testbench: None,
             subcircuit_defs: Vec::new(),
@@ -546,7 +551,7 @@ mod tests {
 
     #[test]
     fn test_serialization_roundtrip() {
-        let ir = CircuitIR {
+        let ir = CircuitIR { raw_dialect: None,
             top: Subcircuit {
                 name: "roundtrip_test".into(),
                 ports: vec![Port { name: "in".into(), direction: PortDirection::Input }],
@@ -618,7 +623,7 @@ mod tests {
 
     #[test]
     fn test_compute_features_xspice() {
-        let ir = CircuitIR {
+        let ir = CircuitIR { raw_dialect: None,
             top: Subcircuit {
                 name: "xspice_test".into(),
                 ports: Vec::new(),
@@ -660,7 +665,7 @@ mod tests {
 
     #[test]
     fn test_compute_features_osdi_and_laplace() {
-        let ir = CircuitIR {
+        let ir = CircuitIR { raw_dialect: None,
             top: Subcircuit {
                 name: "osdi_test".into(),
                 ports: Vec::new(),
@@ -695,7 +700,7 @@ mod tests {
 
     #[test]
     fn test_compute_features_control_blocks() {
-        let ir = CircuitIR {
+        let ir = CircuitIR { raw_dialect: None,
             top: Subcircuit {
                 name: "ctrl_test".into(),
                 ports: Vec::new(),
@@ -720,7 +725,7 @@ mod tests {
 
     #[test]
     fn test_compute_features_measures_and_step() {
-        let ir = CircuitIR {
+        let ir = CircuitIR { raw_dialect: None,
             top: Subcircuit {
                 name: "meas_test".into(),
                 ports: Vec::new(),
@@ -766,7 +771,7 @@ mod tests {
     #[cfg(feature = "backend")]
     #[test]
     fn test_check_backend_osdi_against_ltspice() {
-        let ir = CircuitIR {
+        let ir = CircuitIR { raw_dialect: None,
             top: Subcircuit {
                 name: "osdi_check".into(),
                 ports: Vec::new(),
@@ -797,7 +802,7 @@ mod tests {
     #[cfg(feature = "backend")]
     #[test]
     fn test_check_backend_no_issues_for_clean_circuit() {
-        let ir = CircuitIR {
+        let ir = CircuitIR { raw_dialect: None,
             top: Subcircuit {
                 name: "clean".into(),
                 ports: Vec::new(),
@@ -831,7 +836,7 @@ mod tests {
 
     #[test]
     fn test_full_ir_json_roundtrip() {
-        let ir = CircuitIR {
+        let ir = CircuitIR { raw_dialect: None,
             top: Subcircuit {
                 name: "opamp_tb".into(),
                 ports: vec![],
@@ -1306,7 +1311,7 @@ mod tests {
 
     #[test]
     fn test_minimal_ir_roundtrip() {
-        let ir = CircuitIR {
+        let ir = CircuitIR { raw_dialect: None,
             top: Subcircuit {
                 name: "empty".into(),
                 ports: vec![],
@@ -1398,7 +1403,7 @@ mod tests {
             Component::RawSpice { line: ".probe V(out)".into() },
         ];
 
-        let ir = CircuitIR {
+        let ir = CircuitIR { raw_dialect: None,
             top: Subcircuit {
                 name: "all_components".into(),
                 ports: vec![],
@@ -1448,7 +1453,7 @@ mod tests {
             Analysis::SpectrePstb { pss_fundamental: 1e6, pss_stabilization: 100e-6, pss_harmonics: 10, probe: "iprobe".into(), variation: "dec".into(), points: 100, start: 1.0, stop: 1e9 },
         ];
 
-        let ir = CircuitIR {
+        let ir = CircuitIR { raw_dialect: None,
             top: Subcircuit {
                 name: "analysis_test".into(),
                 ports: vec![],

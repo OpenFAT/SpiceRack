@@ -767,7 +767,8 @@ pub fn parse(src: &str, name: &str, d: Dialect) -> Result<(CircuitIR, Report), S
         eprintln!("warning: .subckt {} has no .ends", sc.name);
         close_subckt(&mut open, &mut defs);
     }
-    Ok((CircuitIR { top, testbench: Some(tb), subcircuit_defs: defs, model_libraries: vec![] }, report))
+    let raw_dialect = Some(if d == Dialect::Hspice { "hspice" } else { "ngspice" }.to_string());
+    Ok((CircuitIR { raw_dialect, top, testbench: Some(tb), subcircuit_defs: defs, model_libraries: vec![] }, report))
 }
 
 #[cfg(test)]

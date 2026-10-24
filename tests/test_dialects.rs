@@ -96,7 +96,7 @@ fn circuit(analyses: Vec<Analysis>) -> CircuitIR {
         port_mapping: vec!["mid".into()],
         parameters: vec![("r".into(), "2k".into())],
     }];
-    CircuitIR { top, testbench: Some(tb(analyses)), subcircuit_defs: vec![load], model_libraries: vec![] }
+    CircuitIR { raw_dialect: None, top, testbench: Some(tb(analyses)), subcircuit_defs: vec![load], model_libraries: vec![] }
 }
 
 #[test]
@@ -166,6 +166,13 @@ fn raw_spice_is_refused_not_dropped() {
             assert!(e.contains("raw SPICE line"), "{d:?}: {e}");
         }
         assert!(netlist(&ir, Dialect::Ngspice).unwrap().contains(&line));
+        // Imported ngspice text reaches ngspice and ESPice only.
+        ir.raw_dialect = Some("ngspice".into());
+        assert!(netlist(&ir, Dialect::Espice).is_ok());
+        for d in [Dialect::Hspice, Dialect::Ltspice] {
+            let e = netlist(&ir, d).unwrap_err().to_string();
+            assert!(e.contains("ngspice line"), "{d:?}: {e}");
+        }
     }
 }
 

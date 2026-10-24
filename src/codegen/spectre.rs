@@ -972,7 +972,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     fn sample_resistor_divider() -> CircuitIR {
-        CircuitIR {
+        CircuitIR { raw_dialect: None,
             top: Subcircuit {
                 name: "Voltage Divider".into(),
                 ports: vec![],
@@ -1044,7 +1044,7 @@ mod tests {
 
     #[test]
     fn test_spectre_mosfet() {
-        let ir = CircuitIR {
+        let ir = CircuitIR { raw_dialect: None,
             top: Subcircuit {
                 name: "CMOS Inverter".into(),
                 ports: vec![],
@@ -1249,7 +1249,7 @@ mod tests {
 
     #[test]
     fn test_spectre_osdi() {
-        let ir = CircuitIR {
+        let ir = CircuitIR { raw_dialect: None,
             top: Subcircuit {
                 name: "VA Test".into(),
                 ports: vec![],
@@ -1290,7 +1290,7 @@ mod tests {
         backend_paths.insert("ngspice".into(), "/pdk/ngspice/sky130.lib".into());
         backend_paths.insert("spectre".into(), "/pdk/spectre/sky130.scs".into());
 
-        let ir = CircuitIR {
+        let ir = CircuitIR { raw_dialect: None,
             top: Subcircuit {
                 name: "pdk_spectre".into(),
                 ports: vec![], parameters: vec![], components: vec![],

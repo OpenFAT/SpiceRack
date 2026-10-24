@@ -292,7 +292,7 @@ impl PyCircuit {
         } else {
             return Err(PyKeyError::new_err(format!("Element '{name}' not found")));
         };
-        let deck = emit_ir_netlist(CircuitIR { top: one, ..Default::default() }, "ngspice")?;
+        let deck = emit_ir_netlist(CircuitIR { raw_dialect: None, top: one, ..Default::default() }, "ngspice")?;
         // Drop the title line and `.end`.
         let lines: Vec<&str> = deck.lines().collect();
         Ok(lines[1..lines.len() - 1].join("\n"))
@@ -344,7 +344,7 @@ impl PyCircuit {
 
 impl PyCircuit {
     fn ir(slf: &PyRef<'_, Self>) -> CircuitIR {
-        CircuitIR {
+        CircuitIR { raw_dialect: None,
             top: slf.as_super().inner.clone(),
             testbench: Some(slf.tb.clone()),
             subcircuit_defs: slf.defs.clone(),
@@ -1418,7 +1418,7 @@ impl PyTestbench {
     #[new]
     fn new(dut: &PySubcircuit) -> (Self, PySimulator) {
         let tb = ir::Testbench { dut: dut.inner.name.clone(), ..Default::default() };
-        let ir = CircuitIR { top: dut.inner.clone(), testbench: Some(tb), ..Default::default() };
+        let ir = CircuitIR { raw_dialect: None, top: dut.inner.clone(), testbench: Some(tb), ..Default::default() };
         (Self {}, PySimulator { ir, backend: None, save_currents: false })
     }
 

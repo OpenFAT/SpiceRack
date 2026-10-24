@@ -117,7 +117,7 @@ fn rc_ir(analyses: Vec<Analysis>) -> CircuitIR {
     top.components = vec![r("1", "vdd", "out", 1000.0), r("2", "out", "0", 1000.0)];
     let mut tb = empty_tb(analyses);
     tb.stimulus = vec![vsrc("dd", "vdd", "0", 3.0)];
-    CircuitIR { top, testbench: Some(tb), subcircuit_defs: vec![], model_libraries: vec![] }
+    CircuitIR { raw_dialect: None, top, testbench: Some(tb), subcircuit_defs: vec![], model_libraries: vec![] }
 }
 
 // ── Analyses ──
@@ -176,7 +176,7 @@ fn two_source_dc_runs_inner_sweep_fastest() {
     }]);
     tb.stimulus = vec![vsrc("a", "a", "0", 0.0), vsrc("b", "c", "0", 0.0)];
     top.components.push(r("3", "c", "0", 1000.0));
-    let ir = CircuitIR { top, testbench: Some(tb), subcircuit_defs: vec![], model_libraries: vec![] };
+    let ir = CircuitIR { raw_dialect: None, top, testbench: Some(tb), subcircuit_defs: vec![], model_libraries: vec![] };
     let Some(raw) = run(&ir) else { return };
     // 3 outer x 3 inner = 9 points, inner fastest.
     let a = col(&raw, "a");
@@ -202,7 +202,7 @@ fn ac_finds_the_rc_corner() {
         value: IrValue::Numeric { value: 0.0 },
         ac_magnitude: Some(1.0), ac_phase: Some(0.0), waveform: None,
     }];
-    let ir = CircuitIR { top, testbench: Some(tb), subcircuit_defs: vec![], model_libraries: vec![] };
+    let ir = CircuitIR { raw_dialect: None, top, testbench: Some(tb), subcircuit_defs: vec![], model_libraries: vec![] };
     let Some(raw) = run(&ir) else { return };
     assert!(raw.is_complex, "AC must come back as a complex plot");
 
@@ -232,7 +232,7 @@ fn ac_phase_on_a_source_is_honoured() {
         value: IrValue::Numeric { value: 0.0 },
         ac_magnitude: Some(2.0), ac_phase: Some(90.0), waveform: None,
     }];
-    let ir = CircuitIR { top, testbench: Some(tb), subcircuit_defs: vec![], model_libraries: vec![] };
+    let ir = CircuitIR { raw_dialect: None, top, testbench: Some(tb), subcircuit_defs: vec![], model_libraries: vec![] };
     let Some(raw) = run(&ir) else { return };
     let v = cplx(&raw, "vin");
     close(v[0].norm(), 2.0, 1e-9);
@@ -255,7 +255,7 @@ fn tran_follows_the_rc_step_response() {
             fall_time: 1e-9, pulse_width: 1.0, period: 0.0,
         }),
     }];
-    let ir = CircuitIR { top, testbench: Some(tb), subcircuit_defs: vec![], model_libraries: vec![] };
+    let ir = CircuitIR { raw_dialect: None, top, testbench: Some(tb), subcircuit_defs: vec![], model_libraries: vec![] };
     let Some(raw) = run(&ir) else { return };
     let t = col(&raw, "time");
     let out = col(&raw, "out");
@@ -275,7 +275,7 @@ fn tran_emits_maxstep_so_the_grid_is_spices() {
         step: 1e-4, stop: 1e-2, start: None, max_step: None, uic: false,
     }]);
     tb.stimulus = vec![vsrc("1", "vin", "0", 1.0)];
-    let ir = CircuitIR { top, testbench: Some(tb), subcircuit_defs: vec![], model_libraries: vec![] };
+    let ir = CircuitIR { raw_dialect: None, top, testbench: Some(tb), subcircuit_defs: vec![], model_libraries: vec![] };
     let netlist = emit(&ir, Dialect::Vacask).unwrap();
     assert!(netlist.contains("maxstep="), "{}", netlist);
     let Some(raw) = run(&ir) else { return };
@@ -303,7 +303,7 @@ fn noise_matches_a_resistors_thermal_floor() {
         ac_magnitude: Some(1.0), ac_phase: None, waveform: None,
     }];
     tb.temperature = Some(27.0);
-    let ir = CircuitIR { top, testbench: Some(tb), subcircuit_defs: vec![], model_libraries: vec![] };
+    let ir = CircuitIR { raw_dialect: None, top, testbench: Some(tb), subcircuit_defs: vec![], model_libraries: vec![] };
     let Some(raw) = run(&ir) else { return };
 
     let onoise = col(&raw, "onoise");
@@ -345,7 +345,7 @@ fn a_diode_runs_under_the_spice_device_set() {
     let mut tb = empty_tb(vec![Analysis::Op]);
     tb.stimulus = vec![vsrc("1", "vin", "0", 1.0)];
     tb.temperature = Some(27.0);
-    let ir = CircuitIR { top, testbench: Some(tb), subcircuit_defs: vec![], model_libraries: vec![] };
+    let ir = CircuitIR { raw_dialect: None, top, testbench: Some(tb), subcircuit_defs: vec![], model_libraries: vec![] };
     let netlist = emit(&ir, Dialect::Vacask).unwrap();
     assert!(netlist.contains("load \"spice/diode.osdi\""), "{}", netlist);
     assert!(netlist.contains("model dmod sp_diode"), "{}", netlist);
@@ -373,7 +373,7 @@ fn a_bjt_runs_and_carries_its_polarity() {
     }];
     let mut tb = empty_tb(vec![Analysis::Op]);
     tb.stimulus = vec![vsrc("cc", "vcc", "0", 5.0), vsrc("b", "vb", "0", 1.0)];
-    let ir = CircuitIR { top, testbench: Some(tb), subcircuit_defs: vec![], model_libraries: vec![] };
+    let ir = CircuitIR { raw_dialect: None, top, testbench: Some(tb), subcircuit_defs: vec![], model_libraries: vec![] };
     let netlist = emit(&ir, Dialect::Vacask).unwrap();
     assert!(netlist.contains("model qn sp_bjt (type=1"), "{}", netlist);
     let Some(raw) = run(&ir) else { return };
@@ -403,7 +403,7 @@ fn a_level_1_mosfet_runs() {
     }];
     let mut tb = empty_tb(vec![Analysis::Op]);
     tb.stimulus = vec![vsrc("dd", "vdd", "0", 5.0), vsrc("g", "gate", "0", 3.0)];
-    let ir = CircuitIR { top, testbench: Some(tb), subcircuit_defs: vec![], model_libraries: vec![] };
+    let ir = CircuitIR { raw_dialect: None, top, testbench: Some(tb), subcircuit_defs: vec![], model_libraries: vec![] };
     let netlist = emit(&ir, Dialect::Vacask).unwrap();
     assert!(netlist.contains("load \"spice/mos1.osdi\""), "{}", netlist);
     assert!(netlist.contains("model nm sp_mos1 (type=1"), "{}", netlist);
@@ -429,7 +429,7 @@ fn a_jfet_runs() {
     }];
     let mut tb = empty_tb(vec![Analysis::Op]);
     tb.stimulus = vec![vsrc("dd", "vdd", "0", 5.0)];
-    let ir = CircuitIR { top, testbench: Some(tb), subcircuit_defs: vec![], model_libraries: vec![] };
+    let ir = CircuitIR { raw_dialect: None, top, testbench: Some(tb), subcircuit_defs: vec![], model_libraries: vec![] };
     let netlist = emit(&ir, Dialect::Vacask).unwrap();
     assert!(netlist.contains("load \"spice/jfet1.osdi\""), "{}", netlist);
     let Some(raw) = run(&ir) else { return };
@@ -452,7 +452,7 @@ fn an_inductor_and_its_mutual_coupling_run() {
         value: IrValue::Numeric { value: 0.0 },
         ac_magnitude: Some(1.0), ac_phase: None, waveform: None,
     }];
-    let ir = CircuitIR { top, testbench: Some(tb), subcircuit_defs: vec![], model_libraries: vec![] };
+    let ir = CircuitIR { raw_dialect: None, top, testbench: Some(tb), subcircuit_defs: vec![], model_libraries: vec![] };
     let netlist = emit(&ir, Dialect::Vacask).unwrap();
     assert!(netlist.contains("k1 () mutual k=9.9e-1 ind1=\"l1\" ind2=\"l2\""), "{}", netlist);
     let Some(raw) = run(&ir) else { return };
@@ -479,7 +479,7 @@ fn controlled_sources_run() {
     ];
     let mut tb = empty_tb(vec![Analysis::Op]);
     tb.stimulus = vec![vsrc("1", "in", "0", 2.0)];
-    let ir = CircuitIR { top, testbench: Some(tb), subcircuit_defs: vec![], model_libraries: vec![] };
+    let ir = CircuitIR { raw_dialect: None, top, testbench: Some(tb), subcircuit_defs: vec![], model_libraries: vec![] };
     let Some(raw) = run(&ir) else { return };
     close(col(&raw, "e")[0], 4.0, 1e-9);            // VCVS: 2 V * 2
     close(col(&raw, "g")[0], 2.0 * 2e-3 * 1e3, 1e-9); // VCCS: 2 V * 2 mS * 1k
@@ -514,7 +514,7 @@ fn subcircuits_and_their_instances_run() {
     }];
     let mut tb = empty_tb(vec![Analysis::Op]);
     tb.stimulus = vec![vsrc("dd", "vdd", "0", 4.0)];
-    let ir = CircuitIR {
+    let ir = CircuitIR { raw_dialect: None,
         top, testbench: Some(tb), subcircuit_defs: vec![divider], model_libraries: vec![],
     };
     let Some(raw) = run(&ir) else { return };
@@ -537,7 +537,7 @@ fn step_params_sweep_a_netlist_variable() {
     tb.step_params = vec![StepParam {
         param: "rtop".into(), start: 1000.0, stop: 3000.0, step: 1000.0, sweep_type: None,
     }];
-    let ir = CircuitIR { top, testbench: Some(tb), subcircuit_defs: vec![], model_libraries: vec![] };
+    let ir = CircuitIR { raw_dialect: None, top, testbench: Some(tb), subcircuit_defs: vec![], model_libraries: vec![] };
     let Some(raw) = run(&ir) else { return };
     let out = col(&raw, "out");
     assert_eq!(out.len(), 3, "{:?}", out);
@@ -555,7 +555,7 @@ fn initial_conditions_reach_the_analysis() {
     }]);
     tb.stimulus = vec![vsrc("1", "vin", "0", 1.0)];
     tb.initial_conditions = vec![("out".into(), 0.5)];
-    let ir = CircuitIR { top, testbench: Some(tb), subcircuit_defs: vec![], model_libraries: vec![] };
+    let ir = CircuitIR { raw_dialect: None, top, testbench: Some(tb), subcircuit_defs: vec![], model_libraries: vec![] };
     let netlist = emit(&ir, Dialect::Vacask).unwrap();
     assert!(netlist.contains("ic=[\"out\"; 5e-1]"), "{}", netlist);
     let Some(raw) = run(&ir) else { return };
@@ -583,13 +583,13 @@ fn refusals_are_errors_not_broken_decks() {
     let with = |comp: Component| {
         let mut top = empty_sub("c");
         top.components = vec![comp];
-        CircuitIR { top, testbench: None, subcircuit_defs: vec![], model_libraries: vec![] }
+        CircuitIR { raw_dialect: None, top, testbench: None, subcircuit_defs: vec![], model_libraries: vec![] }
     };
 
     // No measurement statement at all: `measure` is "Command not found".
     let mut tb = empty_tb(vec![Analysis::Op]);
     tb.measures = vec!["tran vmax MAX V(out)".into()];
-    let ir = CircuitIR { top: empty_sub("m"), testbench: Some(tb), subcircuit_defs: vec![], model_libraries: vec![] };
+    let ir = CircuitIR { raw_dialect: None, top: empty_sub("m"), testbench: Some(tb), subcircuit_defs: vec![], model_libraries: vec![] };
     assert!(refuses(&ir), "measures must refuse");
 
     // PWL parses and then returns an identically-zero transient.
@@ -599,7 +599,7 @@ fn refusals_are_errors_not_broken_decks() {
         value: IrValue::Numeric { value: 0.0 }, ac_magnitude: None, ac_phase: None,
         waveform: Some(IrWaveform::Pwl { values: vec![(0.0, 0.0), (1e-3, 1.0)] }),
     }];
-    let ir = CircuitIR { top, testbench: None, subcircuit_defs: vec![], model_libraries: vec![] };
+    let ir = CircuitIR { raw_dialect: None, top, testbench: None, subcircuit_defs: vec![], model_libraries: vec![] };
     assert!(refuses(&ir), "PWL must refuse");
 
     // No behavioural sources, switches, transmission lines or XSPICE.
@@ -648,7 +648,7 @@ fn a_sine_source_runs_with_delay_and_damping() {
             offset: 0.5, amplitude: 2.0, frequency: 1e3, delay: 0.0, damping: 0.0, phase: 0.0,
         }),
     }];
-    let ir = CircuitIR { top, testbench: Some(tb), subcircuit_defs: vec![], model_libraries: vec![] };
+    let ir = CircuitIR { raw_dialect: None, top, testbench: Some(tb), subcircuit_defs: vec![], model_libraries: vec![] };
     let Some(raw) = run(&ir) else { return };
     let t = col(&raw, "time");
     let v = col(&raw, "vin");
@@ -673,7 +673,7 @@ fn a_pulse_train_runs() {
             fall_time: 1e-6, pulse_width: 1e-4, period: 2e-4,
         }),
     }];
-    let ir = CircuitIR { top, testbench: Some(tb), subcircuit_defs: vec![], model_libraries: vec![] };
+    let ir = CircuitIR { raw_dialect: None, top, testbench: Some(tb), subcircuit_defs: vec![], model_libraries: vec![] };
     let Some(raw) = run(&ir) else { return };
     let t = col(&raw, "time");
     let v = col(&raw, "vin");

@@ -13,7 +13,7 @@ fn analysis(d: Dialect, a: &Analysis) -> Result<String, CodeGenError> {
 // ── Shared test fixtures ──
 
 fn resistor_divider_ir() -> CircuitIR {
-    CircuitIR {
+    CircuitIR { raw_dialect: None,
         top: Subcircuit {
             name: "Voltage Divider".into(),
             ports: vec![],
@@ -71,7 +71,7 @@ fn resistor_divider_ir() -> CircuitIR {
 }
 
 fn mosfet_inverter_ir() -> CircuitIR {
-    CircuitIR {
+    CircuitIR { raw_dialect: None,
         top: Subcircuit {
             name: "CMOS Inverter".into(),
             ports: vec![],
@@ -146,7 +146,7 @@ fn mosfet_inverter_ir() -> CircuitIR {
 }
 
 fn subcircuit_ir() -> CircuitIR {
-    CircuitIR {
+    CircuitIR { raw_dialect: None,
         top: Subcircuit {
             name: "Top Level".into(),
             ports: vec![],
@@ -244,7 +244,7 @@ fn subcircuit_ir() -> CircuitIR {
 }
 
 fn waveform_ir() -> CircuitIR {
-    CircuitIR {
+    CircuitIR { raw_dialect: None,
         top: Subcircuit {
             name: "Waveform Test".into(),
             ports: vec![],

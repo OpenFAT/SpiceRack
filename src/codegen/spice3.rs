@@ -245,7 +245,25 @@ fn loads(d: Dialect, ir: &CircuitIR, lines: &mut Vec<String>) -> Result<(), Code
     Ok(())
 }
 
+/// Raw lines imported from one dialect reach only that dialect (ngspice and
+/// ESPice read the same text): ngspice's TRNOISE or `.probe` copied into an
+/// HSPICE deck would be a silently different deck.
+fn check_raw_dialect(d: Dialect, ir: &CircuitIR) -> Result<(), CodeGenError> {
+    let Some(from) = ir.raw_dialect.as_deref() else { return Ok(()) };
+    let family = |name: &str| if name == "espice" { "ngspice".to_string() } else { name.to_string() };
+    let to = format!("{d:?}").to_ascii_lowercase();
+    let raw = std::iter::once(&ir.top).chain(&ir.subcircuit_defs).find_map(|s| s.raw_spice.first());
+    match raw {
+        Some(line) if family(from) != family(&to) => Err(CodeGenError::UnsupportedComponent {
+            backend: to,
+            component: format!("{from} line '{}' (kept verbatim on import; it is {from} text)", line.trim()),
+        }),
+        _ => Ok(()),
+    }
+}
+
 pub(super) fn netlist(d: Dialect, ir: &CircuitIR) -> Result<String, CodeGenError> {
+    check_raw_dialect(d, ir)?;
     // Title must be first line (SPICE treats line 1 as title/comment)
     let mut lines = vec![format!("* {}", ir.top.name)];
     loads(d, ir, &mut lines)?;
@@ -542,7 +560,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     fn sample_resistor_divider() -> CircuitIR {
-        CircuitIR {
+        CircuitIR { raw_dialect: None,
             top: Subcircuit {
                 name: "Voltage Divider".into(),
                 ports: vec![],
@@ -627,7 +645,7 @@ mod tests {
 
     #[test]
     fn test_mosfet_circuit() {
-        let ir = CircuitIR {
+        let ir = CircuitIR { raw_dialect: None,
             top: Subcircuit {
                 name: "CMOS Inverter".into(),
                 ports: vec![],
@@ -706,7 +724,7 @@ mod tests {
 
     #[test]
     fn test_subcircuit_instances() {
-        let ir = CircuitIR {
+        let ir = CircuitIR { raw_dialect: None,
             top: Subcircuit {
                 name: "Top".into(),
                 ports: vec![],
@@ -793,7 +811,7 @@ mod tests {
 
     #[test]
     fn test_waveforms_sin_pulse_pwl() {
-        let ir = CircuitIR {
+        let ir = CircuitIR { raw_dialect: None,
             top: Subcircuit {
                 name: "Waveforms".into(),
                 ports: vec![],
@@ -986,7 +1004,7 @@ mod tests {
 
     #[test]
     fn test_osdi_ngspice_only() {
-        let ir = CircuitIR {
+        let ir = CircuitIR { raw_dialect: None,
             top: Subcircuit {
                 name: "OSDI Test".into(),
                 ports: vec![],
@@ -1038,7 +1056,7 @@ mod tests {
 
     #[test]
     fn test_step_params_ltspice_ok_ngspice_errors() {
-        let ir = CircuitIR {
+        let ir = CircuitIR { raw_dialect: None,
             top: Subcircuit {
                 name: "Step Test".into(),
                 ports: vec![],
@@ -1132,7 +1150,7 @@ mod tests {
         backend_paths.insert("ngspice".into(), "/pdk/ngspice/sky130.lib".into());
         backend_paths.insert("spectre".into(), "/pdk/spectre/sky130.scs".into());
 
-        let ir = CircuitIR {
+        let ir = CircuitIR { raw_dialect: None,
             top: Subcircuit {
                 name: "pdk_test".into(),
                 ports: vec![], parameters: vec![], components: vec![],
@@ -1174,7 +1192,7 @@ mod tests {
 
     #[test]
     fn test_model_library_corner_switch() {
-        let ir_tt = CircuitIR {
+        let ir_tt = CircuitIR { raw_dialect: None,
             top: Subcircuit {
                 name: "corner".into(),
                 ports: vec![], parameters: vec![], components: vec![],
@@ -1207,7 +1225,7 @@ mod tests {
 
     #[test]
     fn test_model_library_no_corner_uses_include() {
-        let ir = CircuitIR {
+        let ir = CircuitIR { raw_dialect: None,
             top: Subcircuit {
                 name: "nocorner".into(),
                 ports: vec![], parameters: vec![], components: vec![],
@@ -1235,7 +1253,7 @@ mod tests {
 
     #[test]
     fn test_ngspice_uses_save() {
-        let ir = CircuitIR {
+        let ir = CircuitIR { raw_dialect: None,
             top: Subcircuit {
                 name: "ng_save".into(),
                 ports: vec![], parameters: vec![],
@@ -1342,7 +1360,7 @@ mod tests {
 
     #[test]
     fn test_pdk_netlist_lib_before_subckt_and_components() {
-        let ir = CircuitIR {
+        let ir = CircuitIR { raw_dialect: None,
             top: Subcircuit {
                 name: "cs_amp_tb".into(),
                 ports: vec![], parameters: vec![],
@@ -1430,7 +1448,7 @@ mod tests {
 
     #[test]
     fn test_setup_includes_emitted_before_lib() {
-        let ir = CircuitIR {
+        let ir = CircuitIR { raw_dialect: None,
             top: Subcircuit {
                 name: "gf180_test".into(),
                 ports: vec![], parameters: vec![], components: vec![],
