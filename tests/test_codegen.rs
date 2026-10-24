@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use spicerack::codegen::{netlist, CodeGenError, Dialect};
 use spicerack::ir::*;
 
@@ -472,7 +472,7 @@ fn test_spectre_options() {
             ("reltol".into(), "1e-4".into()),
             ("max_iterations".into(), "150".into()),
         ],
-        backend_specific: HashMap::new(),
+        backend_specific: BTreeMap::new(),
     };
 
     let mut ir = resistor_divider_ir();

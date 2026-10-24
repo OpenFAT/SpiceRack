@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use serde::{Serialize, Deserialize};
 
 // ── Core IR types ──
@@ -35,7 +35,7 @@ pub struct VerilogBlock {
     pub source: String,
     pub mode: VerilogMode,
     pub instance_name: String,
-    pub connections: HashMap<String, VerilogConnection>,
+    pub connections: BTreeMap<String, VerilogConnection>,
     pub pdk: Option<String>,
     pub liberty: Option<String>,
     pub spice_models: Option<String>,
@@ -270,7 +270,7 @@ pub struct AcSweepParams {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct SimOptions {
     pub portable: Vec<(String, String)>,
-    pub backend_specific: HashMap<String, Vec<(String, String)>>,
+    pub backend_specific: BTreeMap<String, Vec<(String, String)>>,
 }
 
 /// Opaque PDK/model library reference
@@ -279,7 +279,7 @@ pub struct ModelLibrary {
     pub name: String,
     pub path: String,
     pub corner: Option<String>,
-    pub backend_paths: HashMap<String, String>,
+    pub backend_paths: BTreeMap<String, String>,
     #[serde(default)]
     pub setup_includes: Vec<String>,
 }
@@ -373,6 +373,7 @@ impl CircuitIR {
         flags.element_count += sub.instances.len();
     }
 
+    #[cfg(feature = "backend")]
     /// Check backend compatibility -- pure function, no I/O.
     ///
     /// Returns a list of issues (errors and warnings) for the given backend name.
@@ -760,6 +761,7 @@ mod tests {
         assert!(features.has_step_params);
     }
 
+    #[cfg(feature = "backend")]
     #[test]
     fn test_check_backend_osdi_against_ltspice() {
         let ir = CircuitIR {
@@ -790,6 +792,7 @@ mod tests {
         assert!(ir.check_backend("spectre").is_empty());
     }
 
+    #[cfg(feature = "backend")]
     #[test]
     fn test_check_backend_no_issues_for_clean_circuit() {
         let ir = CircuitIR {
@@ -918,7 +921,7 @@ mod tests {
                 options: SimOptions {
                     portable: vec![("reltol".into(), "1e-4".into())],
                     backend_specific: {
-                        let mut m = HashMap::new();
+                        let mut m = BTreeMap::new();
                         m.insert("spectre".into(), vec![("errpreset".into(), "moderate".into())]);
                         m
                     },
@@ -970,7 +973,7 @@ mod tests {
                 path: "/pdk/sky130.lib".into(),
                 corner: Some("tt".into()),
                 backend_paths: {
-                    let mut m = HashMap::new();
+                    let mut m = BTreeMap::new();
                     m.insert("ngspice".into(), "/pdk/ngspice/sky130.lib".into());
                     m.insert("spectre".into(), "/pdk/spectre/sky130.scs".into());
                     m

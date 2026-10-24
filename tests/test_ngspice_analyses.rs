@@ -1,3 +1,4 @@
+#![cfg(feature = "backend")]
 //! End-to-end coverage of every analysis the library exposes on ngspice.
 //!
 //! Each test runs a real deck through `BackendKind::Ngspice` and asserts a

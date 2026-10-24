@@ -10,23 +10,29 @@
 //! A digital Verilog block ([`lower`]) is either co-simulated (Icarus `.vvp`
 //! under ngspice `d_cosim`) or synthesized by Yosys into standard cells.
 
+#[cfg(feature = "backend")]
 use std::ffi::OsStr;
+#[cfg(feature = "backend")]
 use std::path::{Path, PathBuf};
+#[cfg(feature = "backend")]
 use std::process::Command;
 
+#[cfg(feature = "backend")]
 use crate::ir::{VerilogBlock, VerilogConnection, VerilogMode};
 
 /// True for a load-list entry that is Verilog-A source rather than a binary.
 pub fn is_source(path: &str) -> bool {
-    let p = Path::new(path);
+    let p = std::path::Path::new(path);
     matches!(p.extension().and_then(|e| e.to_str()), Some(e) if e.eq_ignore_ascii_case("va") || e.eq_ignore_ascii_case("vams"))
 }
 
+#[cfg(feature = "backend")]
 /// The `.va` file for a path or inline source.
 pub fn resolve(source_or_path: &str) -> Result<PathBuf, String> {
     resolve_ext(source_or_path, "va")
 }
 
+#[cfg(feature = "backend")]
 /// An existing `.{ext}` file (made absolute, so a deck written to a temp dir
 /// still finds it), or inline source written to a temp file named by its
 /// hash, so the same text always maps to the same file.
@@ -52,6 +58,7 @@ fn resolve_ext(source_or_path: &str, ext: &str) -> Result<PathBuf, String> {
     Ok(file)
 }
 
+#[cfg(feature = "backend")]
 /// Run `tool args` to make `out` from `src`, skipped when `out` is newer.
 fn run_tool(src: &Path, out: &Path, tool: &str, install: &str, args: &[&OsStr]) -> Result<String, String> {
     let mtime = |p: &Path| p.metadata().and_then(|m| m.modified());
@@ -76,6 +83,7 @@ fn run_tool(src: &Path, out: &Path, tool: &str, install: &str, args: &[&OsStr]) 
     Ok(done)
 }
 
+#[cfg(feature = "backend")]
 /// Compile `va` to an `.osdi` beside it with OpenVAF.
 pub fn compile_osdi(va: &Path) -> Result<String, String> {
     let osdi = va.with_extension("osdi");
@@ -83,12 +91,14 @@ pub fn compile_osdi(va: &Path) -> Result<String, String> {
     run_tool(va, &osdi, "openvaf", install, &[va.as_os_str(), "-o".as_ref(), osdi.as_os_str()])
 }
 
+#[cfg(feature = "backend")]
 /// A load list with every Verilog-A source replaced by its compiled `.osdi`,
 /// for the backends that load OSDI.
 pub fn osdi_loads(loads: &[String]) -> Result<Vec<String>, String> {
     loads.iter().map(|l| if is_source(l) { compile_osdi(Path::new(l)) } else { Ok(l.clone()) }).collect()
 }
 
+#[cfg(feature = "backend")]
 /// What a digital Verilog block becomes in a netlist.
 #[derive(Debug, PartialEq)]
 pub enum Lowered {
@@ -99,6 +109,7 @@ pub enum Lowered {
     Gates { spice_models: String, cells: Vec<Cell> },
 }
 
+#[cfg(feature = "backend")]
 /// One synthesized standard-cell instance.
 #[derive(Debug, PartialEq)]
 pub struct Cell {
@@ -107,6 +118,7 @@ pub struct Cell {
     pub nodes: Vec<String>,
 }
 
+#[cfg(feature = "backend")]
 fn nets(c: &VerilogConnection) -> &[String] {
     match c {
         VerilogConnection::Single(n) => std::slice::from_ref(n),
@@ -114,6 +126,7 @@ fn nets(c: &VerilogConnection) -> &[String] {
     }
 }
 
+#[cfg(feature = "backend")]
 /// Compile (Icarus) or synthesize (Yosys) a Verilog block.
 pub fn lower(vb: &VerilogBlock) -> Result<Lowered, String> {
     let v = resolve_ext(&vb.source, "v")?;
@@ -174,6 +187,7 @@ pub fn lower(vb: &VerilogBlock) -> Result<Lowered, String> {
     Ok(Lowered::Gates { spice_models, cells })
 }
 
+#[cfg(feature = "backend")]
 /// Cell instances of a Yosys `write_verilog` netlist as (instance, cell, nets
 /// in port order), e.g. `sky130_fd_sc_hd__and2_1 _0_ ( .A(\a ), .X(\out ) );`.
 fn gate_instances(netlist: &str) -> Vec<(String, String, Vec<String>)> {
@@ -185,6 +199,7 @@ fn gate_instances(netlist: &str) -> Vec<(String, String, Vec<String>)> {
         .collect()
 }
 
+#[cfg(feature = "backend")]
 /// (liberty, SPICE cell models) of `$PDK_ROOT/<pdk>[A]/libs.ref/<pdk>/`;
 /// the liberty file prefers the `tt` corner.
 fn pdk_paths(pdk: &str) -> Result<(String, String), String> {
@@ -211,6 +226,22 @@ fn pdk_paths(pdk: &str) -> Result<(String, String), String> {
     Ok((find("lib", "lib", "tt")?, find("spice", "spice", "")?))
 }
 
+/// Without the `backend` feature nothing runs OpenVAF: a Verilog-A source in
+/// the load list is an error, a compiled `.osdi` passes through.
+#[cfg(not(feature = "backend"))]
+pub fn osdi_loads(loads: &[String]) -> Result<Vec<String>, String> {
+    loads
+        .iter()
+        .map(|l| {
+            if is_source(l) {
+                Err(format!("{l}: compiling Verilog-A needs spicerack's `backend` feature"))
+            } else {
+                Ok(l.clone())
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -228,6 +259,7 @@ mod tests {
         assert_eq!(osdi_loads(&["/m/a.osdi".into()]).unwrap(), vec!["/m/a.osdi".to_string()]);
     }
 
+    #[cfg(feature = "backend")]
     #[test]
     fn inline_source_resolves_to_a_stable_file() {
         let src = "module t(a); inout a; electrical a; endmodule";
@@ -236,6 +268,7 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&a).unwrap(), src);
     }
 
+    #[cfg(feature = "backend")]
     #[test]
     fn yosys_netlist_cells() {
         let n = "module top(a, b, out);\n  input a;\n  sky130_fd_sc_hd__and2_1 _0_ ( .A(\\a ), .B(b), .X(\\out ) );\nendmodule\n";

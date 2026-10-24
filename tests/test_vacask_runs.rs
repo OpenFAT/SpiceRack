@@ -1,3 +1,4 @@
+#![cfg(feature = "backend")]
 //! VACASK end-to-end: every deck here is emitted by `VacaskCodeGen` and then
 //! handed to the real binary. A deck that parses and produces a raw file is the
 //! only evidence that counts, so nothing is asserted against the generated text
