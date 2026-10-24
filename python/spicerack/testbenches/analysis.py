@@ -1,128 +1,31 @@
-"""Validation, corner, and statistical-analysis helpers for design benches."""
+"""Waveform metrics, validation, corner and Monte Carlo helpers for design benches.
+
+Waveforms are numpy columns; runs are rows (one dict of metrics per run).
+"""
 
 from __future__ import annotations
 
-import csv
 import math
 import re
 from dataclasses import dataclass, field
-from math import sqrt
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Callable, Mapping, NamedTuple, Sequence
+
+import numpy as np
 
 
 def _testbench(obj: Any) -> Any:
     return getattr(obj, "testbench", obj)
 
 
-@dataclass(frozen=True)
-class ValidationResult:
-    name: str
-    passed: bool
-    actual: Any
-    message: str
+# ── waveform primitives ──
 
-
-@dataclass(frozen=True)
-class ValidationReport:
-    results: list[ValidationResult]
-
-    @property
-    def passed(self) -> bool:
-        return all(result.passed for result in self.results)
-
-    @property
-    def failures(self) -> list[ValidationResult]:
-        return [result for result in self.results if not result.passed]
-
-
-@dataclass(frozen=True)
-class ValidationRule:
-    name: str
-    field: str
-    minimum: float | None = None
-    maximum: float | None = None
-    expected: Any = None
-    tolerance: float | None = None
-    required: bool = True
-
-    def check(self, metrics: Mapping[str, Any]) -> ValidationResult:
-        if self.field not in metrics:
-            passed = not self.required
-            message = "optional metric missing" if passed else "required metric missing"
-            return ValidationResult(self.name, passed, None, message)
-
-        actual = metrics[self.field]
-        failures: list[str] = []
-        if self.minimum is not None and float(actual) < self.minimum:
-            failures.append(f"{self.field}={actual} below {self.minimum}")
-        if self.maximum is not None and float(actual) > self.maximum:
-            failures.append(f"{self.field}={actual} above {self.maximum}")
-        if self.expected is not None:
-            if self.tolerance is None:
-                if actual != self.expected:
-                    failures.append(f"{self.field}={actual} expected {self.expected}")
-            elif abs(float(actual) - float(self.expected)) > self.tolerance:
-                failures.append(
-                    f"{self.field}={actual} outside {self.expected} +/- {self.tolerance}"
-                )
-
-        return ValidationResult(
-            self.name,
-            not failures,
-            actual,
-            "; ".join(failures) if failures else "passed",
-        )
-
-
-def validate_metrics(metrics: Mapping[str, Any], rules: Sequence[ValidationRule]) -> ValidationReport:
-    return ValidationReport([rule.check(metrics) for rule in rules])
-
-
-@dataclass(frozen=True)
-class MetricSpec:
-    name: str
-    source: str
-    reducer: str = "last"
-    at: float | None = None
-    threshold: float | None = None
-    rising: bool = True
-
-
-def _get_signal(result: Any, name: str) -> Any:
-    if isinstance(result, Mapping):
-        return result[name]
-    if hasattr(result, "measures") and name in result.measures:
-        return result.measures[name]
-    if hasattr(result, name):
-        return getattr(result, name)
-    return result[name]
-
-
-def _as_series(value: Any) -> list[float]:
-    if isinstance(value, (str, bytes)):
-        raise TypeError("string values are not numeric waveforms")
-    try:
-        return [float(item) for item in value]
-    except TypeError:
-        return [float(value)]
-
-
-def _interp_at(x_values: Sequence[float], y_values: Sequence[float], x_target: float) -> float:
-    if not x_values or not y_values:
+def _interp_at(x: Sequence[float], y: Sequence[float], x_target: float) -> float:
+    """y at ``x_target``, linear, clamped to the end values outside the record."""
+    if len(x) == 0 or len(y) == 0:
         raise ValueError("cannot interpolate an empty waveform")
-    if x_target <= x_values[0]:
-        return float(y_values[0])
-    for idx in range(1, min(len(x_values), len(y_values))):
-        x0 = float(x_values[idx - 1])
-        x1 = float(x_values[idx])
-        if x_target <= x1:
-            y0 = float(y_values[idx - 1])
-            y1 = float(y_values[idx])
-            if x1 == x0:
-                return y1
-            return y0 + (y1 - y0) * ((x_target - x0) / (x1 - x0))
-    return float(y_values[-1])
+    n = min(len(x), len(y))
+    return float(np.interp(x_target, np.asarray(x, float)[:n], np.asarray(y, float)[:n]))
 
 
 def crossings(
@@ -139,74 +42,38 @@ def crossings(
     interpolation between decade points misplaces a -3 dB corner by ~1% at
     10 points/decade.
     """
-    found: list[float] = []
-    for idx in range(1, min(len(x_values), len(y_values))):
-        y0, y1 = float(y_values[idx - 1]), float(y_values[idx])
-        up = y0 <= threshold <= y1
-        down = y0 >= threshold >= y1
-        if rising is True and not up:
-            continue
-        if rising is False and not down:
-            continue
-        if rising is None and not (up or down):
-            continue
-        x0, x1 = float(x_values[idx - 1]), float(x_values[idx])
-        if y1 == y0:
-            found.append(x1)
-            continue
-        frac = (threshold - y0) / (y1 - y0)
-        if log_x and x0 > 0.0 and x1 > 0.0:
-            lo, hi = math.log10(x0), math.log10(x1)
-            found.append(10.0 ** (lo + (hi - lo) * frac))
-        else:
-            found.append(x0 + (x1 - x0) * frac)
-    return found
-
-
-def _crossing_time(x_values: Sequence[float], y_values: Sequence[float], threshold: float, rising: bool) -> float:
-    hits = crossings(x_values, y_values, threshold, rising=rising)
-    if not hits:
-        raise ValueError(f"waveform never crossed {threshold}")
-    return hits[0]
-
-
-def frequency_from_crossings(
-    time: Sequence[float],
-    values: Sequence[float],
-    threshold: float | None = None,
-    skip: float = 0.0,
-) -> float:
-    """Mean frequency from rising-edge crossings, ignoring the first ``skip`` seconds.
-
-    Averaging over the whole edge list rather than one period is what makes this
-    robust: a single period inherits the timestep quantisation of its two edges.
-    """
-    t = [float(x) for x in time]
-    v = [float(x) for x in values]
-    if threshold is None:
-        threshold = (max(v) + min(v)) / 2.0
-    edges = [x for x in crossings(t, v, threshold, rising=True) if x >= skip]
-    if len(edges) < 2:
-        raise ValueError(
-            f"need at least 2 rising crossings of {threshold:g} after {skip:g}s, got {len(edges)}"
-        )
-    return (len(edges) - 1) / (edges[-1] - edges[0])
+    n = min(len(x_values), len(y_values))
+    x = np.asarray(x_values, float)[:n]
+    y = np.asarray(y_values, float)[:n]
+    x0, x1, y0, y1 = x[:-1], x[1:], y[:-1], y[1:]
+    up = (y0 <= threshold) & (threshold <= y1)
+    down = (y0 >= threshold) & (threshold >= y1)
+    hit = up if rising is True else down if rising is False else up | down
+    x0, x1, y0, y1 = x0[hit], x1[hit], y0[hit], y1[hit]
+    flat = y1 == y0
+    with np.errstate(divide="ignore", invalid="ignore"):
+        frac = np.where(flat, 1.0, (threshold - y0) / (y1 - y0))
+        lin = x0 + (x1 - x0) * frac
+        if log_x:
+            lo, hi = np.log10(x0), np.log10(x1)
+            lin = np.where((x0 > 0) & (x1 > 0), 10.0 ** (lo + (hi - lo) * frac), lin)
+    return np.where(flat, x1, lin).tolist()
 
 
 # ── AC-domain extractors ──
 #
 # These need magnitude and phase, which `ac[node]` does not provide (it is the
-# real part). They go through `ac.magnitude()` / `ac.phase()`.
+# real part). They go through `ac.magnitude_db()` / `ac.phase()`.
 
-def _ac_db(ac: Any, node: str) -> tuple[list[float], list[float]]:
-    return [float(f) for f in ac.frequency], list(ac.magnitude_db(node))
+#: The half-power point, 10*log10(2) = 3.0103 dB -- not 3.000 dB.
+#: Using a round 3.0 puts the corner of a single-pole response 0.23% low,
+#: a systematic error that does not shrink with sweep density.
+HALF_POWER_DB = 10.0 * math.log10(2.0)
 
 
 def ac_gain_db(ac: Any, node: str, at_hz: float) -> float:
     """Gain in dB at one frequency (log-interpolated between sweep points)."""
-    freq, db = _ac_db(ac, node)
-    lo = [math.log10(f) for f in freq]
-    return _interp_at(lo, db, math.log10(at_hz))
+    return _interp_at(np.log10(ac.frequency), ac.magnitude_db(node), math.log10(at_hz))
 
 
 def ac_passband_db(ac: Any, node: str) -> float:
@@ -215,14 +82,7 @@ def ac_passband_db(ac: Any, node: str) -> float:
     Referencing to the *peak* rather than to DC is what makes this correct for
     Chebyshev and bandpass responses, where the DC value is not the passband.
     """
-    _, db = _ac_db(ac, node)
-    return max(db)
-
-
-#: The half-power point, 10*log10(2) = 3.0103 dB -- not 3.000 dB.
-#: Using a round 3.0 puts the corner of a single-pole response 0.23% low,
-#: a systematic error that does not shrink with sweep density.
-HALF_POWER_DB = 10.0 * math.log10(2.0)
+    return float(np.max(ac.magnitude_db(node)))
 
 
 def ac_bandwidth_hz(ac: Any, node: str, drop_db: float = HALF_POWER_DB,
@@ -232,11 +92,10 @@ def ac_bandwidth_hz(ac: Any, node: str, drop_db: float = HALF_POWER_DB,
     Defaults to the half-power point (3.0103 dB), which is what "-3 dB
     bandwidth" means. Pass ``drop_db=3.0`` for the literal-3 dB convention.
     """
-    freq, db = _ac_db(ac, node)
-    ref = ac_passband_db(ac, node) if reference_db is None else reference_db
-    peak_idx = db.index(max(db)) if reference_db is None else 0
-    hits = crossings(freq[peak_idx:], db[peak_idx:], ref - drop_db,
-                     rising=False, log_x=True)
+    freq, db = np.asarray(ac.frequency, float), np.asarray(ac.magnitude_db(node), float)
+    peak = int(np.argmax(db)) if reference_db is None else 0
+    ref = db[peak] if reference_db is None else reference_db
+    hits = crossings(freq[peak:], db[peak:], ref - drop_db, rising=False, log_x=True)
     if not hits:
         raise ValueError(
             f"'{node}' never falls {drop_db} dB below its passband "
@@ -247,8 +106,7 @@ def ac_bandwidth_hz(ac: Any, node: str, drop_db: float = HALF_POWER_DB,
 
 def ac_unity_gain_hz(ac: Any, node: str) -> float:
     """Frequency where the magnitude crosses 0 dB going down."""
-    freq, db = _ac_db(ac, node)
-    hits = crossings(freq, db, 0.0, rising=False, log_x=True)
+    hits = crossings(ac.frequency, ac.magnitude_db(node), 0.0, rising=False, log_x=True)
     if not hits:
         raise ValueError(f"'{node}' never crosses 0 dB within the swept range")
     return hits[0]
@@ -261,65 +119,127 @@ def ac_phase_margin_deg(ac: Any, node: str) -> float:
     number is not a stability margin.
     """
     f_unity = ac_unity_gain_hz(ac, node)
-    freq = [float(f) for f in ac.frequency]
-    lo = [math.log10(f) for f in freq]
-    phase = _interp_at(lo, list(ac.phase(node)), math.log10(f_unity))
-    return 180.0 + phase
+    return 180.0 + _interp_at(np.log10(ac.frequency), ac.phase(node), math.log10(f_unity))
+
+
+# ── metric specs and validation ──
+
+@dataclass(frozen=True)
+class MetricSpec:
+    name: str
+    source: str
+    reducer: str = "last"
+    at: float | None = None
+    threshold: float | None = None
+    rising: bool = True
+
+
+def _signal(result: Any, name: str) -> np.ndarray:
+    if not isinstance(result, Mapping):
+        if name in getattr(result, "measures", ()):
+            result = result.measures
+        elif hasattr(result, name):
+            return np.atleast_1d(np.asarray(getattr(result, name), float))
+    return np.atleast_1d(np.asarray(result[name], float))
+
+
+_REDUCERS: dict[str, Callable[[np.ndarray], float]] = {
+    "first": lambda v: v[0], "initial": lambda v: v[0],
+    "last": lambda v: v[-1], "final": lambda v: v[-1],
+    "min": np.min, "max": np.max, "mean": np.mean,
+    "abs_max": lambda v: np.max(np.abs(v)),
+    "peak_to_peak": np.ptp, "pp": np.ptp,
+}
 
 
 def extract_metrics(result: Any, specs: Sequence[MetricSpec]) -> dict[str, float]:
     metrics: dict[str, float] = {}
     for spec in specs:
-        values = _as_series(_get_signal(result, spec.source))
+        values = _signal(result, spec.source)
         reducer = spec.reducer.lower()
-
-        if reducer in {"first", "initial"}:
-            metrics[spec.name] = values[0]
-        elif reducer in {"last", "final"}:
-            metrics[spec.name] = values[-1]
-        elif reducer == "min":
-            metrics[spec.name] = min(values)
-        elif reducer == "max":
-            metrics[spec.name] = max(values)
-        elif reducer == "mean":
-            metrics[spec.name] = sum(values) / len(values)
-        elif reducer == "abs_max":
-            metrics[spec.name] = max(abs(value) for value in values)
-        elif reducer in {"peak_to_peak", "pp"}:
-            metrics[spec.name] = max(values) - min(values)
+        if reducer in _REDUCERS:
+            metrics[spec.name] = float(_REDUCERS[reducer](values))
         elif reducer == "at":
             if spec.at is None:
                 raise ValueError(f"MetricSpec '{spec.name}' requires at=")
-            if isinstance(result, Mapping):
-                axis_name = "time" if "time" in result else "frequency"
-            else:
-                axis_name = "time" if hasattr(result, "time") else "frequency"
-            axis = _as_series(_get_signal(result, axis_name))
+            has_time = "time" in result if isinstance(result, Mapping) else hasattr(result, "time")
+            axis = _signal(result, "time" if has_time else "frequency")
             metrics[spec.name] = _interp_at(axis, values, spec.at)
         elif reducer == "crossing_time":
             if spec.threshold is None:
                 raise ValueError(f"MetricSpec '{spec.name}' requires threshold=")
-            axis = _as_series(_get_signal(result, "time"))
-            metrics[spec.name] = _crossing_time(axis, values, spec.threshold, spec.rising)
+            hits = crossings(_signal(result, "time"), values, spec.threshold, rising=spec.rising)
+            if not hits:
+                raise ValueError(f"waveform never crossed {spec.threshold}")
+            metrics[spec.name] = hits[0]
         else:
             raise ValueError(f"unknown metric reducer '{spec.reducer}'")
     return metrics
 
 
+class ValidationResult(NamedTuple):
+    name: str
+    passed: bool
+    actual: Any
+    message: str
+
+
 @dataclass(frozen=True)
-class ValidationRun:
+class ValidationRule:
+    name: str
+    field: str
+    minimum: float | None = None
+    maximum: float | None = None
+    expected: Any = None
+    tolerance: float | None = None
+    required: bool = True
+
+    def check(self, metrics: Mapping[str, Any]) -> ValidationResult:
+        if self.field not in metrics:
+            return ValidationResult(self.name, not self.required, None,
+                                    f"{'required' if self.required else 'optional'} metric missing")
+        actual, f = metrics[self.field], self.field
+        failures = []
+        if self.minimum is not None and float(actual) < self.minimum:
+            failures.append(f"{f}={actual} below {self.minimum}")
+        if self.maximum is not None and float(actual) > self.maximum:
+            failures.append(f"{f}={actual} above {self.maximum}")
+        if self.expected is not None and self.tolerance is None and actual != self.expected:
+            failures.append(f"{f}={actual} expected {self.expected}")
+        if (self.expected is not None and self.tolerance is not None
+                and abs(float(actual) - float(self.expected)) > self.tolerance):
+            failures.append(f"{f}={actual} outside {self.expected} +/- {self.tolerance}")
+        return ValidationResult(self.name, not failures, actual, "; ".join(failures) or "passed")
+
+
+@dataclass(frozen=True)
+class ValidationReport:
+    results: list[ValidationResult]
+
+    @property
+    def passed(self) -> bool:
+        return all(r.passed for r in self.results)
+
+    @property
+    def failures(self) -> list[ValidationResult]:
+        return [r for r in self.results if not r.passed]
+
+
+def validate_metrics(metrics: Mapping[str, Any], rules: Sequence[ValidationRule]) -> ValidationReport:
+    return ValidationReport([rule.check(metrics) for rule in rules])
+
+
+class ValidationRun(NamedTuple):
     name: str
     metrics: Mapping[str, Any]
     report: ValidationReport
-    metadata: Mapping[str, Any] = field(default_factory=dict)
 
     @property
     def passed(self) -> bool:
         return self.report.passed
 
 
-@dataclass(frozen=True)
-class MetricStats:
+class MetricStats(NamedTuple):
     count: int
     minimum: float
     maximum: float
@@ -337,7 +257,7 @@ class YieldSummary:
 
     @property
     def passed(self) -> int:
-        return sum(1 for run in self.runs if run.passed)
+        return sum(run.passed for run in self.runs)
 
     @property
     def failed(self) -> int:
@@ -352,12 +272,10 @@ class YieldSummary:
         return [run for run in self.runs if not run.passed]
 
     def metric_stats(self, field: str) -> MetricStats:
-        values = [float(run.metrics[field]) for run in self.runs if field in run.metrics]
-        if not values:
+        v = np.array([run.metrics[field] for run in self.runs if field in run.metrics], float)
+        if not v.size:
             raise KeyError(f"metric '{field}' not found in any run")
-        mean = sum(values) / len(values)
-        sigma = sqrt(sum((value - mean) ** 2 for value in values) / len(values))
-        return MetricStats(len(values), min(values), max(values), mean, sigma)
+        return MetricStats(v.size, float(v.min()), float(v.max()), float(v.mean()), float(v.std()))
 
 
 def evaluate_metric_sets(
@@ -365,251 +283,66 @@ def evaluate_metric_sets(
     rules: Sequence[ValidationRule],
     names: Sequence[str] | None = None,
 ) -> YieldSummary:
-    runs: list[ValidationRun] = []
-    for idx, metrics in enumerate(metric_sets):
-        name = names[idx] if names is not None else f"run_{idx}"
-        runs.append(ValidationRun(name, metrics, validate_metrics(metrics, rules)))
-    return YieldSummary(runs)
+    names = names if names is not None else [f"run_{i}" for i in range(len(metric_sets))]
+    return YieldSummary([ValidationRun(n, m, validate_metrics(m, rules))
+                         for n, m in zip(names, metric_sets)])
 
 
-def evaluate_corners(
-    factory: Callable[[], Any],
-    corners: Sequence["CornerCase"],
-    rules: Sequence[ValidationRule],
-    metric_extractor: Callable[[Any], Mapping[str, Any]],
-    backend: str = "ngspice",
-    runner: Callable[[Any], Any] | None = None,
-) -> YieldSummary:
-    runs: list[ValidationRun] = []
-    for corner in corners:
-        bench = corner.apply_to(factory(), backend)
-        result_source = runner(bench) if runner is not None else bench
-        metrics = metric_extractor(result_source)
-        runs.append(
-            ValidationRun(
-                corner.name,
-                metrics,
-                validate_metrics(metrics, rules),
-                metadata={"backend": corner.backend or backend},
-            )
-        )
-    return YieldSummary(runs)
+# ── metric files (CSV/whitespace tables, .measure output, Spectre mcdata) ──
 
-
-_NUMERIC_RE = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$")
+_NUMBER = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?"
+_NUMERIC_RE = re.compile(f"^{_NUMBER}$")
+_COMMENT = ("#", "*", "//")
 
 
 def _parse_float(value: str) -> float | None:
     cleaned = value.strip().strip(",;")
-    if not cleaned or cleaned.lower() in {"nan", "failed"}:
-        return None
-    if _NUMERIC_RE.match(cleaned):
-        return float(cleaned)
-    return None
+    return float(cleaned) if _NUMERIC_RE.match(cleaned) else None
 
 
-def _coerce_metric_rows(rows: Sequence[Mapping[str, str]]) -> list[dict[str, float]]:
-    metric_rows: list[dict[str, float]] = []
-    for row in rows:
-        metrics: dict[str, float] = {}
-        for key, value in row.items():
-            if key is None:
-                continue
-            number = _parse_float(str(value))
-            if number is not None:
-                metrics[key.strip()] = number
-        if metrics:
-            metric_rows.append(metrics)
-    return metric_rows
+def _data_lines(text: str) -> list[list[str]]:
+    """Non-comment lines split on commas, semicolons, tabs or spaces."""
+    return [[p for p in re.split(r"[\s,;]+", line.strip()) if p]
+            for line in text.splitlines()
+            if line.strip() and not line.lstrip().startswith(_COMMENT)]
 
 
-def _parse_delimited_metric_rows(text: str) -> list[dict[str, float]]:
-    lines = [
-        line.strip()
-        for line in text.splitlines()
-        if line.strip() and not line.lstrip().startswith(("#", "*", "//"))
-    ]
-    if not lines:
+def _parse_table(text: str) -> list[dict[str, float]]:
+    """A header row of names, then rows of values; non-numeric cells are dropped."""
+    lines = _data_lines(text)
+    if not lines or len(lines[0]) < 2 or lines[0][0].lower().lstrip(".") == "measure":
         return []
-    if lines[0].lower().startswith(".measure") or lines[0].lower().startswith("measure"):
+    header = lines[0]
+    if any(_parse_float(h) is not None for h in header):
         return []
-
-    sample = "\n".join(lines[:10])
-    try:
-        dialect = csv.Sniffer().sniff(sample, delimiters=",\t;")
-        reader = csv.DictReader(lines, dialect=dialect)
-        rows = _coerce_metric_rows(list(reader))
-        if rows:
-            return rows
-    except csv.Error:
-        pass
-
-    header = re.split(r"\s+", lines[0].strip())
-    if len(header) < 2:
-        return []
-    if any(_parse_float(column) is not None for column in header):
-        return []
-    table_rows: list[dict[str, str]] = []
-    for line in lines[1:]:
-        parts = re.split(r"\s+", line.strip())
+    rows = []
+    for parts in lines[1:]:
         if len(parts) != len(header):
             continue
-        if not any(_parse_float(part) is not None for part in parts):
-            continue
-        table_rows.append(dict(zip(header, parts)))
-    return _coerce_metric_rows(table_rows)
-
-
-def _parse_numeric_matrix(text: str) -> list[list[float]]:
-    rows: list[list[float]] = []
-    for line in text.splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith(("#", "*", "//")):
-            continue
-        parts = [part for part in re.split(r"[\s,;]+", stripped) if part]
-        values = [_parse_float(part) for part in parts]
-        if not values or any(value is None for value in values):
-            return []
-        rows.append([float(value) for value in values if value is not None])
-    if not rows:
-        return []
-    width = len(rows[0])
-    if width == 0 or any(len(row) != width for row in rows):
-        return []
-    return rows
-
-
-def _spectre_mcparam_candidates(path: Path) -> list[Path]:
-    name = path.name
-    lower = name.lower()
-    candidates: list[Path] = []
-
-    def add(candidate: Path) -> None:
-        if candidate not in candidates:
-            candidates.append(candidate)
-
-    if path.suffix.lower() == ".mcdata":
-        add(path.with_suffix(".mcparam"))
-    if lower.endswith("mcdata"):
-        add(path.with_name(f"{name[:-len('mcdata')]}mcparam"))
-    if lower.endswith("data"):
-        add(path.with_name(f"{name[:-len('data')]}param"))
-        add(path.with_name(f"{name[:-len('data')]}Param"))
-    if lower == "mcdata":
-        add(path.with_name("mcparam"))
-    if lower == "processdata":
-        add(path.with_name("processParam"))
-        add(path.with_name("processparam"))
-    if lower == "mismatchdata":
-        add(path.with_name("mismatchparam"))
-        add(path.with_name("mismatchParam"))
-
-    return candidates
-
-
-def _spectre_metric_names_from_paramfile(path: Path, expected: int) -> list[str]:
-    ignored = {
-        "column",
-        "columns",
-        "expr",
-        "expression",
-        "expressions",
-        "index",
-        "run",
-        "sweep",
-        "title",
-        "titles",
-    }
-    for candidate in _spectre_mcparam_candidates(path):
-        if not candidate.exists():
-            continue
-        names: list[str] = []
-        for line in candidate.read_text().splitlines():
-            stripped = line.strip()
-            if not stripped or stripped.startswith(("#", "*", "//")):
-                continue
-            tokens = re.findall(r"[A-Za-z_]\w*", stripped)
-            if len(tokens) == expected and not any(token.lower() in ignored for token in tokens):
-                return tokens
-            if tokens and tokens[0].lower() not in ignored:
-                names.append(tokens[0])
-        if len(names) >= expected:
-            return names[:expected]
-    return []
-
-
-def _parse_spectre_mcdata_file(path: Path) -> list[dict[str, float]]:
-    matrix = _parse_numeric_matrix(path.read_text())
-    if not matrix:
-        return []
-
-    column_count = len(matrix[0])
-    names = _spectre_metric_names_from_paramfile(path, column_count)
-    has_iteration_column = False
-    if not names:
-        names = _spectre_metric_names_from_paramfile(path, column_count - 1)
-        has_iteration_column = bool(names)
-    if not names:
-        names = [f"value_{index + 1}" for index in range(column_count)]
-
-    rows: list[dict[str, float]] = []
-    for index, values in enumerate(matrix, start=1):
-        row: dict[str, float] = {}
-        metric_values = values
-        if has_iteration_column:
-            row["iteration"] = values[0]
-            metric_values = values[1:]
-        elif "iteration" not in {name.lower() for name in names}:
-            row["iteration"] = float(index)
-        row.update(dict(zip(names, metric_values)))
-        rows.append(row)
+        row = {k: v for k, v in ((k, _parse_float(p)) for k, p in zip(header, parts)) if v is not None}
+        if row:
+            rows.append(row)
     return rows
 
 
 def _parse_measure_blocks(text: str) -> list[dict[str, float]]:
+    """``name = value`` lines; a repeated name starts the next run."""
     rows: list[dict[str, float]] = []
     current: dict[str, float] = {}
-
+    pattern = re.compile(rf"(?:\.?measure\s+\S+\s+)?([A-Za-z_]\w*)\s*=\s*({_NUMBER})", re.IGNORECASE)
     for line in text.splitlines():
-        stripped = line.strip()
-        if not stripped:
+        m = pattern.search(line)
+        if not m:
             continue
-
-        measure = re.search(
-            r"(?:\.?measure\s+\S+\s+)?([A-Za-z_]\w*)\s*=\s*"
-            r"([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)",
-            stripped,
-            flags=re.IGNORECASE,
-        )
-        if not measure:
-            continue
-
-        name = measure.group(1)
-        value = float(measure.group(2))
-        if name in current:
+        if m.group(1) in current:
             rows.append(current)
             current = {}
-        current[name] = value
-
-    if current:
-        rows.append(current)
-    return rows
+        current[m.group(1)] = float(m.group(2))
+    return rows + [current] if current else rows
 
 
 def parse_metric_rows(text: str, backend: str = "auto") -> list[dict[str, float]]:
-    rows = _parse_delimited_metric_rows(text)
-    if rows:
-        return rows
-    return _parse_measure_blocks(text)
-
-
-def load_metric_rows(path: str | Path, backend: str = "auto") -> list[dict[str, float]]:
-    metric_path = Path(path)
-    if backend.lower() == "spectre" and _is_spectre_mcdata_file(metric_path):
-        rows = _parse_spectre_mcdata_file(metric_path)
-        if rows:
-            return rows
-    return parse_metric_rows(metric_path.read_text(), backend)
+    return _parse_table(text) or _parse_measure_blocks(text)
 
 
 def _is_spectre_mcdata_file(path: Path) -> bool:
@@ -617,73 +350,88 @@ def _is_spectre_mcdata_file(path: Path) -> bool:
     return name in {"mcdata", "processdata", "mismatchdata"} or name.endswith(".mcdata")
 
 
-def _is_spectre_metric_file(path: Path) -> bool:
-    if _is_spectre_mcdata_file(path):
-        return True
+def _parse_spectre_mcdata(path: Path) -> list[dict[str, float]]:
+    """Spectre ``scalarfile``: a bare numeric matrix, column names in the sibling
+    ``paramfile`` (``mcdata`` -> ``mcparam``, ``processdata`` -> ``processParam``),
+    first identifier of each line. One name short means column 0 is the iteration."""
+    try:
+        matrix = np.loadtxt(path, ndmin=2, comments=_COMMENT, delimiter=None)
+    except ValueError:
+        return []
+    if not matrix.size:
+        return []
+    cols = matrix.shape[1]
+    names: list[str] = []
+    for suffix in ("param", "Param"):
+        param = path.with_name(path.name[:-4] + suffix)
+        if param.exists():
+            names = [m.group(0) for line in param.read_text().splitlines()
+                     if not line.strip().startswith(_COMMENT)
+                     and (m := re.search(r"[A-Za-z_]\w*", line))]
+            break
+    if len(names) >= cols:
+        names, iteration = names[:cols], np.arange(1, len(matrix) + 1, dtype=float)
+    elif len(names) == cols - 1:
+        iteration, matrix = matrix[:, 0], matrix[:, 1:]
+    else:
+        names, iteration = [f"value_{i + 1}" for i in range(cols)], np.arange(1, len(matrix) + 1, dtype=float)
+    lead = [] if "iteration" in {n.lower() for n in names} else [("iteration", iteration)]
+    columns = lead + list(zip(names, matrix.T))
+    return [dict(zip([n for n, _ in columns], row)) for row in np.column_stack([c for _, c in columns]).tolist()]
+
+
+def load_metric_rows(path: str | Path, backend: str = "auto") -> list[dict[str, float]]:
+    path = Path(path)
+    if backend.lower() == "spectre" and _is_spectre_mcdata_file(path):
+        rows = _parse_spectre_mcdata(path)
+        if rows:
+            return rows
+    return parse_metric_rows(path.read_text(), backend)
+
+
+_METRIC_SUFFIXES = {".csv", ".tsv", ".txt", ".log", ".mt0", ".ms0", ".ma0"}
+
+
+def _is_metric_file(path: Path, spectre: bool) -> bool:
     suffix = path.suffix.lower()
-    if suffix in {".measure", ".measurement"}:
+    if suffix in _METRIC_SUFFIXES:
         return True
-    if suffix == ".dat":
-        stem = path.stem.lower()
-        return any(token in stem for token in ("mc", "measure", "metric", "result", "scalar"))
-    return False
+    if not spectre:
+        return False
+    # Spectre scalar exports; a bare `.dat` is a waveform unless its stem says otherwise.
+    return (_is_spectre_mcdata_file(path) or suffix in {".measure", ".measurement"}
+            or (suffix == ".dat" and any(t in path.stem.lower()
+                                         for t in ("mc", "measure", "metric", "result", "scalar"))))
 
 
 def find_metric_files(path: str | Path, backend: str = "auto") -> list[Path]:
     root = Path(path)
     if root.is_file():
         return [root]
-
-    backend_lower = backend.lower()
-    suffixes = {".csv", ".tsv", ".txt", ".log", ".mt0", ".ms0", ".ma0"}
-    if backend_lower == "spectre":
-        suffixes |= {".measure", ".measurement", ".mcdata"}
-
-    files = [
-        candidate
-        for candidate in sorted(root.rglob("*"))
-        if candidate.is_file()
-        and (
-            candidate.suffix.lower() in suffixes
-            or (backend_lower == "spectre" and _is_spectre_metric_file(candidate))
-        )
-    ]
-    return files
+    spectre = backend.lower() == "spectre"
+    return [p for p in sorted(root.rglob("*")) if p.is_file() and _is_metric_file(p, spectre)]
 
 
 def load_monte_carlo_metrics(path: str | Path, backend: str = "auto") -> list[dict[str, float]]:
-    rows: list[dict[str, float]] = []
-    for metric_file in find_metric_files(path, backend):
-        rows.extend(load_metric_rows(metric_file, backend))
-    return rows
+    return [row for f in find_metric_files(path, backend) for row in load_metric_rows(f, backend)]
 
 
-def evaluate_result_text(
-    text: str,
-    rules: Sequence[ValidationRule],
-    backend: str = "auto",
-    names: Sequence[str] | None = None,
-) -> YieldSummary:
+def evaluate_result_text(text: str, rules: Sequence[ValidationRule], backend: str = "auto",
+                         names: Sequence[str] | None = None) -> YieldSummary:
     return evaluate_metric_sets(parse_metric_rows(text, backend), rules, names)
 
 
-def evaluate_result_file(
-    path: str | Path,
-    rules: Sequence[ValidationRule],
-    backend: str = "auto",
-    names: Sequence[str] | None = None,
-) -> YieldSummary:
+def evaluate_result_file(path: str | Path, rules: Sequence[ValidationRule], backend: str = "auto",
+                         names: Sequence[str] | None = None) -> YieldSummary:
     return evaluate_metric_sets(load_metric_rows(path, backend), rules, names)
 
 
-def evaluate_monte_carlo_file(
-    path: str | Path,
-    rules: Sequence[ValidationRule],
-    backend: str = "auto",
-    names: Sequence[str] | None = None,
-) -> YieldSummary:
+def evaluate_monte_carlo_file(path: str | Path, rules: Sequence[ValidationRule], backend: str = "auto",
+                              names: Sequence[str] | None = None) -> YieldSummary:
     return evaluate_metric_sets(load_monte_carlo_metrics(path, backend), rules, names)
 
+
+# ── corners ──
 
 @dataclass(frozen=True)
 class CornerCase:
@@ -699,34 +447,40 @@ class CornerCase:
 
     def apply_to(self, bench_or_testbench: Any, backend: str = "ngspice") -> Any:
         tb = _testbench(bench_or_testbench)
-        selected_backend = self.backend or backend
-        if hasattr(tb, "with_backend"):
-            tb.with_backend(selected_backend)
+        backend = self.backend or backend
+        tb.with_backend(backend)
         if self.temperature is not None:
             tb.temperature = self.temperature
         if self.nominal_temperature is not None:
             tb.nominal_temperature = self.nominal_temperature
-        for model_library in self.model_libraries:
-            tb.use_pdk(model_library)
+        for library in self.model_libraries:
+            tb.use_pdk(library)
+        card = "parameters" if backend == "spectre" else ".param"
         for key, value in self.parameters.items():
-            if selected_backend == "spectre":
-                tb.extra_line(f"parameters {key}={value}")
-            else:
-                tb.extra_line(f".param {key}={value}")
+            tb.extra_line(f"{card} {key}={value}")
         return bench_or_testbench
 
 
-def corner_netlists(
+def corner_netlists(factory: Callable[[], Any], corners: Sequence[CornerCase],
+                    backend: str = "ngspice") -> dict[str, str]:
+    return {c.name: _testbench(c.apply_to(factory(), backend)).netlist(c.backend or backend)
+            for c in corners}
+
+
+def evaluate_corners(
     factory: Callable[[], Any],
     corners: Sequence[CornerCase],
+    rules: Sequence[ValidationRule],
+    metric_extractor: Callable[[Any], Mapping[str, Any]],
     backend: str = "ngspice",
-) -> dict[str, str]:
-    netlists: dict[str, str] = {}
+    runner: Callable[[Any], Any] | None = None,
+) -> YieldSummary:
+    runs = []
     for corner in corners:
         bench = corner.apply_to(factory(), backend)
-        selected_backend = corner.backend or backend
-        netlists[corner.name] = _testbench(bench).netlist(selected_backend)
-    return netlists
+        metrics = metric_extractor(runner(bench) if runner is not None else bench)
+        runs.append(ValidationRun(corner.name, metrics, validate_metrics(metrics, rules)))
+    return YieldSummary(runs)
 
 
 def pdk_corners(
@@ -739,14 +493,9 @@ def pdk_corners(
     ``ss_125C_1.62V``. ``sections`` are the library's own ``.lib`` names."""
     from spicerack import ModelLibrary
 
-    corners = []
-    for section in sections:
-        for temp in temperatures:
-            for vdd in vdds:
-                name = f"{section}_{temp:g}C" + ("" if vdd is None else f"_{vdd:g}V")
-                corners.append(CornerCase(name, temperature=temp, vdd=vdd,
-                                          model_libraries=(ModelLibrary(library, corner=section),)))
-    return corners
+    return [CornerCase(f"{s}_{t:g}C" + ("" if v is None else f"_{v:g}V"), temperature=t, vdd=v,
+                       model_libraries=(ModelLibrary(library, corner=s),))
+            for s in sections for t in temperatures for v in vdds]
 
 
 def run_corners(
@@ -791,10 +540,12 @@ def run_corners(
     return rows
 
 
+# ── Spectre Monte Carlo statement ──
+
 @dataclass(frozen=True)
 class MonteCarloPlan:
-    """Statistical sampling plan. Spectre is the only backend with a
-    Monte Carlo statement SpiceRack can emit."""
+    """Statistical sampling plan. Spectre is the only backend with a Monte
+    Carlo statement SpiceRack can emit. ``distributions`` is not read."""
 
     backend: str = "spectre"
     samples: int = 100
@@ -804,23 +555,13 @@ class MonteCarloPlan:
     seed: int | None = None
 
     def apply_to(self, bench_or_testbench: Any) -> Any:
-        tb = _testbench(bench_or_testbench)
-        if hasattr(tb, "with_backend"):
-            tb.with_backend(self.backend)
-
         if self.backend.lower() != "spectre":
-            raise ValueError(
-                f"MonteCarloPlan supports backend='spectre'; got {self.backend!r}"
-            )
-        tb.add_spectre_monte_carlo(
-            self.samples,
-            self.spectre_inner,
-            self.spectre_inner_type,
-            self.seed,
-        )
+            raise ValueError(f"MonteCarloPlan supports backend='spectre'; got {self.backend!r}")
+        tb = _testbench(bench_or_testbench)
+        tb.with_backend(self.backend)
+        tb.add_spectre_monte_carlo(self.samples, self.spectre_inner, self.spectre_inner_type, self.seed)
         return bench_or_testbench
 
 
 def monte_carlo_netlist(bench_or_testbench: Any, plan: MonteCarloPlan) -> str:
-    plan.apply_to(bench_or_testbench)
-    return _testbench(bench_or_testbench).netlist(plan.backend)
+    return _testbench(plan.apply_to(bench_or_testbench)).netlist(plan.backend)
