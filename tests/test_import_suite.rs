@@ -282,6 +282,12 @@ fn hspice_corpus_fixpoint() {
     corpus_fixpoint("HSPICE_CORPUS", Dialect::Hspice, "sp", |p| p.contains("hspice") && !p.contains("invalid"));
 }
 
+/// Xyce's regression decks (`$XYCE_CORPUS`, Xyce_Regression's `Netlists`).
+#[test]
+fn xyce_corpus_fixpoint() {
+    corpus_fixpoint("XYCE_CORPUS", Dialect::Xyce, "cir", |_| true);
+}
+
 /// LTspice netlists (`$LTSPICE_CORPUS`, e.g. the spice-datasets collection's `*.net`).
 #[test]
 fn ltspice_corpus_fixpoint() {

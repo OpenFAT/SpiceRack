@@ -10,6 +10,7 @@ fn key(d: Dialect) -> &'static str {
     match d {
         Dialect::Ltspice => "ltspice",
         Dialect::Hspice => "hspice",
+        Dialect::Xyce => "xyce",
         _ => "ngspice",
     }
 }
@@ -92,6 +93,10 @@ fn laplace_source(
     }
     let laplace::Laplace::Xfer { num, den, .. } = parsed else { unreachable!() };
 
+    // Xyce has no LAPLACE E/G form (RG §6.1.5).
+    if d == Dialect::Xyce {
+        return Err(CodeGenError::UnsupportedComponent { backend: "xyce".into(), component: format!("B{name}: Laplace source") });
+    }
     if d == Dialect::Ltspice {
         return Ok(format!(
             "{letter}B{name} {np} {nm} {ip} {im} Laplace={}/{}",
@@ -116,7 +121,14 @@ fn laplace_source(
     ))
 }
 
-fn model(m: &ModelDef) -> String {
+/// Xyce rejects BSIM3 as level 8 and reads 49 (RG Table 2-36; 7.10 run).
+fn model(d: Dialect, m: &ModelDef) -> String {
+    let mos = matches!(m.kind.to_ascii_lowercase().as_str(), "nmos" | "pmos");
+    let level8 = |(k, v): &(String, String)| k.eq_ignore_ascii_case("level") && v.trim() == "8";
+    let m = &ModelDef {
+        parameters: m.parameters.iter().map(|p| if d == Dialect::Xyce && mos && level8(p) { (p.0.clone(), "49".into()) } else { p.clone() }).collect(),
+        ..m.clone()
+    };
     let mut s = format!(".model {} {}", m.name, m.kind);
     if !m.parameters.is_empty() {
         let ps: Vec<String> = m.parameters.iter().map(|(k, v)| if v.is_empty() { k.clone() } else { format!("{k}={v}") }).collect();
@@ -174,7 +186,7 @@ fn subcircuit(d: Dialect, sc: &Subcircuit) -> Result<String, CodeGenError> {
     header.push_str(&param_defs(&sc.parameters));
     let mut lines = vec![header];
     file_cards(d, sc, &mut lines)?;
-    lines.extend(sc.models.iter().map(model));
+    lines.extend(sc.models.iter().map(|m| model(d, m)));
     body(d, sc, &mut lines)?;
     lines.push(format!(".ends {}", sc.name));
     Ok(lines.join("\n"))
@@ -196,6 +208,11 @@ fn step_param(d: Dialect, sp: &StepParam) -> Result<String, CodeGenError> {
              or drive the sweep from Python by re-running the testbench per value.",
             sp.param,
         )));
+    }
+    // Xyce: `.step [lin|dec|oct] <name> <start> <stop> <inc>`, no `param` (RG p.155).
+    if d == Dialect::Xyce {
+        let sweep = sp.sweep_type.as_ref().map(|t| format!("{t} ")).unwrap_or_default();
+        return Ok(format!(".step {sweep}{} {} {} {}", sp.param, sp.start, sp.stop, sp.step));
     }
     if d != Dialect::Ltspice {
         return Err(CodeGenError::Other(format!(
@@ -239,6 +256,9 @@ fn loads(d: Dialect, ir: &CircuitIR, lines: &mut Vec<String>) -> Result<(), Code
                 }
             }
         }
+        Dialect::Xyce if !ir.top.osdi_loads.is_empty() => {
+            return Err(CodeGenError::Other("Xyce loads Verilog-A through -plugin, not a deck card".into()));
+        }
         Dialect::Hspice => {
             for l in &ir.top.osdi_loads {
                 if !crate::veriloga::is_source(l) {
@@ -252,6 +272,59 @@ fn loads(d: Dialect, ir: &CircuitIR, lines: &mut Vec<String>) -> Result<(), Code
         _ => {}
     }
     Ok(())
+}
+
+/// Xyce's options: `.options <pkg> k=v` per package (RG pp.96-104). The
+/// importer keeps Xyce's own as `pkg.key` under `backend_specific["xyce"]`;
+/// portable ones map through the RG tables, and one with no Xyce spelling is
+/// refused rather than guessed.
+fn xyce_options(tb: &Testbench) -> Result<Vec<String>, CodeGenError> {
+    // (package, `k=v` or bare `k`), in order; consecutive entries of one
+    // package share a line, so a deck's own order reads back unchanged.
+    let mut items: Vec<(String, String)> = Vec::new();
+    let kv = |k: &str, v: &str| if v.is_empty() { k.to_string() } else { format!("{k}={v}") };
+    for (k, v) in &tb.options.portable {
+        let (pkg, key) = match k.to_ascii_lowercase().as_str() {
+            "reltol" => ("timeint", "reltol"),
+            "vntol" => ("nonlin", "abstol"),
+            "gmin" => ("device", "gmin"),
+            "tnom" => ("device", "tnom"),
+            "temp" => ("device", "temp"),
+            "itl1" | "max_iterations" => ("nonlin", "maxstep"),
+            "itl4" => ("nonlin-tran", "maxstep"),
+            other => {
+                return Err(CodeGenError::UnsupportedAnalysis { backend: "xyce".into(), analysis: format!("option '{other}' (no Xyce package mapped)") });
+            }
+        };
+        items.push((pkg.into(), kv(key, v)));
+    }
+    if let Some(t) = tb.temperature {
+        items.push(("device".into(), kv("temp", &num(t))));
+    }
+    if let Some(t) = tb.nominal_temperature {
+        items.push(("device".into(), kv("tnom", &num(t))));
+    }
+    // `pkg.key`, a bare package `pkg.` (`.options post`), or a key with no
+    // package (`.option scale=`, package ""), each kept as the deck wrote it.
+    for (pk, v) in tb.options.backend_specific.get("xyce").into_iter().flatten() {
+        match pk.split_once('.') {
+            Some((pkg, "")) => items.push((pkg.into(), String::new())),
+            Some((pkg, k)) => items.push((pkg.into(), kv(k, v))),
+            None => items.push((String::new(), kv(pk, v))),
+        }
+    }
+    let mut out: Vec<(String, String)> = Vec::new();
+    for (pkg, item) in items {
+        match out.last_mut() {
+            // A bare package (`.options linsol`) keeps its own line.
+            Some((p, line)) if *p == pkg && !item.is_empty() && line != p => {
+                line.push(' ');
+                line.push_str(&item);
+            }
+            _ => out.push((pkg.clone(), if pkg.is_empty() { item } else if item.is_empty() { pkg } else { format!("{pkg} {item}") })),
+        }
+    }
+    Ok(out.into_iter().map(|(_, l)| format!(".options {l}")).collect())
 }
 
 /// Raw lines imported from one dialect reach only that dialect (ngspice and
@@ -305,7 +378,7 @@ pub(super) fn netlist(d: Dialect, ir: &CircuitIR) -> Result<String, CodeGenError
             lines.push(format!(".param {}={}", p.name, default));
         }
     }
-    lines.extend(ir.top.models.iter().map(model));
+    lines.extend(ir.top.models.iter().map(|m| model(d, m)));
 
     for sc in &ir.subcircuit_defs {
         lines.push(String::new());
@@ -319,16 +392,19 @@ pub(super) fn netlist(d: Dialect, ir: &CircuitIR) -> Result<String, CodeGenError
             lines.push(component(d, comp)?);
         }
 
-        let opts = super::option_pairs(&tb.options, key(d), itl1);
-        if !opts.is_empty() {
-            lines.push(format!(".options {}", opts.join(" ")));
-        }
-
-        if let Some(temp) = tb.temperature {
-            lines.push(format!(".temp {}", temp));
-        }
-        if let Some(tnom) = tb.nominal_temperature {
-            lines.push(format!(".options tnom={}", tnom));
+        if d == Dialect::Xyce {
+            lines.extend(xyce_options(tb)?);
+        } else {
+            let opts = super::option_pairs(&tb.options, key(d), itl1);
+            if !opts.is_empty() {
+                lines.push(format!(".options {}", opts.join(" ")));
+            }
+            if let Some(temp) = tb.temperature {
+                lines.push(format!(".temp {}", temp));
+            }
+            if let Some(tnom) = tb.nominal_temperature {
+                lines.push(format!(".options tnom={}", tnom));
+            }
         }
         lines.extend(tb.initial_conditions.iter().map(|(n, v)| format!(".ic V({})={}", n, v)));
         lines.extend(tb.node_sets.iter().map(|(n, v)| format!(".nodeset V({})={}", n, v)));
@@ -342,7 +418,10 @@ pub(super) fn netlist(d: Dialect, ir: &CircuitIR) -> Result<String, CodeGenError
         // ngspice reads one `.save` card: `all` beside named outputs means
         // all of them plus those, and alone it is what no list means.
         let noise = tb.analyses.iter().any(|a| matches!(a, Analysis::Noise { .. }));
-        if d == Dialect::Hspice && !noise {
+        // Xyce's `.save` writes the operating point; its rawfile (-r) holds
+        // every vector, so a save list has nothing to restrict there.
+        if d == Dialect::Xyce {
+        } else if d == Dialect::Hspice && !noise {
             // HSPICE's `.save` saves simulator state; `.probe` selects outputs.
             lines.extend(tb.saves.iter().map(|s| if s == "all" { ".option post".into() } else { format!(".probe {s}") }));
         } else if ngspice(d) && noise {
@@ -361,7 +440,8 @@ pub(super) fn netlist(d: Dialect, ir: &CircuitIR) -> Result<String, CodeGenError
         }
 
         for meas in &tb.measures {
-            lines.push(if meas.starts_with(".meas") { meas.clone() } else { format!(".meas {}", meas) });
+            // `.MEASURE TRAN ...` is already a card, in any case.
+            lines.push(if meas.to_ascii_lowercase().starts_with(".meas") { meas.clone() } else { format!(".meas {}", meas) });
         }
         for sp in &tb.step_params {
             lines.push(step_param(d, sp)?);
@@ -406,6 +486,10 @@ pub(crate) fn component(d: Dialect, comp: &Component) -> Result<String, CodeGenE
             if d == Dialect::Hspice {
                 return Ok(format!("E{} {} {} vol='{}'", name, np, nm, expression));
             }
+            // Xyce takes the B expression braced (RG p.238).
+            if d == Dialect::Xyce {
+                return Ok(format!("B{name} {np} {nm} V={{{expression}}}"));
+            }
             format!("B{} {} {} V={}", name, np, nm, expression)
         }
         Component::BehavioralCurrent { name, np, nm, expression } => {
@@ -414,6 +498,9 @@ pub(crate) fn component(d: Dialect, comp: &Component) -> Result<String, CodeGenE
             }
             if d == Dialect::Hspice {
                 return Ok(format!("G{} {} {} cur='{}'", name, np, nm, expression));
+            }
+            if d == Dialect::Xyce {
+                return Ok(format!("B{name} {np} {nm} I={{{expression}}}"));
             }
             format!("B{} {} {} I={}", name, np, nm, expression)
         }
@@ -445,9 +532,9 @@ pub(crate) fn component(d: Dialect, comp: &Component) -> Result<String, CodeGenE
         Component::TLine { name, inp, inm, outp, outm, z0, td } => {
             format!("T{} {} {} {} {} Z0={} TD={}", name, inp, inm, outp, outm, z0, td)
         }
-        Component::Xspice { name, .. } if d == Dialect::Hspice => {
+        Component::Xspice { name, .. } if matches!(d, Dialect::Hspice | Dialect::Xyce) => {
             return Err(CodeGenError::UnsupportedComponent {
-                backend: "hspice".into(),
+                backend: key(d).into(),
                 component: format!("XSPICE A{}", name),
             });
         }
@@ -528,10 +615,14 @@ fn analysis(d: Dialect, a: &Analysis) -> Result<String, CodeGenError> {
             let mut s = format!(".noise {} {} {} {} {} {}", out_spec, source, variation, points, num(*start), num(*stop));
             // `pts_per_summary` is an ngspice/SPICE3 extension; LTspice's
             // `.noise` card stops at the stop frequency.
-            if let (Some(pps), true) = (points_per_summary, ng) {
+            if let (Some(pps), true) = (points_per_summary, ng || d == Dialect::Xyce) {
                 s.push_str(&format!(" {}", pps));
             }
             s
+        }
+        // Xyce has no .tf (RG Table 6-1).
+        Analysis::Tf { .. } if d == Dialect::Xyce => {
+            return Err(CodeGenError::UnsupportedAnalysis { backend: "xyce".into(), analysis: "Tf".into() });
         }
         Analysis::Tf { output, source } => format!(".tf {} {}", output, source),
         Analysis::Fourier { fundamental, outputs, num_harmonics } => {

@@ -1,0 +1,29 @@
+# Xyce: physical lines -> the title and logical statements (RG 7.9 §2.1.39
+# p.163, checked on Xyce 7.10). Captures: Title; Line made of Piece.
+
+File       <- Title (eol body)? !.
+# Line 1 is the title, whatever it holds (run: `R9 1 0 1k` there is unread).
+Title      <- (!eol .)*
+body       <- (end / Line / skip)*
+
+# §2.1.6: `.END` ends the netlist; nothing after it is read (run), `+` lines
+# included. `.ends`/`.endfoo` are other cards.
+end        <- '.end'i ![^ \t\r\n] .*
+
+# §2.1.39.1: `*` starts a comment line; so does a line whose first byte is
+# a blank, unless its first non-blank is `+`. Blank lines drop. A `+` with
+# nothing to continue is an error in Xyce ("Unrecognized line"); dropped.
+skip       <- blank* eol / blank+ !. / comment_ln / blank* '+' (!eol .)* eolx
+comment_ln <- ('*' / blank+ !'+') (!eol .)* eolx
+
+Line       <- !blank !'*' !'+' !end Piece cmt? more* eolx
+# §2.1.39.3: `+` continues, past comment and blank lines (run).
+more       <- eol (blank* eol / comment_ln)* blank* '+' Piece cmt?
+# §2.1.39.2: `;` starts an in-line comment anywhere, quotes and braces
+# included (run: `'2;3'` is cut). `$`, `//`, `#` and `\` are not special.
+Piece      <- (!';' !eol .)*
+cmt        <- ';' (!eol .)*
+
+blank      <- [ \t]
+eol        <- '\r'? '\n'
+eolx       <- eol / !.

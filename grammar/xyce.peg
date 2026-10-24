@@ -1,0 +1,70 @@
+# Xyce: the dialect rules spice_cards.peg leaves open. Sources: Xyce
+# Reference Guide 7.9 (RG) and Xyce 7.10 runs (scratch decks).
+
+# Scale factors T G MEG X K MIL M U N P F (X = 1e6, run); no atto: `1a` is
+# 1 with a unit (RG §3.1 p.837, Table 6-2 p.852). Trailing letters are a unit.
+Number     <- [+\-]? Mantissa Exponent? Scale? [a-z0-9_]*
+Mantissa   <- [0-9]+ ('.' [0-9]*)? / '.' [0-9]+
+Exponent   <- [e] [+\-]? [0-9]+
+Scale      <- 'meg' / 'mil' / [tgxkmunpf]
+
+# RG §2.2 p.164: `{expr}`, or `'expr'` for compatibility.
+Expr       <- '{' x Ternary x '}' / "'" x Ternary x "'"
+# RG §2.2 p.164: .param/.global_param take an unbraced expression too.
+pairexpr   <- &([a-zA-Z_.0-9(+\-~$]) Ternary !wordchar
+
+# Table 2-32 (RG p.164) lists the operators but no precedence; the levels
+# below are measured on Xyce 7.10, loosest first:
+#   ?: (right) | & || && (one level, left) | ^ XOR | ~ (takes a relation)
+#   relational (one level, left) | + - | % | * / | unary + - | ** (right)
+Ternary    <- Or (x '?' x Ternary x ':' x Ternary)?
+Or         <- Xor (x OrOp x Xor)*
+Xor        <- Cmp (x XorOp x Cmp)*
+Cmp        <- Add (x CmpOp x Add)*
+Add        <- Mod (x AddOp x Mod)*
+Mod        <- Mul (x ModOp x Mul)*
+Mul        <- Unary (x MulOp x Unary)*
+Unary      <- SignOp x Unary / NotOp x Not / Pow
+Not        <- NotOp x Not / Cmp
+Pow        <- atom (x PowOp x Unary)?
+atom       <- Paren / Probe / Call / Num / Ref / Str
+Paren      <- '(' x Ternary x ')'
+# RG §2.1.31 pp.130-133: V I VR VI VM VP VDB IR.. lead currents IC ID ..,
+# N() P() W().
+Probe      <- ([vi] [rimpdbcgse]* / [npw]) x '(' x Pname (x ',' x Pname)? x ')'
+Pname      <- (![ \t,()\n] .)+
+Call       <- Ref x '(' x (Ternary (x ',' x Ternary)*)? x ')'
+Num        <- Mantissa ([e] [+\-]? [0-9]+)? [a-z]*
+# RG p.165: `:` is a name byte (`R1:R`, `X1:A`), so `a?b:c` needs a blank
+# before `:`, as in Xyce.
+Ref        <- [a-zA-Z_$] [a-zA-Z0-9_.$:]*
+x          <- [ \t]*
+
+OrOp       <- '||' / '|' / '&&' / '&'
+XorOp      <- '^'
+CmpOp      <- '==' / '!=' / '<>' / '<=' / '>=' / '<' / '>'
+AddOp      <- [+\-]
+MulOp      <- '*' !'*' / '/'
+ModOp      <- '%'
+PowOp      <- '**'
+SignOp     <- [+\-]
+# `!` is refused by Xyce ("Unrecognized character: !"); `~` is NOT.
+NotOp      <- '~'
+
+namechar   <- ![ \t\n,=()'"{}] .
+# RG §2.3.2 p.184: brackets are name bytes (`V5 1[ 0 1`).
+wordchar   <- ![ \t\n,=()'"{}] .
+field      <- Pair / Group / Expr / Str / Word / [,()=]
+gfield     <- Group / Expr / Str / Word / [,=]
+# A brace a Ternary cannot read: a composite parameter (`region={name=r1,
+# ...}`, RG §2.4) or `{POLY(2) ...}` (§2.2.5) or `{{...}}`, kept whole.
+value      <- Expr / Str / pairexpr / Word / blob
+blob       <- '{' (blob / !'}' .)* '}'
+
+# SpiceRack's entry for Xyce decks: the Xyce cards spice_cards.peg's
+# Kind/OtherKind refuse (Xyce RG; dev/research/dialect-readers.md 3.3), kept
+# as text, then every other card through OneCard.
+XyCard     <- XyOther nl !. / OneCard
+XyOther    <- '.' XyKind !namechar rest
+XyKind     <- 'global_param' / 'embeddedsampling' / 'sampling' / 'result' / 'mpde' / 'pce'
+            / 'preprocess' / 'initcond' / 'mor' / 'rol' / 'dcop' / 'objective'

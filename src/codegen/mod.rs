@@ -46,7 +46,9 @@ pub fn netlist(ir: &CircuitIR, d: Dialect) -> Result<String, CodeGenError> {
         Dialect::Ngspice | Dialect::Ltspice | Dialect::Espice | Dialect::Hspice => spice3::netlist(d, ir),
         Dialect::Spectre => spectre::netlist(ir),
         Dialect::Vacask => vacask::netlist(ir),
-        Dialect::Xyce | Dialect::Cdl | Dialect::Verilog => xschem::write(&xschem::Deck::new(ir), d),
+        // A Xyce deck with its analyses; `xschem::write` is the xschem layout.
+        Dialect::Xyce => spice3::netlist(d, ir),
+        Dialect::Cdl | Dialect::Verilog => xschem::write(&xschem::Deck::new(ir), d),
     }
 }
 

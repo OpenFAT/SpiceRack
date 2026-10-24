@@ -31,7 +31,9 @@ fn grammars(d: Dialect) -> Result<&'static Grammars, String> {
     static NG: OnceLock<Grammars> = OnceLock::new();
     static HS: OnceLock<Grammars> = OnceLock::new();
     static LT: OnceLock<Grammars> = OnceLock::new();
+    static XY: OnceLock<Grammars> = OnceLock::new();
     let (cell, lines, cards) = match d {
+        Dialect::Xyce => (&XY, peg!("xyce_lines.peg"), peg!("spice_cards.peg", "xyce.peg", "spicerack.peg")),
         Dialect::Ltspice => (&LT, peg!("ltspice_lines.peg"), peg!("spice_cards.peg", "ltspice.peg", "spicerack.peg")),
         Dialect::Ngspice | Dialect::Espice => (&NG, peg!("ngspice_lines.peg"), peg!("spice_cards.peg", "ngspice.peg", "spicerack.peg")),
         Dialect::Hspice => (&HS, peg!("hspice_lines.peg"), peg!("spice_cards.peg", "hspice_ops.peg", "hspice.peg", "spicerack.peg")),
@@ -41,7 +43,7 @@ fn grammars(d: Dialect) -> Result<&'static Grammars, String> {
         let cards = Grammar::compile(cards).expect("card grammar");
         // A dialect file may front OneCard with its own entry (LTspice's
         // LtCard reads the cards spice_cards.peg refuses).
-        let one_card = cards.rule("LtCard").or(cards.rule("OneCard")).unwrap();
+        let one_card = cards.rule("LtCard").or(cards.rule("XyCard")).or(cards.rule("OneCard")).unwrap();
         Grammars { lines: Grammar::compile(lines).expect("line grammar"), one_card, cards }
     }))
 }
@@ -286,9 +288,21 @@ fn flag_pairs(toks: &[String]) -> Vec<(String, String)> {
     toks.iter().map(|t| t.split_once('=').map_or((t.clone(), String::new()), |(k, v)| (k.to_string(), v.to_string()))).collect()
 }
 
+/// Positional fields, then `k=v` pairs. A bare number after a value
+/// continues it as SPICE's comma vector (`IC=0,-5`); a bare word is a flag.
 fn split_params(toks: &[String]) -> (&[String], Option<Vec<(String, String)>>) {
     let at = toks.iter().position(|t| t.contains('=')).unwrap_or(toks.len());
-    (&toks[..at], Some(flag_pairs(&toks[at..])))
+    let mut out: Vec<(String, String)> = Vec::new();
+    for (k, v) in flag_pairs(&toks[at..]) {
+        match out.last_mut() {
+            Some((_, prev)) if v.is_empty() && !prev.is_empty() && num(&k).is_some() => {
+                prev.push(',');
+                prev.push_str(&k);
+            }
+            _ => out.push((k, v)),
+        }
+    }
+    (&toks[..at], Some(out))
 }
 
 /// `name(a b, c)` -> numbers, or `None` if any is not a plain number.
@@ -325,9 +339,15 @@ fn waveform(tok: &str) -> Option<IrWaveform> {
 /// R/C/L value position that names one is a model reference, which the IR's
 /// R/C/L cannot hold, so the card stays raw rather than become `{rtest}`.
 fn element(t: &[String], card: &str, models: &HashSet<String>) -> Option<Component> {
-    let name = t[0][1..].to_string();
+    // Every element has a name and at least two nodes; a shorter card stays
+    // raw (input never panics the importer).
+    if t.len() < 3 {
+        return None;
+    }
+    let first = t[0].chars().next()?;
+    let name = t[0][first.len_utf8()..].to_string();
     let s = |i: usize| t.get(i).cloned();
-    let letter = t[0].chars().next()?.to_ascii_lowercase();
+    let letter = first.to_ascii_lowercase();
     Some(match letter {
         'r' | 'c' | 'l' => {
             let (pos, params) = split_params(&t[3..]);
@@ -643,6 +663,30 @@ pub fn decode(bytes: &[u8]) -> String {
     }
 }
 
+/// Xyce's `X` scale is 1e6 (RG Table 6-2): `2x` in SPICE form is `2meg`.
+fn xyce_number(tok: String) -> String {
+    let digits = tok.find(|c: char| !(c.is_ascii_digit() || c == '.')).unwrap_or(tok.len());
+    match tok[digits..].chars().next() {
+        Some('x' | 'X') if digits > 0 && tok[digits + 1..].chars().all(|c| c.is_ascii_alphabetic()) => format!("{}meg{}", &tok[..digits], &tok[digits + 1..]),
+        _ => tok,
+    }
+}
+
+/// `.step [lin|dec|oct] [param] name start stop step` (LTspice needs the
+/// `param` word, Xyce has none).
+fn step_card(t: &[String]) -> Option<StepParam> {
+    let mut w: Vec<&String> = t[1..].iter().collect();
+    let sweep_type = w.first().map(|x| x.to_ascii_lowercase()).filter(|x| matches!(x.as_str(), "lin" | "dec" | "oct"));
+    if sweep_type.is_some() {
+        w.remove(0);
+    }
+    if w.first().is_some_and(|x| x.eq_ignore_ascii_case("param")) {
+        w.remove(0);
+    }
+    let [name, a, b, c] = w.as_slice() else { return None };
+    Some(StepParam { param: name.to_string(), start: num(a)?, stop: num(b)?, step: num(c)?, sweep_type })
+}
+
 /// A point count: `10`, or a number written as one (`1e2`).
 fn count(tok: &str) -> Option<u32> {
     num(tok).filter(|v| *v >= 0.0 && v.fract() == 0.0).map(|v| v as u32)
@@ -668,7 +712,9 @@ fn control_card(tb: &mut Testbench, card: &str, t: &[String], d: Dialect) -> boo
             tf_type: t[5].to_ascii_lowercase(),
             pz_type: t[6].to_ascii_lowercase(),
         }),
-        // `.sens out [dc]` / `.sens out ac dec|oct|lin n f1 f2`
+        // `.sens out [dc]` / `.sens out ac dec|oct|lin n f1 f2` (Xyce's
+        // `.sens objfunc=... param=...` is another card; it stays raw).
+        ".sens" if d == Dialect::Xyce => None,
         ".sens" if t.len() == 2 || (t.len() == 3 && t[2].eq_ignore_ascii_case("dc")) => Some(Analysis::Sensitivity { output: t[1].clone(), ac: None }),
         ".sens" if t.len() == 7 && t[2].eq_ignore_ascii_case("ac") => (|| {
             let ac = AcSweepParams { variation: t[3].to_ascii_lowercase(), points: count(&t[4])?, start: n(5)?, stop: n(6)? };
@@ -716,6 +762,42 @@ fn control_card(tb: &mut Testbench, card: &str, t: &[String], d: Dialect) -> boo
         return true;
     }
     match kind.as_str() {
+        // Xyce: `.options <pkg> k=v` (RG p.96), kept per package so writing
+        // Xyce regroups them; DEVICE TEMP/TNOM are the temperatures.
+        ".option" | ".options" | ".opt" | ".opts" if d == Dialect::Xyce && t.len() >= 2 && !t[1].contains('=') => {
+            let pkg = t[1].to_ascii_lowercase();
+            let xyce = |tb: &mut Testbench, k: String, v: String| tb.options.backend_specific.entry("xyce".into()).or_default().push((k, v));
+            if t.len() == 2 {
+                xyce(tb, format!("{pkg}."), String::new());
+            }
+            // `reltol 1e-6` is `reltol=1e-6`; a bare number after a value
+            // continues it (`minvalue=-1.0 -1.0`); any other bare word is a flag.
+            let mut kv: Vec<(String, String)> = Vec::new();
+            let mut w = t[2..].iter().peekable();
+            while let Some(x) = w.next() {
+                match (x.split_once('='), kv.last_mut()) {
+                    (Some((k, v)), _) => kv.push((k.into(), v.into())),
+                    (None, Some((_, prev))) if !prev.is_empty() && num(x).is_some() => {
+                        prev.push(' ');
+                        prev.push_str(x);
+                    }
+                    (None, _) => kv.push((x.clone(), w.next_if(|n| !n.contains('=') && num(n).is_some()).cloned().unwrap_or_default())),
+                }
+            }
+            for (k, v) in kv {
+                match (pkg.as_str(), k.to_ascii_lowercase().as_str(), num(&v)) {
+                    ("device", "temp", Some(x)) => tb.temperature = Some(x),
+                    ("device", "tnom", Some(x)) => tb.nominal_temperature = Some(x),
+                    _ => xyce(tb, format!("{pkg}.{}", k.to_ascii_lowercase()), v),
+                }
+            }
+        }
+        // Xyce `.option k=v` with no package: kept as written.
+        ".option" | ".options" | ".opt" | ".opts" if d == Dialect::Xyce => {
+            for (k, v) in flag_pairs(&t[1..]) {
+                tb.options.backend_specific.entry("xyce".into()).or_default().push((k, v));
+            }
+        }
         // A bare word is a flag (`noacct`): an empty value.
         ".option" | ".options" | ".opt" | ".opts" => {
             tb.options.portable.extend(t[1..].iter().map(|x| match x.split_once('=') {
@@ -723,12 +805,16 @@ fn control_card(tb: &mut Testbench, card: &str, t: &[String], d: Dialect) -> boo
                 None => (x.clone(), String::new()),
             }));
         }
-        ".temp" | ".temperature" if t.len() == 2 && n(1).is_some() => tb.temperature = n(1),
+        // Xyce ignores `.temp` (RG Table 6-1); it stays raw there.
+        ".temp" | ".temperature" if t.len() == 2 && n(1).is_some() && d != Dialect::Xyce => tb.temperature = n(1),
+        ".step" if matches!(d, Dialect::Ltspice | Dialect::Xyce) && step_card(t).is_some() => tb.step_params.push(step_card(t).unwrap()),
         ".ic" | ".nodeset" => match node_values(&t[1..]) {
             Some(v) if kind == ".ic" => tb.initial_conditions.extend(v),
             Some(v) => tb.node_sets.extend(v),
             None => return false,
         },
+        // Xyce's `.save` writes the operating point (RG p.152); not a save list.
+        ".save" if d == Dialect::Xyce => return false,
         // A lone `.save all` is what no save list means.
         ".save" if t[1..].iter().all(|x| x.eq_ignore_ascii_case("all")) => {}
         ".save" => tb.saves.extend(t[1..].iter().cloned()),
@@ -867,6 +953,11 @@ pub fn parse(src: &str, name: &str, d: Dialect) -> Result<(CircuitIR, Report), S
             block = Some((open_w, close, 0));
             continue;
         }
+        // Xyce's `.incl` is `.include` (RG p.49).
+        if word == ".incl" && d == Dialect::Xyce {
+            here.includes.push(unquote(card.split_once(char::is_whitespace).map_or("", |x| x.1).trim()).to_string());
+            continue;
+        }
         // An include stays in its block: a `.lib` in a `.subckt` is local.
         match include_line(&card) {
             Some(IncludeLine::Include(p)) => {
@@ -882,8 +973,9 @@ pub fn parse(src: &str, name: &str, d: Dialect) -> Result<(CircuitIR, Report), S
                 here.libs.push((unquote(card.split_once(char::is_whitespace).map_or("", |x| x.1).trim()).to_string(), String::new()));
                 continue;
             }
-            None if word == ".lib" => {
-                // `.lib name` ... `.endl`: a section definition.
+            // `.lib name` ... `.endl`: a section definition (a `.lib` with no
+            // name opens nothing; it falls through as one raw card).
+            None if word == ".lib" && card.split_whitespace().count() == 2 => {
                 here.raw_spice.push(card.clone());
                 report.raw += 1;
                 block = Some(("", ".endl", 0)); // sections do not nest
@@ -891,7 +983,11 @@ pub fn parse(src: &str, name: &str, d: Dialect) -> Result<(CircuitIR, Report), S
             }
             None => {}
         }
-        let Some(t) = card_tokens(&card, g).map(|t| if d == Dialect::Ltspice { t.into_iter().map(lt_number).collect() } else { t }) else {
+        let Some(t) = card_tokens(&card, g).map(|t| match d {
+            Dialect::Ltspice => t.into_iter().map(lt_number).collect(),
+            Dialect::Xyce => t.into_iter().map(xyce_number).collect(),
+            _ => t,
+        }) else {
             report.unparsed.push(card.clone());
             here.raw_spice.push(card);
             continue;
@@ -901,7 +997,8 @@ pub fn parse(src: &str, name: &str, d: Dialect) -> Result<(CircuitIR, Report), S
             if kind.starts_with('x') {
                 let (pos, params) = split_params(&t[1..]);
                 if let (Some(params), Some((sc, ports))) = (params, pos.split_last()) {
-                    here.instances.push(Instance { name: t[0][1..].to_string(), subcircuit: sc.clone(), port_mapping: ports.to_vec(), parameters: params });
+                    let first = t[0].chars().next().map_or(0, char::len_utf8);
+                    here.instances.push(Instance { name: t[0][first..].to_string(), subcircuit: sc.clone(), port_mapping: ports.to_vec(), parameters: params });
                     continue;
                 }
             } else if let Some(c) = element(&t, &card, &models) {
@@ -937,6 +1034,16 @@ pub fn parse(src: &str, name: &str, d: Dialect) -> Result<(CircuitIR, Report), S
             // `.func name(a, b) {body}` / `= body`, at the top level.
             ".func" if !inside && func(&card).is_some() => functions.push(func(&card).unwrap()),
             ".model" => match model(&t) {
+                // Xyce's BSIM3 is level 9 (RG Table 2-36), ngspice's MOS9:
+                // the IR keeps BSIM3 as 49, which both read.
+                Some(mut m) if d == Dialect::Xyce && matches!(m.kind.to_ascii_lowercase().as_str(), "nmos" | "pmos") => {
+                    for (k, v) in &mut m.parameters {
+                        if k.eq_ignore_ascii_case("level") && matches!(num(v), Some(8.0 | 9.0)) {
+                            *v = "49".into();
+                        }
+                    }
+                    here.models.push(m)
+                }
                 Some(m) => here.models.push(m),
                 None => {
                     report.raw += 1;
@@ -956,7 +1063,7 @@ pub fn parse(src: &str, name: &str, d: Dialect) -> Result<(CircuitIR, Report), S
         eprintln!("warning: .subckt {} has no .ends", sc.name);
         close_subckt(&mut open, &mut defs);
     }
-    let raw_dialect = Some(match d { Dialect::Hspice => "hspice", Dialect::Ltspice => "ltspice", _ => "ngspice" }.to_string());
+    let raw_dialect = Some(match d { Dialect::Hspice => "hspice", Dialect::Ltspice => "ltspice", Dialect::Xyce => "xyce", _ => "ngspice" }.to_string());
     Ok((CircuitIR { raw_dialect, globals, functions, top, testbench: Some(tb), subcircuit_defs: defs, model_libraries: vec![] }, report))
 }
 
