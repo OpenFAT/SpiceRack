@@ -44,7 +44,8 @@ source .venv/bin/activate
 pip install maturin pytest
 maturin develop</code></pre>
 <p>With Nix:</p>
-<pre><code>nix develop</code></pre>
+<pre><code>nix develop            # build tools only
+nix develop .#testing  # + ngspice, OpenVAF, VACASK, PDKs</code></pre>
 <p>
 Install at least one simulator to run analyses. Start with
 <code>ngspice</code> unless you need a specific backend. SpiceRack supports

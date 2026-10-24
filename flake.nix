@@ -59,25 +59,31 @@
 
           pythonImportsCheck = [ "spicerack" ];
         };
-      in {
-        devShells.default = pkgs.mkShell {
-          buildInputs = [
+        # Build and unit-test shell. No simulators: SpiceRack emits netlists and
+        # runs whatever simulator the user has installed; it never ships one.
+        dev = pkgs.mkShell {
+          packages = [
             rustToolchain
-            pkgs.cargo
             pkgs.maturin
-            pkgs.ngspice
             pythonEnv
             pkgs.pkg-config
+          ];
+          RUST_SRC_PATH = "${rustToolchain}/lib/rustlib/src/rust/library";
+        };
+      in {
+        devShells.default = dev;
+
+        # `nix develop .#testing`: dev shell plus the simulators and PDKs the
+        # integration tests check our output against.
+        devShells.testing = pkgs.mkShell {
+          inputsFrom = [ dev ];
+          packages = [
+            pkgs.ngspice
             openvaf
             vacask
           ];
 
           shellHook = ''
-            echo "SpiceRack dev shell"
-            echo "  rust: $(rustc --version)"
-            echo "  python: $(python3 --version)"
-            echo "  ngspice: $(ngspice --version 2>&1 | head -1)"
-
             # ── openvaf-r -> openvaf alias ──
             if command -v openvaf-r &>/dev/null && ! command -v openvaf &>/dev/null; then
               alias openvaf=openvaf-r
@@ -115,14 +121,9 @@
               fi
             fi
           '';
-
-          RUST_SRC_PATH = "${rustToolchain}/lib/rustlib/src/rust/library";
         };
 
-        packages = {
-          default = spicerackRs;
-          inherit openvaf vacask;
-        };
+        packages.default = spicerackRs;
       }
     );
 }
