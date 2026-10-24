@@ -197,30 +197,36 @@ fn num(tok: &str) -> Option<f64> {
         .take_while(|&(i, c)| c.is_ascii_digit() || c == '.' || (i == 0 && (c == '+' || c == '-')) || ((c == '+' || c == '-') && t[..i].ends_with('e')) || (c == 'e' && t[i + 1..].starts_with(|n: char| n.is_ascii_digit() || n == '+' || n == '-')))
         .last()
         .map(|(i, c)| i + c.len_utf8())?;
-    let mantissa: f64 = t[..end].parse().ok()?;
     let tail = &t[end..];
     if !tail.chars().all(|c| c.is_ascii_alphabetic()) {
         return None;
     }
+    if tail.starts_with("mil") {
+        return Some(t[..end].parse::<f64>().ok()? * 25.4e-6);
+    }
     let scale = if tail.starts_with("meg") {
-        1e6
-    } else if tail.starts_with("mil") {
-        25.4e-6
+        6
     } else {
         match tail.chars().next() {
-            Some('t') => 1e12,
-            Some('g') => 1e9,
-            Some('k') => 1e3,
-            Some('m') => 1e-3,
-            Some('u') => 1e-6,
-            Some('n') => 1e-9,
-            Some('p') => 1e-12,
-            Some('f') => 1e-15,
-            Some('a') => 1e-18,
-            _ => 1.0,
+            Some('t') => 12,
+            Some('g') => 9,
+            Some('k') => 3,
+            Some('m') => -3,
+            Some('u') => -6,
+            Some('n') => -9,
+            Some('p') => -12,
+            Some('f') => -15,
+            Some('a') => -18,
+            _ => 0,
         }
     };
-    Some(mantissa * scale)
+    // One decimal, parsed once: `0.1n` is `0.1e-9`, exactly the f64 nearest
+    // 1e-10, where `0.1 * 1e-9` is an ulp off.
+    let (base, exp) = match t[..end].split_once('e') {
+        Some((b, e)) => (b, e.parse::<i32>().ok()?),
+        None => (&t[..end], 0),
+    };
+    format!("{base}e{}", exp + scale).parse().ok()
 }
 
 fn unquote(tok: &str) -> &str {
@@ -313,13 +319,29 @@ fn element(t: &[String]) -> Option<Component> {
             let (np, nm) = (s(1)?, s(2)?);
             let (mut v, mut ac_magnitude, mut ac_phase, mut wf) = (IrValue::Numeric { value: 0.0 }, None, None, None);
             let mut dc_given = false;
+            // `dc=1` / `ac=1` are the keyword forms spelled as pairs.
+            let t: Vec<String> = t[..3]
+                .iter()
+                .cloned()
+                .chain(t[3..].iter().flat_map(|x| match x.split_once('=') {
+                    Some((k, v)) if matches!(k.to_ascii_lowercase().as_str(), "dc" | "ac") => vec![k.to_string(), v.to_string()],
+                    _ => vec![x.clone()],
+                }))
+                .collect();
+            // A DC value: a number, an expression or a parameter, not a group.
+            let is_value = |x: &String| !x.contains('(') || x.starts_with(['{', '\'']);
             let mut i = 3;
             while i < t.len() {
                 let k = t[i].to_ascii_lowercase();
                 if k == "dc" {
-                    v = value(t.get(i + 1)?);
-                    dc_given = true;
-                    i += 2;
+                    match t.get(i + 1).filter(|x| is_value(x)) {
+                        Some(x) => {
+                            v = value(x);
+                            dc_given = true;
+                            i += 2;
+                        }
+                        None => i += 1, // a bare `DC`
+                    }
                 } else if k == "ac" {
                     ac_magnitude = Some(t.get(i + 1).and_then(|x| num(x)).unwrap_or(1.0));
                     i += if ac_magnitude.is_some() && t.get(i + 1).and_then(|x| num(x)).is_some() { 2 } else { 1 };
@@ -327,12 +349,12 @@ fn element(t: &[String]) -> Option<Component> {
                         ac_phase = Some(p);
                         i += 1;
                     }
-                } else if t[i].contains('(') {
-                    wf = Some(waveform(&t[i])?);
-                    i += 1;
-                } else if i == 3 {
+                } else if i == 3 && is_value(&t[i]) {
                     v = value(&t[i]);
                     dc_given = true;
+                    i += 1;
+                } else if t[i].contains('(') {
+                    wf = Some(waveform(&t[i])?);
                     i += 1;
                 } else {
                     return None;
@@ -365,9 +387,9 @@ fn element(t: &[String]) -> Option<Component> {
             {
                 let expression = unquote(e).to_string();
                 return Some(if letter == 'e' {
-                    Component::BehavioralVoltage { name: format!("_{name}"), np, nm, expression }
+                    Component::BehavioralVoltage { name, np, nm, expression }
                 } else {
-                    Component::BehavioralCurrent { name: format!("_{name}"), np, nm, expression }
+                    Component::BehavioralCurrent { name, np, nm, expression }
                 });
             }
             let [ncp, ncm, k] = rest else { return None };
@@ -475,7 +497,7 @@ fn node_values(toks: &[String]) -> Option<Vec<(String, f64)>> {
 }
 
 /// A dot card that is an analysis or testbench setting; `false` if not.
-fn control_card(tb: &mut Testbench, card: &str, t: &[String]) -> bool {
+fn control_card(tb: &mut Testbench, card: &str, t: &[String], d: Dialect) -> bool {
     let n = |i: usize| t.get(i).and_then(|x| num(x));
     let kind = t[0].to_ascii_lowercase();
     let parsed = match kind.as_str() {
@@ -488,9 +510,18 @@ fn control_card(tb: &mut Testbench, card: &str, t: &[String]) -> bool {
         ".ac" if t.len() == 5 => (|| Some(Analysis::Ac { variation: t[1].to_ascii_lowercase(), points: t[2].parse().ok()?, start: n(3)?, stop: n(4)? }))(),
         ".tran" => (|| {
             let uic = t.last()?.eq_ignore_ascii_case("uic");
-            let p: Vec<f64> = t[1..t.len() - uic as usize].iter().map(|x| num(x)).collect::<Option<_>>()?;
-            match p.as_slice() {
-                [step, stop, rest @ ..] if rest.len() <= 2 => Some(Analysis::Transient { step: *step, stop: *stop, start: rest.first().copied(), max_step: rest.get(1).copied(), uic }),
+            let body = &t[1..t.len() - uic as usize];
+            // HSPICE: `START=` names the start, and further positional
+            // fields are more step/stop segments, which the IR cannot hold.
+            let start_pair = body.iter().find_map(|x| x.split_once('=').filter(|(k, _)| k.eq_ignore_ascii_case("start")).map(|(_, v)| v));
+            let p: Vec<f64> = body.iter().filter(|x| !x.contains('=')).map(|x| num(x)).collect::<Option<_>>()?;
+            if body.iter().filter(|x| x.contains('=')).count() > start_pair.is_some() as usize {
+                return None;
+            }
+            match (d, p.as_slice()) {
+                (Dialect::Hspice, [step, stop]) => Some(Analysis::Transient { step: *step, stop: *stop, start: start_pair.and_then(num), max_step: None, uic }),
+                (Dialect::Hspice, _) => None,
+                (_, [step, stop, rest @ ..]) if rest.len() <= 2 && start_pair.is_none() => Some(Analysis::Transient { step: *step, stop: *stop, start: rest.first().copied(), max_step: rest.get(1).copied(), uic }),
                 _ => None,
             }
         })(),
@@ -526,6 +557,8 @@ fn control_card(tb: &mut Testbench, card: &str, t: &[String]) -> bool {
             Some(v) => tb.node_sets.extend(v),
             None => return false,
         },
+        // A lone `.save all` is what no save list means.
+        ".save" if t[1..].iter().all(|x| x.eq_ignore_ascii_case("all")) => {}
         ".save" => tb.saves.extend(t[1..].iter().cloned()),
         // `.print tran v(a)` / `.probe v(a)`: the analysis word is not an output.
         ".print" | ".probe" | ".plot" => tb.saves.extend(t[1..].iter().filter(|x| !matches!(x.to_ascii_lowercase().as_str(), "op" | "dc" | "ac" | "tran" | "noise")).cloned()),
@@ -587,7 +620,7 @@ pub fn parse(src: &str, name: &str, d: Dialect) -> Result<(CircuitIR, Report), S
             let cmd = word.trim_start_matches('.');
             if control && CONTROL_ANALYSES.contains(&cmd) {
                 if let Some(t) = card_tokens(&format!(".{card}"), g) {
-                    let _ = control_card(&mut tb, &format!(".{card}"), &t);
+                    let _ = control_card(&mut tb, &format!(".{card}"), &t, d);
                 }
             }
             continue;
@@ -674,7 +707,7 @@ pub fn parse(src: &str, name: &str, d: Dialect) -> Result<(CircuitIR, Report), S
                     here.raw_spice.push(card);
                 }
             },
-            _ if !inside && control_card(&mut tb, &card, &t) => {}
+            _ if !inside && control_card(&mut tb, &card, &t, d) => {}
             // SPICE text the IR has no form for (.pz, .step, .hb, ...);
             // `extra_lines` is for target-native text, not this.
             _ => {

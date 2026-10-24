@@ -55,17 +55,22 @@ fn refuse_raw_spice(ir: &CircuitIR, backend: &str) -> Result<(), CodeGenError> {
     }
 }
 
-/// Format f64 in SPICE notation (use SI prefix when clean)
+/// `v` in SPICE notation, with an SI suffix when that spelling reads back as
+/// exactly `v` (`10k`, `2.5n`), else the shortest exact exponent form
+/// (`2.0000000000000002e-7`). Rounding the mantissa (`200n` for that value)
+/// would hand the simulator a different number.
 pub fn format_spice_number(v: f64) -> String {
     let (mult, suffix) = crate::unit::si_prefix(v);
-    let mantissa = v / mult;
-    // Round to avoid floating point artifacts (10e-6/1e-6 = 10.000000000000002)
-    let rounded = mantissa.round();
-    if (mantissa - rounded).abs() < 1e-9 && rounded.abs() < 1e15 {
-        format!("{}{}", rounded as i64, suffix)
-    } else {
-        format!("{}{}", mantissa, suffix)
+    let exp = mult.log10().round() as i32; // the prefixes are powers of ten
+    let m = crate::unit::unscale(v, mult);
+    let rounded = m.round();
+    let whole = (rounded.abs() < 1e15).then(|| format!("{}", rounded as i64));
+    for mantissa in whole.into_iter().chain([format!("{m}")]) {
+        if format!("{mantissa}e{exp}").parse::<f64>() == Ok(v) {
+            return mantissa + suffix;
+        }
     }
+    format!("{v:e}")
 }
 
 /// ` k=v k=v` — instance parameters in SPICE and Spectre alike.

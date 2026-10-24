@@ -46,7 +46,7 @@ struct PyUnitValue {
 #[pymethods]
 impl PyUnit {
     fn __rmatmul__(&self, value: f64) -> PyUnitValue {
-        PyUnitValue { inner: u::UnitValue { value: value * self.mult, symbol: self.symbol } }
+        PyUnitValue { inner: u::UnitValue { value: u::scale(value, self.mult), symbol: self.symbol } }
     }
 
     fn __repr__(&self) -> String {

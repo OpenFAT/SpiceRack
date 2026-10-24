@@ -143,6 +143,13 @@ fn body(d: Dialect, sc: &Subcircuit, lines: &mut Vec<String>) -> Result<(), Code
     Ok(())
 }
 
+/// `.include` and `.lib` cards; HSPICE quotes paths (`.lib 'file' section`).
+fn file_cards(d: Dialect, includes: &[String], libs: &[(String, String)], lines: &mut Vec<String>) {
+    let path = |p: &str| if d == Dialect::Hspice { format!("'{p}'") } else { p.to_string() };
+    lines.extend(includes.iter().map(|inc| format!(".include {}", path(inc))));
+    lines.extend(libs.iter().map(|(p, section)| format!(".lib {} {}", path(p), section)));
+}
+
 fn subcircuit(d: Dialect, sc: &Subcircuit) -> Result<String, CodeGenError> {
     let mut header = format!(".subckt {}", sc.name);
     for port in &sc.ports {
@@ -154,6 +161,7 @@ fn subcircuit(d: Dialect, sc: &Subcircuit) -> Result<String, CodeGenError> {
     }
     header.push_str(&param_defs(&sc.parameters));
     let mut lines = vec![header];
+    file_cards(d, &sc.includes, &sc.libs, &mut lines);
     lines.extend(sc.models.iter().map(model));
     body(d, sc, &mut lines)?;
     lines.push(format!(".ends {}", sc.name));
@@ -239,10 +247,8 @@ pub(super) fn netlist(d: Dialect, ir: &CircuitIR) -> Result<String, CodeGenError
     let mut lines = vec![format!("* {}", ir.top.name)];
     loads(d, ir, &mut lines)?;
 
-    // HSPICE quotes paths: `.lib 'file' section`.
+    file_cards(d, &ir.top.includes, &ir.top.libs, &mut lines);
     let path = |p: &str| if d == Dialect::Hspice { format!("'{p}'") } else { p.to_string() };
-    lines.extend(ir.top.includes.iter().map(|inc| format!(".include {}", path(inc))));
-    lines.extend(ir.top.libs.iter().map(|(p, section)| format!(".lib {} {}", path(p), section)));
 
     for lib in &ir.model_libraries {
         lines.extend(lib.setup_includes.iter().map(|s| format!(".include {}", path(s))));
@@ -292,17 +298,17 @@ pub(super) fn netlist(d: Dialect, ir: &CircuitIR) -> Result<String, CodeGenError
         // run fails outright. Saving everything is the only correct list here;
         // LTspice has no `.save all` and saves everything by default, so it
         // just gets no save list.
-        if tb.analyses.iter().any(|a| matches!(a, Analysis::Noise { .. })) {
-            if ngspice(d) {
-                lines.push(".save all".to_string());
-            }
-        } else {
+        // ngspice reads one `.save` card: `all` beside named outputs means
+        // all of them plus those, and alone it is what no list means.
+        let noise = tb.analyses.iter().any(|a| matches!(a, Analysis::Noise { .. }));
+        if d == Dialect::Hspice && !noise {
             // HSPICE's `.save` saves simulator state; `.probe` selects outputs.
-            lines.extend(tb.saves.iter().map(|s| match (d, s.as_str()) {
-                (Dialect::Hspice, "all") => ".option post".into(),
-                (Dialect::Hspice, _) => format!(".probe {}", s),
-                _ => format!(".save {}", s),
-            }));
+            lines.extend(tb.saves.iter().map(|s| if s == "all" { ".option post".into() } else { format!(".probe {s}") }));
+        } else if ngspice(d) && noise {
+            let named = tb.saves.iter().filter(|s| *s != "all").map(|s| format!(" {s}")).collect::<String>();
+            lines.push(format!(".save all{named}"));
+        } else if !tb.saves.is_empty() && !noise {
+            lines.push(format!(".save {}", tb.saves.join(" ")));
         }
 
         for meas in &tb.measures {
@@ -349,7 +355,7 @@ pub(crate) fn component(d: Dialect, comp: &Component) -> Result<String, CodeGenE
                 return laplace_source(d, name, np, nm, expression, false);
             }
             if d == Dialect::Hspice {
-                return Ok(format!("EB{} {} {} vol='{}'", name, np, nm, expression));
+                return Ok(format!("E{} {} {} vol='{}'", name, np, nm, expression));
             }
             format!("B{} {} {} V={}", name, np, nm, expression)
         }
@@ -358,7 +364,7 @@ pub(crate) fn component(d: Dialect, comp: &Component) -> Result<String, CodeGenE
                 return laplace_source(d, name, np, nm, expression, true);
             }
             if d == Dialect::Hspice {
-                return Ok(format!("GB{} {} {} cur='{}'", name, np, nm, expression));
+                return Ok(format!("G{} {} {} cur='{}'", name, np, nm, expression));
             }
             format!("B{} {} {} I={}", name, np, nm, expression)
         }

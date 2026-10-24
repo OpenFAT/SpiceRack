@@ -25,6 +25,29 @@ pub fn si_prefix(v: f64) -> (f64, &'static str) {
     PREFIXES.into_iter().find(|p| v.abs() >= p.0).unwrap_or(PREFIXES[9])
 }
 
+/// `v * mult` for a power-of-ten `mult`, rounded once: `100 @ u_ns` is the
+/// f64 nearest 1e-7, where the float multiply lands an ulp above it.
+pub fn scale(v: f64, mult: f64) -> f64 {
+    shift(v, mult).unwrap_or(v * mult)
+}
+
+/// `v / mult` the same way: 1e-7 in ns is 100, not 99.99999999999999.
+pub fn unscale(v: f64, mult: f64) -> f64 {
+    shift(v, 1.0 / mult).unwrap_or(v / mult)
+}
+
+/// Moves the decimal point of `v`'s shortest exact spelling by `mult`'s
+/// power of ten, then reads it back once. `None` if `mult` is no power of ten.
+fn shift(v: f64, mult: f64) -> Option<f64> {
+    let exp = mult.log10().round() as i32;
+    if 10f64.powi(exp) != mult && 10f64.powi(-exp) != 1.0 / mult {
+        return None;
+    }
+    let s = format!("{v:e}");
+    let (m, e) = s.split_once('e')?;
+    format!("{m}e{}", e.parse::<i32>().ok()? + exp).parse().ok()
+}
+
 /// The `spicerack.unit` constants: (Python name, multiplier, symbol).
 pub const UNITS: &[(&str, f64, &str)] = &[
     ("u_V", 1.0, "V"),
@@ -89,6 +112,6 @@ impl UnitValue {
 impl fmt::Display for UnitValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let (mult, suffix) = si_prefix(self.value);
-        write!(f, "{}{}{}", self.value / mult, suffix, self.symbol)
+        write!(f, "{}{}{}", unscale(self.value, mult), suffix, self.symbol)
     }
 }

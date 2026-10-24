@@ -132,7 +132,7 @@ fn hspice_card_forms() {
         ".subckt load n r=1k",
         "R1 n 0 'r'",
         "R1 in mid 'rv'",
-        "EB1 b 0 vol='2*v(mid)+1'",
+        "E1 b 0 vol='2*v(mid)+1'",
         "EB2 lp 0 LAPLACE in 0 1e0 / 1e0 1e-3",
         ".option delmax=5n",
         ".tran 1n 1u START=100n UIC",

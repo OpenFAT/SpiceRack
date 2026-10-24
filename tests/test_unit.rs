@@ -3,7 +3,7 @@ use spicerack::unit::*;
 /// `v @ <name>` as Python builds it.
 fn at(v: f64, name: &str) -> UnitValue {
     let &(_, mult, symbol) = UNITS.iter().find(|u| u.0 == name).expect("unit in table");
-    UnitValue { value: v * mult, symbol }
+    UnitValue { value: spicerack::unit::scale(v, mult), symbol }
 }
 
 #[test]

@@ -215,6 +215,44 @@ fn reordered(deck: &str) -> String {
     out.join("\n") + "\n"
 }
 
+/// Emitting `ir` in `d` and reading it back gives `ir` again, and emitting
+/// that gives the same text: what SpiceRack writes, it reads as written.
+fn fixpoint(ir: &CircuitIR, d: Dialect) -> Result<(), String> {
+    let text = netlist(ir, d).map_err(|e| format!("{d:?} emit: {e}"))?;
+    let (again, _) = parse(&text, &ir.top.name, d)?;
+    if &again != ir || netlist(&again, d).ok().as_ref() != Some(&text) {
+        return Err(format!("{d:?} is no fixpoint: re-reading the emitted deck changes the IR"));
+    }
+    Ok(())
+}
+
+/// ESPice's HSPICE corpus (`$HSPICE_CORPUS`, its
+/// `tests/conformance/tests/netlist`) is a fixpoint in HSPICE. No simulator.
+#[test]
+fn hspice_corpus_fixpoint() {
+    let Ok(root) = std::env::var("HSPICE_CORPUS") else {
+        eprintln!("HSPICE_CORPUS not set — skipping");
+        return;
+    };
+    let mut all = Vec::new();
+    decks(Path::new(&root), &mut all);
+    all.retain(|p| p.to_string_lossy().contains("hspice") && !p.to_string_lossy().contains("invalid"));
+    assert!(!all.is_empty(), "no HSPICE decks under {root}");
+    let bad: Vec<String> = all
+        .iter()
+        .filter_map(|p| {
+            let src = String::from_utf8_lossy(&std::fs::read(p).ok()?).into_owned();
+            let why = match parse(&src, "t", Dialect::Hspice) {
+                Ok((ir, _)) => fixpoint(&ir, Dialect::Hspice).err()?,
+                Err(e) => e,
+            };
+            Some(format!("{}: {why}", p.display()))
+        })
+        .collect();
+    eprintln!("{} HSPICE decks, {} not fixpoints", all.len(), bad.len());
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
+}
+
 enum Outcome {
     Pass,
     Skip(String),
@@ -231,6 +269,9 @@ fn check(deck: &Path, secs: u64, refused: &std::sync::Mutex<std::collections::BT
         Ok((ir, _)) => ir,
         Err(e) => return Outcome::Fail(e),
     };
+    if let Err(why) = fixpoint(&ir, Dialect::Ngspice) {
+        return Outcome::Fail(why);
+    }
     let back: CircuitIR = serde_json::from_str(&serde_json::to_string(&ir).unwrap()).unwrap();
     if back != ir {
         return Outcome::Fail("JSON round trip changed the IR".into());
