@@ -4,6 +4,7 @@ pub mod laplace;
 pub(crate) mod spice3;
 mod spectre;
 mod vacask;
+pub mod xschem;
 
 use crate::ir::*;
 
@@ -30,6 +31,12 @@ pub enum Dialect {
     /// `.hdl` Verilog-A, and the card forms in ESPice's
     /// `tests/frontend/grammar/hspice.peg` and `tests/conformance/tests/netlist/hspice`.
     Hspice,
+    /// Xyce: the xschem layout only ([`xschem`]).
+    Xyce,
+    /// CDL for LVS: the xschem layout only ([`xschem`]).
+    Cdl,
+    /// Structural Verilog: the xschem layout only ([`xschem`]).
+    Verilog,
 }
 
 /// The whole deck for `d`. An analysis or component the simulator cannot run
@@ -39,6 +46,7 @@ pub fn netlist(ir: &CircuitIR, d: Dialect) -> Result<String, CodeGenError> {
         Dialect::Ngspice | Dialect::Ltspice | Dialect::Espice | Dialect::Hspice => spice3::netlist(d, ir),
         Dialect::Spectre => spectre::netlist(ir),
         Dialect::Vacask => vacask::netlist(ir),
+        Dialect::Xyce | Dialect::Cdl | Dialect::Verilog => xschem::write(&xschem::Deck::new(ir), d),
     }
 }
 
