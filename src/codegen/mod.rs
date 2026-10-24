@@ -42,6 +42,15 @@ pub fn netlist(ir: &CircuitIR, d: Dialect) -> Result<String, CodeGenError> {
     }
 }
 
+/// One component's card in a SPICE-family dialect (ngspice, LTspice,
+/// HSPICE, ESPice): what `netlist` writes for it.
+pub fn card(comp: &Component, d: Dialect) -> Result<String, CodeGenError> {
+    match d {
+        Dialect::Spectre | Dialect::Vacask => Err(CodeGenError::Other(format!("card: {d:?} is not a SPICE dialect"))),
+        _ => spice3::component(d, comp),
+    }
+}
+
 /// `raw_spice` lines are SPICE text; a non-SPICE dialect cannot place them,
 /// and dropping them would be a silently different deck.
 fn refuse_raw_spice(ir: &CircuitIR, backend: &str) -> Result<(), CodeGenError> {
