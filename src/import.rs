@@ -1080,7 +1080,36 @@ pub fn parse(src: &str, name: &str, d: Dialect) -> Result<(CircuitIR, Report), S
         close_subckt(&mut open, &mut defs);
     }
     let raw_dialect = Some(match d { Dialect::Hspice => "hspice", Dialect::Ltspice => "ltspice", Dialect::Xyce => "xyce", _ => "ngspice" }.to_string());
+    // LTspice inductors carry an implicit Rser=1m unless given or K-coupled
+    // (ADI ltspice-reference CIRCUIT-ELEMENTS-REFERENCE); make it explicit so
+    // other dialects don't silently lose it.
+    if d == Dialect::Ltspice {
+        add_implicit_rser(&mut top.components);
+        for sc in &mut defs {
+            add_implicit_rser(&mut sc.components);
+        }
+    }
     Ok((CircuitIR { raw_dialect, globals, functions, top, testbench: Some(tb), subcircuit_defs: defs, model_libraries: vec![] }, report))
+}
+
+/// LTspice gives every inductor an implicit 1mOhm series resistance unless
+/// `Rser=` is given or the inductor is coupled by a `K` statement.
+fn add_implicit_rser(components: &mut [Component]) {
+    let coupled: HashSet<String> = components
+        .iter()
+        .filter_map(|c| match c {
+            Component::MutualInductor { inductor1, inductor2, .. } => Some([inductor1.clone(), inductor2.clone()]),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    for c in components.iter_mut() {
+        if let Component::Inductor { name, params, .. } = c {
+            if !coupled.contains(name) && !params.iter().any(|(k, _)| k.eq_ignore_ascii_case("rser")) {
+                params.push(("Rser".to_string(), "1m".to_string()));
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1204,5 +1233,21 @@ Rp p 0 1k
             let (x, y) = (at(&a).unwrap(), at(&b).unwrap_or_else(|| panic!("{node} missing:\n{converted}")));
             assert!((x - y).abs() <= 1e-9 * x.abs().max(1.0), "{node}: {x} vs {y}\n{converted}");
         }
+    }
+
+    #[test]
+    fn ltspice_inductor_gets_implicit_rser_unless_given_or_coupled() {
+        let deck = "t\nL1 a 0 1u\nL2 b 0 1u Rser=5\nL3 c 0 1u\nL4 d 0 1u\nK1 L3 L4 0.5\n";
+        let ir = parse(deck, "t", Dialect::Ltspice).unwrap().0;
+        let rser = |name: &str| {
+            ir.top.components.iter().find_map(|c| match c {
+                Component::Inductor { name: n, params, .. } if n == name => Some(params.iter().find(|(k, _)| k.eq_ignore_ascii_case("rser")).map(|(_, v)| v.clone())),
+                _ => None,
+            })
+        };
+        assert_eq!(rser("1"), Some(Some("1m".to_string())));
+        assert_eq!(rser("2"), Some(Some("5".to_string())));
+        assert_eq!(rser("3"), Some(None));
+        assert_eq!(rser("4"), Some(None));
     }
 }
