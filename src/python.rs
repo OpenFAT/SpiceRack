@@ -1258,6 +1258,11 @@ fn emit_ir_netlist(ir: &crate::ir::CircuitIR, backend: &str) -> PyResult<String>
                 dialect: crate::codegen::spice3::Spice3Dialect::Ltspice,
             }.emit_netlist(ir)
         }
+        "hspice" => {
+            crate::codegen::spice3::Spice3CodeGen {
+                dialect: crate::codegen::spice3::Spice3Dialect::Hspice,
+            }.emit_netlist(ir)
+        }
         "spectre" => crate::codegen::spectre::SpectreCodeGen.emit_netlist(ir),
         "vacask" => crate::codegen::vacask::VacaskCodeGen.emit_netlist(ir),
         "espice" => crate::codegen::espice::EspiceCodeGen.emit_netlist(ir),

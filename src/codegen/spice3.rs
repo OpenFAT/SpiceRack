@@ -6,6 +6,10 @@ use super::{laplace, CodeGen, CodeGenError};
 pub enum Spice3Dialect {
     Ngspice,
     Ltspice,
+    /// HSPICE: `'expr'` quoting, `E`/`G` `vol=`/`cur=` behavioural sources,
+    /// `.hdl` Verilog-A, and the card forms in ESPice's
+    /// `tests/frontend/grammar/hspice.peg` and `tests/conformance/tests/netlist/hspice`.
+    Hspice,
 }
 
 pub struct Spice3CodeGen {
@@ -16,6 +20,8 @@ impl Spice3CodeGen {
     fn emit_value(&self, v: &IrValue) -> String {
         match v {
             IrValue::Numeric { value } => format_spice_number(*value),
+            // HSPICE reads braces as name bytes; only quotes make an expression.
+            IrValue::Expression { expr } if self.dialect == Spice3Dialect::Hspice => format!("'{}'", expr),
             IrValue::Expression { expr } => format!("{{{}}}", expr),
             IrValue::Raw { text } => text.clone(),
         }
@@ -116,6 +122,11 @@ impl Spice3CodeGen {
                 laplace::horner(&num),
                 laplace::horner(&den),
             )),
+            // `E1 b 0 LAPLACE a 0 k0 k1 ... / d0 d1 ...`, ascending powers.
+            Spice3Dialect::Hspice => {
+                let asc = |c: &[f64]| laplace::coeff_array(&c.iter().rev().copied().collect::<Vec<_>>());
+                Ok(format!("{letter}B{name} {np} {nm} LAPLACE {ip} {im} {} / {}", asc(&num), asc(&den)))
+            }
         }
     }
 
@@ -196,6 +207,13 @@ impl Spice3CodeGen {
             ))),
             // LTspice: `.step [lin|oct|dec] param <name> <start> <stop> <inc>`.
             // The `param` keyword is mandatory in both forms.
+            // HSPICE sweeps a parameter on the analysis card (`sweep`) or
+            // with `.alter`; there is no `.step`.
+            Spice3Dialect::Hspice => Err(CodeGenError::Other(format!(
+                "HSPICE has no `.step` (stepping '{}'). Sweep it on the analysis card \
+                 or drive the sweep from Python by re-running the testbench per value.",
+                sp.param,
+            ))),
             Spice3Dialect::Ltspice => Ok(match sp.sweep_type {
                 Some(ref sweep) => format!(
                     ".step {} param {} {} {} {}",
@@ -220,6 +238,7 @@ impl CodeGen for Spice3CodeGen {
         match self.dialect {
             Spice3Dialect::Ngspice => "ngspice",
             Spice3Dialect::Ltspice => "ltspice",
+            Spice3Dialect::Hspice => "hspice",
         }
     }
 
@@ -239,29 +258,42 @@ impl CodeGen for Spice3CodeGen {
             }
             lines.push(".endc".into());
         }
+        let hspice = self.dialect == Spice3Dialect::Hspice;
+        if hspice {
+            for l in &ir.top.osdi_loads {
+                if !crate::veriloga::is_source(l) {
+                    return Err(CodeGenError::Other(format!(
+                        "HSPICE loads Verilog-A source, not OSDI ({l}); use veriloga(\"model.va\")"
+                    )));
+                }
+                lines.push(format!(".hdl \"{}\"", l));
+            }
+        }
+        // HSPICE quotes paths: `.lib 'file' section`.
+        let path = |p: &str| if hspice { format!("'{p}'") } else { p.to_string() };
 
         // Includes
         for inc in &ir.top.includes {
-            lines.push(format!(".include {}", inc));
+            lines.push(format!(".include {}", path(inc)));
         }
 
         // Libs
-        for (path, section) in &ir.top.libs {
-            lines.push(format!(".lib {} {}", path, section));
+        for (p, section) in &ir.top.libs {
+            lines.push(format!(".lib {} {}", path(p), section));
         }
 
         // Model libraries
         for lib in &ir.model_libraries {
             for setup in &lib.setup_includes {
-                lines.push(format!(".include {}", setup));
+                lines.push(format!(".include {}", path(setup)));
             }
-            let path = lib.backend_paths
+            let p = path(lib.backend_paths
                 .get(self.backend_name())
-                .unwrap_or(&lib.path);
+                .unwrap_or(&lib.path));
             if let Some(ref corner) = lib.corner {
-                lines.push(format!(".lib {} {}", path, corner));
+                lines.push(format!(".lib {} {}", p, corner));
             } else {
-                lines.push(format!(".include {}", path));
+                lines.push(format!(".include {}", p));
             }
         }
 
@@ -347,7 +379,12 @@ impl CodeGen for Spice3CodeGen {
                 }
             } else {
                 for save in &tb.saves {
-                    lines.push(format!(".save {}", save));
+                    // HSPICE's `.save` saves simulator state; `.probe` selects outputs.
+                    lines.push(match (hspice, save.as_str()) {
+                        (true, "all") => ".option post".into(),
+                        (true, _) => format!(".probe {}", save),
+                        _ => format!(".save {}", save),
+                    });
                 }
             }
 
@@ -383,7 +420,10 @@ impl CodeGen for Spice3CodeGen {
             header.push_str(&format!(" {}", port.name));
         }
         if !sc.parameters.is_empty() {
-            header.push_str(" PARAMS:");
+            // HSPICE takes the defaults bare after the ports.
+            if self.dialect != Spice3Dialect::Hspice {
+                header.push_str(" PARAMS:");
+            }
             for p in &sc.parameters {
                 if let Some(ref default) = p.default {
                     header.push_str(&format!(" {}={}", p.name, default));
@@ -448,11 +488,17 @@ impl CodeGen for Spice3CodeGen {
                 if laplace::is_laplace(expression) {
                     return self.emit_laplace(name, np, nm, expression, false);
                 }
+                if self.dialect == Spice3Dialect::Hspice {
+                    return Ok(format!("EB{} {} {} vol='{}'", name, np, nm, expression));
+                }
                 format!("B{} {} {} V={}", name, np, nm, expression)
             }
             Component::BehavioralCurrent { name, np, nm, expression } => {
                 if laplace::is_laplace(expression) {
                     return self.emit_laplace(name, np, nm, expression, true);
+                }
+                if self.dialect == Spice3Dialect::Hspice {
+                    return Ok(format!("GB{} {} {} cur='{}'", name, np, nm, expression));
                 }
                 format!("B{} {} {} I={}", name, np, nm, expression)
             }
@@ -512,6 +558,12 @@ impl CodeGen for Spice3CodeGen {
                         s.push_str(&format!(" {}", model));
                         s
                     }
+                    Spice3Dialect::Hspice => {
+                        return Err(CodeGenError::UnsupportedComponent {
+                            backend: "hspice".into(),
+                            component: format!("XSPICE A{}", name),
+                        });
+                    }
                     Spice3Dialect::Ltspice => {
                         // LTspice has no XSPICE A-elements -- emit as comment
                         let mut s = format!("* XSPICE (unsupported): A{}", name);
@@ -555,6 +607,22 @@ impl CodeGen for Spice3CodeGen {
                     format_spice_number(*stop),
                 )
             }
+            // HSPICE reads extra positional fields as further step/stop
+            // segments, so the start is `START=` and the step cap `delmax`.
+            Analysis::Transient { step, stop, start, max_step, uic } if self.dialect == Spice3Dialect::Hspice => {
+                let mut s = String::new();
+                if let Some(ms) = max_step {
+                    s.push_str(&format!(".option delmax={}\n", format_spice_number(*ms)));
+                }
+                s.push_str(&format!(".tran {} {}", format_spice_number(*step), format_spice_number(*stop)));
+                if let Some(st) = start {
+                    s.push_str(&format!(" START={}", format_spice_number(*st)));
+                }
+                if *uic {
+                    s.push_str(" UIC");
+                }
+                s
+            }
             Analysis::Transient { step, stop, start, max_step, uic } => {
                 let mut s = format!(
                     ".tran {} {}",
@@ -582,6 +650,19 @@ impl CodeGen for Spice3CodeGen {
                 } else {
                     format!("V({},{})", output, reference)
                 };
+                // HSPICE: `.noise ov src inter` takes its frequencies from `.ac`.
+                if self.dialect == Spice3Dialect::Hspice {
+                    return Ok(format!(
+                        ".ac {} {} {} {}\n.noise {} {} {}",
+                        variation,
+                        points,
+                        format_spice_number(*start),
+                        format_spice_number(*stop),
+                        out_spec,
+                        source,
+                        points_per_summary.unwrap_or(0),
+                    ));
+                }
                 let mut s = format!(
                     ".noise {} {} {} {} {} {}",
                     out_spec,
@@ -602,8 +683,10 @@ impl CodeGen for Spice3CodeGen {
                 format!(".tf {} {}", output, source)
             }
             Analysis::Sensitivity { output, ac } => {
-                // LTspice has no `.sens` card.
-                if self.dialect != Spice3Dialect::Ngspice {
+                // LTspice has no `.sens` card; HSPICE's is DC only.
+                if self.dialect == Spice3Dialect::Ltspice
+                    || (self.dialect == Spice3Dialect::Hspice && ac.is_some())
+                {
                     return Err(CodeGenError::UnsupportedAnalysis {
                         backend: self.backend_name().into(),
                         analysis: "Sensitivity".into(),
