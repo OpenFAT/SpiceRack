@@ -101,45 +101,33 @@ impl Py {
                         Some(v) => self.line(format!("{obj}.{letter}({head}, value={v}{ac})")),
                         None => self.gap(obj, "raw element value", &raw),
                     },
-                    (_, None) => self.gap(obj, "waveform sources take no expression DC value", &raw),
-                    (Some(IrWaveform::Pulse { initial, pulsed, delay, rise_time, fall_time, pulse_width, period }), Some(v)) => {
-                        if !ac.is_empty() {
-                            self.gap(obj, "pulse/PWL sources take no ac=", &raw)
-                        } else if v != *initial {
-                            self.gap(obj, "waveform sources take no DC value of their own", &raw)
-                        } else {
-                            self.line(format!(
-                                "{obj}.Pulse{kind}Source({head}, initial_value={}, pulsed_value={}, delay={}, pulse_width={}, period={}, rise_time={}, fall_time={})",
-                                py_num(*initial), py_num(*pulsed), py_num(*delay), py_num(*pulse_width), py_num(*period), py_num(*rise_time), py_num(*fall_time)
-                            ))
-                        }
+                    (Some(_), None) => self.gap(obj, "waveform sources take no expression DC value", &raw),
+                    (Some(wf), Some(v)) => {
+                        let (stem, args, t0) = match wf {
+                            IrWaveform::Pulse { initial, pulsed, delay, rise_time, fall_time, pulse_width, period } => ("Pulse", format!(
+                                "initial_value={}, pulsed_value={}, delay={}, pulse_width={}, period={}, rise_time={}, fall_time={}",
+                                py_num(*initial), py_num(*pulsed), py_num(*delay), py_num(*pulse_width), py_num(*period), py_num(*rise_time), py_num(*fall_time)), *initial),
+                            IrWaveform::Pwl { values } => {
+                                let pts: Vec<String> = values.iter().map(|(t, y)| format!("({}, {})", py_num(*t), py_num(*y))).collect();
+                                ("PieceWiseLinear", format!("values=[{}]", pts.join(", ")), values.first().map_or(0.0, |p| p.1))
+                            }
+                            IrWaveform::Sin { offset, amplitude, frequency, delay, damping, phase } => ("Sinusoidal", format!(
+                                "offset={}, amplitude={}, frequency={}, delay={}, damping_factor={}, phase={}",
+                                py_num(*offset), py_num(*amplitude), py_num(*frequency), py_num(*delay), py_num(*damping), py_num(*phase)), *offset),
+                            IrWaveform::Exp { initial, pulsed, rise_delay, rise_tau, fall_delay, fall_tau } => ("Exponential", format!(
+                                "initial_value={}, pulsed_value={}, rise_delay_time={}, rise_time_constant={}, fall_delay_time={}, fall_time_constant={}",
+                                py_num(*initial), py_num(*pulsed), py_num(*rise_delay), py_num(*rise_tau), py_num(*fall_delay), py_num(*fall_tau)), *initial),
+                            IrWaveform::Sffm { offset, amplitude, carrier_freq, modulation_index, signal_freq } => ("SingleFrequencyFM", format!(
+                                "offset={}, amplitude={}, carrier_frequency={}, modulation_index={}, signal_frequency={}",
+                                py_num(*offset), py_num(*amplitude), py_num(*carrier_freq), py_num(*modulation_index), py_num(*signal_freq)), *offset),
+                            IrWaveform::Am { amplitude, offset, modulating_freq, carrier_freq, delay } => ("AmplitudeModulated", format!(
+                                "offset={}, amplitude={}, modulating_frequency={}, carrier_frequency={}, signal_delay={}",
+                                py_num(*offset), py_num(*amplitude), py_num(*modulating_freq), py_num(*carrier_freq), py_num(*delay)), 0.0),
+                        };
+                        // `dc=` only when it is not what the waveform starts at.
+                        let dc = if v == t0 { String::new() } else { format!(", dc={}", py_num(v)) };
+                        self.line(format!("{obj}.{stem}{kind}Source({head}, {args}{dc}{ac})"))
                     }
-                    (Some(IrWaveform::Pwl { values }), Some(v)) => {
-                        let first = values.first().map_or(0.0, |p| p.1);
-                        if current {
-                            self.gap(obj, "no PWL current source on Subcircuit", &raw)
-                        } else if !ac.is_empty() {
-                            self.gap(obj, "pulse/PWL sources take no ac=", &raw)
-                        } else if v != first {
-                            self.gap(obj, "waveform sources take no DC value of their own", &raw)
-                        } else {
-                            let pts: Vec<String> = values.iter().map(|(t, y)| format!("({}, {})", py_num(*t), py_num(*y))).collect();
-                            self.line(format!("{obj}.PieceWiseLinearVoltageSource({head}, values=[{}])", pts.join(", ")))
-                        }
-                    }
-                    (Some(IrWaveform::Sin { offset, amplitude, frequency, delay, damping, phase }), Some(v)) => {
-                        if *delay != 0.0 || *damping != 0.0 || *phase != 0.0 {
-                            self.gap(obj, "sinusoidal sources take no delay/damping/phase", &raw)
-                        } else if current && !ac.is_empty() {
-                            self.gap(obj, "Subcircuit.SinusoidalCurrentSource takes no ac=", &raw)
-                        } else {
-                            self.line(format!(
-                                "{obj}.Sinusoidal{kind}Source({head}, dc_offset={}, offset={}, amplitude={}, frequency={}{ac})",
-                                py_num(v), py_num(*offset), py_num(*amplitude), py_num(*frequency)
-                            ))
-                        }
-                    }
-                    (Some(IrWaveform::Exp { .. } | IrWaveform::Sffm { .. } | IrWaveform::Am { .. }), _) => self.gap(obj, "no EXP/SFFM/AM source", &raw),
                 }
             }
             Component::BehavioralVoltage { name, np, nm, expression } => self.line(format!("{obj}.BV(name={}, positive={}, negative={}, expression={})", n(name), n(np), n(nm), n(expression))),
@@ -219,12 +207,23 @@ impl Py {
                 let nh = num_harmonics.map_or("None".into(), |n| n.to_string());
                 self.line(format!("tb.add_fourier({}, [{}], num_harmonics={nh})", py_num(*fundamental), outs.join(", ")))
             }
+            Analysis::Tf { output, source } => self.line(format!("tb.add_tf({}, {})", py_str(output), py_str(source))),
+            Analysis::Sensitivity { output, ac: None } => self.line(format!("tb.add_dc_sensitivity({})", py_str(output))),
+            Analysis::Sensitivity { output, ac: Some(a) } => self.line(format!(
+                "tb.add_ac_sensitivity({}, variation={}, number_of_points={}, start_frequency={}, stop_frequency={})",
+                py_str(output), py_str(&a.variation), a.points, py_num(a.start), py_num(a.stop)
+            )),
+            Analysis::PoleZero { node1, node2, node3, node4, tf_type, pz_type } => self.line(format!(
+                "tb.add_polezero({}, {}, {}, {}, {}, {})", py_str(node1), py_str(node2), py_str(node3), py_str(node4), py_str(tf_type), py_str(pz_type)
+            )),
+            Analysis::Distortion { variation, points, start, stop, f2overf1 } => self.line(format!(
+                "tb.add_distortion(variation={}, points={points}, start_frequency={}, stop_frequency={}, f2overf1={})",
+                py_str(variation), py_num(*start), py_num(*stop), f2overf1.map_or("None".into(), py_num)
+            )),
+            // Spectre/VACASK-only analyses; the importer reads SPICE decks, so none arrive.
             other => {
-                // `tb.tf()`, `tb.polezero()` ... run at once; there is no `add_` form.
-                self.gaps.push("analysis with no add_* builder (tf, sens, pz, disto, ...)");
-                let text = netlist(&CircuitIR { top: Subcircuit { name: String::new(), ports: vec![], parameters: vec![], components: vec![], instances: vec![], models: vec![], raw_spice: vec![], includes: vec![], libs: vec![], osdi_loads: vec![], verilog_blocks: vec![] }, testbench: Some(Testbench { dut: String::new(), stimulus: vec![], analyses: vec![other.clone()], options: SimOptions::default(), saves: vec![], measures: vec![], temperature: None, nominal_temperature: None, initial_conditions: vec![], node_sets: vec![], step_params: vec![], extra_lines: vec![] }), subcircuit_defs: vec![], model_libraries: vec![] }, Dialect::Ngspice).unwrap_or_default();
-                let card = text.lines().find(|l| l.starts_with('.') && *l != ".end").unwrap_or("").to_string();
-                self.line(format!("tb.extra_line({})  # gap: analysis with no add_* builder (tf, sens, pz, disto, ...)", py_str(&card)));
+                self.gaps.push("analysis with no add_* builder");
+                self.line(format!("# gap: analysis with no add_* builder: {other:?}"));
             }
         }
     }

@@ -480,6 +480,38 @@ class TestWaveformSources:
         assert "Q1 c b e s dt qv m=3" in netlist
         assert "J1 d g s jm area=1.5" in netlist
 
+    def test_waveform_sources_take_dc_ac_and_positional_nodes(self):
+        # PySpice-style positional name/nodes; dc= and ac= beside a waveform;
+        # the sine's delay/damping/phase; EXP/SFFM/AM; PWL current on a Subcircuit.
+        c = ps().Circuit("t")
+        c.PulseVoltageSource("p", "a", c.gnd, initial_value=0.0, pulsed_value=1.0, dc=0.5, ac=1.0)
+        c.SinusoidalVoltageSource("s", "b", c.gnd, offset=0.2, amplitude=1.0, frequency=1e3, delay=1e-3, damping_factor=10.0, phase=90.0)
+        c.ExponentialCurrentSource("e", "d", c.gnd, initial_value=0.0, pulsed_value=1e-3, rise_time_constant=1e-6, fall_delay_time=5e-6, fall_time_constant=1e-6)
+        c.SingleFrequencyFMVoltageSource("f", "f", c.gnd, offset=0.0, amplitude=1.0, carrier_frequency=1e6, modulation_index=0.5, signal_frequency=1e3)
+        c.AmplitudeModulatedVoltageSource("m", "m", c.gnd, offset=1.0, amplitude=0.5, modulating_frequency=1e3, carrier_frequency=1e6)
+        c.PieceWiseLinearCurrentSource("w", "w", c.gnd, values=[(0, 0), (1e-6, 1e-3)])
+        n = str(c)
+        assert "Vp a 0 500m AC 1 PULSE(" in n
+        assert "Vs b 0 200m SIN(0.2 1 1000 0.001 10 90)" in n  # DC defaults to the offset
+        assert "Ie d 0 0 EXP(0 0.001 0 0.000001 0.000005 0.000001)" in n
+        assert "SFFM(0 1 1000000 0.5 1000)" in n and "AM(0.5 1 1000 1000000 0)" in n
+        assert "Iw w 0 0 PWL(" in n
+        with pytest.raises(TypeError):
+            c.PulseVoltageSource("x", "x", c.gnd, dc=1.0, dc_offset=1.0)
+
+    def test_testbench_builds_tf_sens_pz_disto(self):
+        dut = ps().Subcircuit("d")
+        dut.R("1", "in", "out", 1e3)
+        tb = ps().Testbench(dut)
+        tb.V("in", "in", "0", 1.0, ac=1.0)
+        tb.add_tf("v(out)", "Vin")
+        tb.add_dc_sensitivity("v(out)")
+        tb.add_polezero("in", "0", "out", "0", "vol", "pz")
+        tb.add_distortion("dec", 10, 100.0, 1e6)
+        n = tb.netlist("ngspice")
+        for card in (".tf v(out) Vin", ".sens v(out)", ".pz in 0 out 0 vol pz", ".disto dec 10 100 1meg"):
+            assert card in n, n
+
     def test_pwl_voltage(self):
         c = ps().Circuit("t")
         c.PieceWiseLinearVoltageSource(

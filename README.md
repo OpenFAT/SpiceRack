@@ -88,11 +88,11 @@ There are voltage, current, resistance, capacitance, inductance, frequency, time
 
 Element methods mirror the SPICE element letters and exist on both `Circuit` and `Subcircuit`, with the source methods also on `Testbench`.
 
-Passives are `R`, `C`, `L`, and `K` for mutual inductance. Independent sources are `V` and `I`, each taking an optional `ac=` magnitude for small-signal analyses. For time-varying stimulus there are `SinusoidalVoltageSource`, `PulseVoltageSource`, and `PieceWiseLinearVoltageSource`, along with sinusoidal and pulse current variants.
+Passives are `R`, `C`, `L`, and `K` for mutual inductance. Independent sources are `V` and `I`, each taking an optional `ac=` magnitude for small-signal analyses. A value is a number, a `UnitValue`, or an expression string (`value="rload*2"`), and `R`/`C`/`L` take instance parameters as keyword arguments. For time-varying stimulus there are `Sinusoidal`, `Pulse`, `PieceWiseLinear`, `Exponential`, `SingleFrequencyFM` and `AmplitudeModulated` sources, each in a `...VoltageSource` and a `...CurrentSource` form, on `Circuit`, `Subcircuit` and `Testbench` alike. Every one takes `dc=` (default: the waveform's value at t=0, as SPICE reads a card without one), `ac=` and `ac_phase=`, and the name and both nodes may be passed positionally, as in PySpice.
 
 ```python
-tb.PulseVoltageSource(name="clk", positive="clk", negative=dut.gnd,
-    initial_value=0.0, pulsed_value=3.3, pulse_width=25e-9, period=50e-9,
+tb.PulseVoltageSource("clk", "clk", dut.gnd,
+    initial_value=0.0, pulsed_value=3.3, delay=1e-9, pulse_width=25e-9, period=50e-9,
     rise_time=0.5e-9, fall_time=0.5e-9)
 ```
 
@@ -131,7 +131,7 @@ ac   = tb.ac(variation="dec", number_of_points=100,
 tran = tb.transient(step_time=10e-6, end_time=5e-3)
 ```
 
-Beyond those there is `noise`, `transfer_function` (aliased `tf`), `dc_sensitivity`, `ac_sensitivity`, `polezero`, and `distortion`. The RF and periodic steady-state group covers `pss`, `s_param`, `harmonic_balance`, `stability`, and `transient_noise`.
+Beyond those there is `noise`, `transfer_function` (aliased `tf`), `dc_sensitivity`, `ac_sensitivity`, `polezero`, and `distortion`. Each has an `add_*` twin on `Testbench` (`add_tf`, `add_polezero`, ...) that adds the card to a multi-analysis deck instead of running it. The RF and periodic steady-state group covers `pss`, `s_param`, `harmonic_balance`, `stability`, and `transient_noise`.
 
 Some analyses only exist on one simulator, so they are exposed under a backend prefix. Spectre contributes `spectre_sweep`, `spectre_montecarlo`, `spectre_pac`, `spectre_pnoise`, `spectre_pxf`, and `spectre_pstb`.
 
