@@ -319,7 +319,7 @@ fn the_display_netlist_runs_on_ngspice_too() {
         .simulator()
         .ac("lin", 1, 1000.0, 1000.0)
         .expect("legacy Laplace deck must run");
-    let out = ac_res.base.nodes["out"].complex.as_ref().expect("AC is complex")[0];
+    let out = ac_res.complex("out").expect("AC is complex")[0];
     assert!((out.norm() - std::f64::consts::FRAC_1_SQRT_2).abs() < 1e-4, "|H| = {}", out.norm());
     assert!((out.arg().to_degrees() + 45.0).abs() < 1e-3, "arg H = {}", out.arg().to_degrees());
 }
