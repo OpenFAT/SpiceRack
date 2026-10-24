@@ -227,7 +227,10 @@ fn check(deck: &Path, secs: u64, refused: &std::sync::Mutex<std::collections::BT
         Err(e) => return Outcome::Fail(e.to_string()),
     };
     let stem = deck.file_stem().unwrap().to_string_lossy();
-    let ir = parse(&src, &stem);
+    let ir = match parse(&src, &stem, Dialect::Ngspice) {
+        Ok((ir, _)) => ir,
+        Err(e) => return Outcome::Fail(e),
+    };
     let back: CircuitIR = serde_json::from_str(&serde_json::to_string(&ir).unwrap()).unwrap();
     if back != ir {
         return Outcome::Fail("JSON round trip changed the IR".into());

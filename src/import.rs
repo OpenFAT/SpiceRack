@@ -6,73 +6,133 @@
 //! `.pz`, `.step`, ...) is kept verbatim as a raw line, so it reaches the
 //! SPICE-family outputs unchanged. `tools/spice2rack.rs` is the CLI.
 
+use std::sync::OnceLock;
+
+use crate::codegen::Dialect;
 use crate::ir::*;
+use crate::peg::Grammar;
+
+// ── Grammars ──
+
+/// One dialect's grammars, compiled once: physical lines -> logical lines,
+/// one logical line -> its card, and include lines.
+struct Grammars {
+    lines: Grammar,
+    cards: Grammar,
+    one_card: u32,
+}
+
+macro_rules! peg {
+    ($($f:literal),+) => { concat!($(include_str!(concat!("../grammar/", $f)), "\n"),+) };
+}
+
+fn grammars(d: Dialect) -> Result<&'static Grammars, String> {
+    static NG: OnceLock<Grammars> = OnceLock::new();
+    static HS: OnceLock<Grammars> = OnceLock::new();
+    let (cell, lines, cards) = match d {
+        Dialect::Ngspice | Dialect::Espice => (&NG, peg!("ngspice_lines.peg"), peg!("spice_cards.peg", "ngspice.peg", "spicerack.peg")),
+        Dialect::Hspice => (&HS, peg!("hspice_lines.peg"), peg!("spice_cards.peg", "hspice_ops.peg", "hspice.peg", "spicerack.peg")),
+        other => return Err(format!("no {other:?} reader yet")),
+    };
+    Ok(cell.get_or_init(|| {
+        let cards = Grammar::compile(cards).expect("card grammar");
+        Grammars { lines: Grammar::compile(lines).expect("line grammar"), one_card: cards.rule("OneCard").unwrap(), cards }
+    }))
+}
+
+fn include_grammar() -> &'static Grammar {
+    static G: OnceLock<Grammar> = OnceLock::new();
+    G.get_or_init(|| Grammar::compile(peg!("include.peg")).expect("include grammar"))
+}
 
 // ── Line layer ──
 
-/// Analysis commands a `.control` block runs; ngspice reads `tran 1n 1u`
-/// there as it reads `.tran 1n 1u`.
-const CONTROL_ANALYSES: &[&str] = &["op", "dc", "ac", "tran", "noise", "tf", "sens", "pz", "disto", "four", "meas"];
-
-/// Logical cards: title dropped, comments stripped, `+` lines joined. A
-/// `.control` block keeps only its analysis commands, as dot cards; the rest
-/// is ngspice scripting no other dialect has.
-fn cards(src: &str) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    let mut control = false;
-    for raw in src.lines().skip(1) {
-        let line = strip_comment(raw.trim());
-        if line.is_empty() {
-            continue;
-        }
-        let lower = line.to_ascii_lowercase();
-        if control {
-            control = !lower.starts_with(".endc");
-            let word = lower.split_whitespace().next().unwrap_or("");
-            if CONTROL_ANALYSES.contains(&word) {
-                out.push(format!(".{line}"));
+/// The title and the logical lines, original case: continuations joined
+/// (`Piece` with a blank, HSPICE's `\\` `Glue` with nothing), comments and
+/// blank lines gone, as the dialect's `*_lines.peg` reads them.
+fn logical_lines(src: &str, g: &Grammars) -> Result<(String, Vec<String>), usize> {
+    let tree = g.lines.parse(g.lines.rule("File").unwrap(), src)?;
+    let (mut title, mut out) = (String::new(), Vec::new());
+    // Row 0 is `File` itself; its children are the title and the lines.
+    for row in tree.children(Some(0)) {
+        match g.lines.name(tree.rows[row].rule) {
+            "Title" => title = tree.text(row).trim().to_string(),
+            "Line" => {
+                let mut line = String::new();
+                for part in tree.children(Some(row)) {
+                    let text = tree.text(part).trim();
+                    if !line.is_empty() && !text.is_empty() && g.lines.name(tree.rows[part].rule) == "Piece" {
+                        line.push(' ');
+                    }
+                    line.push_str(text);
+                }
+                if !line.is_empty() {
+                    out.push(line);
+                }
             }
-            continue;
-        }
-        if lower.starts_with(".control") {
-            control = true;
-            continue;
-        }
-        if lower == ".end" || lower.starts_with(".end ") {
-            break;
-        }
-        match (line.strip_prefix('+'), out.last_mut()) {
-            (Some(rest), Some(last)) => {
-                last.push(' ');
-                last.push_str(rest.trim());
-            }
-            _ => out.push(line.to_string()),
+            _ => {} // HSPICE `EndRun`: a further run, not read
         }
     }
-    out
+    Ok((title, out))
 }
 
-/// `*` lines are comments; a tail comment starts at `$` or `;` after a blank
-/// (inside a name `$` is a name byte) or at `//`. Quotes and braces protect.
-fn strip_comment(line: &str) -> &str {
-    if line.starts_with('*') {
-        return "";
+/// A card's tokens as the card grammar splits it: the dot keyword, then each
+/// captured field (`Name`, `Word`, `Pair`, `Group`, `Expr`, `Str`, `Assign`)
+/// in original case. Two fields with a bare `=` between them (`v(a) = 1`)
+/// are one pair. `None` when the grammar refuses the card.
+fn card_tokens(line: &str, g: &Grammars) -> Option<Vec<String>> {
+    let lower = format!("{}\n", line.to_ascii_lowercase());
+    let tree = g.cards.parse(g.one_card, &lower).ok()?;
+    let orig = |i: usize| &line[tree.rows[i].start as usize..(tree.rows[i].end as usize).min(line.len())];
+    // Row 0 is `OneCard`; its child is the card rule that matched.
+    let card = tree.children(Some(0)).next()?;
+    let mut out: Vec<String> = Vec::new();
+    if line.starts_with('.') {
+        out.push(line.split(|c: char| c.is_whitespace() || c == '(').next()?.to_string());
     }
-    let b = line.as_bytes();
-    let (mut depth, mut quote) = (0i32, None::<u8>);
-    for i in 0..b.len() {
-        match (quote, b[i]) {
-            (Some(q), c) if c == q => quote = None,
-            (Some(_), _) => {}
-            (None, b'\'' | b'"') => quote = Some(b[i]),
-            (None, b'{') => depth += 1,
-            (None, b'}') => depth -= 1,
-            (None, b'$' | b';') if depth == 0 && i > 0 && b[i - 1].is_ascii_whitespace() => return line[..i].trim_end(),
-            (None, b'/') if depth == 0 && b.get(i + 1) == Some(&b'/') => return line[..i].trim_end(),
-            _ => {}
+    let mut last_end = None;
+    for f in tree.children(Some(card)) {
+        let text = match g.cards.name(tree.rows[f].rule) {
+            "Name" | "Word" | "Group" | "Expr" | "Str" => orig(f).trim().to_string(),
+            "Pair" | "Assign" | "LPair" => {
+                let (k, v) = orig(f).split_once('=')?;
+                format!("{}={}", k.trim(), v.trim())
+            }
+            _ => continue, // Kind (the keyword), Ends
+        };
+        let between = last_end.map(|e| &lower[e..tree.rows[f].start as usize]);
+        match (between, out.last_mut()) {
+            (Some(gap), Some(prev)) if gap.trim() == "=" => {
+                prev.push('=');
+                prev.push_str(&text);
+            }
+            _ => out.push(text),
         }
+        last_end = Some(tree.rows[f].end as usize);
     }
-    line
+    Some(out)
+}
+
+/// `.include path` / `.lib path section`, read by `include.peg`.
+enum IncludeLine {
+    Include(String),
+    Lib(String, String),
+}
+
+fn include_line(line: &str) -> Option<IncludeLine> {
+    let g = include_grammar();
+    let tree = g.parse(g.rule("SpiceFile").unwrap(), line).ok()?;
+    let row = tree.children(Some(0)).next()?; // under `SpiceFile`
+    let args: Vec<String> = tree
+        .children(Some(row))
+        .filter(|&a| matches!(g.name(tree.rows[a].rule), "Quoted" | "Word"))
+        .map(|a| unquote(tree.text(a)).to_string())
+        .collect();
+    match (g.name(tree.rows[row].rule), args.as_slice()) {
+        ("Include", [p]) => Some(IncludeLine::Include(p.clone())),
+        ("Lib", [p, sec]) => Some(IncludeLine::Lib(p.clone(), sec.clone())),
+        _ => None,
+    }
 }
 
 /// Whitespace-separated tokens; `{..}`, `'..'`, `".."` and `(..)` stay whole,
@@ -218,8 +278,7 @@ fn waveform(tok: &str) -> Option<IrWaveform> {
 // ── Elements ──
 
 /// One element card, or `None` when the IR has no faithful form for it.
-fn element(card: &str) -> Option<Component> {
-    let t = tokens(card);
+fn element(t: &[String]) -> Option<Component> {
     let name = t[0][1..].to_string();
     let s = |i: usize| t.get(i).cloned();
     let letter = t[0].chars().next()?.to_ascii_lowercase();
@@ -416,7 +475,7 @@ fn node_values(toks: &[String]) -> Option<Vec<(String, f64)>> {
 }
 
 /// A dot card that is an analysis or testbench setting; `false` if not.
-fn control(tb: &mut Testbench, card: &str, t: &[String]) -> bool {
+fn control_card(tb: &mut Testbench, card: &str, t: &[String]) -> bool {
     let n = |i: usize| t.get(i).and_then(|x| num(x));
     let kind = t[0].to_ascii_lowercase();
     let parsed = match kind.as_str() {
@@ -489,24 +548,91 @@ fn model(t: &[String]) -> Option<ModelDef> {
     Some(ModelDef { name, kind, parameters })
 }
 
-/// Parses deck text (line 1 is the title) into IR named `name`.
-pub fn parse(src: &str, name: &str) -> CircuitIR {
+/// Analysis commands a `.control` block runs; ngspice reads `tran 1n 1u`
+/// there as it reads `.tran 1n 1u`.
+const CONTROL_ANALYSES: &[&str] = &["op", "dc", "ac", "tran", "noise", "tf", "sens", "pz", "disto", "four", "meas"];
+
+/// Multi-line blocks no IR field holds, kept whole as raw lines: opener,
+/// closer.
+const BLOCKS: &[(&str, &str)] = &[(".if", ".endif"), (".data", ".enddata"), (".variation", ".end_variation")];
+
+/// What a deck lost on the way to IR.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct Report {
+    /// Cards the dialect grammar refused, kept as raw lines.
+    pub unparsed: Vec<String>,
+    /// Cards the grammar read that no IR field holds, kept as raw lines.
+    pub raw: usize,
+}
+
+/// Parses deck text in dialect `d` (line 1 is the title) into IR named `name`.
+pub fn parse(src: &str, name: &str, d: Dialect) -> Result<(CircuitIR, Report), String> {
+    let g = grammars(d)?;
+    let (_title, lines) = logical_lines(src, g).map_err(|at| format!("line grammar stops at byte {at}"))?;
+    let mut report = Report::default();
     let mut top = sub(name);
     let mut tb = testbench(name);
     let mut defs: Vec<Subcircuit> = Vec::new();
     let mut open: Option<Subcircuit> = None; // ponytail: one level; nested .subckt goes raw
-    let mut lib_block = false;
+    let mut block: Option<&str> = None; // the closer of an open raw block
+    let mut control = false;
 
-    for card in cards(src) {
-        let t = tokens(&card);
-        let kind = t[0].to_ascii_lowercase();
+    for card in lines {
+        let word = card.split(|c: char| c.is_whitespace() || c == '(').next().unwrap_or("").to_ascii_lowercase();
         let inside = open.is_some();
         let here = open.as_mut().unwrap_or(&mut top);
-        if lib_block {
-            here.raw_spice.push(card.clone());
-            lib_block = !kind.starts_with(".endl");
+        if control {
+            control = word != ".endc";
+            // ngspice runs a `.control` block's analyses; the rest is scripting.
+            let cmd = word.trim_start_matches('.');
+            if control && CONTROL_ANALYSES.contains(&cmd) {
+                if let Some(t) = card_tokens(&format!(".{card}"), g) {
+                    let _ = control_card(&mut tb, &format!(".{card}"), &t);
+                }
+            }
             continue;
         }
+        if let Some(close) = block {
+            here.raw_spice.push(card.clone());
+            if word == close {
+                block = None;
+            }
+            continue;
+        }
+        if word == ".control" && d == Dialect::Ngspice {
+            control = true;
+            continue;
+        }
+        if let Some(&(_, close)) = BLOCKS.iter().find(|(o, _)| *o == word) {
+            here.raw_spice.push(card.clone());
+            report.raw += 1;
+            block = Some(close);
+            continue;
+        }
+        match include_line(&card) {
+            Some(IncludeLine::Include(p)) => {
+                here.includes.push(p);
+                continue;
+            }
+            Some(IncludeLine::Lib(p, sec)) => {
+                here.libs.push((p, sec));
+                continue;
+            }
+            None if word == ".lib" => {
+                // `.lib name` ... `.endl`: a section definition.
+                here.raw_spice.push(card.clone());
+                report.raw += 1;
+                block = Some(".endl");
+                continue;
+            }
+            None => {}
+        }
+        let Some(t) = card_tokens(&card, g) else {
+            report.unparsed.push(card.clone());
+            here.raw_spice.push(card);
+            continue;
+        };
+        let kind = t[0].to_ascii_lowercase();
         if !kind.starts_with('.') {
             if kind.starts_with('x') {
                 let (pos, params) = split_params(&t[1..]);
@@ -514,18 +640,18 @@ pub fn parse(src: &str, name: &str) -> CircuitIR {
                     here.instances.push(Instance { name: t[0][1..].to_string(), subcircuit: sc.clone(), port_mapping: ports.to_vec(), parameters: params });
                     continue;
                 }
-            } else if let Some(c) = element(&card) {
+            } else if let Some(c) = element(&t) {
                 here.components.push(c);
                 continue;
             }
+            report.raw += 1;
             here.raw_spice.push(card);
             continue;
         }
         match kind.as_str() {
             ".subckt" | ".macro" if !inside && t.len() >= 2 => {
                 let mut sc = sub(&t[1]);
-                let body: Vec<&String> = t[2..].iter().filter(|x| !x.eq_ignore_ascii_case("params:")).collect();
-                for x in body {
+                for x in t[2..].iter().filter(|x| !x.eq_ignore_ascii_case("params:")) {
                     match x.split_once('=') {
                         Some((k, v)) => sc.parameters.push(ParamDef { name: k.into(), default: Some(v.into()) }),
                         None => sc.ports.push(Port { name: x.clone(), direction: PortDirection::InOut }),
@@ -536,29 +662,32 @@ pub fn parse(src: &str, name: &str) -> CircuitIR {
             ".ends" | ".eom" if inside => defs.push(open.take().unwrap()),
             ".param" | ".parameter" | ".parameters" if !inside => match pairs(&t[1..]) {
                 Some(p) => top.parameters.extend(p.into_iter().map(|(k, v)| ParamDef { name: k, default: Some(v) })),
-                None => top.raw_spice.push(card),
+                None => {
+                    report.raw += 1;
+                    top.raw_spice.push(card);
+                }
             },
             ".model" => match model(&t) {
                 Some(m) => here.models.push(m),
-                None => here.raw_spice.push(card),
+                None => {
+                    report.raw += 1;
+                    here.raw_spice.push(card);
+                }
             },
-            ".include" | ".inc" if t.len() == 2 => here.includes.push(unquote(&t[1]).to_string()),
-            ".lib" if t.len() == 3 => here.libs.push((unquote(&t[1]).to_string(), t[2].clone())),
-            ".lib" if t.len() == 2 => {
-                here.raw_spice.push(card);
-                lib_block = true;
-            }
-            _ if !inside && control(&mut tb, &card, &t) => {}
+            _ if !inside && control_card(&mut tb, &card, &t) => {}
             // SPICE text the IR has no form for (.pz, .step, .hb, ...);
             // `extra_lines` is for target-native text, not this.
-            _ => here.raw_spice.push(card),
+            _ => {
+                report.raw += 1;
+                here.raw_spice.push(card);
+            }
         }
     }
     if let Some(sc) = open {
         eprintln!("warning: .subckt {} has no .ends", sc.name);
         defs.push(sc);
     }
-    CircuitIR { top, testbench: Some(tb), subcircuit_defs: defs, model_libraries: vec![] }
+    Ok((CircuitIR { top, testbench: Some(tb), subcircuit_defs: defs, model_libraries: vec![] }, report))
 }
 
 #[cfg(test)]
@@ -594,7 +723,7 @@ Rp p 0 1k
 
     #[test]
     fn deck_to_ir() {
-        let ir = parse(DECK, "divider");
+        let ir = parse(DECK, "divider", Dialect::Ngspice).unwrap().0;
         assert_eq!(ir.subcircuit_defs[0].parameters[0], ParamDef { name: "r".into(), default: Some("1k".into()) });
         assert_eq!(ir.top.instances[0].parameters, vec![("r".into(), "2k".into())]);
         assert!(ir.top.components.iter().any(|c| matches!(c, Component::Resistor { value: IrValue::Expression { expr }, .. } if expr == "rv")));
@@ -604,10 +733,10 @@ Rp p 0 1k
         // POLY has no IR form: kept verbatim.
         assert_eq!(ir.top.raw_spice, vec!["Gp 0 p poly(1) mid 0 0 1m".to_string()]);
         // `.control` analyses become dot cards; the scripting goes.
-        let c = parse("t\nR1 a 0 1k\n.control\nTRAN 1n 10n\nplot v(a)\n.endc\n", "t");
+        let c = parse("t\nR1 a 0 1k\n.control\nTRAN 1n 10n\nplot v(a)\n.endc\n", "t", Dialect::Ngspice).unwrap().0;
         assert!(matches!(c.testbench.as_ref().unwrap().analyses[..], [Analysis::Transient { stop, .. }] if stop == 10e-9));
         // A waveform-only source keeps its t=0 value as the DC value.
-        let w = parse("t\nV2 x 0 pulse(3 0 1n 1n 1n 5n 10n)\n", "t");
+        let w = parse("t\nV2 x 0 pulse(3 0 1n 1n 1n 5n 10n)\n", "t", Dialect::Ngspice).unwrap().0;
         assert!(matches!(w.top.components[0], Component::VoltageSource { value: IrValue::Numeric { value: 3.0 }, .. }));
         assert_eq!(num("1.5meg"), Some(1.5e6));
         assert_eq!(num("10pF"), Some(10e-12));
@@ -626,7 +755,7 @@ Rp p 0 1k
             assert!(out.status.success(), "{}\n{deck}", String::from_utf8_lossy(&out.stdout));
             Some(crate::rawfile::parse_raw(&std::fs::read(&r).unwrap()).unwrap())
         };
-        let converted = netlist(&parse(DECK, "divider"), Dialect::Ngspice).unwrap();
+        let converted = netlist(&parse(DECK, "divider", Dialect::Ngspice).unwrap().0, Dialect::Ngspice).unwrap();
         let (Some(a), Some(b)) = (run(DECK), run(&converted)) else {
             eprintln!("ngspice not on PATH — skipping");
             return;

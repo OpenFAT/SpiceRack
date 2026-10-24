@@ -27,10 +27,12 @@ const BACKENDS: [(Dialect, &str); 6] = [
 fn convert(deck: &Path, out: &Path) -> std::io::Result<()> {
     let src = std::fs::read_to_string(deck)?;
     let stem = deck.file_stem().and_then(|s| s.to_str()).unwrap_or("deck");
-    let ir = parse(&src, stem);
-    let raw = ir.top.raw_spice.len() + ir.subcircuit_defs.iter().map(|s| s.raw_spice.len()).sum::<usize>();
-    if raw > 0 {
-        eprintln!("{}: {raw} card(s) kept verbatim (no IR form)", deck.display());
+    let (ir, report) = parse(&src, stem, Dialect::Ngspice).map_err(std::io::Error::other)?;
+    if report.raw > 0 {
+        eprintln!("{}: {} card(s) kept verbatim (no IR form)", deck.display(), report.raw);
+    }
+    for card in &report.unparsed {
+        eprintln!("{}: grammar refused, kept verbatim: {card}", deck.display());
     }
     std::fs::write(out.join(format!("{stem}.json")), serde_json::to_string_pretty(&ir).map_err(std::io::Error::other)?)?;
     for (d, ext) in BACKENDS {
