@@ -7,7 +7,7 @@ name = "spicerack"
 version = "0.1.0"
 description = "Build SPICE circuits, generate netlists, run simulator backends, and read results"
 readme = "README.md"
-license = "MIT OR Apache-2.0"
+license = "MIT"
 requires-python = ">=3.10"
 dependencies = ["numpy"]
 

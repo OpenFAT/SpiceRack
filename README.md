@@ -1,8 +1,15 @@
 # SpiceRack
 
+[![Tests](https://github.com/OmarSiwy/SpiceRack/actions/workflows/test.yaml/badge.svg?branch=main)](https://github.com/OmarSiwy/SpiceRack/actions/workflows/test.yaml)
+[![Release](https://github.com/OmarSiwy/SpiceRack/actions/workflows/tags.yaml/badge.svg)](https://github.com/OmarSiwy/SpiceRack/actions/workflows/tags.yaml)
+[![Docs](https://github.com/OmarSiwy/SpiceRack/actions/workflows/docs.yaml/badge.svg?branch=main)](https://omarsiwy.github.io/SpiceRack/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Build SPICE circuits in Python, generate netlists, run them on whichever simulator you have installed, and read the results back as plain lists of floats.
 
-The core is a Rust crate (`spicerack`). Python bindings ship in the same package, imported as `spicerack`. The API is close enough to PySpice that most PySpice code ports with an import change, but the circuit model underneath is backend neutral: one description compiles to ngspice, LTspice, VACASK, or Spectre dialects.
+The core is a Rust crate (`spicerack`). Python bindings ship in the same package, imported as `spicerack`. The API is close enough to PySpice that most PySpice code ports with an import change, but the circuit model underneath is backend neutral: one description compiles to ngspice, HSPICE, LTspice, VACASK, Spectre, or ESPice decks (`tb.netlist("hspice")`). HSPICE is netlist-only: there is no HSPICE runner.
+
+**Status:** maintained by one person, pre-1.0 (0.1.0). The API can break between minor versions; pin a release tag or commit rather than following `main`.
 
 ## Install
 
@@ -327,4 +334,4 @@ python3 -m pytest -v
 
 ## License
 
-MIT or Apache-2.0, at your option.
+MIT. See [LICENSE](LICENSE).
