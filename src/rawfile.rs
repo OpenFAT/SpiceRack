@@ -1,6 +1,7 @@
 //! Parser for nutmeg-format `.raw` files (ngspice, VACASK, LTspice, Spectre nutbin):
 //! `key: value` header lines, a `Variables:` block, then `Binary:` or `Values:` and the data.
-//! Only the first plot in a file is read.
+//! [`parse_raw`] reads the first plot; [`parse_raw_all`] reads every plot
+//! (ngspice writes one per analysis, not in card order).
 
 use num_complex::Complex64;
 use crate::result::{RawData, VarInfo};
@@ -18,9 +19,24 @@ pub fn parse_raw(data: &[u8]) -> Result<RawData, RawFileError> {
     let utf16 = data.starts_with(&[0xFF, 0xFE])
         || (data.len() >= 10 && data[1] == 0 && data[3] == 0 && data[5] == 0);
     if utf16 {
-        return parse_utf8(&decode_utf16_le(data));
+        return parse_utf8(&decode_utf16_le(data)).map(|(r, _)| r);
     }
-    parse_utf8(data)
+    parse_utf8(data).map(|(r, _)| r)
+}
+
+/// Every plot in the file, in file order. LTspice's UTF-16 files hold one.
+pub fn parse_raw_all(data: &[u8]) -> Result<Vec<RawData>, RawFileError> {
+    if data.starts_with(&[0xFF, 0xFE]) {
+        return parse_raw(data).map(|r| vec![r]);
+    }
+    let mut plots = Vec::new();
+    let mut rest = data;
+    while !rest.trim_ascii().is_empty() {
+        let (raw, used) = parse_utf8(rest)?;
+        plots.push(raw);
+        rest = &rest[used..];
+    }
+    Ok(plots)
 }
 
 /// LTspice header text is UTF-16-LE (ASCII in the low byte); binary data after
@@ -42,7 +58,8 @@ fn bad<E: std::fmt::Display>(what: &str) -> impl FnOnce(E) -> RawFileError + '_ 
     move |e| RawFileError::Parse(format!("Bad {what}: {e}"))
 }
 
-fn parse_utf8(data: &[u8]) -> Result<RawData, RawFileError> {
+/// One plot from the start of `data`, and the bytes it spans.
+fn parse_utf8(data: &[u8]) -> Result<(RawData, usize), RawFileError> {
     let mut raw = RawData::empty();
     let (mut num_vars, mut num_points) = (0usize, 0usize);
     let (mut in_variables, mut fast_access) = (false, false);
@@ -108,12 +125,15 @@ fn parse_utf8(data: &[u8]) -> Result<RawData, RawFileError> {
     }
 
     let body = &data[pos..];
-    if is_binary {
-        parse_binary(body, &mut raw, num_vars, num_points, fast_access)?;
+    let used = if is_binary {
+        parse_binary(body, &mut raw, num_vars, num_points, fast_access)?
     } else {
-        parse_ascii(body, &mut raw, num_vars, num_points)?;
-    }
-    Ok(raw)
+        // The values end where the next plot's header begins.
+        let end = body.windows(7).position(|w| w == b"\nTitle:").map_or(body.len(), |i| i + 1);
+        parse_ascii(&body[..end], &mut raw, num_vars, num_points)?;
+        end
+    };
+    Ok((raw, pos + used))
 }
 
 /// Little-endian f64s, point-major (`p*nv + v`) or, with FastAccess, variable-major.
@@ -124,7 +144,7 @@ fn parse_binary(
     nv: usize,
     np: usize,
     fast_access: bool,
-) -> Result<(), RawFileError> {
+) -> Result<usize, RawFileError> {
     let width = if raw.is_complex { 2 } else { 1 };
     let need = nv * np * width * 8;
     if body.len() < need {
@@ -142,7 +162,7 @@ fn parse_binary(
     } else {
         raw.real_data = (0..nv).map(|v| (0..np).map(|p| f(slot(v, p))).collect()).collect();
     }
-    Ok(())
+    Ok(need)
 }
 
 /// Whitespace-separated: per point an index token, then one value per variable
@@ -187,6 +207,25 @@ mod tests {
         }
         h += marker;
         h.into_bytes()
+    }
+
+    #[test]
+    fn every_plot_in_order() {
+        let mut ascii = header("real", &["v(a)"], 1, "Values:\n");
+        ascii.extend_from_slice(b" 0\t1.5\n");
+        ascii.extend(header("real", &["time", "v(a)"], 2, "Values:\n"));
+        ascii.extend_from_slice(b" 0\t0\n\t1\n 1\t1e-9\n\t2\n");
+        let plots = parse_raw_all(&ascii).unwrap();
+        assert_eq!(plots.len(), 2);
+        assert_eq!(plots[0].real_data, vec![vec![1.5]]);
+        assert_eq!(plots[1].real_data, vec![vec![0.0, 1e-9], vec![1.0, 2.0]]);
+
+        let mut bin = header("real", &["v(a)"], 1, "Binary:\n");
+        bin.extend_from_slice(&3.0f64.to_le_bytes());
+        bin.extend(header("real", &["v(a)", "v(b)"], 1, "Binary:\n"));
+        bin.extend([4.0f64, 5.0].iter().flat_map(|v| v.to_le_bytes()));
+        let plots = parse_raw_all(&bin).unwrap();
+        assert_eq!(plots.iter().map(|p| p.real_data.clone()).collect::<Vec<_>>(), vec![vec![vec![3.0]], vec![vec![4.0], vec![5.0]]]);
     }
 
     #[test]
