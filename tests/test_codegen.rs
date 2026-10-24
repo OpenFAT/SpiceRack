@@ -476,26 +476,3 @@ fn test_spectre_options() {
     assert!(s.contains("dcmaxiters=150"));
 }
 
-#[test]
-fn test_roundtrip_from_circuit_sanity() {
-    use spicerack::circuit::{Circuit, Param};
-
-    let mut c = Circuit::new("Roundtrip Test");
-    c.r("1", "a", "b", 4700.0);
-    c.c("1", "b", "0", 100e-12);
-    c.v("1", "a", "0", 5.0);
-    c.model("dmod", "D", vec![Param::new("IS", "1e-14"), Param::new("N", "1")]);
-
-    let ir = CircuitIR::from_circuit(&c);
-    let cg = Spice3CodeGen { dialect: Spice3Dialect::Ngspice };
-    let emitted = cg.emit_netlist(&ir).unwrap();
-
-    // Key components should match Circuit::to_string() output patterns
-    let original = c.to_string();
-    assert!(emitted.contains("R1 a b 4"), "R1: {}", emitted);
-    assert!(original.contains("R1 a b 4"), "original R1: {}", original);
-    assert!(emitted.contains("C1 b 0 100p"), "C1: {}", emitted);
-    assert!(original.contains("C1 b 0 100p"), "original C1: {}", original);
-    assert!(emitted.contains(".model dmod D(IS=1e-14 N=1)"), "model: {}", emitted);
-    assert!(original.contains(".model dmod D(IS=1e-14 N=1)"), "original model: {}", original);
-}

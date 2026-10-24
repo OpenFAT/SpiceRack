@@ -30,7 +30,7 @@
 //! current-controlled switches, `AM` sources, and transient noise (Spectre
 //! spells it `tran ... noisefmax=` and the IR carries no bandwidth).
 
-use crate::circuit::format_spice_number;
+use super::format_spice_number;
 use crate::ir::*;
 use super::{CodeGen, CodeGenError};
 
