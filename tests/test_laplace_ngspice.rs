@@ -7,8 +7,7 @@
 //!
 //! Skipped automatically when ngspice is not on PATH.
 
-use spicerack::backend::Backend;
-use spicerack::backend::ngspice::NgspiceSubprocess;
+use spicerack::backend::BackendKind;
 use spicerack::circuit::{Circuit, Node};
 use spicerack::codegen::{CodeGen, spice3::{Spice3CodeGen, Spice3Dialect}};
 use spicerack::ir::CircuitIR;
@@ -40,7 +39,7 @@ fn run(deck: &str) -> Option<RawData> {
         return None;
     }
     Some(
-        NgspiceSubprocess
+        BackendKind::Ngspice
             .run(deck)
             .unwrap_or_else(|e| panic!("deck failed: {e}\n{deck}")),
     )
@@ -83,7 +82,7 @@ fn the_old_verbatim_bsource_really_is_fatal() {
                 B1 out 0 V=Laplace(v(in), 1/(1+s*1.59e-4))\n\
                 Rl out 0 1meg\n.ac lin 1 1000 1000\n.end\n";
     assert!(
-        NgspiceSubprocess.run(deck).is_err(),
+        BackendKind::Ngspice.run(deck).is_err(),
         "ngspice accepted `V=Laplace(...)` — re-check the translation"
     );
 }

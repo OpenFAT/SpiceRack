@@ -5,11 +5,7 @@
 // `Circuit::Display`. This is the "round-trip: build IR, emit, assert no
 // string-translation pass runs" test from the issue.
 
-use spicerack::backend::ngspice::NgspiceSubprocess;
-use spicerack::backend::ltspice::LtspiceSubprocess;
-use spicerack::backend::spectre::SpectreSubprocess;
-use spicerack::backend::vacask::VacaskSubprocess;
-use spicerack::backend::Backend;
+use spicerack::backend::{netlist, BackendKind, Dialect};
 use spicerack::circuit::Circuit;
 use spicerack::codegen::spice3::{Spice3CodeGen, Spice3Dialect};
 use spicerack::codegen::CodeGen;
@@ -78,12 +74,6 @@ fn rc_op_ir() -> CircuitIR {
 }
 
 #[test]
-fn ngspice_backend_names_its_codegen() {
-    let ng = NgspiceSubprocess;
-    assert_eq!(ng.codegen().backend_name(), "ngspice");
-}
-
-#[test]
 fn run_path_netlist_comes_from_codegen_not_display() {
     let ir = rc_op_ir();
 
@@ -92,8 +82,7 @@ fn run_path_netlist_comes_from_codegen_not_display() {
     let mut sim = Circuit::new("rc").simulator();
     sim.set_ir(ir.clone());
 
-    let ng = NgspiceSubprocess;
-    let produced = sim.netlist_to_run(&ng).expect("emit netlist for backend");
+    let produced = sim.netlist_to_run(BackendKind::Ngspice.dialect()).expect("emit netlist for backend");
 
     let expected = Spice3CodeGen { dialect: Spice3Dialect::Ngspice }
         .emit_netlist(&ir)
@@ -107,39 +96,15 @@ fn run_path_netlist_comes_from_codegen_not_display() {
 
 // ── RED: each backend names its codegen correctly ──
 
-#[test]
-fn ltspice_backend_names_its_codegen() {
-    let lt = LtspiceSubprocess {
-        executable: std::path::PathBuf::from("ltspice"),
-        use_wine: false,
-        fast_access: false,
-    };
-    assert_eq!(lt.codegen().backend_name(), "ltspice");
-}
-
-#[test]
-fn spectre_backend_names_its_codegen() {
-    let sp = SpectreSubprocess;
-    assert_eq!(sp.codegen().backend_name(), "spectre");
-}
-
 // ── RED: same IR → dialect-different netlists ──
 
 #[test]
 fn same_ir_produces_different_dialect_netlists() {
     let ir = rc_op_ir();
 
-    let ng = NgspiceSubprocess;
-    let lt = LtspiceSubprocess {
-        executable: std::path::PathBuf::from("ltspice"),
-        use_wine: false,
-        fast_access: false,
-    };
-    let sp = SpectreSubprocess;
-
-    let ng_netlist = ng.codegen().emit_netlist(&ir).unwrap();
-    let lt_netlist = lt.codegen().emit_netlist(&ir).unwrap();
-    let sp_netlist = sp.codegen().emit_netlist(&ir).unwrap();
+    let ng_netlist = netlist(&ir, Dialect::Ngspice).unwrap();
+    let lt_netlist = netlist(&ir, Dialect::Ltspice).unwrap();
+    let sp_netlist = netlist(&ir, Dialect::Spectre).unwrap();
 
     // All must be valid netlists containing the resistors + analysis
     assert!(ng_netlist.contains("R1 vdd out"), "ngspice R1");
@@ -169,8 +134,7 @@ fn run_path_spectre_uses_spectre_codegen() {
     let mut sim = Circuit::new("rc").simulator();
     sim.set_ir(ir.clone());
 
-    let sp = SpectreSubprocess;
-    let produced = sim.netlist_to_run(&sp).expect("spectre netlist");
+    let produced = sim.netlist_to_run(BackendKind::Spectre.dialect()).expect("spectre netlist");
 
     // Must be Spectre syntax, not SPICE
     assert!(produced.contains("simulator lang=spectre"), "spectre lang header");
@@ -181,16 +145,9 @@ fn run_path_spectre_uses_spectre_codegen() {
 // ── Issue 04: Vacask codegen ──
 
 #[test]
-fn vacask_backend_names_its_codegen() {
-    let vk = VacaskSubprocess;
-    assert_eq!(vk.codegen().backend_name(), "vacask");
-}
-
-#[test]
 fn vacask_codegen_emits_native_syntax() {
     let ir = rc_op_ir();
-    let vk = VacaskSubprocess;
-    let netlist = vk.codegen().emit_netlist(&ir).unwrap();
+    let netlist = netlist(&ir, Dialect::Vacask).unwrap();
 
     // Vacask uses Spectre-like syntax
     assert!(netlist.contains("r1 (vdd out) resistor r="), "vacask r1");
@@ -220,8 +177,7 @@ fn vacask_codegen_osdi_uses_load() {
         model_libraries: vec![],
     };
 
-    let vk = VacaskSubprocess;
-    let netlist = vk.codegen().emit_netlist(&ir).unwrap();
+    let netlist = netlist(&ir, Dialect::Vacask).unwrap();
 
     // Vacask uses `load`, not `ahdl_include` or `.pre_osdi`
     assert!(netlist.contains("load \"/models/bsim4.osdi\""), "load: {}", netlist);
@@ -265,8 +221,7 @@ fn vacask_codegen_subcircuit_ends_has_name() {
         model_libraries: vec![],
     };
 
-    let vk = VacaskSubprocess;
-    let netlist = vk.codegen().emit_netlist(&ir).unwrap();
+    let netlist = netlist(&ir, Dialect::Vacask).unwrap();
 
     assert!(netlist.contains("subckt mybuf (in out)"), "subckt header: {}", netlist);
     assert!(netlist.contains("\nends"), "ends with name: {}", netlist);

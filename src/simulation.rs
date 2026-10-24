@@ -1,6 +1,6 @@
 use crate::circuit::Circuit;
 use crate::result::*;
-use crate::backend::{Backend, BackendError, detect_and_select_with_features, CircuitFeatures, detect};
+use crate::backend::{BackendError, BackendKind, Dialect};
 use crate::codegen::CodeGenError;
 
 /// Parameter sweep definition for `.step` directives
@@ -77,9 +77,9 @@ impl CircuitSimulator {
     /// The netlist the given backend will actually run, sourced from its
     /// `CodeGen`. Requires an attached IR; this is the IR→text path that
     /// replaces string translation.
-    pub fn netlist_to_run(&self, backend: &dyn Backend) -> Result<String, CodeGenError> {
+    pub fn netlist_to_run(&self, dialect: Dialect) -> Result<String, CodeGenError> {
         match &self.ir {
-            Some(ir) => backend.codegen().emit_netlist(ir),
+            Some(ir) => crate::backend::netlist(ir, dialect),
             None => Err(CodeGenError::Other("no IR attached to simulator".into())),
         }
     }
@@ -446,10 +446,8 @@ impl CircuitSimulator {
         inner_analysis: &str,
         inner_type: &str,
     ) -> Result<RawData, BackendError> {
-        let netlist = self.build_netlist("");
-        let backend = crate::backend::spectre::SpectreSubprocess;
-        backend.spectre_sweep(&netlist, param, start, stop, step, inner_analysis, inner_type)
-    }
+        let raw = self.run_spectre(crate::ir::Analysis::SpectreSweep { param: param.into(), start, stop, step, inner: inner_analysis.into(), inner_type: inner_type.into() })?;
+        Ok(raw)    }
 
     /// Spectre Monte Carlo analysis. Wraps an inner analysis inside a Spectre
     /// `montecarlo` block.
@@ -460,10 +458,8 @@ impl CircuitSimulator {
         inner_type: &str,
         seed: Option<u64>,
     ) -> Result<RawData, BackendError> {
-        let netlist = self.build_netlist("");
-        let backend = crate::backend::spectre::SpectreSubprocess;
-        backend.spectre_montecarlo(&netlist, num_iterations, inner_analysis, inner_type, seed)
-    }
+        let raw = self.run_spectre(crate::ir::Analysis::SpectreMonteCarlo { iterations: num_iterations, inner: inner_analysis.into(), inner_type: inner_type.into(), seed })?;
+        Ok(raw)    }
 
     /// SpectreRF Periodic AC (PAC) analysis. Automatically includes PSS prerequisite.
     pub fn spectre_pac(
@@ -477,13 +473,8 @@ impl CircuitSimulator {
         stop_freq: f64,
         sweep_type: &str,
     ) -> Result<AcAnalysis, BackendError> {
-        let netlist = self.build_netlist("");
-        let backend = crate::backend::spectre::SpectreSubprocess;
-        backend.spectre_pac(
-            &netlist, pss_fundamental, pss_stabilization, pss_harmonics,
-            variation, points, start_freq, stop_freq, sweep_type,
-        )
-    }
+        let raw = self.run_spectre(crate::ir::Analysis::SpectrePac { pss_fundamental, pss_stabilization, pss_harmonics, variation: variation.into(), points, start: start_freq, stop: stop_freq, sweep_type: sweep_type.into() })?;
+        Ok(AcAnalysis::from_raw(raw))    }
 
     /// SpectreRF Periodic Noise (PNoise) analysis. Automatically includes PSS prerequisite.
     pub fn spectre_pnoise(
@@ -498,13 +489,8 @@ impl CircuitSimulator {
         start_freq: f64,
         stop_freq: f64,
     ) -> Result<NoiseAnalysis, BackendError> {
-        let netlist = self.build_netlist("");
-        let backend = crate::backend::spectre::SpectreSubprocess;
-        backend.spectre_pnoise(
-            &netlist, pss_fundamental, pss_stabilization, pss_harmonics,
-            output_node, ref_node, variation, points, start_freq, stop_freq,
-        )
-    }
+        let raw = self.run_spectre(crate::ir::Analysis::SpectrePnoise { pss_fundamental, pss_stabilization, pss_harmonics, output: output_node.into(), reference: ref_node.into(), variation: variation.into(), points, start: start_freq, stop: stop_freq })?;
+        Ok(NoiseAnalysis::from_raw(raw))    }
 
     /// SpectreRF Periodic Transfer Function (PXF) analysis. Automatically includes PSS prerequisite.
     pub fn spectre_pxf(
@@ -519,13 +505,8 @@ impl CircuitSimulator {
         start_freq: f64,
         stop_freq: f64,
     ) -> Result<AcAnalysis, BackendError> {
-        let netlist = self.build_netlist("");
-        let backend = crate::backend::spectre::SpectreSubprocess;
-        backend.spectre_pxf(
-            &netlist, pss_fundamental, pss_stabilization, pss_harmonics,
-            output_node, source, variation, points, start_freq, stop_freq,
-        )
-    }
+        let raw = self.run_spectre(crate::ir::Analysis::SpectrePxf { pss_fundamental, pss_stabilization, pss_harmonics, output: output_node.into(), source: source.into(), variation: variation.into(), points, start: start_freq, stop: stop_freq })?;
+        Ok(AcAnalysis::from_raw(raw))    }
 
     /// SpectreRF Periodic Stability (PSTB) analysis. Automatically includes PSS prerequisite.
     pub fn spectre_pstb(
@@ -539,20 +520,26 @@ impl CircuitSimulator {
         start_freq: f64,
         stop_freq: f64,
     ) -> Result<StabilityAnalysis, BackendError> {
-        let netlist = self.build_netlist("");
-        let backend = crate::backend::spectre::SpectreSubprocess;
-        backend.spectre_pstb(
-            &netlist, pss_fundamental, pss_stabilization, pss_harmonics,
-            probe, variation, points, start_freq, stop_freq,
-        )
-    }
+        let raw = self.run_spectre(crate::ir::Analysis::SpectrePstb { pss_fundamental, pss_stabilization, pss_harmonics, probe: probe.into(), variation: variation.into(), points, start: start_freq, stop: stop_freq })?;
+        Ok(StabilityAnalysis::from_raw(raw))    }
 
 
     pub fn available_backends() -> Vec<String> {
-        detect::detect_backends()
-            .iter()
-            .map(|b| b.display_name().to_string())
-            .collect()
+        crate::backend::available().iter().map(|b| b.name().to_string()).collect()
+    }
+
+    /// Run one Spectre-only analysis on the attached IR, in place of the
+    /// testbench's own analyses.
+    fn run_spectre(&self, analysis: crate::ir::Analysis) -> Result<RawData, BackendError> {
+        let mut ir = self.ir.clone().filter(|ir| ir.testbench.is_some()).ok_or_else(|| {
+            BackendError::SimulationError("Spectre analyses need a Testbench (the IR path)".into())
+        })?;
+        if let Some(tb) = ir.testbench.as_mut() {
+            tb.analyses = vec![analysis];
+        }
+        let netlist = crate::backend::netlist(&ir, Dialect::Spectre)
+            .map_err(|e| BackendError::SimulationError(e.to_string()))?;
+        BackendKind::Spectre.run(&netlist)
     }
 
     // ── Internal ──
@@ -638,9 +625,9 @@ impl CircuitSimulator {
     }
 
     fn run(&self, analysis_stmt: &str, analysis_type: &str) -> Result<RawData, BackendError> {
-        let features: CircuitFeatures = match &self.ir {
-            Some(ir) => (&ir.compute_features()).into(),
-            None => CircuitFeatures {
+        let features = match &self.ir {
+            Some(ir) => ir.compute_features(),
+            None => crate::ir::FeatureFlags {
                 has_xspice: self.circuit.has_xspice(),
                 has_osdi: self.circuit.has_osdi(),
                 has_measures: !self.measures.is_empty(),
@@ -651,15 +638,14 @@ impl CircuitSimulator {
                 element_count: self.circuit.elements().len(),
             },
         };
-        let backend = detect_and_select_with_features(
+        let backend = crate::backend::select(
             analysis_type, self.backend_override.as_deref(), &features
         )?;
         let backend_name = backend.name().to_string();
-        // IR present → codegen emits backend-native text and run_netlist executes
-        // it verbatim. No IR → legacy SPICE string, and run() applies any
-        // backend-specific translation (e.g. spice_to_vacask).
+        // IR present → codegen emits backend-native text. No IR → legacy
+        // SPICE string. Either way the backend runs the text verbatim.
         let mut raw = if self.ir.is_some() {
-            let netlist = match self.netlist_to_run(backend.as_ref()) {
+            let netlist = match self.netlist_to_run(backend.dialect()) {
                 Ok(n) => n,
                 // Analyses whose `emit_analysis` arm is not yet implemented
                 // (Pss/HB/SPar/Stability/TransientNoise/Spectre*) fall back to
@@ -672,7 +658,7 @@ impl CircuitSimulator {
                 // different netlist than the user built.
                 Err(e) => return Err(BackendError::SimulationError(e.to_string())),
             };
-            backend.run_netlist(&netlist)?
+            backend.run(&netlist)?
         } else {
             // `Circuit::Display` cannot return an error, so a Laplace source it
             // could not translate would reach the simulator as fatal text.

@@ -5,8 +5,7 @@
 //!
 //! Skips when `vacask` is not on PATH so CI without it still passes.
 
-use spicerack::backend::vacask::VacaskSubprocess;
-use spicerack::backend::Backend;
+use spicerack::backend::{netlist as emit, BackendKind, Dialect};
 use spicerack::ir::*;
 use spicerack::result::RawData;
 
@@ -20,13 +19,12 @@ fn have_vacask() -> bool {
 
 /// Emit the deck and run it. `None` means "no binary, skip".
 fn run(ir: &CircuitIR) -> Option<RawData> {
-    let vk = VacaskSubprocess;
-    let netlist = vk.codegen().emit_netlist(ir).expect("emit vacask deck");
+    let netlist = emit(ir, Dialect::Vacask).expect("emit vacask deck");
     if !have_vacask() {
         eprintln!("skipping: vacask not on PATH");
         return None;
     }
-    match vk.run_netlist(&netlist) {
+    match BackendKind::Vacask.run(&netlist) {
         Ok(raw) => Some(raw),
         Err(e) => panic!("vacask rejected the generated deck: {}\n--- deck ---\n{}", e, netlist),
     }
@@ -277,7 +275,7 @@ fn tran_emits_maxstep_so_the_grid_is_spices() {
     }]);
     tb.stimulus = vec![vsrc("1", "vin", "0", 1.0)];
     let ir = CircuitIR { top, testbench: Some(tb), subcircuit_defs: vec![], model_libraries: vec![] };
-    let netlist = VacaskSubprocess.codegen().emit_netlist(&ir).unwrap();
+    let netlist = emit(&ir, Dialect::Vacask).unwrap();
     assert!(netlist.contains("maxstep="), "{}", netlist);
     let Some(raw) = run(&ir) else { return };
     let t = col(&raw, "time");
@@ -347,7 +345,7 @@ fn a_diode_runs_under_the_spice_device_set() {
     tb.stimulus = vec![vsrc("1", "vin", "0", 1.0)];
     tb.temperature = Some(27.0);
     let ir = CircuitIR { top, testbench: Some(tb), subcircuit_defs: vec![], model_libraries: vec![] };
-    let netlist = VacaskSubprocess.codegen().emit_netlist(&ir).unwrap();
+    let netlist = emit(&ir, Dialect::Vacask).unwrap();
     assert!(netlist.contains("load \"spice/diode.osdi\""), "{}", netlist);
     assert!(netlist.contains("model dmod sp_diode"), "{}", netlist);
     let Some(raw) = run(&ir) else { return };
@@ -375,7 +373,7 @@ fn a_bjt_runs_and_carries_its_polarity() {
     let mut tb = empty_tb(vec![Analysis::Op]);
     tb.stimulus = vec![vsrc("cc", "vcc", "0", 5.0), vsrc("b", "vb", "0", 1.0)];
     let ir = CircuitIR { top, testbench: Some(tb), subcircuit_defs: vec![], model_libraries: vec![] };
-    let netlist = VacaskSubprocess.codegen().emit_netlist(&ir).unwrap();
+    let netlist = emit(&ir, Dialect::Vacask).unwrap();
     assert!(netlist.contains("model qn sp_bjt (type=1"), "{}", netlist);
     let Some(raw) = run(&ir) else { return };
     let vbe = col(&raw, "base")[0];
@@ -405,7 +403,7 @@ fn a_level_1_mosfet_runs() {
     let mut tb = empty_tb(vec![Analysis::Op]);
     tb.stimulus = vec![vsrc("dd", "vdd", "0", 5.0), vsrc("g", "gate", "0", 3.0)];
     let ir = CircuitIR { top, testbench: Some(tb), subcircuit_defs: vec![], model_libraries: vec![] };
-    let netlist = VacaskSubprocess.codegen().emit_netlist(&ir).unwrap();
+    let netlist = emit(&ir, Dialect::Vacask).unwrap();
     assert!(netlist.contains("load \"spice/mos1.osdi\""), "{}", netlist);
     assert!(netlist.contains("model nm sp_mos1 (type=1"), "{}", netlist);
     assert!(netlist.contains("w=10u l=1u"), "{}", netlist);
@@ -431,7 +429,7 @@ fn a_jfet_runs() {
     let mut tb = empty_tb(vec![Analysis::Op]);
     tb.stimulus = vec![vsrc("dd", "vdd", "0", 5.0)];
     let ir = CircuitIR { top, testbench: Some(tb), subcircuit_defs: vec![], model_libraries: vec![] };
-    let netlist = VacaskSubprocess.codegen().emit_netlist(&ir).unwrap();
+    let netlist = emit(&ir, Dialect::Vacask).unwrap();
     assert!(netlist.contains("load \"spice/jfet1.osdi\""), "{}", netlist);
     let Some(raw) = run(&ir) else { return };
     assert!(col(&raw, "drain")[0] < 5.0);
@@ -454,7 +452,7 @@ fn an_inductor_and_its_mutual_coupling_run() {
         ac_magnitude: Some(1.0), ac_phase: None, waveform: None,
     }];
     let ir = CircuitIR { top, testbench: Some(tb), subcircuit_defs: vec![], model_libraries: vec![] };
-    let netlist = VacaskSubprocess.codegen().emit_netlist(&ir).unwrap();
+    let netlist = emit(&ir, Dialect::Vacask).unwrap();
     assert!(netlist.contains("k1 () mutual k=9.9e-1 ind1=\"l1\" ind2=\"l2\""), "{}", netlist);
     let Some(raw) = run(&ir) else { return };
     // Turns ratio sqrt(4m/1m) = 2, so the secondary rises above the primary.
@@ -557,7 +555,7 @@ fn initial_conditions_reach_the_analysis() {
     tb.stimulus = vec![vsrc("1", "vin", "0", 1.0)];
     tb.initial_conditions = vec![("out".into(), 0.5)];
     let ir = CircuitIR { top, testbench: Some(tb), subcircuit_defs: vec![], model_libraries: vec![] };
-    let netlist = VacaskSubprocess.codegen().emit_netlist(&ir).unwrap();
+    let netlist = emit(&ir, Dialect::Vacask).unwrap();
     assert!(netlist.contains("ic=[\"out\"; 5e-1]"), "{}", netlist);
     let Some(raw) = run(&ir) else { return };
     close(col(&raw, "out")[0], 0.5, 1e-9);
@@ -580,13 +578,18 @@ fn every_analysis_writes_its_own_raw_file_and_the_last_one_is_read_back() {
 
 #[test]
 fn refusals_are_errors_not_broken_decks() {
-    let cg = VacaskSubprocess.codegen();
+    let refuses = |ir: &CircuitIR| emit(ir, Dialect::Vacask).is_err();
+    let with = |comp: Component| {
+        let mut top = empty_sub("c");
+        top.components = vec![comp];
+        CircuitIR { top, testbench: None, subcircuit_defs: vec![], model_libraries: vec![] }
+    };
 
     // No measurement statement at all: `measure` is "Command not found".
     let mut tb = empty_tb(vec![Analysis::Op]);
     tb.measures = vec!["tran vmax MAX V(out)".into()];
     let ir = CircuitIR { top: empty_sub("m"), testbench: Some(tb), subcircuit_defs: vec![], model_libraries: vec![] };
-    assert!(cg.emit_netlist(&ir).is_err(), "measures must refuse");
+    assert!(refuses(&ir), "measures must refuse");
 
     // PWL parses and then returns an identically-zero transient.
     let mut top = empty_sub("pwl");
@@ -596,7 +599,7 @@ fn refusals_are_errors_not_broken_decks() {
         waveform: Some(IrWaveform::Pwl { values: vec![(0.0, 0.0), (1e-3, 1.0)] }),
     }];
     let ir = CircuitIR { top, testbench: None, subcircuit_defs: vec![], model_libraries: vec![] };
-    assert!(cg.emit_netlist(&ir).is_err(), "PWL must refuse");
+    assert!(refuses(&ir), "PWL must refuse");
 
     // No behavioural sources, switches, transmission lines or XSPICE.
     for comp in [
@@ -605,7 +608,7 @@ fn refusals_are_errors_not_broken_decks() {
         Component::TLine { name: "1".into(), inp: "a".into(), inm: "0".into(), outp: "b".into(), outm: "0".into(), z0: 50.0, td: 1e-9 },
         Component::Xspice { name: "1".into(), connections: vec!["a".into()], model: "d_and".into() },
     ] {
-        assert!(cg.emit_component(&comp).is_err(), "{:?} must refuse", comp);
+        assert!(refuses(&with(comp.clone())), "{:?} must refuse", comp);
     }
 
     // A SIN phase is accepted by VACASK and then ignored.
@@ -616,7 +619,7 @@ fn refusals_are_errors_not_broken_decks() {
             offset: 0.0, amplitude: 1.0, frequency: 1e3, delay: 0.0, damping: 0.0, phase: 90.0,
         }),
     };
-    assert!(cg.emit_component(&sin).is_err(), "a nonzero SIN phase must refuse");
+    assert!(refuses(&with(sin)), "a nonzero SIN phase must refuse");
 
     // Analyses VACASK does not implement.
     for a in [
@@ -624,7 +627,7 @@ fn refusals_are_errors_not_broken_decks() {
         Analysis::Distortion { variation: "dec".into(), points: 10, start: 1.0, stop: 1e3, f2overf1: None },
         Analysis::Sensitivity { output: "v(out)".into(), ac: None },
     ] {
-        assert!(cg.emit_analysis(&a).is_err(), "{:?} must refuse", a);
+        assert!(refuses(&rc_ir(vec![a.clone()])), "{:?} must refuse", a);
     }
 }
 

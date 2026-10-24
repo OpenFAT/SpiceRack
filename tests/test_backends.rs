@@ -1,33 +1,4 @@
 use spicerack::circuit::*;
-use spicerack::backend::{Backend, BackendKind, detect};
-
-#[test]
-fn test_backend_kind_from_str() {
-    assert_eq!(BackendKind::from_str("ngspice"), Some(BackendKind::NgspiceSubprocess));
-    assert_eq!(BackendKind::from_str("ngspice-subprocess"), Some(BackendKind::NgspiceSubprocess));
-    assert_eq!(BackendKind::from_str("ngspice-shared"), Some(BackendKind::NgspiceShared));
-    assert!(BackendKind::from_str("vacask").is_some());
-    assert_eq!(BackendKind::from_str("vacask-shared"), Some(BackendKind::VacaskShared));
-    assert!(BackendKind::from_str("spectre").is_some());
-    assert!(BackendKind::from_str("ltspice").is_some());
-    assert!(BackendKind::from_str("nonexistent").is_none());
-}
-
-#[test]
-fn test_backend_display_names() {
-    assert_eq!(BackendKind::NgspiceSubprocess.display_name(), "ngspice");
-    assert_eq!(BackendKind::NgspiceShared.display_name(), "ngspice-shared");
-    assert_eq!(BackendKind::Vacask.display_name(), "vacask");
-    assert_eq!(BackendKind::VacaskShared.display_name(), "vacask-shared");
-    assert_eq!(BackendKind::Spectre.display_name(), "spectre");
-}
-
-#[test]
-fn test_detect_backends() {
-    let backends = detect::detect_backends();
-    // Should at least not panic; may or may not find backends on CI
-    assert!(backends.len() <= 10); // sanity check
-}
 
 #[test]
 fn test_available_backends_api() {
@@ -114,34 +85,6 @@ fn test_osdi_emitted_in_netlist() {
     assert!(osdi_pos < title_pos, "pre_osdi must appear before .title");
 }
 
-#[test]
-fn test_circuit_features_struct_default() {
-    use spicerack::backend::CircuitFeatures;
-    let f = CircuitFeatures::default();
-    assert!(!f.has_xspice);
-    assert!(!f.has_osdi);
-}
-
-#[test]
-fn test_circuit_features_from_circuit() {
-    use spicerack::backend::CircuitFeatures;
-
-    let mut c = Circuit::new("features_test");
-    c.osdi("test.osdi");
-    c.a("1", vec!["in".into()], "mymodel");
-
-    let features = CircuitFeatures {
-        has_xspice: c.has_xspice(),
-        has_osdi: c.has_osdi(),
-        has_control_blocks: c.has_control_blocks(),
-        has_laplace_sources: c.has_laplace_sources(),
-        element_count: c.elements().len(),
-        ..Default::default()
-    };
-    assert!(features.has_xspice);
-    assert!(features.has_osdi);
-}
-
 // ── Circuit .control block detection tests ──
 
 #[test]
@@ -195,66 +138,6 @@ fn test_has_laplace_sources_true_for_bi() {
     assert!(c.has_laplace_sources());
 }
 
-// ── Full feature detection from simulator config ──
-
-#[test]
-fn test_simulator_features_measures() {
-    use spicerack::backend::CircuitFeatures;
-
-    let mut c = Circuit::new("meas_test");
-    c.v("1", "in", Node::Ground, 1.0);
-    let mut sim = c.simulator();
-    sim.measure(vec!["tran", "delay", "TRIG", "V(in)", "VAL=0.5", "RISE=1", "TARG", "V(out)", "VAL=0.5", "RISE=1"]);
-
-    // Build features the same way simulation.rs does
-    let features = CircuitFeatures {
-        has_xspice: false,
-        has_osdi: false,
-        has_measures: true, // sim has measures
-        has_step_params: false,
-        has_control_blocks: false,
-        has_laplace_sources: false,
-        has_verilog_cosim: false,
-        element_count: 1,
-    };
-    assert!(features.has_measures);
-}
-
-#[test]
-fn test_simulator_features_step_params() {
-    use spicerack::backend::CircuitFeatures;
-
-    let mut c = Circuit::new("step_test");
-    c.v("1", "in", Node::Ground, 1.0);
-    let mut sim = c.simulator();
-    sim.step("Rval", 1e3, 10e3, 1e3);
-
-    let features = CircuitFeatures {
-        has_step_params: true,
-        ..Default::default()
-    };
-    assert!(features.has_step_params);
-}
-
-// ── Vacask SPICE-to-Vacask translator tests ──
-
-// ── LTspice netlist normalization tests ──
-
-#[test]
-fn test_ltspice_normalization() {
-    use spicerack::backend::ltspice::LtspiceSubprocess;
-    use std::path::PathBuf;
-
-    // We can't call normalize_netlist directly (it's private), but we can
-    // verify the backend exists and creates properly
-    let backend = LtspiceSubprocess {
-        executable: PathBuf::from("/usr/bin/ltspice"),
-        use_wine: false,
-        fast_access: false,
-    };
-    assert_eq!(spicerack::backend::Backend::name(&backend), "ltspice");
-}
-
 // ── New analysis netlist generation tests ──
 
 #[test]
@@ -287,16 +170,6 @@ fn test_hb_netlist() {
     assert!(netlist.contains(".HB 1000000000"));
 }
 
-// ── Spectre output format detection tests ──
-
-#[test]
-fn test_spectre_output_format_enum() {
-    use spicerack::backend::spectre::OutputFormat;
-    assert_ne!(OutputFormat::Nutmeg, OutputFormat::Psf);
-    assert_eq!(OutputFormat::Nutmeg, OutputFormat::Nutmeg);
-    assert_eq!(OutputFormat::Psf, OutputFormat::Psf);
-}
-
 // ── PSF parser tests ──
 
 #[test]
@@ -318,16 +191,6 @@ fn test_psf_parse_too_short() {
     let data = b"Clar";
     let result = spicerack::psf::parse_psf(data);
     assert!(result.is_err());
-}
-
-// ── Spectre sweep netlist generation tests ──
-
-#[test]
-fn test_spectre_sweep_netlist_generation() {
-    // This tests the netlist building logic, not actual Spectre execution
-    let backend = spicerack::backend::spectre::SpectreSubprocess;
-    // We can't actually run spectre, but we can verify the object exists
-    assert_eq!(spicerack::backend::Backend::name(&backend), "spectre");
 }
 
 // ── Raw file parser tests ──
@@ -360,140 +223,4 @@ Values:\n\
     assert_eq!(result.title, "test");
     assert_eq!(result.variables.len(), 2);
     assert!((result.real_data[0][0] - 3.3).abs() < 1e-10);
-}
-
-// ── NGSpice shared library backend tests ──
-
-#[test]
-fn test_ngspice_shared_is_available_doesnt_panic() {
-    // is_available should never panic, regardless of whether the lib exists
-    let _ = spicerack::backend::ngspice::NgspiceShared::is_available();
-}
-
-#[test]
-#[ignore] // Requires libngspice.so to be installed
-fn test_ngspice_shared_op_simulation() {
-    use spicerack::backend::ngspice::NgspiceShared;
-
-    let shared = NgspiceShared::new().expect("Failed to load libngspice.so");
-
-    let netlist = "\
-        test op\n\
-        V1 vdd 0 3.3\n\
-        R1 vdd out 1k\n\
-        R2 out 0 2k\n\
-        .op\n\
-        .end\n";
-
-    let result = shared.run(netlist);
-    assert!(result.is_ok(), "Simulation failed: {:?}", result.err());
-
-    let raw = result.unwrap();
-    assert!(!raw.variables.is_empty(), "No variables in result");
-    assert_eq!(raw.real_data.len(), raw.variables.len());
-}
-
-#[test]
-#[ignore] // Requires libngspice.so to be installed
-fn test_ngspice_shared_tran_simulation() {
-    use spicerack::backend::ngspice::NgspiceShared;
-
-    let shared = NgspiceShared::new().expect("Failed to load libngspice.so");
-
-    let netlist = "\
-        test tran\n\
-        V1 in 0 PULSE(0 1 0 1n 1n 5u 10u)\n\
-        R1 in out 1k\n\
-        C1 out 0 1n\n\
-        .tran 10n 20u\n\
-        .end\n";
-
-    let result = shared.run(netlist);
-    assert!(result.is_ok(), "Simulation failed: {:?}", result.err());
-
-    let raw = result.unwrap();
-    assert!(!raw.real_data.is_empty());
-    assert!(raw.real_data[0].len() > 1, "Expected multiple data points in transient");
-}
-
-#[test]
-#[ignore] // Requires libngspice.so to be installed
-fn test_ngspice_shared_streaming_data() {
-    use spicerack::backend::ngspice::NgspiceSharedStreaming;
-
-    let streaming = NgspiceSharedStreaming::new()
-        .expect("Failed to load libngspice.so");
-
-    let netlist = "\
-        test streaming\n\
-        V1 in 0 PULSE(0 1 0 1n 1n 5u 10u)\n\
-        R1 in out 1k\n\
-        C1 out 0 1n\n\
-        .tran 10n 20u\n\
-        .end\n";
-
-    let result = streaming.run(netlist);
-    assert!(result.is_ok(), "Simulation failed: {:?}", result.err());
-
-    let points = streaming.drain_streaming_data();
-    // The buffer should be empty after drain (data was already consumed
-    // during run or accumulated)
-    let points2 = streaming.drain_streaming_data();
-    assert!(points2.is_empty(), "Drain should return empty after first drain");
-    // We just verify it does not panic; actual count depends on ngspice internals
-    let _ = points;
-}
-
-#[test]
-#[ignore] // Requires libngspice.so to be installed
-fn test_ngspice_shared_backend_name() {
-    use spicerack::backend::ngspice::NgspiceShared;
-
-    let shared = NgspiceShared::new().expect("Failed to load libngspice.so");
-    assert_eq!(shared.name(), "ngspice-shared");
-}
-
-// ── Vacask shared library backend tests ──
-
-#[test]
-fn test_vacask_library_is_available_doesnt_panic() {
-    // is_available should never panic, regardless of whether the lib exists
-    let _ = spicerack::backend::vacask::VacaskLibrary::is_available();
-}
-
-#[test]
-#[ignore] // Requires libvacask.so to be installed
-fn test_vacask_library_init() {
-    use spicerack::backend::vacask::VacaskLibrary;
-
-    let lib = VacaskLibrary::new();
-    assert!(lib.is_ok(), "Failed to init: {:?}", lib.err());
-}
-
-#[test]
-#[ignore] // Requires libvacask.so to be installed
-fn test_vacask_library_op_simulation() {
-    use spicerack::backend::vacask::VacaskLibrary;
-
-    let lib = VacaskLibrary::new().expect("Failed to load libvacask.so");
-
-    let netlist = "\
-        test op\n\
-        V1 vdd 0 3.3\n\
-        R1 vdd out 1k\n\
-        R2 out 0 2k\n\
-        .op\n\
-        .end\n";
-
-    let result = lib.run(netlist);
-    assert!(result.is_ok(), "Simulation failed: {:?}", result.err());
-}
-
-#[test]
-#[ignore] // Requires libvacask.so to be installed
-fn test_vacask_library_backend_name() {
-    use spicerack::backend::vacask::VacaskLibrary;
-
-    let lib = VacaskLibrary::new().expect("Failed to load libvacask.so");
-    assert_eq!(lib.name(), "vacask-shared");
 }
