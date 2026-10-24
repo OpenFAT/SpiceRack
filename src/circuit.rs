@@ -413,7 +413,6 @@ impl fmt::Display for BehavioralVoltage {
 fn emit_laplace_ngspice(
     name: &str, np: &Node, nm: &Node, expression: &str, current_output: bool,
 ) -> Option<String> {
-    use crate::codegen::CodeGen;
     if !crate::codegen::laplace::is_laplace(expression) {
         return None;
     }
@@ -428,9 +427,7 @@ fn emit_laplace_ngspice(
             expression: expression.into(),
         }
     };
-    crate::codegen::spice3::Spice3CodeGen { dialect: crate::codegen::spice3::Spice3Dialect::Ngspice }
-        .emit_component(&comp)
-        .ok()
+    crate::codegen::spice3::component(crate::codegen::Dialect::Ngspice, &comp).ok()
 }
 
 #[derive(Debug, Clone)]

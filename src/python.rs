@@ -11,7 +11,6 @@ use std::collections::HashMap;
 use pyo3::prelude::*;
 use pyo3::exceptions::{PyKeyError, PyAttributeError};
 
-use crate::codegen::CodeGen;
 use crate::circuit::{self as cir, ComponentValue, Param};
 use crate::unit as u;
 
@@ -1244,25 +1243,14 @@ fn extract_dc_sweeps(dict: &Bound<'_, pyo3::types::PyDict>) -> PyResult<Vec<(Str
 }
 
 fn emit_ir_netlist(ir: &crate::ir::CircuitIR, backend: &str) -> PyResult<String> {
-    let emitted = match backend.to_ascii_lowercase().as_str() {
-        "ngspice" | "ngspice-subprocess" | "ngspice-shared" => {
-            crate::codegen::spice3::Spice3CodeGen {
-                dialect: crate::codegen::spice3::Spice3Dialect::Ngspice,
-            }.emit_netlist(ir)
-        }
-        "ltspice" => {
-            crate::codegen::spice3::Spice3CodeGen {
-                dialect: crate::codegen::spice3::Spice3Dialect::Ltspice,
-            }.emit_netlist(ir)
-        }
-        "hspice" => {
-            crate::codegen::spice3::Spice3CodeGen {
-                dialect: crate::codegen::spice3::Spice3Dialect::Hspice,
-            }.emit_netlist(ir)
-        }
-        "spectre" => crate::codegen::spectre::SpectreCodeGen.emit_netlist(ir),
-        "vacask" => crate::codegen::vacask::VacaskCodeGen.emit_netlist(ir),
-        "espice" => crate::codegen::espice::EspiceCodeGen.emit_netlist(ir),
+    use crate::codegen::Dialect;
+    let dialect = match backend.to_ascii_lowercase().as_str() {
+        "ngspice" | "ngspice-subprocess" | "ngspice-shared" => Dialect::Ngspice,
+        "ltspice" => Dialect::Ltspice,
+        "spectre" => Dialect::Spectre,
+        "vacask" => Dialect::Vacask,
+        "espice" => Dialect::Espice,
+        "hspice" => Dialect::Hspice,
         _ => {
             return Err(pyo3::exceptions::PyValueError::new_err(format!(
                 "unknown backend '{}'",
@@ -1271,7 +1259,7 @@ fn emit_ir_netlist(ir: &crate::ir::CircuitIR, backend: &str) -> PyResult<String>
         }
     };
 
-    emitted.map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+    crate::codegen::netlist(ir, dialect).map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
 }
 
 // ── Result bindings ──

@@ -13,8 +13,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 
-use crate::codegen::{CodeGen, CodeGenError};
-use crate::ir::{CircuitIR, FeatureFlags};
+use crate::ir::FeatureFlags;
 use crate::rawfile;
 use crate::result::RawData;
 
@@ -45,23 +44,7 @@ pub enum BackendError {
     Io(#[from] std::io::Error),
 }
 
-/// Netlist dialects, one per simulator family.
-// ponytail: stand-in for `codegen::Dialect`; on merge delete this enum and
-// `netlist` below, then `use crate::codegen::{Dialect, netlist}`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Dialect { Ngspice, Ltspice, Spectre, Vacask, Espice }
-
-/// IR → netlist text in dialect `d`. Same signature as `codegen::netlist`.
-pub fn netlist(ir: &CircuitIR, d: Dialect) -> Result<String, CodeGenError> {
-    use crate::codegen::spice3::{Spice3CodeGen, Spice3Dialect};
-    match d {
-        Dialect::Ngspice => Spice3CodeGen { dialect: Spice3Dialect::Ngspice }.emit_netlist(ir),
-        Dialect::Ltspice => Spice3CodeGen { dialect: Spice3Dialect::Ltspice }.emit_netlist(ir),
-        Dialect::Spectre => crate::codegen::spectre::SpectreCodeGen.emit_netlist(ir),
-        Dialect::Vacask => crate::codegen::vacask::VacaskCodeGen.emit_netlist(ir),
-        Dialect::Espice => crate::codegen::espice::EspiceCodeGen.emit_netlist(ir),
-    }
-}
+pub use crate::codegen::{netlist, Dialect};
 
 /// Every simulator SpiceRack can drive.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -180,12 +163,12 @@ impl BackendKind {
     }
 
     pub fn capabilities(self) -> BackendCapabilities {
-        match self.dialect() {
-            Dialect::Ngspice => NGSPICE_CAPS,
-            Dialect::Ltspice => LTSPICE_CAPS,
-            Dialect::Vacask => VACASK_CAPS,
-            Dialect::Spectre => SPECTRE_CAPS,
-            Dialect::Espice => ESPICE_CAPS,
+        match self {
+            Self::Ngspice => NGSPICE_CAPS,
+            Self::Ltspice => LTSPICE_CAPS,
+            Self::Vacask => VACASK_CAPS,
+            Self::Spectre => SPECTRE_CAPS,
+            Self::Espice => ESPICE_CAPS,
         }
     }
 

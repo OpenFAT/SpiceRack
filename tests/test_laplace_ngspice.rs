@@ -9,7 +9,7 @@
 
 use spicerack::backend::BackendKind;
 use spicerack::circuit::{Circuit, Node};
-use spicerack::codegen::{CodeGen, spice3::{Spice3CodeGen, Spice3Dialect}};
+use spicerack::codegen::Dialect;
 use spicerack::ir::CircuitIR;
 use spicerack::result::RawData;
 
@@ -21,16 +21,16 @@ fn ngspice_available() -> bool {
         .unwrap_or(false)
 }
 
-fn ngspice() -> Spice3CodeGen {
-    Spice3CodeGen { dialect: Spice3Dialect::Ngspice }
+fn ngspice() -> Dialect {
+    Dialect::Ngspice
 }
 
-fn ltspice() -> Spice3CodeGen {
-    Spice3CodeGen { dialect: Spice3Dialect::Ltspice }
+fn ltspice() -> Dialect {
+    Dialect::Ltspice
 }
 
-fn netlist(cg: &Spice3CodeGen, c: &Circuit) -> Result<String, String> {
-    cg.emit_netlist(&CircuitIR::from_circuit(c)).map_err(|e| e.to_string())
+fn netlist(cg: &Dialect, c: &Circuit) -> Result<String, String> {
+    spicerack::codegen::netlist(&CircuitIR::from_circuit(c), *cg).map_err(|e| e.to_string())
 }
 
 fn run(deck: &str) -> Option<RawData> {
@@ -60,7 +60,7 @@ fn ac(raw: &RawData, name: &str, i: usize) -> (f64, f64) {
 }
 
 /// A one-pole lowpass at `f0`, driven by a 1 V AC source, read at `out`.
-fn onepole_deck(cg: &Spice3CodeGen, tau: f64, sweep: &str) -> String {
+fn onepole_deck(cg: &Dialect, tau: f64, sweep: &str) -> String {
     let mut c = Circuit::new("laplace onepole");
     c.raw_spice("V1 in 0 AC 1");
     c.bv("1", "out", Node::Ground, format!("Laplace(V(in), 1/(1+s*{tau}))"));
@@ -286,12 +286,12 @@ fn current_inputs_are_refused_not_emitted() {
 
 #[test]
 fn spectre_and_vacask_refuse_every_behavioural_source() {
-    use spicerack::codegen::{spectre::SpectreCodeGen, vacask::VacaskCodeGen};
+    use spicerack::codegen::netlist;
     let mut c = Circuit::new("no bsource");
     c.bv("1", "out", Node::Ground, "Laplace(V(in), 1/(1+s*1e-6))");
     let ir = CircuitIR::from_circuit(&c);
-    assert!(SpectreCodeGen.emit_netlist(&ir).is_err());
-    assert!(VacaskCodeGen.emit_netlist(&ir).is_err());
+    assert!(netlist(&ir, Dialect::Spectre).is_err());
+    assert!(netlist(&ir, Dialect::Vacask).is_err());
 }
 
 // ── the legacy `Circuit::Display` path ──

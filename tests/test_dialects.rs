@@ -8,16 +8,8 @@
 //!
 //! The ESPice runs skip when `espice` is not on PATH (`$ESPICE` overrides).
 
-use spicerack::codegen::CodeGen;
-use spicerack::codegen::espice::EspiceCodeGen;
-use spicerack::codegen::spectre::SpectreCodeGen;
-use spicerack::codegen::spice3::{Spice3CodeGen, Spice3Dialect};
-use spicerack::codegen::vacask::VacaskCodeGen;
+use spicerack::codegen::{netlist, Dialect};
 use spicerack::ir::*;
-
-const NG: Spice3CodeGen = Spice3CodeGen { dialect: Spice3Dialect::Ngspice };
-const LT: Spice3CodeGen = Spice3CodeGen { dialect: Spice3Dialect::Ltspice };
-const HS: Spice3CodeGen = Spice3CodeGen { dialect: Spice3Dialect::Hspice };
 
 fn sub(name: &str) -> Subcircuit {
     Subcircuit {
@@ -112,10 +104,9 @@ fn every_dialect_dumps() {
     // VACASK has no behavioural-source language; the rest is common ground.
     let mut ir = circuit(vec![Analysis::Op]);
     ir.top.components.retain(|c| !matches!(c, Component::BehavioralVoltage { .. }));
-    let gens: [&dyn CodeGen; 6] = [&NG, &HS, &LT, &VacaskCodeGen, &SpectreCodeGen, &EspiceCodeGen];
-    for g in gens {
-        let text = g.emit_netlist(&ir).unwrap_or_else(|e| panic!("{}: {e}", g.backend_name()));
-        assert!(text.contains("mid"), "{}:\n{text}", g.backend_name());
+    for d in [Dialect::Ngspice, Dialect::Hspice, Dialect::Ltspice, Dialect::Vacask, Dialect::Spectre, Dialect::Espice] {
+        let text = netlist(&ir, d).unwrap_or_else(|e| panic!("{d:?}: {e}"));
+        assert!(text.contains("mid"), "{d:?}:\n{text}");
     }
 }
 
@@ -135,7 +126,7 @@ fn hspice_card_forms() {
         },
     ]);
     ir.top.libs = vec![("corners.lib".into(), "tt".into())];
-    let n = HS.emit_netlist(&ir).unwrap();
+    let n = netlist(&ir, Dialect::Hspice).unwrap();
     for want in [
         ".lib 'corners.lib' tt",
         ".subckt load n r=1k",
@@ -153,9 +144,13 @@ fn hspice_card_forms() {
     assert!(!n.contains('{') && !n.contains("PARAMS:") && !n.contains("\nB"), "{n}");
 
     let step = StepParam { param: "rv".into(), start: 1e3, stop: 3e3, step: 1e3, sweep_type: None };
-    assert!(HS.emit_step_param(&step).is_err());
+    let mut stepped = circuit(vec![Analysis::Op]);
+    stepped.testbench.as_mut().unwrap().step_params = vec![step];
+    assert!(netlist(&stepped, Dialect::Hspice).is_err());
     let xspice = Component::Xspice { name: "1".into(), connections: vec!["a".into()], model: "m".into() };
-    assert!(HS.emit_component(&xspice).is_err());
+    let mut with_a = circuit(vec![Analysis::Op]);
+    with_a.top.components.push(xspice);
+    assert!(netlist(&with_a, Dialect::Hspice).is_err());
 }
 
 // ── ESPice as the reader ──
@@ -204,14 +199,18 @@ fn espice_reads_each_dialect_to_the_same_op() {
         return;
     };
     let ir = circuit(vec![Analysis::Op]);
-    let gens: [(&dyn CodeGen, &str); 4] =
-        [(&NG, "ngspice"), (&HS, "hspice"), (&EspiceCodeGen, "ngspice"), (&SpectreCodeGen, "spectre")];
+    let gens = [
+        (Dialect::Ngspice, "ngspice"),
+        (Dialect::Hspice, "hspice"),
+        (Dialect::Espice, "ngspice"),
+        (Dialect::Spectre, "spectre"),
+    ];
     for (g, tokenizer) in gens {
-        let deck = g.emit_netlist(&ir).unwrap();
+        let deck = netlist(&ir, g).unwrap();
         let raw = op_point(&bin, &deck, tokenizer);
         for (name, want) in [("mid", 0.5), ("b", 2.0), ("lp", 1.0)] {
             let got = node(&raw, name);
-            assert!((got - want).abs() < 1e-6, "{}: v({name}) = {got}, want {want}\n{deck}", g.backend_name());
+            assert!((got - want).abs() < 1e-6, "{:?}: v({name}) = {got}, want {want}\n{deck}", g);
         }
     }
 }
