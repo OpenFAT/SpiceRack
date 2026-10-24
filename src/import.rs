@@ -6,6 +6,7 @@
 //! `.pz`, `.step`, ...) is kept verbatim as a raw line, so it reaches the
 //! SPICE-family outputs unchanged. `tools/spice2rack.rs` is the CLI.
 
+use std::collections::HashSet;
 use std::sync::OnceLock;
 
 use crate::codegen::Dialect;
@@ -284,7 +285,10 @@ fn waveform(tok: &str) -> Option<IrWaveform> {
 // ── Elements ──
 
 /// One element card, or `None` when the IR has no faithful form for it.
-fn element(t: &[String]) -> Option<Component> {
+/// `models` holds the deck's `.model` names, lowercased: a bare word in an
+/// R/C/L value position that names one is a model reference, which the IR's
+/// R/C/L cannot hold, so the card stays raw rather than become `{rtest}`.
+fn element(t: &[String], models: &HashSet<String>) -> Option<Component> {
     let name = t[0][1..].to_string();
     let s = |i: usize| t.get(i).cloned();
     let letter = t[0].chars().next()?.to_ascii_lowercase();
@@ -293,6 +297,7 @@ fn element(t: &[String]) -> Option<Component> {
             let (pos, params) = split_params(&t[3..]);
             let mut params = params?;
             let v = match pos {
+                [v] if models.contains(&v.to_ascii_lowercase()) => return None,
                 [v] => value(v),
                 // ngspice `R1 a b r=1k`
                 [] => {
@@ -605,22 +610,50 @@ pub struct Report {
     pub raw: usize,
 }
 
+/// Closes the innermost open `.subckt`. A definition nested in another is
+/// local to it in SPICE, while IR subcircuit names are global: it is hoisted
+/// as `<parent>__<name>` and the parent's references to it renamed, so the
+/// two `sub`s of `sub1` and `sub2` stay two.
+fn close_subckt(open: &mut Vec<(Subcircuit, usize, Vec<(String, String)>)>, defs: &mut Vec<Subcircuit>) {
+    let Some((mut sc, first, renames)) = open.pop() else { return };
+    for inst in sc.instances.iter_mut().chain(defs[first..].iter_mut().flat_map(|d| d.instances.iter_mut())) {
+        if let Some((_, to)) = renames.iter().find(|(from, _)| from.eq_ignore_ascii_case(&inst.subcircuit)) {
+            inst.subcircuit = to.clone();
+        }
+    }
+    if let Some((parent, _, parent_renames)) = open.last_mut() {
+        let scoped = format!("{}__{}", parent.name, sc.name);
+        parent_renames.push((std::mem::replace(&mut sc.name, scoped.clone()), scoped));
+    }
+    defs.push(sc);
+}
+
 /// Parses deck text in dialect `d` (line 1 is the title) into IR named `name`.
 pub fn parse(src: &str, name: &str, d: Dialect) -> Result<(CircuitIR, Report), String> {
     let g = grammars(d)?;
     let (_title, lines) = logical_lines(src, g).map_err(|at| format!("line grammar stops at byte {at}"))?;
     let mut report = Report::default();
+    let models: HashSet<String> = lines
+        .iter()
+        .filter_map(|l| {
+            let mut w = l.split_whitespace();
+            w.next().filter(|k| k.eq_ignore_ascii_case(".model"))?;
+            w.next().map(str::to_ascii_lowercase)
+        })
+        .collect();
     let mut top = sub(name);
     let mut tb = testbench(name);
     let mut defs: Vec<Subcircuit> = Vec::new();
-    let mut open: Option<Subcircuit> = None; // ponytail: one level; nested .subckt goes raw
-    let mut block: Option<&str> = None; // the closer of an open raw block
+    // Open `.subckt`s, innermost last: the definition, where its descendants
+    // start in `defs`, and its local names renamed on hoisting.
+    let mut open: Vec<(Subcircuit, usize, Vec<(String, String)>)> = Vec::new();
+    let mut block: Option<(&str, &str, usize)> = None; // an open raw block: opener, closer, depth
     let mut control = false;
 
     for card in lines {
         let word = card.split(|c: char| c.is_whitespace() || c == '(').next().unwrap_or("").to_ascii_lowercase();
-        let inside = open.is_some();
-        let here = open.as_mut().unwrap_or(&mut top);
+        let inside = !open.is_empty();
+        let here = open.last_mut().map_or(&mut top, |f| &mut f.0);
         if control {
             control = word != ".endc";
             // ngspice runs a `.control` block's analyses; the rest is scripting.
@@ -632,42 +665,42 @@ pub fn parse(src: &str, name: &str, d: Dialect) -> Result<(CircuitIR, Report), S
             }
             continue;
         }
-        if let Some(close) = block {
+        if let Some((open_w, close, depth)) = block {
             here.raw_spice.push(card.clone());
-            if word == close {
-                block = None;
-            }
+            // Blocks nest (`.if` inside `.if`): only the matching closer ends one.
+            block = match (word == open_w, word == close) {
+                (true, _) => Some((open_w, close, depth + 1)),
+                (_, true) if depth == 0 => None,
+                (_, true) => Some((open_w, close, depth - 1)),
+                _ => block,
+            };
             continue;
         }
         if word == ".control" && d == Dialect::Ngspice {
             control = true;
             continue;
         }
-        if let Some(&(_, close)) = BLOCKS.iter().find(|(o, _)| *o == word) {
+        if let Some(&(open_w, close)) = BLOCKS.iter().find(|(o, _)| *o == word) {
             here.raw_spice.push(card.clone());
             report.raw += 1;
-            block = Some(close);
+            block = Some((open_w, close, 0));
             continue;
         }
-        // Includes scope globally in every backend; they live on the top.
+        // An include stays in its block: a `.lib` in a `.subckt` is local.
         match include_line(&card) {
             Some(IncludeLine::Include(p)) => {
-                if !top.includes.contains(&p) {
-                    top.includes.push(p);
-                }
+                here.includes.push(p);
                 continue;
             }
             Some(IncludeLine::Lib(p, sec)) => {
-                if !top.libs.contains(&(p.clone(), sec.clone())) {
-                    top.libs.push((p, sec));
-                }
+                here.libs.push((p, sec));
                 continue;
             }
             None if word == ".lib" => {
                 // `.lib name` ... `.endl`: a section definition.
                 here.raw_spice.push(card.clone());
                 report.raw += 1;
-                block = Some(".endl");
+                block = Some(("", ".endl", 0)); // sections do not nest
                 continue;
             }
             None => {}
@@ -685,7 +718,7 @@ pub fn parse(src: &str, name: &str, d: Dialect) -> Result<(CircuitIR, Report), S
                     here.instances.push(Instance { name: t[0][1..].to_string(), subcircuit: sc.clone(), port_mapping: ports.to_vec(), parameters: params });
                     continue;
                 }
-            } else if let Some(c) = element(&t) {
+            } else if let Some(c) = element(&t, &models) {
                 here.components.push(c);
                 continue;
             }
@@ -694,7 +727,7 @@ pub fn parse(src: &str, name: &str, d: Dialect) -> Result<(CircuitIR, Report), S
             continue;
         }
         match kind.as_str() {
-            ".subckt" | ".macro" if !inside && t.len() >= 2 => {
+            ".subckt" | ".macro" if t.len() >= 2 => {
                 let mut sc = sub(&t[1]);
                 for x in t[2..].iter().filter(|x| !x.eq_ignore_ascii_case("params:")) {
                     match x.split_once('=') {
@@ -702,9 +735,9 @@ pub fn parse(src: &str, name: &str, d: Dialect) -> Result<(CircuitIR, Report), S
                         None => sc.ports.push(Port { name: x.clone(), direction: PortDirection::InOut }),
                     }
                 }
-                open = Some(sc);
+                open.push((sc, defs.len(), Vec::new()));
             }
-            ".ends" | ".eom" if inside => defs.push(open.take().unwrap()),
+            ".ends" | ".eom" if inside => close_subckt(&mut open, &mut defs),
             ".param" | ".parameter" | ".parameters" if !inside => match pairs(&t[1..]) {
                 Some(p) => top.parameters.extend(p.into_iter().map(|(k, v)| ParamDef { name: k, default: Some(v) })),
                 None => {
@@ -728,9 +761,9 @@ pub fn parse(src: &str, name: &str, d: Dialect) -> Result<(CircuitIR, Report), S
             }
         }
     }
-    if let Some(sc) = open {
+    while let Some((sc, ..)) = open.last() {
         eprintln!("warning: .subckt {} has no .ends", sc.name);
-        defs.push(sc);
+        close_subckt(&mut open, &mut defs);
     }
     Ok((CircuitIR { top, testbench: Some(tb), subcircuit_defs: defs, model_libraries: vec![] }, report))
 }
@@ -769,6 +802,19 @@ Rp p 0 1k
     #[test]
     fn deck_to_ir() {
         let ir = parse(DECK, "divider", Dialect::Ngspice).unwrap().0;
+        // A bare word naming a `.model` is a model reference: raw, not `{rtest}`.
+        let m = parse("t\n.model rtest r r=1k\nR1 1 0 rtest\nR2 1 0 rv\n", "t", Dialect::Ngspice).unwrap().0;
+        assert_eq!(m.top.raw_spice, vec!["R1 1 0 rtest".to_string()]);
+        assert!(matches!(&m.top.components[0], Component::Resistor { value: IrValue::Expression { expr }, .. } if expr == "rv"));
+        // Nested definitions are local: two `sub`s, hoisted under their parents.
+        let sc = parse("t\n.subckt a n\n.subckt sub n\nR1 n 0 1k\n.ends\nX1 n sub\n.ends\n.subckt b n\n.subckt sub n\nR1 n 0 2k\n.ends\nX1 n sub\n.ends\n", "t", Dialect::Ngspice).unwrap().0;
+        let names: Vec<&str> = sc.subcircuit_defs.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, ["a__sub", "a", "b__sub", "b"]);
+        assert_eq!(sc.subcircuit_defs[1].instances[0].subcircuit, "a__sub");
+        assert_eq!(sc.subcircuit_defs[3].instances[0].subcircuit, "b__sub");
+        // Nested `.if` blocks stay one raw block.
+        let n = parse("t\n.if (a == 1)\n.if (b == 1)\nR1 1 0 1\n.endif\n.else\nR1 1 0 2\n.endif\n", "t", Dialect::Ngspice).unwrap().0;
+        assert!(n.top.components.is_empty() && n.top.raw_spice.len() == 7, "{:?}", n.top);
         assert_eq!(ir.subcircuit_defs[0].parameters[0], ParamDef { name: "r".into(), default: Some("1k".into()) });
         assert_eq!(ir.top.instances[0].parameters, vec![("r".into(), "2k".into())]);
         assert!(ir.top.components.iter().any(|c| matches!(c, Component::Resistor { value: IrValue::Expression { expr }, .. } if expr == "rv")));

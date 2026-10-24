@@ -256,8 +256,8 @@ impl PyCircuit {
     }
 
     fn subcircuit(mut slf: PyRefMut<'_, Self>, subckt: &PySubcircuit) {
-        hoist_directives(&mut slf.as_super().inner, &subckt.inner);
-        slf.defs.push(subckt.inner.clone());
+        let def = hoisted(&mut slf.as_super().inner, &subckt.inner);
+        slf.defs.push(def);
     }
 
     /// The card of the first component or instance called `name` (without its letter).
@@ -331,9 +331,11 @@ impl PyCircuit {
     }
 }
 
-/// Hoist a child definition's `include`/`lib`/`osdi` directives to the deck's
-/// top level: every backend scopes them globally.
-fn hoist_directives(top: &mut ir::Subcircuit, child: &ir::Subcircuit) {
+/// The definition to store for `child`, its `include`/`lib`/`osdi`
+/// directives moved to the deck's top level (once each), which is where this
+/// API places them. The IR itself keeps a definition's directives inside it:
+/// SPICE scopes a `.lib` in a `.subckt` to that subcircuit.
+fn hoisted(top: &mut ir::Subcircuit, child: &ir::Subcircuit) -> ir::Subcircuit {
     for inc in &child.includes {
         if !top.includes.contains(inc) { top.includes.push(inc.clone()); }
     }
@@ -343,6 +345,11 @@ fn hoist_directives(top: &mut ir::Subcircuit, child: &ir::Subcircuit) {
     for osdi in &child.osdi_loads {
         if !top.osdi_loads.contains(osdi) { top.osdi_loads.push(osdi.clone()); }
     }
+    let mut def = child.clone();
+    def.includes.clear();
+    def.libs.clear();
+    def.osdi_loads.clear();
+    def
 }
 
 // ── CircuitSimulator: an IR deck plus a backend choice ──
@@ -1307,8 +1314,8 @@ impl PyTestbench {
     /// Register a child definition (its include/lib/osdi are hoisted to the top level).
     fn add_subcircuit(mut slf: PyRefMut<'_, Self>, subckt: &PySubcircuit) {
         let ir = &mut slf.as_super().ir;
-        hoist_directives(&mut ir.top, &subckt.inner);
-        ir.subcircuit_defs.push(subckt.inner.clone());
+        let def = hoisted(&mut ir.top, &subckt.inner);
+        ir.subcircuit_defs.push(def);
     }
 
     /// Attach a PDK model library. Codegen resolves the per-backend path and corner.

@@ -143,23 +143,14 @@ fn body(d: Dialect, sc: &Subcircuit, lines: &mut Vec<String>) -> Result<(), Code
     Ok(())
 }
 
-/// Every block's `.include` and `.lib` cards, once each, at the top of the
-/// deck: they scope globally in every backend, so a subcircuit's go there
-/// too. HSPICE quotes paths (`.lib 'file' section`).
-fn file_cards(d: Dialect, ir: &CircuitIR, lines: &mut Vec<String>) {
+/// A block's `.include` and `.lib` cards, in the block: SPICE scopes a
+/// `.lib` inside a `.subckt` to that subcircuit (ngspice's
+/// lib-processing/ex1b), so hoisting one changes which models it sees.
+/// HSPICE quotes paths (`.lib 'file' section`).
+fn file_cards(d: Dialect, sc: &Subcircuit, lines: &mut Vec<String>) {
     let path = |p: &str| if d == Dialect::Hspice { format!("'{p}'") } else { p.to_string() };
-    let blocks = || std::iter::once(&ir.top).chain(&ir.subcircuit_defs);
-    let mut seen = std::collections::HashSet::new();
-    for inc in blocks().flat_map(|b| &b.includes) {
-        if seen.insert(format!(".include {inc}")) {
-            lines.push(format!(".include {}", path(inc)));
-        }
-    }
-    for (p, section) in blocks().flat_map(|b| &b.libs) {
-        if seen.insert(format!(".lib {p} {section}")) {
-            lines.push(format!(".lib {} {}", path(p), section));
-        }
-    }
+    lines.extend(sc.includes.iter().map(|inc| format!(".include {}", path(inc))));
+    lines.extend(sc.libs.iter().map(|(p, section)| format!(".lib {} {}", path(p), section)));
 }
 
 fn subcircuit(d: Dialect, sc: &Subcircuit) -> Result<String, CodeGenError> {
@@ -173,6 +164,7 @@ fn subcircuit(d: Dialect, sc: &Subcircuit) -> Result<String, CodeGenError> {
     }
     header.push_str(&param_defs(&sc.parameters));
     let mut lines = vec![header];
+    file_cards(d, sc, &mut lines);
     lines.extend(sc.models.iter().map(model));
     body(d, sc, &mut lines)?;
     lines.push(format!(".ends {}", sc.name));
@@ -258,7 +250,7 @@ pub(super) fn netlist(d: Dialect, ir: &CircuitIR) -> Result<String, CodeGenError
     let mut lines = vec![format!("* {}", ir.top.name)];
     loads(d, ir, &mut lines)?;
 
-    file_cards(d, ir, &mut lines);
+    file_cards(d, &ir.top, &mut lines);
     let path = |p: &str| if d == Dialect::Hspice { format!("'{p}'") } else { p.to_string() };
 
     for lib in &ir.model_libraries {
