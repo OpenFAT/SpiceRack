@@ -565,9 +565,7 @@ pub fn parse(src: &str, name: &str) -> CircuitIR {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::codegen::CodeGen;
-    use crate::codegen::spice3::{Spice3CodeGen, Spice3Dialect};
-    const NG: Spice3CodeGen = Spice3CodeGen { dialect: Spice3Dialect::Ngspice };
+    use crate::codegen::{Dialect, netlist};
 
     const DECK: &str = "\
 divider bench
@@ -629,7 +627,7 @@ Rp p 0 1k
             assert!(out.status.success(), "{}\n{deck}", String::from_utf8_lossy(&out.stdout));
             Some(crate::rawfile::parse_raw(&std::fs::read(&r).unwrap()).unwrap())
         };
-        let converted = NG.emit_netlist(&parse(DECK, "divider")).unwrap();
+        let converted = netlist(&parse(DECK, "divider"), Dialect::Ngspice).unwrap();
         let (Some(a), Some(b)) = (run(DECK), run(&converted)) else {
             eprintln!("ngspice not on PATH — skipping");
             return;

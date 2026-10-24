@@ -10,22 +10,19 @@
 
 use std::path::{Path, PathBuf};
 
-use spicerack::codegen::CodeGen;
-use spicerack::codegen::espice::EspiceCodeGen;
-use spicerack::codegen::spectre::SpectreCodeGen;
-use spicerack::codegen::spice3::{Spice3CodeGen, Spice3Dialect};
-use spicerack::codegen::vacask::VacaskCodeGen;
+use spicerack::codegen::{Dialect, netlist};
 use spicerack::import::parse;
 
 // ── Output ──
 
-const NG: Spice3CodeGen = Spice3CodeGen { dialect: Spice3Dialect::Ngspice };
-const HS: Spice3CodeGen = Spice3CodeGen { dialect: Spice3Dialect::Hspice };
-const LT: Spice3CodeGen = Spice3CodeGen { dialect: Spice3Dialect::Ltspice };
-
-fn backends() -> [(&'static dyn CodeGen, &'static str); 6] {
-    [(&NG, "ngspice.sp"), (&HS, "hspice.sp"), (&LT, "ltspice.cir"), (&SpectreCodeGen, "spectre.scs"), (&VacaskCodeGen, "vacask.sim"), (&EspiceCodeGen, "espice.sp")]
-}
+const BACKENDS: [(Dialect, &str); 6] = [
+    (Dialect::Ngspice, "ngspice.sp"),
+    (Dialect::Hspice, "hspice.sp"),
+    (Dialect::Ltspice, "ltspice.cir"),
+    (Dialect::Spectre, "spectre.scs"),
+    (Dialect::Vacask, "vacask.sim"),
+    (Dialect::Espice, "espice.sp"),
+];
 
 fn convert(deck: &Path, out: &Path) -> std::io::Result<()> {
     let src = std::fs::read_to_string(deck)?;
@@ -36,10 +33,10 @@ fn convert(deck: &Path, out: &Path) -> std::io::Result<()> {
         eprintln!("{}: {raw} card(s) kept verbatim (no IR form)", deck.display());
     }
     std::fs::write(out.join(format!("{stem}.json")), serde_json::to_string_pretty(&ir).map_err(std::io::Error::other)?)?;
-    for (g, ext) in backends() {
-        match g.emit_netlist(&ir) {
+    for (d, ext) in BACKENDS {
+        match netlist(&ir, d) {
             Ok(text) => std::fs::write(out.join(format!("{stem}.{ext}")), text + "\n")?,
-            Err(e) => eprintln!("{}: {} skipped: {e}", deck.display(), g.backend_name()),
+            Err(e) => eprintln!("{}: {d:?} skipped: {e}", deck.display()),
         }
     }
     Ok(())

@@ -13,24 +13,17 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use spicerack::codegen::CodeGen;
-use spicerack::codegen::espice::EspiceCodeGen;
-use spicerack::codegen::spectre::SpectreCodeGen;
-use spicerack::codegen::spice3::{Spice3CodeGen, Spice3Dialect};
-use spicerack::codegen::vacask::VacaskCodeGen;
+use spicerack::codegen::{Dialect, netlist};
 use spicerack::import::parse;
 use spicerack::ir::CircuitIR;
 use spicerack::result::RawData;
-
-const NG: Spice3CodeGen = Spice3CodeGen { dialect: Spice3Dialect::Ngspice };
-const HS: Spice3CodeGen = Spice3CodeGen { dialect: Spice3Dialect::Hspice };
-const LT: Spice3CodeGen = Spice3CodeGen { dialect: Spice3Dialect::Ltspice };
 
 fn decks(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(rd) = std::fs::read_dir(dir) else { return };
     for e in rd.flatten() {
         let p = e.path();
-        if p.is_dir() && p.file_name() != Some("src".as_ref()) {
+        // `src*` holds fetched sources and their assets, not runnable decks.
+        if p.is_dir() && !p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("src")) {
             decks(&p, out);
         } else if p.extension() == Some("sp".as_ref()) {
             out.push(p);
@@ -98,12 +91,12 @@ fn check(deck: &Path, secs: u64, refused: &std::sync::Mutex<std::collections::BT
     if back != ir {
         return Outcome::Fail("JSON round trip changed the IR".into());
     }
-    for g in [&NG as &dyn CodeGen, &HS, &LT, &SpectreCodeGen, &VacaskCodeGen, &EspiceCodeGen] {
-        if g.emit_netlist(&ir).is_err() {
-            *refused.lock().unwrap().entry(g.backend_name().to_string()).or_default() += 1;
+    for d in [Dialect::Ngspice, Dialect::Hspice, Dialect::Ltspice, Dialect::Spectre, Dialect::Vacask, Dialect::Espice] {
+        if netlist(&ir, d).is_err() {
+            *refused.lock().unwrap().entry(format!("{d:?}")).or_default() += 1;
         }
     }
-    let converted = match NG.emit_netlist(&ir) {
+    let converted = match netlist(&ir, Dialect::Ngspice) {
         Ok(t) => t,
         Err(e) => return Outcome::Fail(format!("ngspice emit: {e}")),
     };
