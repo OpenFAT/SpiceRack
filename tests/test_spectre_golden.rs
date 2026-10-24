@@ -76,7 +76,7 @@ fn empty_tb() -> Testbench {
 }
 
 fn ir_with(top: Subcircuit, tb: Option<Testbench>) -> CircuitIR {
-    CircuitIR { raw_dialect: None, globals: vec![], top, testbench: tb, subcircuit_defs: vec![], model_libraries: vec![] }
+    CircuitIR { raw_dialect: None, globals: vec![], functions: vec![], top, testbench: tb, subcircuit_defs: vec![], model_libraries: vec![] }
 }
 
 fn analysis(a: Analysis) -> String {

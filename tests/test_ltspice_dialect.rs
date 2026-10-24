@@ -31,7 +31,7 @@ impl Cg {
             components: component.into_iter().cloned().collect(), instances: vec![], models: vec![],
             raw_spice: vec![], includes: vec![], libs: vec![], osdi_loads: vec![], verilog_blocks: vec![],
         };
-        let ir = CircuitIR { raw_dialect: None, globals: vec![], top, testbench: Some(tb), subcircuit_defs: vec![], model_libraries: vec![] };
+        let ir = CircuitIR { raw_dialect: None, globals: vec![], functions: vec![], top, testbench: Some(tb), subcircuit_defs: vec![], model_libraries: vec![] };
         let n = self.emit_netlist(&ir)?;
         Ok(n.strip_prefix("* t\n").unwrap().strip_suffix("\n.end").unwrap().to_string())
     }
@@ -163,7 +163,7 @@ fn pz_disto_and_sens_are_rejected_for_ltspice() {
 // ── .save ──
 
 fn noise_tb(saves: Vec<String>) -> CircuitIR {
-    CircuitIR { raw_dialect: None, globals: vec![],
+    CircuitIR { raw_dialect: None, globals: vec![], functions: vec![],
         top: Subcircuit {
             name: "nz".into(),
             ports: vec![],

@@ -409,6 +409,14 @@ fn element(t: &[String], models: &HashSet<String>) -> Option<Component> {
                 Component::CurrentSource { name, np, nm, value: v, ac_magnitude, ac_phase, waveform: wf }
             }
         }
+        // `E o 0 POLY(2) a 0 b 0 c0 c1 ...` / `F o 0 POLY(2) v1 v2 c0 ...`
+        'e' | 'g' | 'f' | 'h' if t.get(3).is_some_and(|x| x.to_ascii_lowercase().starts_with("poly")) => {
+            let dims = count(t[3].split_once('(')?.1.strip_suffix(')')?.trim())? as usize;
+            let n_controls = if matches!(letter, 'e' | 'g') { 2 * dims } else { dims };
+            let controls = t.get(4..4 + n_controls)?.to_vec();
+            let coeffs: Vec<f64> = t[4 + n_controls..].iter().map(|x| num(x)).collect::<Option<_>>()?;
+            Component::Poly { name, letter: letter.to_ascii_uppercase(), np: s(1)?, nm: s(2)?, controls, coeffs }
+        }
         'e' | 'g' => {
             let (np, nm) = (s(1)?, s(2)?);
             let rest = &t[3..];
@@ -551,6 +559,21 @@ fn node_values(toks: &[String]) -> Option<Vec<(String, f64)>> {
 /// A dot card that is an analysis or testbench setting; `false` if not.
 /// The analyses a `.print` card may name.
 const PRINT_KINDS: &[&str] = &["op", "dc", "ac", "tran", "noise", "disto", "tf", "sens", "pz", "four"];
+
+/// `.func name(a, b) {body}`, `= body` or `'body'`; also HSPICE's
+/// `.param name(a, b)='body'`, which is the same definition.
+fn func(card: &str) -> Option<FuncDef> {
+    let rest = card.split_once(char::is_whitespace)?.1.trim();
+    // A `.param` holds a function only when a `(` comes before its `=`.
+    if rest.find('(').is_none_or(|p| rest.find('=').is_some_and(|e| e < p)) {
+        return None;
+    }
+    let (name, rest) = rest.split_once('(')?;
+    let (args, body) = rest.split_once(')')?;
+    let body = unquote(body.trim().trim_start_matches('=').trim());
+    let args: Vec<String> = args.split(',').map(|a| a.trim().to_string()).filter(|a| !a.is_empty()).collect();
+    (!name.trim().is_empty() && !body.is_empty()).then(|| FuncDef { name: name.trim().to_string(), args, body: body.to_string() })
+}
 
 /// A point count: `10`, or a number written as one (`1e2`).
 fn count(tok: &str) -> Option<u32> {
@@ -730,6 +753,7 @@ pub fn parse(src: &str, name: &str, d: Dialect) -> Result<(CircuitIR, Report), S
     let mut top = sub(name);
     let mut tb = testbench(name);
     let mut globals: Vec<String> = Vec::new();
+    let mut functions: Vec<FuncDef> = Vec::new();
     let mut defs: Vec<Subcircuit> = Vec::new();
     // Open `.subckt`s, innermost last: the definition, where its descendants
     // start in `defs`, and its local names renamed on hoisting.
@@ -825,6 +849,7 @@ pub fn parse(src: &str, name: &str, d: Dialect) -> Result<(CircuitIR, Report), S
                 open.push((sc, defs.len(), Vec::new()));
             }
             ".ends" | ".eom" if inside => close_subckt(&mut open, &mut defs),
+            ".param" | ".parameter" | ".parameters" if !inside && func(&card).is_some() => functions.push(func(&card).unwrap()),
             ".param" | ".parameter" | ".parameters" if !inside => match pairs(&t[1..]) {
                 Some(p) => top.parameters.extend(p.into_iter().map(|(k, v)| ParamDef { name: k, default: Some(v) })),
                 None => {
@@ -834,6 +859,8 @@ pub fn parse(src: &str, name: &str, d: Dialect) -> Result<(CircuitIR, Report), S
             },
             // `.global` nodes name one net everywhere, wherever the card sits.
             ".global" => globals.extend(t[1..].iter().filter(|g| !globals.contains(g)).cloned().collect::<Vec<_>>()),
+            // `.func name(a, b) {body}` / `= body`, at the top level.
+            ".func" if !inside && func(&card).is_some() => functions.push(func(&card).unwrap()),
             ".model" => match model(&t) {
                 Some(m) => here.models.push(m),
                 None => {
@@ -855,7 +882,7 @@ pub fn parse(src: &str, name: &str, d: Dialect) -> Result<(CircuitIR, Report), S
         close_subckt(&mut open, &mut defs);
     }
     let raw_dialect = Some(if d == Dialect::Hspice { "hspice" } else { "ngspice" }.to_string());
-    Ok((CircuitIR { raw_dialect, globals, top, testbench: Some(tb), subcircuit_defs: defs, model_libraries: vec![] }, report))
+    Ok((CircuitIR { raw_dialect, globals, functions, top, testbench: Some(tb), subcircuit_defs: defs, model_libraries: vec![] }, report))
 }
 
 #[cfg(test)]
@@ -911,11 +938,21 @@ Rp p 0 1k
         assert!(ir.top.components.iter().any(|c| matches!(c, Component::VoltageSource { waveform: Some(IrWaveform::Pulse { period, .. }), .. } if *period == 10e-9)));
         assert!(ir.top.components.iter().any(|c| matches!(c, Component::BehavioralVoltage { expression, .. } if expression == "2*v(mid)+1")));
         assert_eq!(ir.top.models[1].parameters.len(), 3);
-        // POLY has no IR form: kept verbatim.
-        assert_eq!(ir.top.raw_spice, vec!["Gp 0 p poly(1) mid 0 0 1m".to_string()]);
+        // POLY is a component now; nothing in this deck stays raw.
+        assert!(ir.top.raw_spice.is_empty(), "{:?}", ir.top.raw_spice);
         // `.control` analyses become dot cards; the scripting goes.
         let c = parse("t\nR1 a 0 1k\n.control\nTRAN 1n 10n\nplot v(a)\n.endc\n", "t", Dialect::Ngspice).unwrap().0;
         assert!(matches!(c.testbench.as_ref().unwrap().analyses[..], [Analysis::Transient { stop, .. }] if stop == 10e-9));
+        // `.func`, as ngspice and HSPICE spell it.
+        let f = parse("t\n.func dbl(x) {x*2}\nR1 a 0 {dbl(500)}\n", "t", Dialect::Ngspice).unwrap().0;
+        assert_eq!(f.functions, vec![FuncDef { name: "dbl".into(), args: vec!["x".into()], body: "x*2".into() }]);
+        assert!(netlist(&f, Dialect::Ngspice).unwrap().contains(".func dbl(x) {x*2}"));
+        assert!(netlist(&f, Dialect::Hspice).unwrap().contains(".param dbl(x)='x*2'"));
+        // POLY sources, voltage- and current-controlled.
+        let p = parse("t\nE1 o 0 poly(2) a 0 b 0 1 2 3 4 5 6\nF1 f 0 poly(1) vs 0 1m\nVs s 0 0\n", "t", Dialect::Ngspice).unwrap().0;
+        assert!(p.top.raw_spice.is_empty(), "{:?}", p.top.raw_spice);
+        assert!(matches!(&p.top.components[0], Component::Poly { letter: 'E', controls, coeffs, .. } if controls.len() == 4 && coeffs.len() == 6));
+        assert!(netlist(&p, Dialect::Ngspice).unwrap().contains("E1 o 0 POLY(2) a 0 b 0 1 2 3 4 5 6"));
         // A 3-terminal VDMOS, a model flag and an instance flag.
         let v = parse("t\n.model vdm vdmos pchan vto=1\n.model nch nmos level=1\nM1 d g s vdm\nM2 d g s b nch w=1u off\n", "t", Dialect::Ngspice).unwrap().0;
         assert!(v.top.raw_spice.is_empty(), "{:?}", v.top.raw_spice);

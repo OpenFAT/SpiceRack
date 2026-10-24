@@ -292,7 +292,7 @@ impl PyCircuit {
         } else {
             return Err(PyKeyError::new_err(format!("Element '{name}' not found")));
         };
-        let deck = emit_ir_netlist(CircuitIR { raw_dialect: None, globals: vec![], top: one, ..Default::default() }, "ngspice")?;
+        let deck = emit_ir_netlist(CircuitIR { raw_dialect: None, globals: vec![], functions: vec![], top: one, ..Default::default() }, "ngspice")?;
         // Drop the title line and `.end`.
         let lines: Vec<&str> = deck.lines().collect();
         Ok(lines[1..lines.len() - 1].join("\n"))
@@ -344,7 +344,7 @@ impl PyCircuit {
 
 impl PyCircuit {
     fn ir(slf: &PyRef<'_, Self>) -> CircuitIR {
-        CircuitIR { raw_dialect: None, globals: vec![],
+        CircuitIR { raw_dialect: None, globals: vec![], functions: vec![],
             top: slf.as_super().inner.clone(),
             testbench: Some(slf.tb.clone()),
             subcircuit_defs: slf.defs.clone(),
@@ -1162,6 +1162,23 @@ impl PySubcircuit {
         });
     }
 
+    /// A polynomial controlled source, SPICE `POLY(n)`: `kind` is "E", "G",
+    /// "F" or "H"; `controls` are node pairs (E/G) or sensing V sources
+    /// (F/H); `coefficients` in SPICE's term order.
+    #[pyo3(signature = (name, kind, positive, negative, controls, coefficients))]
+    fn POLY(&mut self, name: &str, kind: &str, positive: &str, negative: &str, controls: Vec<String>, coefficients: Vec<f64>) -> PyResult<()> {
+        let letter = match kind.to_ascii_uppercase().as_str() {
+            k @ ("E" | "G" | "F" | "H") => k.chars().next().unwrap(),
+            _ => return Err(PyValueError::new_err("POLY kind is E, G, F or H")),
+        };
+        if matches!(letter, 'E' | 'G') && controls.len() % 2 != 0 {
+            return Err(PyValueError::new_err("POLY E/G controls are node pairs"));
+        }
+        let controls = if matches!(letter, 'E' | 'G') { controls.iter().map(|c| self.net(c)).collect() } else { controls };
+        self.push(Component::Poly { name: name.into(), letter, np: self.net(positive), nm: self.net(negative), controls, coeffs: coefficients });
+        Ok(())
+    }
+
     /// XSPICE code model instance (A-element).
     ///
     /// ```python
@@ -1430,7 +1447,7 @@ impl PyTestbench {
     #[new]
     fn new(dut: &PySubcircuit) -> (Self, PySimulator) {
         let tb = ir::Testbench { prints: vec![], dut: dut.inner.name.clone(), ..Default::default() };
-        let ir = CircuitIR { raw_dialect: None, globals: vec![], top: dut.inner.clone(), testbench: Some(tb), ..Default::default() };
+        let ir = CircuitIR { raw_dialect: None, globals: vec![], functions: vec![], top: dut.inner.clone(), testbench: Some(tb), ..Default::default() };
         (Self {}, PySimulator { ir, backend: None, save_currents: false })
     }
 
@@ -1605,6 +1622,12 @@ impl PyTestbench {
     #[pyo3(signature = (analysis, *outputs))]
     fn add_print(mut slf: PyRefMut<'_, Self>, analysis: &str, outputs: Vec<String>) {
         slf.as_super().tb().prints.push(ir::PrintCard { analysis: analysis.to_ascii_lowercase(), outputs });
+    }
+
+    /// A `.func`: `add_function("f", ["x"], "x*2")`.
+    #[pyo3(signature = (name, args, body))]
+    fn add_function(mut slf: PyRefMut<'_, Self>, name: &str, args: Vec<String>, body: &str) {
+        slf.as_super().ir.functions.push(ir::FuncDef { name: name.into(), args, body: body.into() });
     }
 
     /// `.global` nodes: one net under these names in every subcircuit.

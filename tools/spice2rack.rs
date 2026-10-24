@@ -157,6 +157,11 @@ impl Py {
                 let conns: Vec<String> = connections.iter().map(|c| n(c)).collect();
                 self.line(format!("{obj}.A(name={}, connections=[{}], model={})", n(name), conns.join(", "), n(model)))
             }
+            Component::Poly { name, letter, np, nm, controls, coeffs } => {
+                let cs: Vec<String> = controls.iter().map(|c| n(c)).collect();
+                let ks: Vec<String> = coeffs.iter().map(|k| py_num(*k)).collect();
+                self.line(format!("{obj}.POLY({}, {}, {}, {}, [{}], [{}])", n(name), py_str(&letter.to_string()), n(np), n(nm), cs.join(", "), ks.join(", ")))
+            }
             Component::RawSpice { line } => self.gap(obj, "card with no IR form", line),
         }
     }
@@ -250,6 +255,10 @@ fn python(ir: &CircuitIR) -> Py {
     py.line(format!("dut = ps.Subcircuit({})", py_str(&ir.top.name)));
     py.block("dut", &ir.top, true);
     py.line("\ntb = ps.Testbench(dut)");
+    for f in &ir.functions {
+        let args: Vec<String> = f.args.iter().map(|a| py_str(a)).collect();
+        py.line(format!("tb.add_function({}, [{}], {})", py_str(&f.name), args.join(", "), py_str(&f.body)));
+    }
     if !ir.globals.is_empty() {
         py.line(format!("tb.global_nodes({})", ir.globals.iter().map(|g| py_str(g)).collect::<Vec<_>>().join(", ")));
     }

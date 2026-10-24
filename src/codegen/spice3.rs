@@ -271,6 +271,14 @@ pub(super) fn netlist(d: Dialect, ir: &CircuitIR) -> Result<String, CodeGenError
     if !ir.globals.is_empty() {
         lines.push(format!(".global {}", ir.globals.join(" ")));
     }
+    // HSPICE spells a function as a parameter: `.param f(x)='x*2'`.
+    for f in &ir.functions {
+        let args = f.args.join(", ");
+        lines.push(match d {
+            Dialect::Hspice => format!(".param {}({args})='{}'", f.name, f.body),
+            _ => format!(".func {}({args}) {{{}}}", f.name, f.body),
+        });
+    }
     file_cards(d, &ir.top, &mut lines);
     let path = |p: &str| if d == Dialect::Hspice { format!("'{p}'") } else { p.to_string() };
 
@@ -405,6 +413,11 @@ pub(crate) fn component(d: Dialect, comp: &Component) -> Result<String, CodeGenE
             format!("G{} {} {} {} {} {}", name, np, nm, ncp, ncm, transconductance)
         }
         Component::Cccs { name, np, nm, vsense, gain } => format!("F{} {} {} {} {}", name, np, nm, vsense, gain),
+        Component::Poly { name, letter, np, nm, controls, coeffs } => {
+            let dims = if matches!(letter, 'E' | 'G') { controls.len() / 2 } else { controls.len() };
+            let k: Vec<String> = coeffs.iter().map(|c| super::format_spice_number(*c)).collect();
+            format!("{letter}{name} {np} {nm} POLY({dims}) {} {}", controls.join(" "), k.join(" "))
+        }
         Component::Ccvs { name, np, nm, vsense, transresistance } => {
             format!("H{} {} {} {} {}", name, np, nm, vsense, transresistance)
         }
@@ -572,7 +585,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     fn sample_resistor_divider() -> CircuitIR {
-        CircuitIR { raw_dialect: None, globals: vec![],
+        CircuitIR { raw_dialect: None, globals: vec![], functions: vec![],
             top: Subcircuit {
                 name: "Voltage Divider".into(),
                 ports: vec![],
@@ -657,7 +670,7 @@ mod tests {
 
     #[test]
     fn test_mosfet_circuit() {
-        let ir = CircuitIR { raw_dialect: None, globals: vec![],
+        let ir = CircuitIR { raw_dialect: None, globals: vec![], functions: vec![],
             top: Subcircuit {
                 name: "CMOS Inverter".into(),
                 ports: vec![],
@@ -736,7 +749,7 @@ mod tests {
 
     #[test]
     fn test_subcircuit_instances() {
-        let ir = CircuitIR { raw_dialect: None, globals: vec![],
+        let ir = CircuitIR { raw_dialect: None, globals: vec![], functions: vec![],
             top: Subcircuit {
                 name: "Top".into(),
                 ports: vec![],
@@ -823,7 +836,7 @@ mod tests {
 
     #[test]
     fn test_waveforms_sin_pulse_pwl() {
-        let ir = CircuitIR { raw_dialect: None, globals: vec![],
+        let ir = CircuitIR { raw_dialect: None, globals: vec![], functions: vec![],
             top: Subcircuit {
                 name: "Waveforms".into(),
                 ports: vec![],
@@ -1016,7 +1029,7 @@ mod tests {
 
     #[test]
     fn test_osdi_ngspice_only() {
-        let ir = CircuitIR { raw_dialect: None, globals: vec![],
+        let ir = CircuitIR { raw_dialect: None, globals: vec![], functions: vec![],
             top: Subcircuit {
                 name: "OSDI Test".into(),
                 ports: vec![],
@@ -1068,7 +1081,7 @@ mod tests {
 
     #[test]
     fn test_step_params_ltspice_ok_ngspice_errors() {
-        let ir = CircuitIR { raw_dialect: None, globals: vec![],
+        let ir = CircuitIR { raw_dialect: None, globals: vec![], functions: vec![],
             top: Subcircuit {
                 name: "Step Test".into(),
                 ports: vec![],
@@ -1162,7 +1175,7 @@ mod tests {
         backend_paths.insert("ngspice".into(), "/pdk/ngspice/sky130.lib".into());
         backend_paths.insert("spectre".into(), "/pdk/spectre/sky130.scs".into());
 
-        let ir = CircuitIR { raw_dialect: None, globals: vec![],
+        let ir = CircuitIR { raw_dialect: None, globals: vec![], functions: vec![],
             top: Subcircuit {
                 name: "pdk_test".into(),
                 ports: vec![], parameters: vec![], components: vec![],
@@ -1204,7 +1217,7 @@ mod tests {
 
     #[test]
     fn test_model_library_corner_switch() {
-        let ir_tt = CircuitIR { raw_dialect: None, globals: vec![],
+        let ir_tt = CircuitIR { raw_dialect: None, globals: vec![], functions: vec![],
             top: Subcircuit {
                 name: "corner".into(),
                 ports: vec![], parameters: vec![], components: vec![],
@@ -1237,7 +1250,7 @@ mod tests {
 
     #[test]
     fn test_model_library_no_corner_uses_include() {
-        let ir = CircuitIR { raw_dialect: None, globals: vec![],
+        let ir = CircuitIR { raw_dialect: None, globals: vec![], functions: vec![],
             top: Subcircuit {
                 name: "nocorner".into(),
                 ports: vec![], parameters: vec![], components: vec![],
@@ -1265,7 +1278,7 @@ mod tests {
 
     #[test]
     fn test_ngspice_uses_save() {
-        let ir = CircuitIR { raw_dialect: None, globals: vec![],
+        let ir = CircuitIR { raw_dialect: None, globals: vec![], functions: vec![],
             top: Subcircuit {
                 name: "ng_save".into(),
                 ports: vec![], parameters: vec![],
@@ -1372,7 +1385,7 @@ mod tests {
 
     #[test]
     fn test_pdk_netlist_lib_before_subckt_and_components() {
-        let ir = CircuitIR { raw_dialect: None, globals: vec![],
+        let ir = CircuitIR { raw_dialect: None, globals: vec![], functions: vec![],
             top: Subcircuit {
                 name: "cs_amp_tb".into(),
                 ports: vec![], parameters: vec![],
@@ -1460,7 +1473,7 @@ mod tests {
 
     #[test]
     fn test_setup_includes_emitted_before_lib() {
-        let ir = CircuitIR { raw_dialect: None, globals: vec![],
+        let ir = CircuitIR { raw_dialect: None, globals: vec![], functions: vec![],
             top: Subcircuit {
                 name: "gf180_test".into(),
                 ports: vec![], parameters: vec![], components: vec![],

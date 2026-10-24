@@ -18,6 +18,17 @@ pub struct CircuitIR {
     /// `.global` nodes: one net under the same name in every subcircuit.
     #[serde(default)]
     pub globals: Vec<String>,
+    /// Top-level `.func` definitions: `name(args) = body`, the body an
+    /// expression over the arguments and parameters.
+    #[serde(default)]
+    pub functions: Vec<FuncDef>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct FuncDef {
+    pub name: String,
+    pub args: Vec<String>,
+    pub body: String,
 }
 
 /// Named, parameterized, composable circuit fragment -- the unit of reuse
@@ -131,6 +142,10 @@ pub enum Component {
     ISwitch { name: String, np: String, nm: String, vcontrol: String, model: String },
     TLine { name: String, inp: String, inm: String, outp: String, outm: String, z0: f64, td: f64 },
     Xspice { name: String, connections: Vec<String>, model: String },
+    /// A polynomial controlled source, SPICE `POLY(n)`: `letter` is E (VCVS),
+    /// G (VCCS), F (CCCS) or H (CCVS); `controls` are node pairs (E/G) or
+    /// sensing V sources (F/H); `coeffs` in SPICE 2G6 term order.
+    Poly { name: String, letter: char, np: String, nm: String, controls: Vec<String>, coeffs: Vec<f64> },
     RawSpice { line: String },
 }
 
@@ -144,7 +159,7 @@ impl Component {
             | BehavioralVoltage { name, .. } | BehavioralCurrent { name, .. } | Vcvs { name, .. }
             | Vccs { name, .. } | Cccs { name, .. } | Ccvs { name, .. } | Diode { name, .. }
             | Bjt { name, .. } | Mosfet { name, .. } | Jfet { name, .. } | Mesfet { name, .. }
-            | VSwitch { name, .. } | ISwitch { name, .. } | TLine { name, .. } | Xspice { name, .. } => Some(name),
+            | VSwitch { name, .. } | ISwitch { name, .. } | TLine { name, .. } | Xspice { name, .. } | Poly { name, .. } => Some(name),
             RawSpice { .. } => None,
         }
     }
@@ -553,7 +568,7 @@ mod tests {
             verilog_blocks: vec![],
         };
 
-        let ir = CircuitIR { raw_dialect: None, globals: vec![],
+        let ir = CircuitIR { raw_dialect: None, globals: vec![], functions: vec![],
             top: sub.clone(),
             testbench: None,
             subcircuit_defs: Vec::new(),
@@ -569,7 +584,7 @@ mod tests {
 
     #[test]
     fn test_serialization_roundtrip() {
-        let ir = CircuitIR { raw_dialect: None, globals: vec![],
+        let ir = CircuitIR { raw_dialect: None, globals: vec![], functions: vec![],
             top: Subcircuit {
                 name: "roundtrip_test".into(),
                 ports: vec![Port { name: "in".into(), direction: PortDirection::Input }],
@@ -641,7 +656,7 @@ mod tests {
 
     #[test]
     fn test_compute_features_xspice() {
-        let ir = CircuitIR { raw_dialect: None, globals: vec![],
+        let ir = CircuitIR { raw_dialect: None, globals: vec![], functions: vec![],
             top: Subcircuit {
                 name: "xspice_test".into(),
                 ports: Vec::new(),
@@ -683,7 +698,7 @@ mod tests {
 
     #[test]
     fn test_compute_features_osdi_and_laplace() {
-        let ir = CircuitIR { raw_dialect: None, globals: vec![],
+        let ir = CircuitIR { raw_dialect: None, globals: vec![], functions: vec![],
             top: Subcircuit {
                 name: "osdi_test".into(),
                 ports: Vec::new(),
@@ -718,7 +733,7 @@ mod tests {
 
     #[test]
     fn test_compute_features_control_blocks() {
-        let ir = CircuitIR { raw_dialect: None, globals: vec![],
+        let ir = CircuitIR { raw_dialect: None, globals: vec![], functions: vec![],
             top: Subcircuit {
                 name: "ctrl_test".into(),
                 ports: Vec::new(),
@@ -743,7 +758,7 @@ mod tests {
 
     #[test]
     fn test_compute_features_measures_and_step() {
-        let ir = CircuitIR { raw_dialect: None, globals: vec![],
+        let ir = CircuitIR { raw_dialect: None, globals: vec![], functions: vec![],
             top: Subcircuit {
                 name: "meas_test".into(),
                 ports: Vec::new(),
@@ -789,7 +804,7 @@ mod tests {
     #[cfg(feature = "backend")]
     #[test]
     fn test_check_backend_osdi_against_ltspice() {
-        let ir = CircuitIR { raw_dialect: None, globals: vec![],
+        let ir = CircuitIR { raw_dialect: None, globals: vec![], functions: vec![],
             top: Subcircuit {
                 name: "osdi_check".into(),
                 ports: Vec::new(),
@@ -820,7 +835,7 @@ mod tests {
     #[cfg(feature = "backend")]
     #[test]
     fn test_check_backend_no_issues_for_clean_circuit() {
-        let ir = CircuitIR { raw_dialect: None, globals: vec![],
+        let ir = CircuitIR { raw_dialect: None, globals: vec![], functions: vec![],
             top: Subcircuit {
                 name: "clean".into(),
                 ports: Vec::new(),
@@ -854,7 +869,7 @@ mod tests {
 
     #[test]
     fn test_full_ir_json_roundtrip() {
-        let ir = CircuitIR { raw_dialect: None, globals: vec![],
+        let ir = CircuitIR { raw_dialect: None, globals: vec![], functions: vec![],
             top: Subcircuit {
                 name: "opamp_tb".into(),
                 ports: vec![],
@@ -1329,7 +1344,7 @@ mod tests {
 
     #[test]
     fn test_minimal_ir_roundtrip() {
-        let ir = CircuitIR { raw_dialect: None, globals: vec![],
+        let ir = CircuitIR { raw_dialect: None, globals: vec![], functions: vec![],
             top: Subcircuit {
                 name: "empty".into(),
                 ports: vec![],
@@ -1421,7 +1436,7 @@ mod tests {
             Component::RawSpice { line: ".probe V(out)".into() },
         ];
 
-        let ir = CircuitIR { raw_dialect: None, globals: vec![],
+        let ir = CircuitIR { raw_dialect: None, globals: vec![], functions: vec![],
             top: Subcircuit {
                 name: "all_components".into(),
                 ports: vec![],
@@ -1471,7 +1486,7 @@ mod tests {
             Analysis::SpectrePstb { pss_fundamental: 1e6, pss_stabilization: 100e-6, pss_harmonics: 10, probe: "iprobe".into(), variation: "dec".into(), points: 100, start: 1.0, stop: 1e9 },
         ];
 
-        let ir = CircuitIR { raw_dialect: None, globals: vec![],
+        let ir = CircuitIR { raw_dialect: None, globals: vec![], functions: vec![],
             top: Subcircuit {
                 name: "analysis_test".into(),
                 ports: vec![],

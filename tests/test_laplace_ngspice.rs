@@ -51,7 +51,7 @@ impl Deck {
         self.0.components.push(Component::BehavioralCurrent { name: name.into(), np: np.into(), nm: nm.into(), expression: expression.into() });
     }
     fn ir(&self) -> CircuitIR {
-        CircuitIR { raw_dialect: None, globals: vec![], top: self.0.clone(), ..Default::default() }
+        CircuitIR { raw_dialect: None, globals: vec![], functions: vec![], top: self.0.clone(), ..Default::default() }
     }
 }
 

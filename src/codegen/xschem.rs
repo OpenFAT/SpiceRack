@@ -772,7 +772,7 @@ mod tests {
     }
 
     fn ir() -> CircuitIR {
-        CircuitIR { raw_dialect: None, globals: vec![],
+        CircuitIR { raw_dialect: None, globals: vec![], functions: vec![],
             top: Subcircuit {
                 name: "tb".into(),
                 parameters: vec![ParamDef {
