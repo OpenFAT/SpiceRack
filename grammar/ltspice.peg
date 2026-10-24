@@ -1,0 +1,71 @@
+# LTspice: the dialect rules spice_cards.peg leaves open. Same rule set as
+# ngspice.peg minus numtok; differs in Number/Scale, Expr, the operator
+# ladder (Unary, AndOp, OrOp, CmpOp, MulOp, PowOp, NotOp) and value.
+# Sources: ADI ltspice-reference ai_ref/ (SSR = SPICE-SYNTAX-REFERENCE.md,
+# CER = CIRCUIT-ELEMENTS-REFERENCE.md, SCR = SIMULATION-COMMANDS-REFERENCE.md);
+# LTspice XVII help B-device.htm, DotParam.htm.
+
+# SSR "Engineering Multipliers": T G Meg K mil m u n p f; `u` or `µ`
+# (XVII help); no `a`. Trailing letters are ignored (`10V`); `6K34` is
+# 6.34K, so digits may follow the scale (the tail takes them).
+Number     <- [+\-]? Mantissa Exponent? Scale? ([a-z0-9_.] / 'µ')*
+Mantissa   <- [0-9]+ ('.' [0-9]*)? / '.' [0-9]+
+Exponent   <- [e] [+\-]? [0-9]+
+Scale      <- 'meg' / 'mil' / 'µ' / [tgkmunpf]
+
+# DotParam.htm: `{expr}` invokes evaluation. Quotes are not expressions
+# (undocumented); `"..."` is a string (SCR .PARAM).
+Expr       <- '{' x Ternary x '}'
+# B-device.htm `V=<expression>`: unbraced after `key=`.
+pairexpr   <- &([a-zA-Z_.0-9(+\-!~]) Ternary !wordchar
+
+# CER "Supported Operators (ascending precedence)": `& | ^` (one level,
+# Boolean, true is > .5), comparisons, `+ -`, `* / %`, `**`, `! ~`.
+# `?:` is undocumented (kept: spice_cards.peg's `cond` names Ternary).
+Ternary    <- Or (x '?' x Ternary x ':' x Ternary)?
+Or         <- And (x OrOp x And)*
+And        <- Cmp (x AndOp x Cmp)*
+Cmp        <- Add (x CmpOp x Add)*
+Add        <- Mul (x AddOp x Mul)*
+Mul        <- Pow (x MulOp x Pow)*
+Pow        <- Unary (x PowOp x Unary)*
+# B-device.htm: `-2**1.5` is 0, the real part of (-2)**1.5: the sign binds
+# tighter than `**`, unlike ngspice (`-2^2` = -4).
+Unary      <- (SignOp / NotOp) x Unary / atom
+# SCR .PARAM: `select(n, "1N4148", "1N4007")` takes strings.
+atom       <- Paren / Probe / Call / Num / Str / Ref
+Paren      <- '(' x Ternary x ')'
+Probe      <- [vi] x '(' x Pname (x ',' x Pname)? x ')'
+Pname      <- (![ \t,()\n] .)+
+Call       <- Ref x '(' x (Ternary (x ',' x Ternary)*)? x ')'
+Num        <- Mantissa ([e] [+\-]? [0-9]+)? ([a-z0-9] / 'µ')*
+Ref        <- [a-zA-Z_$] [a-zA-Z0-9_.$]*
+x          <- [ \t]*
+
+OrOp       <- [&|^]
+# `&` shares the `|` level: this level never matches (`x` always does).
+AndOp      <- !x
+CmpOp      <- '==' / '!=' / '<=' / '>=' / '<' / '>'
+AddOp      <- [+\-]
+MulOp      <- '*' !'*' / [/%]
+PowOp      <- '**'
+SignOp     <- [+\-]
+NotOp      <- [!~] !'='
+
+namechar   <- ![ \t\n,=()'"{}] .
+wordchar   <- ![ \t\n,=()'"{}\[\]] .
+
+field      <- Pair / Group / Expr / Str / Word / [,()=]
+gfield     <- Group / Expr / Str / Word / [,=]
+value      <- Expr / Str / pairexpr / Word
+
+# LTspice dot cards spice_cards.peg's Kind/OtherKind refuse, kept as text.
+# Entry: the importer starts here when the rule exists.
+LtCard     <- (LtOther / FraDevice) nl !. / OneCard
+# SSR "Line Types": `@` is the FRA device, `&` its probe (CER).
+FraDevice  <- [@&] Name fields
+LtOther    <- '.params' s (Assign / FuncDef) (s (Assign / FuncDef))*
+            / '.' LtKind !namechar rest
+LtKind     <- 'backanno' / 'savebias' / 'loadbias' / 'savestate' / 'loadstate' / 'wave'
+            / 'machine' / 'endmachine' / 'state' / 'rule' / 'output' / 'fra' / 'ferret'
+            / 'softstart' / 'fourier' / 'endl'

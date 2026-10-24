@@ -147,10 +147,19 @@ fn body(d: Dialect, sc: &Subcircuit, lines: &mut Vec<String>) -> Result<(), Code
 /// `.lib` inside a `.subckt` to that subcircuit (ngspice's
 /// lib-processing/ex1b), so hoisting one changes which models it sees.
 /// HSPICE quotes paths (`.lib 'file' section`).
-fn file_cards(d: Dialect, sc: &Subcircuit, lines: &mut Vec<String>) {
+/// A library with no section is LTspice's `.lib file` (the whole file);
+/// ngspice and HSPICE would read that card as a section definition.
+fn file_cards(d: Dialect, sc: &Subcircuit, lines: &mut Vec<String>) -> Result<(), CodeGenError> {
     let path = |p: &str| if d == Dialect::Hspice { format!("'{p}'") } else { p.to_string() };
     lines.extend(sc.includes.iter().map(|inc| format!(".include {}", path(inc))));
-    lines.extend(sc.libs.iter().map(|(p, section)| format!(".lib {} {}", path(p), section)));
+    for (p, section) in &sc.libs {
+        match (section.is_empty(), d) {
+            (true, Dialect::Ltspice) => lines.push(format!(".lib {}", path(p))),
+            (true, _) => return Err(CodeGenError::Other(format!(".lib {p} with no section is LTspice's whole-file form; {d:?} reads it as a section definition"))),
+            (false, _) => lines.push(format!(".lib {} {}", path(p), section)),
+        }
+    }
+    Ok(())
 }
 
 fn subcircuit(d: Dialect, sc: &Subcircuit) -> Result<String, CodeGenError> {
@@ -164,7 +173,7 @@ fn subcircuit(d: Dialect, sc: &Subcircuit) -> Result<String, CodeGenError> {
     }
     header.push_str(&param_defs(&sc.parameters));
     let mut lines = vec![header];
-    file_cards(d, sc, &mut lines);
+    file_cards(d, sc, &mut lines)?;
     lines.extend(sc.models.iter().map(model));
     body(d, sc, &mut lines)?;
     lines.push(format!(".ends {}", sc.name));
@@ -279,7 +288,7 @@ pub(super) fn netlist(d: Dialect, ir: &CircuitIR) -> Result<String, CodeGenError
             _ => format!(".func {}({args}) {{{}}}", f.name, f.body),
         });
     }
-    file_cards(d, &ir.top, &mut lines);
+    file_cards(d, &ir.top, &mut lines)?;
     let path = |p: &str| if d == Dialect::Hspice { format!("'{p}'") } else { p.to_string() };
 
     for lib in &ir.model_libraries {

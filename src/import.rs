@@ -30,14 +30,19 @@ macro_rules! peg {
 fn grammars(d: Dialect) -> Result<&'static Grammars, String> {
     static NG: OnceLock<Grammars> = OnceLock::new();
     static HS: OnceLock<Grammars> = OnceLock::new();
+    static LT: OnceLock<Grammars> = OnceLock::new();
     let (cell, lines, cards) = match d {
+        Dialect::Ltspice => (&LT, peg!("ltspice_lines.peg"), peg!("spice_cards.peg", "ltspice.peg", "spicerack.peg")),
         Dialect::Ngspice | Dialect::Espice => (&NG, peg!("ngspice_lines.peg"), peg!("spice_cards.peg", "ngspice.peg", "spicerack.peg")),
         Dialect::Hspice => (&HS, peg!("hspice_lines.peg"), peg!("spice_cards.peg", "hspice_ops.peg", "hspice.peg", "spicerack.peg")),
         other => return Err(format!("no {other:?} reader yet")),
     };
     Ok(cell.get_or_init(|| {
         let cards = Grammar::compile(cards).expect("card grammar");
-        Grammars { lines: Grammar::compile(lines).expect("line grammar"), one_card: cards.rule("OneCard").unwrap(), cards }
+        // A dialect file may front OneCard with its own entry (LTspice's
+        // LtCard reads the cards spice_cards.peg refuses).
+        let one_card = cards.rule("LtCard").or(cards.rule("OneCard")).unwrap();
+        Grammars { lines: Grammar::compile(lines).expect("line grammar"), one_card, cards }
     }))
 }
 
@@ -85,8 +90,12 @@ fn card_tokens(line: &str, g: &Grammars) -> Option<Vec<String>> {
     let lower = format!("{}\n", line.to_ascii_lowercase());
     let tree = g.cards.parse(g.one_card, &lower).ok()?;
     let orig = |i: usize| &line[tree.rows[i].start as usize..(tree.rows[i].end as usize).min(line.len())];
-    // Row 0 is `OneCard`; its child is the card rule that matched.
-    let card = tree.children(Some(0)).next()?;
+    // Row 0 is the entry rule; its child is the card rule that matched
+    // (one level further down when an entry like LtCard fell back to OneCard).
+    let mut card = tree.children(Some(0)).next()?;
+    if g.cards.name(tree.rows[card].rule) == "OneCard" {
+        card = tree.children(Some(card)).next()?;
+    }
     let mut out: Vec<String> = Vec::new();
     if line.starts_with('.') {
         out.push(line.split(|c: char| c.is_whitespace() || c == '(').next()?.to_string());
@@ -230,10 +239,26 @@ fn num(tok: &str) -> Option<f64> {
     format!("{base}e{}", exp + scale).parse().ok()
 }
 
+/// `{expr}`, `'expr'` or `"expr"` without its delimiters, only when the
+/// opening one closes at the very end: `{a}/{b}` is one expression, not `a}/{b`.
 fn unquote(tok: &str) -> &str {
     let t = tok.trim();
     for (o, c) in [('{', '}'), ('\'', '\''), ('"', '"')] {
-        if let Some(inner) = t.strip_prefix(o).and_then(|s| s.strip_suffix(c)) {
+        let Some(inner) = t.strip_prefix(o).and_then(|s| s.strip_suffix(c)) else { continue };
+        let whole = if o == '{' {
+            let mut depth = 1;
+            inner.chars().all(|ch| {
+                match ch {
+                    '{' => depth += 1,
+                    '}' => depth -= 1,
+                    _ => {}
+                }
+                depth > 0
+            })
+        } else {
+            !inner.contains(c)
+        };
+        if whole {
             return inner.trim();
         }
     }
@@ -299,7 +324,7 @@ fn waveform(tok: &str) -> Option<IrWaveform> {
 /// `models` holds the deck's `.model` names, lowercased: a bare word in an
 /// R/C/L value position that names one is a model reference, which the IR's
 /// R/C/L cannot hold, so the card stays raw rather than become `{rtest}`.
-fn element(t: &[String], models: &HashSet<String>) -> Option<Component> {
+fn element(t: &[String], card: &str, models: &HashSet<String>) -> Option<Component> {
     let name = t[0][1..].to_string();
     let s = |i: usize| t.get(i).cloned();
     let letter = t[0].chars().next()?.to_ascii_lowercase();
@@ -449,12 +474,26 @@ fn element(t: &[String], models: &HashSet<String>) -> Option<Component> {
                 Component::Ccvs { name, np, nm, vsense, transresistance: k }
             }
         }
+        // The expression is the card's own text after `V=`/`I=`: rebuilt from
+        // fields it would lose its spacing and the braces inside it.
         'b' => {
             let (np, nm) = (s(1)?, s(2)?);
-            let rest = t[3..].join(" ");
-            let (k, e) = rest.split_once('=')?;
+            let (lhs, e) = card.split_once('=')?;
+            let k = lhs.split_whitespace().last()?;
+            let e = e.trim();
+            // A second `key=` at depth 0 (LTspice `Rpar=`) is a parameter the
+            // IR's B source has no field for.
+            let mut depth = 0i32;
+            for (i, c) in e.char_indices() {
+                match c {
+                    '(' | '{' => depth += 1,
+                    ')' | '}' => depth -= 1,
+                    '=' if depth == 0 && !matches!(e[..i].chars().last(), Some('=' | '!' | '<' | '>')) && !e[i + 1..].starts_with('=') => return None,
+                    _ => {}
+                }
+            }
             let expression = unquote(e).to_string();
-            match k.trim().to_ascii_lowercase().as_str() {
+            match k.to_ascii_lowercase().as_str() {
                 "v" => Component::BehavioralVoltage { name, np, nm, expression },
                 "i" => Component::BehavioralCurrent { name, np, nm, expression },
                 _ => return None,
@@ -575,6 +614,35 @@ fn func(card: &str) -> Option<FuncDef> {
     (!name.trim().is_empty() && !body.is_empty()).then(|| FuncDef { name: name.trim().to_string(), args, body: body.to_string() })
 }
 
+/// LTspice number spellings in SPICE form: `6K34` is 6.34K (SSR
+/// "Engineering Multipliers"), `µ` is `u`. Anything else passes unchanged.
+fn lt_number(tok: String) -> String {
+    let t = tok.replace('µ', "u");
+    let b = t.as_bytes();
+    let digits = b.iter().take_while(|c| c.is_ascii_digit()).count();
+    let scale = t[digits..].chars().next().map(|c| c.to_ascii_lowercase());
+    if digits > 0 && matches!(scale, Some('t' | 'g' | 'k' | 'm' | 'u' | 'n' | 'p' | 'f')) && !t[digits..].to_ascii_lowercase().starts_with("meg") && !t[digits..].to_ascii_lowercase().starts_with("mil") {
+        let frac: String = t[digits + 1..].chars().take_while(|c| c.is_ascii_digit()).collect();
+        if !frac.is_empty() && t.len() == digits + 1 + frac.len() {
+            return format!("{}.{frac}{}", &t[..digits], &t[digits..digits + 1]);
+        }
+    }
+    t
+}
+
+/// Deck bytes as text: UTF-16LE with a BOM (LTspice), UTF-8, else Latin-1
+/// (LTspice's older netlists, SSR "Encoding"), so a `µ` survives.
+pub fn decode(bytes: &[u8]) -> String {
+    if let Some(body) = bytes.strip_prefix(&[0xFF, 0xFE]) {
+        let units: Vec<u16> = body.chunks_exact(2).map(|p| u16::from_le_bytes([p[0], p[1]])).collect();
+        return String::from_utf16_lossy(&units);
+    }
+    match std::str::from_utf8(bytes) {
+        Ok(s) => s.trim_start_matches('\u{feff}').to_string(),
+        Err(_) => bytes.iter().map(|&b| b as char).collect(),
+    }
+}
+
 /// A point count: `10`, or a number written as one (`1e2`).
 fn count(tok: &str) -> Option<u32> {
     num(tok).filter(|v| *v >= 0.0 && v.fract() == 0.0).map(|v| v as u32)
@@ -617,6 +685,8 @@ fn control_card(tb: &mut Testbench, card: &str, t: &[String], d: Dialect) -> boo
                 return None;
             }
             match (d, p.as_slice()) {
+                // LTspice `.tran Tstop` (SCR .TRAN): the step is LTspice's own.
+                (Dialect::Ltspice, [stop]) => Some(Analysis::Transient { step: 0.0, stop: *stop, start: None, max_step: None, uic }),
                 (Dialect::Hspice, [step, stop]) => Some(Analysis::Transient { step: *step, stop: *stop, start: start_pair.and_then(num), max_step: None, uic }),
                 (Dialect::Hspice, _) => None,
                 (_, [step, stop, rest @ ..]) if rest.len() <= 2 && start_pair.is_none() => Some(Analysis::Transient { step: *step, stop: *stop, start: rest.first().copied(), max_step: rest.get(1).copied(), uic }),
@@ -807,6 +877,11 @@ pub fn parse(src: &str, name: &str, d: Dialect) -> Result<(CircuitIR, Report), S
                 here.libs.push((p, sec));
                 continue;
             }
+            // LTspice `.lib file`: the whole library (SCR .LIB), not a section.
+            None if word == ".lib" && d == Dialect::Ltspice => {
+                here.libs.push((unquote(card.split_once(char::is_whitespace).map_or("", |x| x.1).trim()).to_string(), String::new()));
+                continue;
+            }
             None if word == ".lib" => {
                 // `.lib name` ... `.endl`: a section definition.
                 here.raw_spice.push(card.clone());
@@ -816,7 +891,7 @@ pub fn parse(src: &str, name: &str, d: Dialect) -> Result<(CircuitIR, Report), S
             }
             None => {}
         }
-        let Some(t) = card_tokens(&card, g) else {
+        let Some(t) = card_tokens(&card, g).map(|t| if d == Dialect::Ltspice { t.into_iter().map(lt_number).collect() } else { t }) else {
             report.unparsed.push(card.clone());
             here.raw_spice.push(card);
             continue;
@@ -829,7 +904,7 @@ pub fn parse(src: &str, name: &str, d: Dialect) -> Result<(CircuitIR, Report), S
                     here.instances.push(Instance { name: t[0][1..].to_string(), subcircuit: sc.clone(), port_mapping: ports.to_vec(), parameters: params });
                     continue;
                 }
-            } else if let Some(c) = element(&t, &models) {
+            } else if let Some(c) = element(&t, &card, &models) {
                 here.components.push(c);
                 continue;
             }
@@ -881,7 +956,7 @@ pub fn parse(src: &str, name: &str, d: Dialect) -> Result<(CircuitIR, Report), S
         eprintln!("warning: .subckt {} has no .ends", sc.name);
         close_subckt(&mut open, &mut defs);
     }
-    let raw_dialect = Some(if d == Dialect::Hspice { "hspice" } else { "ngspice" }.to_string());
+    let raw_dialect = Some(match d { Dialect::Hspice => "hspice", Dialect::Ltspice => "ltspice", _ => "ngspice" }.to_string());
     Ok((CircuitIR { raw_dialect, globals, functions, top, testbench: Some(tb), subcircuit_defs: defs, model_libraries: vec![] }, report))
 }
 
@@ -953,6 +1028,10 @@ Rp p 0 1k
         assert!(p.top.raw_spice.is_empty(), "{:?}", p.top.raw_spice);
         assert!(matches!(&p.top.components[0], Component::Poly { letter: 'E', controls, coeffs, .. } if controls.len() == 4 && coeffs.len() == 6));
         assert!(netlist(&p, Dialect::Ngspice).unwrap().contains("E1 o 0 POLY(2) a 0 b 0 1 2 3 4 5 6"));
+        // A B expression keeps its own braces and spacing.
+        let bx = parse("t\nB1 0 0 I={Cjo}/(1+max(V(b),-.5*{Vj})/{Vj})**{m}\n", "t", Dialect::Ltspice).unwrap().0;
+        assert!(matches!(&bx.top.components[0], Component::BehavioralCurrent { expression, .. } if expression == "{Cjo}/(1+max(V(b),-.5*{Vj})/{Vj})**{m}"), "{:?}", bx.top.components);
+        assert_eq!(lt_number("6K34".into()), "6.34K");
         // A 3-terminal VDMOS, a model flag and an instance flag.
         let v = parse("t\n.model vdm vdmos pchan vto=1\n.model nch nmos level=1\nM1 d g s vdm\nM2 d g s b nch w=1u off\n", "t", Dialect::Ngspice).unwrap().0;
         assert!(v.top.raw_spice.is_empty(), "{:?}", v.top.raw_spice);

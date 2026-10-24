@@ -323,7 +323,7 @@ struct Opts {
 
 /// Converts one deck; returns the Python gaps it hit (empty without `--python`).
 fn convert(deck: &Path, o: &Opts) -> std::io::Result<Vec<&'static str>> {
-    let src = String::from_utf8_lossy(&std::fs::read(deck)?).into_owned();
+    let src = spicerack::import::decode(&std::fs::read(deck)?);
     let stem = deck.file_stem().and_then(|s| s.to_str()).unwrap_or("deck");
     let (ir, report) = parse(&src, stem, o.dialect).map_err(std::io::Error::other)?;
     if report.raw > 0 {
@@ -385,13 +385,14 @@ fn main() {
     let dialect = match value("--dialect").as_deref() {
         None | Some("ngspice") => Dialect::Ngspice,
         Some("hspice") => Dialect::Hspice,
+        Some("ltspice") => Dialect::Ltspice,
         Some(other) => {
-            eprintln!("--dialect {other}: reads ngspice or hspice");
+            eprintln!("--dialect {other}: reads ngspice, hspice or ltspice");
             std::process::exit(2);
         }
     };
     if args.is_empty() {
-        eprintln!("usage: spice2rack [-o DIR] [--dialect ngspice|hspice] [--python [--check]] DECK...");
+        eprintln!("usage: spice2rack [-o DIR] [--dialect ngspice|hspice|ltspice] [--python [--check]] DECK...");
         std::process::exit(2);
     }
     std::fs::create_dir_all(&out).expect("output directory");

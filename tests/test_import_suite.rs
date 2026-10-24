@@ -23,6 +23,19 @@ use num_complex::Complex64;
 use spicerack::measure_parse::parse_measures;
 use spicerack::result::RawData;
 
+/// Files ending in `.ext` under `dir`, skipping `src*` directories.
+fn files(dir: &Path, ext: &str, out: &mut Vec<PathBuf>) {
+    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    for e in rd.flatten() {
+        let p = e.path();
+        if p.is_dir() && !p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("src")) {
+            files(&p, ext, out);
+        } else if p.extension() == Some(ext.as_ref()) {
+            out.push(p);
+        }
+    }
+}
+
 fn decks(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(rd) = std::fs::read_dir(dir) else { return };
     for e in rd.flatten() {
@@ -237,31 +250,42 @@ fn fixpoint(ir: &CircuitIR, d: Dialect) -> Result<(), String> {
     Ok(())
 }
 
-/// ESPice's HSPICE corpus (`$HSPICE_CORPUS`, its
-/// `tests/conformance/tests/netlist`) is a fixpoint in HSPICE. No simulator.
-#[test]
-fn hspice_corpus_fixpoint() {
-    let Ok(root) = std::env::var("HSPICE_CORPUS") else {
-        eprintln!("HSPICE_CORPUS not set — skipping");
+/// Every deck under `$<var>` whose path passes `keep` is a fixpoint in `d`.
+/// No simulator.
+fn corpus_fixpoint(var: &str, d: Dialect, ext: &str, keep: fn(&str) -> bool) {
+    let Ok(root) = std::env::var(var) else {
+        eprintln!("{var} not set — skipping");
         return;
     };
     let mut all = Vec::new();
-    decks(Path::new(&root), &mut all);
-    all.retain(|p| p.to_string_lossy().contains("hspice") && !p.to_string_lossy().contains("invalid"));
-    assert!(!all.is_empty(), "no HSPICE decks under {root}");
+    files(Path::new(&root), ext, &mut all);
+    all.retain(|p| keep(&p.to_string_lossy()));
+    assert!(!all.is_empty(), "no {d:?} decks under {root}");
     let bad: Vec<String> = all
         .iter()
         .filter_map(|p| {
-            let src = String::from_utf8_lossy(&std::fs::read(p).ok()?).into_owned();
-            let why = match parse(&src, "t", Dialect::Hspice) {
-                Ok((ir, _)) => fixpoint(&ir, Dialect::Hspice).err()?,
+            let src = spicerack::import::decode(&std::fs::read(p).ok()?);
+            let why = match parse(&src, "t", d) {
+                Ok((ir, _)) => fixpoint(&ir, d).err()?,
                 Err(e) => e,
             };
             Some(format!("{}: {why}", p.display()))
         })
         .collect();
-    eprintln!("{} HSPICE decks, {} not fixpoints", all.len(), bad.len());
+    eprintln!("{} {d:?} decks, {} not fixpoints", all.len(), bad.len());
     assert!(bad.is_empty(), "{}", bad.join("\n"));
+}
+
+/// ESPice's HSPICE corpus (`$HSPICE_CORPUS`, its `tests/conformance/tests/netlist`).
+#[test]
+fn hspice_corpus_fixpoint() {
+    corpus_fixpoint("HSPICE_CORPUS", Dialect::Hspice, "sp", |p| p.contains("hspice") && !p.contains("invalid"));
+}
+
+/// LTspice netlists (`$LTSPICE_CORPUS`, e.g. the spice-datasets collection's `*.net`).
+#[test]
+fn ltspice_corpus_fixpoint() {
+    corpus_fixpoint("LTSPICE_CORPUS", Dialect::Ltspice, "net", |_| true);
 }
 
 enum Outcome {
@@ -272,7 +296,7 @@ enum Outcome {
 
 fn check(deck: &Path, secs: u64, refused: &std::sync::Mutex<std::collections::BTreeMap<String, usize>>) -> Outcome {
     let src = match std::fs::read(deck) {
-        Ok(b) => String::from_utf8_lossy(&b).into_owned(),
+        Ok(b) => spicerack::import::decode(&b),
         Err(e) => return Outcome::Fail(e.to_string()),
     };
     let stem = deck.file_stem().unwrap().to_string_lossy();
