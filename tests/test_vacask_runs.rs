@@ -33,7 +33,7 @@ fn run(ir: &CircuitIR) -> Option<RawData> {
 }
 
 /// One variable's real data, looked up by VACASK's own column name.
-fn col<'a>(raw: &'a RawData, name: &str) -> &'a [f64] {
+fn col(raw: &RawData, name: &str) -> Vec<f64> {
     let i = raw
         .variables
         .iter()
@@ -45,7 +45,7 @@ fn col<'a>(raw: &'a RawData, name: &str) -> &'a [f64] {
                 raw.variables.iter().map(|v| &v.name).collect::<Vec<_>>()
             )
         });
-    &raw.real_data[i]
+    raw.re(i)
 }
 
 fn cplx(raw: &RawData, name: &str) -> Vec<num_complex::Complex64> {

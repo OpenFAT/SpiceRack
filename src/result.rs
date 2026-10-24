@@ -1,16 +1,15 @@
 use std::collections::HashMap;
 use num_complex::Complex64;
 
-/// Raw simulation data parsed from .raw file
-#[derive(Debug, Clone)]
+/// One simulator plot, stored by column: `real_data[v]` or `complex_data[v]` holds every
+/// point of variable `v`. A real plot fills `real_data`; a complex plot fills
+/// `complex_data` (a backend may also fill `real_data` for its real-valued vectors).
+#[derive(Debug, Clone, Default)]
 pub struct RawData {
     pub title: String,
     pub plot_name: String,
-    pub flags: String,
     pub variables: Vec<VarInfo>,
-    /// Real data vectors (each inner vec = one variable's values across sweep)
     pub real_data: Vec<Vec<f64>>,
-    /// Complex data vectors (for AC analysis)
     pub complex_data: Vec<Vec<Complex64>>,
     pub is_complex: bool,
     /// Captured stdout from simulator process (contains .meas results, etc.)
@@ -19,397 +18,16 @@ pub struct RawData {
     pub log_content: String,
     /// Parsed .meas results extracted from stdout/log
     pub measures: Vec<MeasureResult>,
-    /// Which backend produced this data (for name normalization).
-    /// Empty string defaults to "ngspice" behavior.
+    /// Backend that produced this data, for name normalization; empty means ngspice.
     pub backend_hint: String,
 }
 
 #[derive(Debug, Clone)]
 pub struct VarInfo {
+    /// Column in `real_data` / `complex_data`.
     pub index: usize,
     pub name: String,
     pub var_type: String, // "voltage", "current", "time", "frequency"
-}
-
-impl RawData {
-    pub fn empty() -> Self {
-        Self {
-            title: String::new(),
-            plot_name: String::new(),
-            flags: String::new(),
-            variables: Vec::new(),
-            real_data: Vec::new(),
-            complex_data: Vec::new(),
-            is_complex: false,
-            stdout: String::new(),
-            log_content: String::new(),
-            measures: Vec::new(),
-            backend_hint: String::new(),
-        }
-    }
-}
-
-/// A named waveform vector with optional unit info
-#[derive(Debug, Clone)]
-pub struct WaveForm {
-    pub name: String,
-    /// Real part. For a complex plot this is `Re`, not the magnitude.
-    pub data: Vec<f64>,
-    /// Present only for complex plots (AC, noise). Kept so magnitude and
-    /// phase are reachable: `data` alone cannot reconstruct them.
-    pub complex: Option<Vec<Complex64>>,
-}
-
-impl WaveForm {
-    pub fn real(name: String, data: Vec<f64>) -> Self {
-        Self { name, data, complex: None }
-    }
-
-    pub fn complex(name: String, data: &[Complex64]) -> Self {
-        Self {
-            name,
-            data: data.iter().map(|c| c.re).collect(),
-            complex: Some(data.to_vec()),
-        }
-    }
-
-    /// `sqrt(re^2 + im^2)` per point; `None` for a real-valued plot.
-    pub fn magnitude(&self) -> Option<Vec<f64>> {
-        self.complex
-            .as_ref()
-            .map(|c| c.iter().map(|v| v.norm()).collect())
-    }
-
-    /// Magnitude in dB (`20*log10`); `None` for a real-valued plot.
-    pub fn magnitude_db(&self) -> Option<Vec<f64>> {
-        self.complex
-            .as_ref()
-            .map(|c| c.iter().map(|v| 20.0 * v.norm().log10()).collect())
-    }
-
-    /// Phase in degrees. ngspice's own `vp()` reports radians; this does not.
-    pub fn phase_deg(&self) -> Option<Vec<f64>> {
-        self.complex
-            .as_ref()
-            .map(|c| c.iter().map(|v| v.arg().to_degrees()).collect())
-    }
-
-    pub fn len(&self) -> usize {
-        self.data.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.data.is_empty()
-    }
-}
-
-/// Base analysis result: maps node/branch names -> waveforms
-#[derive(Debug, Clone)]
-pub struct AnalysisBase {
-    pub nodes: HashMap<String, WaveForm>,
-    pub branches: HashMap<String, WaveForm>,
-    pub measures: Vec<MeasureResult>,
-}
-
-impl AnalysisBase {
-    pub fn from_raw(raw: &RawData) -> Self {
-        let backend = if raw.backend_hint.is_empty() {
-            "ngspice"
-        } else {
-            &raw.backend_hint
-        };
-        Self::from_raw_with_backend(raw, backend)
-    }
-
-    pub fn from_raw_with_backend(raw: &RawData, backend: &str) -> Self {
-        use crate::normalize;
-
-        let mut nodes = HashMap::new();
-        let mut branches = HashMap::new();
-
-        for var in &raw.variables {
-            let wf = if raw.is_complex {
-                WaveForm::complex(var.name.clone(), &raw.complex_data[var.index])
-            } else {
-                WaveForm::real(var.name.clone(), raw.real_data[var.index].clone())
-            };
-
-            let normalized = normalize::normalize_var_name(&var.name, backend);
-
-            // Classify: currents go to branches, everything else to nodes
-            if is_current(&var.name, &var.var_type, backend) {
-                branches.insert(normalized, wf);
-            } else {
-                nodes.insert(normalized, wf);
-            }
-        }
-
-        Self { nodes, branches, measures: raw.measures.clone() }
-    }
-
-    pub fn get(&self, name: &str) -> Option<&WaveForm> {
-        let lower = name.to_lowercase();
-        self.nodes.get(&lower)
-            .or_else(|| self.branches.get(&lower))
-            .or_else(|| self.nodes.get(name))
-            .or_else(|| self.branches.get(name))
-    }
-
-    /// Get parsed .meas results
-    pub fn measures(&self) -> &[MeasureResult] {
-        &self.measures
-    }
-
-    /// Get a specific .meas result by name (case-insensitive)
-    pub fn measure(&self, name: &str) -> Option<f64> {
-        let lower = name.to_lowercase();
-        self.measures.iter()
-            .find(|m| m.name.to_lowercase() == lower)
-            .map(|m| m.value)
-    }
-}
-
-/// Classify whether a variable represents a current measurement.
-fn is_current(name: &str, var_type: &str, backend: &str) -> bool {
-    if var_type == "current" {
-        return true;
-    }
-    crate::normalize::is_current_name(name, backend)
-}
-
-// ── Specific analysis result types ──
-
-#[derive(Debug, Clone)]
-pub struct OperatingPoint {
-    pub base: AnalysisBase,
-}
-
-impl OperatingPoint {
-    pub fn from_raw(raw: RawData) -> Self {
-        Self { base: AnalysisBase::from_raw(&raw) }
-    }
-
-    pub fn get(&self, name: &str) -> Option<f64> {
-        self.base.get(name).and_then(|wf| wf.data.first().copied())
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct DcAnalysis {
-    pub base: AnalysisBase,
-    pub sweep: Vec<f64>,
-}
-
-impl DcAnalysis {
-    pub fn from_raw(raw: RawData) -> Self {
-        let sweep = if !raw.real_data.is_empty() {
-            raw.real_data[0].clone()
-        } else {
-            Vec::new()
-        };
-        Self {
-            base: AnalysisBase::from_raw(&raw),
-            sweep,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct AcAnalysis {
-    pub base: AnalysisBase,
-    pub frequency: Vec<f64>,
-}
-
-impl AcAnalysis {
-    pub fn from_raw(raw: RawData) -> Self {
-        let frequency = if !raw.real_data.is_empty() {
-            raw.real_data[0].clone()
-        } else if !raw.complex_data.is_empty() {
-            raw.complex_data[0].iter().map(|c| c.re).collect()
-        } else {
-            Vec::new()
-        };
-        Self {
-            base: AnalysisBase::from_raw(&raw),
-            frequency,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct TransientAnalysis {
-    pub base: AnalysisBase,
-    pub time: Vec<f64>,
-}
-
-impl TransientAnalysis {
-    pub fn from_raw(raw: RawData) -> Self {
-        let time = if !raw.real_data.is_empty() {
-            raw.real_data[0].clone()
-        } else {
-            Vec::new()
-        };
-        Self {
-            base: AnalysisBase::from_raw(&raw),
-            time,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct NoiseAnalysis {
-    pub base: AnalysisBase,
-}
-
-impl NoiseAnalysis {
-    pub fn from_raw(raw: RawData) -> Self {
-        Self { base: AnalysisBase::from_raw(&raw) }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct TransferFunctionAnalysis {
-    pub base: AnalysisBase,
-}
-
-impl TransferFunctionAnalysis {
-    pub fn from_raw(raw: RawData) -> Self {
-        Self { base: AnalysisBase::from_raw(&raw) }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct SensitivityAnalysis {
-    pub base: AnalysisBase,
-}
-
-impl SensitivityAnalysis {
-    pub fn from_raw(raw: RawData) -> Self {
-        Self { base: AnalysisBase::from_raw(&raw) }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct PoleZeroAnalysis {
-    pub base: AnalysisBase,
-}
-
-impl PoleZeroAnalysis {
-    /// Poles and zeros arrive as ordinary named vectors in the raw file and are
-    /// reached through `base` (e.g. `pz["pole(1)"]`).
-    pub fn from_raw(raw: RawData) -> Self {
-        Self {
-            base: AnalysisBase::from_raw(&raw),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct DistortionAnalysis {
-    pub base: AnalysisBase,
-    pub frequency: Vec<f64>,
-}
-
-impl DistortionAnalysis {
-    pub fn from_raw(raw: RawData) -> Self {
-        let frequency = if !raw.real_data.is_empty() {
-            raw.real_data[0].clone()
-        } else {
-            Vec::new()
-        };
-        Self {
-            base: AnalysisBase::from_raw(&raw),
-            frequency,
-        }
-    }
-}
-
-// ── New analysis result types ──
-
-#[derive(Debug, Clone)]
-pub struct PssAnalysis {
-    pub base: AnalysisBase,
-    pub time: Vec<f64>,
-}
-
-impl PssAnalysis {
-    pub fn from_raw(raw: RawData) -> Self {
-        let time = if !raw.real_data.is_empty() {
-            raw.real_data[0].clone()
-        } else {
-            Vec::new()
-        };
-        Self {
-            base: AnalysisBase::from_raw(&raw),
-            time,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct SParamAnalysis {
-    pub base: AnalysisBase,
-    pub frequency: Vec<f64>,
-}
-
-impl SParamAnalysis {
-    pub fn from_raw(raw: RawData) -> Self {
-        let frequency = if !raw.real_data.is_empty() {
-            raw.real_data[0].clone()
-        } else if !raw.complex_data.is_empty() {
-            raw.complex_data[0].iter().map(|c| c.re).collect()
-        } else {
-            Vec::new()
-        };
-        Self {
-            base: AnalysisBase::from_raw(&raw),
-            frequency,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct HarmonicBalanceAnalysis {
-    pub base: AnalysisBase,
-    pub frequency: Vec<f64>,
-}
-
-impl HarmonicBalanceAnalysis {
-    pub fn from_raw(raw: RawData) -> Self {
-        let frequency = if !raw.real_data.is_empty() {
-            raw.real_data[0].clone()
-        } else if !raw.complex_data.is_empty() {
-            raw.complex_data[0].iter().map(|c| c.re).collect()
-        } else {
-            Vec::new()
-        };
-        Self {
-            base: AnalysisBase::from_raw(&raw),
-            frequency,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct StabilityAnalysis {
-    pub base: AnalysisBase,
-    pub frequency: Vec<f64>,
-}
-
-impl StabilityAnalysis {
-    pub fn from_raw(raw: RawData) -> Self {
-        let frequency = if !raw.real_data.is_empty() {
-            raw.real_data[0].clone()
-        } else if !raw.complex_data.is_empty() {
-            raw.complex_data[0].iter().map(|c| c.re).collect()
-        } else {
-            Vec::new()
-        };
-        Self {
-            base: AnalysisBase::from_raw(&raw),
-            frequency,
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -418,145 +36,118 @@ pub struct MeasureResult {
     pub value: f64,
 }
 
-#[derive(Debug, Clone)]
-pub struct TransientNoiseAnalysis {
-    pub base: AnalysisBase,
-    pub time: Vec<f64>,
-}
+impl RawData {
+    pub fn empty() -> Self {
+        Self::default()
+    }
 
-impl TransientNoiseAnalysis {
-    pub fn from_raw(raw: RawData) -> Self {
-        let time = if !raw.real_data.is_empty() {
-            raw.real_data[0].clone()
-        } else {
-            Vec::new()
-        };
-        Self {
-            base: AnalysisBase::from_raw(&raw),
-            time,
+    /// Complex column `i`, or `None` when that variable is real-valued.
+    pub fn complex(&self, i: usize) -> Option<&[Complex64]> {
+        self.complex_data.get(i).filter(|c| !c.is_empty()).map(Vec::as_slice)
+    }
+
+    /// Column `i` as reals (the real part of a complex column); empty if absent.
+    pub fn re(&self, i: usize) -> Vec<f64> {
+        match self.complex(i) {
+            Some(c) => c.iter().map(|c| c.re).collect(),
+            None => self.real_data.get(i).cloned().unwrap_or_default(),
         }
     }
 }
 
-/// Result from a statistical sampling analysis
+/// Any analysis result: the plot plus normalized-name -> column lookup.
+/// Every analysis kind is this one type; the sweep axis (time, frequency, DC sweep)
+/// is column 0.
 #[derive(Debug, Clone)]
-pub struct SamplingAnalysis {
-    pub base: AnalysisBase,
+pub struct Analysis {
+    pub raw: RawData,
+    pub nodes: HashMap<String, usize>,
+    pub branches: HashMap<String, usize>,
 }
 
-impl SamplingAnalysis {
+pub type OperatingPoint = Analysis;
+pub type DcAnalysis = Analysis;
+pub type AcAnalysis = Analysis;
+pub type TransientAnalysis = Analysis;
+pub type NoiseAnalysis = Analysis;
+pub type TransferFunctionAnalysis = Analysis;
+pub type SensitivityAnalysis = Analysis;
+pub type PoleZeroAnalysis = Analysis;
+pub type DistortionAnalysis = Analysis;
+pub type PssAnalysis = Analysis;
+pub type SParamAnalysis = Analysis;
+pub type HarmonicBalanceAnalysis = Analysis;
+pub type StabilityAnalysis = Analysis;
+pub type TransientNoiseAnalysis = Analysis;
+pub type SamplingAnalysis = Analysis;
+
+impl Analysis {
     pub fn from_raw(raw: RawData) -> Self {
-        Self {
-            base: AnalysisBase::from_raw(&raw),
+        use crate::normalize::{is_current_name, normalize_var_name};
+        let backend = if raw.backend_hint.is_empty() { "ngspice" } else { &raw.backend_hint };
+        let mut nodes = HashMap::new();
+        let mut branches = HashMap::new();
+        for v in &raw.variables {
+            let map = if v.var_type == "current" || is_current_name(&v.name, backend) {
+                &mut branches
+            } else {
+                &mut nodes
+            };
+            map.insert(normalize_var_name(&v.name, backend), v.index);
         }
+        Self { raw, nodes, branches }
+    }
+
+    /// Column of `name` (canonical form, any case), nodes before branches.
+    pub fn column(&self, name: &str) -> Option<usize> {
+        let lower = name.to_lowercase();
+        self.nodes.get(&lower).or_else(|| self.branches.get(&lower)).copied()
+    }
+
+    /// Waveform of `name`; the real part for a complex plot.
+    pub fn get(&self, name: &str) -> Option<Vec<f64>> {
+        self.column(name).map(|i| self.raw.re(i))
+    }
+
+    pub fn complex(&self, name: &str) -> Option<&[Complex64]> {
+        self.raw.complex(self.column(name)?)
+    }
+
+    /// The sweep axis (column 0).
+    pub fn axis(&self) -> Vec<f64> {
+        self.raw.re(0)
     }
 }
 
-/// Compute ENOB, SFDR, SNR, and THD from FFT magnitude bins.
+/// Compute (ENOB, SFDR dB, SNR dB, THD dB) from FFT magnitude bins.
 ///
-/// Assumes bin 0 is DC, bin with max magnitude is the fundamental,
-/// and harmonics are at integer multiples of the fundamental bin index.
+/// Bin 0 is DC, the largest other bin is the fundamental, and harmonics sit at
+/// integer multiples of the fundamental's index.
 pub fn compute_fft_metrics(magnitude: &[f64]) -> (f64, f64, f64, f64) {
     if magnitude.len() < 4 {
         return (0.0, 0.0, 0.0, 0.0);
     }
-
-    // Find the fundamental: largest magnitude bin (skip DC at index 0)
-    let (fund_idx, fund_mag) = magnitude.iter().enumerate()
-        .skip(1)
+    let (fund, fund_mag) = magnitude.iter().copied().enumerate().skip(1)
         .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-        .unwrap_or((1, &0.0));
-
-    if *fund_mag <= 0.0 {
+        .expect("len >= 4");
+    if fund_mag <= 0.0 {
         return (0.0, 0.0, 0.0, 0.0);
     }
 
+    let (mut harmonic, mut noise, mut spur) = (0.0, 0.0, 0.0_f64);
+    for (i, &m) in magnitude.iter().enumerate().skip(1) {
+        if i == fund {
+            continue;
+        }
+        spur = spur.max(m);
+        if i % fund == 0 { harmonic += m * m } else { noise += m * m }
+    }
+
     let fund_power = fund_mag * fund_mag;
-
-    // Identify harmonic bins (2nd, 3rd, ... up to Nyquist)
-    let mut harmonic_power = 0.0;
-    let mut harmonic_idx = 2 * fund_idx;
-    while harmonic_idx < magnitude.len() {
-        harmonic_power += magnitude[harmonic_idx] * magnitude[harmonic_idx];
-        harmonic_idx += fund_idx;
-    }
-
-    // Noise power: everything except DC, fundamental, and harmonics
-    let mut noise_power = 0.0;
-    let harmonic_bins: std::collections::HashSet<usize> = {
-        let mut set = std::collections::HashSet::new();
-        set.insert(0); // DC
-        set.insert(fund_idx); // fundamental
-        let mut h = 2 * fund_idx;
-        while h < magnitude.len() {
-            set.insert(h);
-            h += fund_idx;
-        }
-        set
-    };
-
-    for (i, &m) in magnitude.iter().enumerate() {
-        if !harmonic_bins.contains(&i) {
-            noise_power += m * m;
-        }
-    }
-
-    // THD = sqrt(sum of harmonic powers) / fundamental magnitude
-    let thd = if fund_power > 0.0 {
-        (harmonic_power / fund_power).sqrt()
-    } else {
-        0.0
-    };
-    let thd_db = if thd > 0.0 { 20.0 * thd.log10() } else { f64::NEG_INFINITY };
-
-    // SNR = fundamental power / noise power (in dB)
-    let snr_db = if noise_power > 0.0 {
-        10.0 * (fund_power / noise_power).log10()
-    } else {
-        f64::INFINITY
-    };
-
-    // SFDR = fundamental magnitude / next-largest spur (in dB)
-    let max_spur = magnitude.iter().enumerate()
-        .skip(1)
-        .filter(|(i, _)| *i != fund_idx)
-        .map(|(_, &m)| m)
-        .fold(0.0_f64, |a, b| a.max(b));
-    let sfdr_db = if max_spur > 0.0 {
-        20.0 * (fund_mag / max_spur).log10()
-    } else {
-        f64::INFINITY
-    };
-
-    // ENOB = (SNR - 1.76) / 6.02
-    let sinad_db = if (noise_power + harmonic_power) > 0.0 {
-        10.0 * (fund_power / (noise_power + harmonic_power)).log10()
-    } else {
-        f64::INFINITY
-    };
-    let enob = (sinad_db - 1.76) / 6.02;
-
+    let db = |ratio: f64| if ratio > 0.0 { 10.0 * ratio.log10() } else { f64::NEG_INFINITY };
+    let thd_db = db(harmonic / fund_power);
+    let snr_db = -db(noise / fund_power);
+    let sfdr_db = -db(spur * spur / fund_power);
+    let enob = (-db((noise + harmonic) / fund_power) - 1.76) / 6.02;
     (enob, sfdr_db, snr_db, thd_db)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_waveform_complex_magnitude_and_phase() {
-        // 3-4-5 triangle: |3+4i| = 5, arg = 53.13 deg
-        let wf = WaveForm::complex("h".into(), &[Complex64::new(3.0, 4.0)]);
-        assert!((wf.data[0] - 3.0).abs() < 1e-12, "data must stay the real part");
-        assert!((wf.magnitude().unwrap()[0] - 5.0).abs() < 1e-12);
-        assert!((wf.phase_deg().unwrap()[0] - 53.13010235).abs() < 1e-6);
-        assert!((wf.magnitude_db().unwrap()[0] - 20.0 * 5.0f64.log10()).abs() < 1e-12);
-    }
-
-    #[test]
-    fn test_waveform_real_has_no_complex_part() {
-        let wf = WaveForm::real("v".into(), vec![1.0, 2.0]);
-        assert!(wf.magnitude().is_none());
-        assert!(wf.phase_deg().is_none());
-    }
 }

@@ -1293,14 +1293,12 @@ impl PyRawData {
         self.inner.variables.iter().map(|v| v.name.clone()).collect()
     }
     fn __getitem__(&self, name: &str) -> PyResult<Vec<f64>> {
-        let lower = name.to_lowercase();
-        for (i, var) in self.inner.variables.iter().enumerate() {
-            if var.name.to_lowercase() == lower
-                && i < self.inner.real_data.len() {
-                    return Ok(self.inner.real_data[i].clone());
-                }
-        }
-        Err(PyKeyError::new_err(format!("Variable '{}' not found", name)))
+        self.inner
+            .variables
+            .iter()
+            .find(|v| v.name.eq_ignore_ascii_case(name))
+            .map(|v| self.inner.re(v.index))
+            .ok_or_else(|| PyKeyError::new_err(format!("Variable '{}' not found", name)))
     }
     fn __getattr__(&self, name: &str) -> PyResult<Vec<f64>> {
         self.__getitem__(name)
@@ -1311,410 +1309,111 @@ impl PyRawData {
 
 #[pyclass(name = "OperatingPoint")]
 struct PyOperatingPoint {
-    inner: crate::result::OperatingPoint,
+    inner: crate::result::Analysis,
 }
 
 #[pymethods]
 impl PyOperatingPoint {
     fn __getitem__(&self, name: &str) -> PyResult<f64> {
-        self.inner
-            .get(name)
-            .ok_or_else(|| PyKeyError::new_err(format!("Node '{}' not found", name)))
+        self.value(name).ok_or_else(|| PyKeyError::new_err(format!("Node '{}' not found", name)))
     }
 
     fn __getattr__(&self, name: &str) -> PyResult<f64> {
-        self.inner
-            .get(name)
-            .ok_or_else(|| PyAttributeError::new_err(format!("No node '{}'", name)))
+        self.value(name).ok_or_else(|| PyAttributeError::new_err(format!("No node '{}'", name)))
     }
 
     /// Parsed .meas results as {name: value} dict
     #[getter]
-    fn measures(&self) -> HashMap<String, f64> {
-        measures_to_dict(&self.inner.base.measures)
+    fn measures(&self) -> HashMap<String, f64> { measures_to_dict(&self.inner.raw.measures) }
+}
+
+impl PyOperatingPoint {
+    fn value(&self, name: &str) -> Option<f64> {
+        self.inner.get(name)?.first().copied()
     }
 }
 
-#[pyclass(name = "DcAnalysis")]
-struct PyDcAnalysis {
-    inner: crate::result::DcAnalysis,
+/// Per-point transform of a complex waveform, for `magnitude`/`magnitude_db`/`phase`.
+fn complex_part(
+    a: &crate::result::Analysis,
+    name: &str,
+    f: fn(num_complex::Complex64) -> f64,
+) -> PyResult<Vec<f64>> {
+    let i = a.column(name).ok_or_else(|| PyKeyError::new_err(format!("Node '{}' not found", name)))?;
+    let c = a.raw.complex(i).ok_or_else(|| {
+        pyo3::exceptions::PyValueError::new_err(format!(
+            "Node '{}' has no complex data; the backend returned a real-valued plot",
+            name
+        ))
+    })?;
+    Ok(c.iter().map(|&v| f(v)).collect())
 }
 
-#[pymethods]
-impl PyDcAnalysis {
-    fn __getitem__(&self, name: &str) -> PyResult<Vec<f64>> {
-        self.inner
-            .base
-            .get(name)
-            .map(|wf| wf.data.clone())
-            .ok_or_else(|| PyKeyError::new_err(format!("Node '{}' not found", name)))
-    }
+/// Every swept analysis is the same `result::Analysis`; each Python class differs only
+/// in its name and the name of its axis getter (`sweep`, `frequency`, `time`).
+macro_rules! analysis_class {
+    ($ty:ident, $name:literal $(, $axis:ident)?) => {
+        #[pyclass(name = $name)]
+        struct $ty {
+            inner: crate::result::Analysis,
+        }
 
-    fn __getattr__(&self, name: &str) -> PyResult<Vec<f64>> {
-        self.inner
-            .base
-            .get(name)
-            .map(|wf| wf.data.clone())
-            .ok_or_else(|| PyAttributeError::new_err(format!("No node '{}'", name)))
-    }
+        #[pymethods]
+        impl $ty {
+            fn __getitem__(&self, name: &str) -> PyResult<Vec<f64>> {
+                self.inner.get(name).ok_or_else(|| PyKeyError::new_err(format!("Node '{}' not found", name)))
+            }
 
-    #[getter]
-    fn sweep(&self) -> Vec<f64> {
-        self.inner.sweep.clone()
-    }
+            fn __getattr__(&self, name: &str) -> PyResult<Vec<f64>> {
+                self.inner.get(name).ok_or_else(|| PyAttributeError::new_err(format!("No node '{}'", name)))
+            }
 
-    #[getter]
-    fn measures(&self) -> HashMap<String, f64> {
-        measures_to_dict(&self.inner.base.measures)
-    }
+            $(
+                #[getter]
+                fn $axis(&self) -> Vec<f64> { self.inner.axis() }
+            )?
 
-    #[getter]
-    fn nodes(&self) -> Vec<String> {
-        self.inner.base.nodes.keys().cloned().collect()
-    }
+            #[getter]
+            fn measures(&self) -> HashMap<String, f64> { measures_to_dict(&self.inner.raw.measures) }
 
-    #[getter]
-    fn branches(&self) -> Vec<String> {
-        self.inner.base.branches.keys().cloned().collect()
-    }
+            #[getter]
+            fn nodes(&self) -> Vec<String> { self.inner.nodes.keys().cloned().collect() }
+
+            #[getter]
+            fn branches(&self) -> Vec<String> { self.inner.branches.keys().cloned().collect() }
+
+            /// |H| per point. `result[node]` returns the real part, not this.
+            fn magnitude(&self, name: &str) -> PyResult<Vec<f64>> {
+                complex_part(&self.inner, name, |v| v.norm())
+            }
+
+            /// 20*log10(|H|) per point.
+            fn magnitude_db(&self, name: &str) -> PyResult<Vec<f64>> {
+                complex_part(&self.inner, name, |v| 20.0 * v.norm().log10())
+            }
+
+            /// Phase in degrees (ngspice's own `vp()` reports radians; this does not).
+            fn phase(&self, name: &str) -> PyResult<Vec<f64>> {
+                complex_part(&self.inner, name, |v| v.arg().to_degrees())
+            }
+        }
+    };
 }
 
-#[pyclass(name = "AcAnalysis")]
-struct PyAcAnalysis {
-    inner: crate::result::AcAnalysis,
-}
-
-#[pymethods]
-impl PyAcAnalysis {
-    fn __getitem__(&self, name: &str) -> PyResult<Vec<f64>> {
-        self.inner
-            .base
-            .get(name)
-            .map(|wf| wf.data.clone())
-            .ok_or_else(|| PyKeyError::new_err(format!("Node '{}' not found", name)))
-    }
-
-    fn __getattr__(&self, name: &str) -> PyResult<Vec<f64>> {
-        self.inner
-            .base
-            .get(name)
-            .map(|wf| wf.data.clone())
-            .ok_or_else(|| PyAttributeError::new_err(format!("No node '{}'", name)))
-    }
-
-    #[getter]
-    fn frequency(&self) -> Vec<f64> {
-        self.inner.frequency.clone()
-    }
-
-    /// |H| per frequency point. `ac[node]` returns the real part, not this.
-    fn magnitude(&self, name: &str) -> PyResult<Vec<f64>> {
-        self.complex_part(name, |wf| wf.magnitude())
-    }
-
-    /// 20*log10(|H|) per frequency point.
-    fn magnitude_db(&self, name: &str) -> PyResult<Vec<f64>> {
-        self.complex_part(name, |wf| wf.magnitude_db())
-    }
-
-    /// Phase in degrees (ngspice's own `vp()` reports radians; this does not).
-    fn phase(&self, name: &str) -> PyResult<Vec<f64>> {
-        self.complex_part(name, |wf| wf.phase_deg())
-    }
-
-    #[getter]
-    fn measures(&self) -> HashMap<String, f64> {
-        measures_to_dict(&self.inner.base.measures)
-    }
-}
-
-impl PyAcAnalysis {
-    fn complex_part(
-        &self,
-        name: &str,
-        f: impl Fn(&crate::result::WaveForm) -> Option<Vec<f64>>,
-    ) -> PyResult<Vec<f64>> {
-        let wf = self
-            .inner
-            .base
-            .get(name)
-            .ok_or_else(|| PyKeyError::new_err(format!("Node '{}' not found", name)))?;
-        f(wf).ok_or_else(|| {
-            pyo3::exceptions::PyValueError::new_err(format!(
-                "Node '{}' has no complex data; the backend returned a real-valued plot",
-                name
-            ))
-        })
-    }
-}
-
-#[pyclass(name = "TransientAnalysis")]
-struct PyTransientAnalysis {
-    inner: crate::result::TransientAnalysis,
-}
-
-#[pymethods]
-impl PyTransientAnalysis {
-    fn __getitem__(&self, name: &str) -> PyResult<Vec<f64>> {
-        self.inner
-            .base
-            .get(name)
-            .map(|wf| wf.data.clone())
-            .ok_or_else(|| PyKeyError::new_err(format!("Node '{}' not found", name)))
-    }
-
-    fn __getattr__(&self, name: &str) -> PyResult<Vec<f64>> {
-        self.inner
-            .base
-            .get(name)
-            .map(|wf| wf.data.clone())
-            .ok_or_else(|| PyAttributeError::new_err(format!("No node '{}'", name)))
-    }
-
-    #[getter]
-    fn time(&self) -> Vec<f64> {
-        self.inner.time.clone()
-    }
-
-    #[getter]
-    fn measures(&self) -> HashMap<String, f64> {
-        measures_to_dict(&self.inner.base.measures)
-    }
-}
-
-#[pyclass(name = "NoiseAnalysis")]
-struct PyNoiseAnalysis {
-    inner: crate::result::NoiseAnalysis,
-}
-
-#[pymethods]
-impl PyNoiseAnalysis {
-    fn __getitem__(&self, name: &str) -> PyResult<Vec<f64>> {
-        self.inner.base.get(name).map(|wf| wf.data.clone())
-            .ok_or_else(|| PyKeyError::new_err(format!("Node '{}' not found", name)))
-    }
-    fn __getattr__(&self, name: &str) -> PyResult<Vec<f64>> {
-        self.inner.base.get(name).map(|wf| wf.data.clone())
-            .ok_or_else(|| PyAttributeError::new_err(format!("No node '{}'", name)))
-    }
-    #[getter]
-    fn measures(&self) -> HashMap<String, f64> {
-        measures_to_dict(&self.inner.base.measures)
-    }
-}
-
-#[pyclass(name = "TransferFunctionAnalysis")]
-struct PyTransferFunctionAnalysis {
-    inner: crate::result::TransferFunctionAnalysis,
-}
-
-#[pymethods]
-impl PyTransferFunctionAnalysis {
-    fn __getitem__(&self, name: &str) -> PyResult<Vec<f64>> {
-        self.inner.base.get(name).map(|wf| wf.data.clone())
-            .ok_or_else(|| PyKeyError::new_err(format!("Node '{}' not found", name)))
-    }
-    fn __getattr__(&self, name: &str) -> PyResult<Vec<f64>> {
-        self.inner.base.get(name).map(|wf| wf.data.clone())
-            .ok_or_else(|| PyAttributeError::new_err(format!("No node '{}'", name)))
-    }
-    #[getter]
-    fn measures(&self) -> HashMap<String, f64> {
-        measures_to_dict(&self.inner.base.measures)
-    }
-}
-
-#[pyclass(name = "SensitivityAnalysis")]
-struct PySensitivityAnalysis {
-    inner: crate::result::SensitivityAnalysis,
-}
-
-#[pymethods]
-impl PySensitivityAnalysis {
-    fn __getitem__(&self, name: &str) -> PyResult<Vec<f64>> {
-        self.inner.base.get(name).map(|wf| wf.data.clone())
-            .ok_or_else(|| PyKeyError::new_err(format!("Node '{}' not found", name)))
-    }
-    fn __getattr__(&self, name: &str) -> PyResult<Vec<f64>> {
-        self.inner.base.get(name).map(|wf| wf.data.clone())
-            .ok_or_else(|| PyAttributeError::new_err(format!("No node '{}'", name)))
-    }
-    #[getter]
-    fn measures(&self) -> HashMap<String, f64> {
-        measures_to_dict(&self.inner.base.measures)
-    }
-}
-
-#[pyclass(name = "PoleZeroAnalysis")]
-struct PyPoleZeroAnalysis {
-    inner: crate::result::PoleZeroAnalysis,
-}
-
-#[pymethods]
-impl PyPoleZeroAnalysis {
-    fn __getitem__(&self, name: &str) -> PyResult<Vec<f64>> {
-        self.inner
-            .base
-            .get(name)
-            .map(|wf| wf.data.clone())
-            .ok_or_else(|| PyKeyError::new_err(format!("Node '{}' not found", name)))
-    }
-
-    #[getter]
-    fn measures(&self) -> HashMap<String, f64> {
-        measures_to_dict(&self.inner.base.measures)
-    }
-}
-
-#[pyclass(name = "DistortionAnalysis")]
-struct PyDistortionAnalysis {
-    inner: crate::result::DistortionAnalysis,
-}
-
-#[pymethods]
-impl PyDistortionAnalysis {
-    fn __getitem__(&self, name: &str) -> PyResult<Vec<f64>> {
-        self.inner
-            .base
-            .get(name)
-            .map(|wf| wf.data.clone())
-            .ok_or_else(|| PyKeyError::new_err(format!("Node '{}' not found", name)))
-    }
-
-    #[getter]
-    fn frequency(&self) -> Vec<f64> {
-        self.inner.frequency.clone()
-    }
-
-    #[getter]
-    fn measures(&self) -> HashMap<String, f64> {
-        measures_to_dict(&self.inner.base.measures)
-    }
-}
-
-#[pyclass(name = "PssAnalysis")]
-struct PyPssAnalysis {
-    inner: crate::result::PssAnalysis,
-}
-
-#[pymethods]
-impl PyPssAnalysis {
-    fn __getitem__(&self, name: &str) -> PyResult<Vec<f64>> {
-        self.inner.base.get(name).map(|wf| wf.data.clone())
-            .ok_or_else(|| PyKeyError::new_err(format!("Node '{}' not found", name)))
-    }
-    fn __getattr__(&self, name: &str) -> PyResult<Vec<f64>> {
-        self.inner.base.get(name).map(|wf| wf.data.clone())
-            .ok_or_else(|| PyAttributeError::new_err(format!("No node '{}'", name)))
-    }
-    #[getter]
-    fn time(&self) -> Vec<f64> { self.inner.time.clone() }
-    #[getter]
-    fn measures(&self) -> HashMap<String, f64> { measures_to_dict(&self.inner.base.measures) }
-}
-
-#[pyclass(name = "SParamAnalysis")]
-struct PySParamAnalysis {
-    inner: crate::result::SParamAnalysis,
-}
-
-#[pymethods]
-impl PySParamAnalysis {
-    fn __getitem__(&self, name: &str) -> PyResult<Vec<f64>> {
-        self.inner.base.get(name).map(|wf| wf.data.clone())
-            .ok_or_else(|| PyKeyError::new_err(format!("Node '{}' not found", name)))
-    }
-    fn __getattr__(&self, name: &str) -> PyResult<Vec<f64>> {
-        self.inner.base.get(name).map(|wf| wf.data.clone())
-            .ok_or_else(|| PyAttributeError::new_err(format!("No node '{}'", name)))
-    }
-    #[getter]
-    fn frequency(&self) -> Vec<f64> { self.inner.frequency.clone() }
-    #[getter]
-    fn measures(&self) -> HashMap<String, f64> { measures_to_dict(&self.inner.base.measures) }
-}
-
-#[pyclass(name = "HarmonicBalanceAnalysis")]
-struct PyHarmonicBalanceAnalysis {
-    inner: crate::result::HarmonicBalanceAnalysis,
-}
-
-#[pymethods]
-impl PyHarmonicBalanceAnalysis {
-    fn __getitem__(&self, name: &str) -> PyResult<Vec<f64>> {
-        self.inner.base.get(name).map(|wf| wf.data.clone())
-            .ok_or_else(|| PyKeyError::new_err(format!("Node '{}' not found", name)))
-    }
-    fn __getattr__(&self, name: &str) -> PyResult<Vec<f64>> {
-        self.inner.base.get(name).map(|wf| wf.data.clone())
-            .ok_or_else(|| PyAttributeError::new_err(format!("No node '{}'", name)))
-    }
-    #[getter]
-    fn frequency(&self) -> Vec<f64> { self.inner.frequency.clone() }
-    #[getter]
-    fn measures(&self) -> HashMap<String, f64> { measures_to_dict(&self.inner.base.measures) }
-}
-
-#[pyclass(name = "StabilityAnalysis")]
-struct PyStabilityAnalysis {
-    inner: crate::result::StabilityAnalysis,
-}
-
-#[pymethods]
-impl PyStabilityAnalysis {
-    fn __getitem__(&self, name: &str) -> PyResult<Vec<f64>> {
-        self.inner.base.get(name).map(|wf| wf.data.clone())
-            .ok_or_else(|| PyKeyError::new_err(format!("Node '{}' not found", name)))
-    }
-    fn __getattr__(&self, name: &str) -> PyResult<Vec<f64>> {
-        self.inner.base.get(name).map(|wf| wf.data.clone())
-            .ok_or_else(|| PyAttributeError::new_err(format!("No node '{}'", name)))
-    }
-    #[getter]
-    fn frequency(&self) -> Vec<f64> { self.inner.frequency.clone() }
-    #[getter]
-    fn measures(&self) -> HashMap<String, f64> { measures_to_dict(&self.inner.base.measures) }
-}
-
-#[pyclass(name = "TransientNoiseAnalysis")]
-struct PyTransientNoiseAnalysis {
-    inner: crate::result::TransientNoiseAnalysis,
-}
-
-#[pymethods]
-impl PyTransientNoiseAnalysis {
-    fn __getitem__(&self, name: &str) -> PyResult<Vec<f64>> {
-        self.inner.base.get(name).map(|wf| wf.data.clone())
-            .ok_or_else(|| PyKeyError::new_err(format!("Node '{}' not found", name)))
-    }
-    fn __getattr__(&self, name: &str) -> PyResult<Vec<f64>> {
-        self.inner.base.get(name).map(|wf| wf.data.clone())
-            .ok_or_else(|| PyAttributeError::new_err(format!("No node '{}'", name)))
-    }
-    #[getter]
-    fn time(&self) -> Vec<f64> { self.inner.time.clone() }
-    #[getter]
-    fn measures(&self) -> HashMap<String, f64> { measures_to_dict(&self.inner.base.measures) }
-}
-
-#[pyclass(name = "SamplingAnalysis")]
-struct PySamplingAnalysis {
-    inner: crate::result::SamplingAnalysis,
-}
-
-#[pymethods]
-impl PySamplingAnalysis {
-    fn __getitem__(&self, name: &str) -> PyResult<Vec<f64>> {
-        self.inner.base.get(name).map(|wf| wf.data.clone())
-            .ok_or_else(|| PyKeyError::new_err(format!("Node '{}' not found", name)))
-    }
-    fn __getattr__(&self, name: &str) -> PyResult<Vec<f64>> {
-        self.inner.base.get(name).map(|wf| wf.data.clone())
-            .ok_or_else(|| PyAttributeError::new_err(format!("No node '{}'", name)))
-    }
-    #[getter]
-    fn measures(&self) -> HashMap<String, f64> { measures_to_dict(&self.inner.base.measures) }
-}
+analysis_class!(PyDcAnalysis, "DcAnalysis", sweep);
+analysis_class!(PyAcAnalysis, "AcAnalysis", frequency);
+analysis_class!(PyTransientAnalysis, "TransientAnalysis", time);
+analysis_class!(PyNoiseAnalysis, "NoiseAnalysis", frequency);
+analysis_class!(PyTransferFunctionAnalysis, "TransferFunctionAnalysis");
+analysis_class!(PySensitivityAnalysis, "SensitivityAnalysis");
+analysis_class!(PyPoleZeroAnalysis, "PoleZeroAnalysis");
+analysis_class!(PyDistortionAnalysis, "DistortionAnalysis", frequency);
+analysis_class!(PyPssAnalysis, "PssAnalysis", time);
+analysis_class!(PySParamAnalysis, "SParamAnalysis", frequency);
+analysis_class!(PyHarmonicBalanceAnalysis, "HarmonicBalanceAnalysis", frequency);
+analysis_class!(PyStabilityAnalysis, "StabilityAnalysis", frequency);
+analysis_class!(PyTransientNoiseAnalysis, "TransientNoiseAnalysis", time);
+analysis_class!(PySamplingAnalysis, "SamplingAnalysis");
 
 // ── Module-level functions ──
 
