@@ -415,6 +415,10 @@ pub(super) fn netlist(ir: &CircuitIR) -> Result<String, CodeGenError> {
     lines.push(String::new());
     lines.push("simulator lang=spectre".into());
     lines.push(String::new());
+    // `global 0 a b`: Spectre takes the first global as ground (R5 p.871).
+    if !ir.globals.is_empty() {
+        lines.push(format!("global 0 {}", ir.globals.join(" ")));
+    }
 
     // `[CMP]` p.888 / `[REF]` p.541: `ahdl_include "VerilogAfile.va"`.
     for path in &ir.top.osdi_loads {
@@ -1043,7 +1047,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     fn sample_resistor_divider() -> CircuitIR {
-        CircuitIR { raw_dialect: None,
+        CircuitIR { raw_dialect: None, globals: vec![],
             top: Subcircuit {
                 name: "Voltage Divider".into(),
                 ports: vec![],
@@ -1081,7 +1085,7 @@ mod tests {
                 osdi_loads: vec![],
                 verilog_blocks: vec![],
             },
-            testbench: Some(Testbench {
+            testbench: Some(Testbench { prints: vec![],
                 dut: "Voltage Divider".into(),
                 stimulus: vec![],
                 analyses: vec![Analysis::Op],
@@ -1115,7 +1119,7 @@ mod tests {
 
     #[test]
     fn test_spectre_mosfet() {
-        let ir = CircuitIR { raw_dialect: None,
+        let ir = CircuitIR { raw_dialect: None, globals: vec![],
             top: Subcircuit {
                 name: "CMOS Inverter".into(),
                 ports: vec![],
@@ -1320,7 +1324,7 @@ mod tests {
 
     #[test]
     fn test_spectre_osdi() {
-        let ir = CircuitIR { raw_dialect: None,
+        let ir = CircuitIR { raw_dialect: None, globals: vec![],
             top: Subcircuit {
                 name: "VA Test".into(),
                 ports: vec![],
@@ -1361,7 +1365,7 @@ mod tests {
         backend_paths.insert("ngspice".into(), "/pdk/ngspice/sky130.lib".into());
         backend_paths.insert("spectre".into(), "/pdk/spectre/sky130.scs".into());
 
-        let ir = CircuitIR { raw_dialect: None,
+        let ir = CircuitIR { raw_dialect: None, globals: vec![],
             top: Subcircuit {
                 name: "pdk_spectre".into(),
                 ports: vec![], parameters: vec![], components: vec![],

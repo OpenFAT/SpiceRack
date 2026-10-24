@@ -292,7 +292,7 @@ impl PyCircuit {
         } else {
             return Err(PyKeyError::new_err(format!("Element '{name}' not found")));
         };
-        let deck = emit_ir_netlist(CircuitIR { raw_dialect: None, top: one, ..Default::default() }, "ngspice")?;
+        let deck = emit_ir_netlist(CircuitIR { raw_dialect: None, globals: vec![], top: one, ..Default::default() }, "ngspice")?;
         // Drop the title line and `.end`.
         let lines: Vec<&str> = deck.lines().collect();
         Ok(lines[1..lines.len() - 1].join("\n"))
@@ -344,7 +344,7 @@ impl PyCircuit {
 
 impl PyCircuit {
     fn ir(slf: &PyRef<'_, Self>) -> CircuitIR {
-        CircuitIR { raw_dialect: None,
+        CircuitIR { raw_dialect: None, globals: vec![],
             top: slf.as_super().inner.clone(),
             testbench: Some(slf.tb.clone()),
             subcircuit_defs: slf.defs.clone(),
@@ -1417,8 +1417,8 @@ struct PyTestbench {}
 impl PyTestbench {
     #[new]
     fn new(dut: &PySubcircuit) -> (Self, PySimulator) {
-        let tb = ir::Testbench { dut: dut.inner.name.clone(), ..Default::default() };
-        let ir = CircuitIR { raw_dialect: None, top: dut.inner.clone(), testbench: Some(tb), ..Default::default() };
+        let tb = ir::Testbench { prints: vec![], dut: dut.inner.name.clone(), ..Default::default() };
+        let ir = CircuitIR { raw_dialect: None, globals: vec![], top: dut.inner.clone(), testbench: Some(tb), ..Default::default() };
         (Self {}, PySimulator { ir, backend: None, save_currents: false })
     }
 
@@ -1586,6 +1586,20 @@ impl PyTestbench {
 
     fn extra_line(mut slf: PyRefMut<'_, Self>, line: &str) {
         slf.as_super().tb().extra_lines.push(line.to_string());
+    }
+
+    /// A `.print` card: `add_print("tran", "v(out)", "i(vdd)")`; `analysis`
+    /// may be `""`. Simulators that print nothing in a rawfile run omit it.
+    #[pyo3(signature = (analysis, *outputs))]
+    fn add_print(mut slf: PyRefMut<'_, Self>, analysis: &str, outputs: Vec<String>) {
+        slf.as_super().tb().prints.push(ir::PrintCard { analysis: analysis.to_ascii_lowercase(), outputs });
+    }
+
+    /// `.global` nodes: one net under these names in every subcircuit.
+    #[pyo3(signature = (*nodes))]
+    fn global_nodes(mut slf: PyRefMut<'_, Self>, nodes: Vec<String>) {
+        let g = &mut slf.as_super().ir.globals;
+        g.extend(nodes.into_iter().filter(|n| !g.contains(n)).collect::<Vec<_>>());
     }
 
     // ── Analysis builders for multi-analysis decks ──

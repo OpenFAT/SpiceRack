@@ -268,6 +268,9 @@ pub(super) fn netlist(d: Dialect, ir: &CircuitIR) -> Result<String, CodeGenError
     let mut lines = vec![format!("* {}", ir.top.name)];
     loads(d, ir, &mut lines)?;
 
+    if !ir.globals.is_empty() {
+        lines.push(format!(".global {}", ir.globals.join(" ")));
+    }
     file_cards(d, &ir.top, &mut lines);
     let path = |p: &str| if d == Dialect::Hspice { format!("'{p}'") } else { p.to_string() };
 
@@ -330,6 +333,14 @@ pub(super) fn netlist(d: Dialect, ir: &CircuitIR) -> Result<String, CodeGenError
             lines.push(format!(".save all{named}"));
         } else if !tb.saves.is_empty() && !noise {
             lines.push(format!(".save {}", tb.saves.join(" ")));
+        }
+        // `.print` prints to stdout; LTspice has no such card, and a rawfile
+        // run ignores it, so there it is omitted.
+        if d != Dialect::Ltspice {
+            for p in &tb.prints {
+                let analysis = if p.analysis.is_empty() { String::new() } else { format!(" {}", p.analysis) };
+                lines.push(format!(".print{analysis} {}", p.outputs.join(" ")));
+            }
         }
 
         for meas in &tb.measures {
@@ -560,7 +571,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     fn sample_resistor_divider() -> CircuitIR {
-        CircuitIR { raw_dialect: None,
+        CircuitIR { raw_dialect: None, globals: vec![],
             top: Subcircuit {
                 name: "Voltage Divider".into(),
                 ports: vec![],
@@ -598,7 +609,7 @@ mod tests {
                 osdi_loads: vec![],
                 verilog_blocks: vec![],
             },
-            testbench: Some(Testbench {
+            testbench: Some(Testbench { prints: vec![],
                 dut: "Voltage Divider".into(),
                 stimulus: vec![],
                 analyses: vec![Analysis::Op],
@@ -645,7 +656,7 @@ mod tests {
 
     #[test]
     fn test_mosfet_circuit() {
-        let ir = CircuitIR { raw_dialect: None,
+        let ir = CircuitIR { raw_dialect: None, globals: vec![],
             top: Subcircuit {
                 name: "CMOS Inverter".into(),
                 ports: vec![],
@@ -693,7 +704,7 @@ mod tests {
                 osdi_loads: vec![],
                 verilog_blocks: vec![],
             },
-            testbench: Some(Testbench {
+            testbench: Some(Testbench { prints: vec![],
                 dut: "CMOS Inverter".into(),
                 stimulus: vec![],
                 analyses: vec![
@@ -724,7 +735,7 @@ mod tests {
 
     #[test]
     fn test_subcircuit_instances() {
-        let ir = CircuitIR { raw_dialect: None,
+        let ir = CircuitIR { raw_dialect: None, globals: vec![],
             top: Subcircuit {
                 name: "Top".into(),
                 ports: vec![],
@@ -811,7 +822,7 @@ mod tests {
 
     #[test]
     fn test_waveforms_sin_pulse_pwl() {
-        let ir = CircuitIR { raw_dialect: None,
+        let ir = CircuitIR { raw_dialect: None, globals: vec![],
             top: Subcircuit {
                 name: "Waveforms".into(),
                 ports: vec![],
@@ -1004,7 +1015,7 @@ mod tests {
 
     #[test]
     fn test_osdi_ngspice_only() {
-        let ir = CircuitIR { raw_dialect: None,
+        let ir = CircuitIR { raw_dialect: None, globals: vec![],
             top: Subcircuit {
                 name: "OSDI Test".into(),
                 ports: vec![],
@@ -1056,7 +1067,7 @@ mod tests {
 
     #[test]
     fn test_step_params_ltspice_ok_ngspice_errors() {
-        let ir = CircuitIR { raw_dialect: None,
+        let ir = CircuitIR { raw_dialect: None, globals: vec![],
             top: Subcircuit {
                 name: "Step Test".into(),
                 ports: vec![],
@@ -1078,7 +1089,7 @@ mod tests {
                 osdi_loads: vec![],
                 verilog_blocks: vec![],
             },
-            testbench: Some(Testbench {
+            testbench: Some(Testbench { prints: vec![],
                 dut: "Step Test".into(),
                 stimulus: vec![],
                 analyses: vec![Analysis::Op],
@@ -1150,7 +1161,7 @@ mod tests {
         backend_paths.insert("ngspice".into(), "/pdk/ngspice/sky130.lib".into());
         backend_paths.insert("spectre".into(), "/pdk/spectre/sky130.scs".into());
 
-        let ir = CircuitIR { raw_dialect: None,
+        let ir = CircuitIR { raw_dialect: None, globals: vec![],
             top: Subcircuit {
                 name: "pdk_test".into(),
                 ports: vec![], parameters: vec![], components: vec![],
@@ -1158,7 +1169,7 @@ mod tests {
                 includes: vec![], libs: vec![], osdi_loads: vec![],
                 verilog_blocks: vec![],
             },
-            testbench: Some(Testbench {
+            testbench: Some(Testbench { prints: vec![],
                 dut: "pdk_test".into(), stimulus: vec![],
                 analyses: vec![Analysis::Op],
                 options: SimOptions::default(), saves: vec![],
@@ -1192,7 +1203,7 @@ mod tests {
 
     #[test]
     fn test_model_library_corner_switch() {
-        let ir_tt = CircuitIR { raw_dialect: None,
+        let ir_tt = CircuitIR { raw_dialect: None, globals: vec![],
             top: Subcircuit {
                 name: "corner".into(),
                 ports: vec![], parameters: vec![], components: vec![],
@@ -1225,7 +1236,7 @@ mod tests {
 
     #[test]
     fn test_model_library_no_corner_uses_include() {
-        let ir = CircuitIR { raw_dialect: None,
+        let ir = CircuitIR { raw_dialect: None, globals: vec![],
             top: Subcircuit {
                 name: "nocorner".into(),
                 ports: vec![], parameters: vec![], components: vec![],
@@ -1253,7 +1264,7 @@ mod tests {
 
     #[test]
     fn test_ngspice_uses_save() {
-        let ir = CircuitIR { raw_dialect: None,
+        let ir = CircuitIR { raw_dialect: None, globals: vec![],
             top: Subcircuit {
                 name: "ng_save".into(),
                 ports: vec![], parameters: vec![],
@@ -1261,7 +1272,7 @@ mod tests {
                 raw_spice: vec![], includes: vec![], libs: vec![],
                 osdi_loads: vec![], verilog_blocks: vec![],
             },
-            testbench: Some(Testbench {
+            testbench: Some(Testbench { prints: vec![],
                 dut: "ng_save".into(), stimulus: vec![],
                 analyses: vec![Analysis::Op],
                 options: SimOptions::default(),
@@ -1360,7 +1371,7 @@ mod tests {
 
     #[test]
     fn test_pdk_netlist_lib_before_subckt_and_components() {
-        let ir = CircuitIR { raw_dialect: None,
+        let ir = CircuitIR { raw_dialect: None, globals: vec![],
             top: Subcircuit {
                 name: "cs_amp_tb".into(),
                 ports: vec![], parameters: vec![],
@@ -1375,7 +1386,7 @@ mod tests {
                 includes: vec![], libs: vec![], osdi_loads: vec![],
                 verilog_blocks: vec![],
             },
-            testbench: Some(Testbench {
+            testbench: Some(Testbench { prints: vec![],
                 dut: "cs_amp_tb".into(), stimulus: vec![
                     Component::VoltageSource {
                         name: "dd".into(), np: "vdd".into(), nm: "0".into(),
@@ -1448,7 +1459,7 @@ mod tests {
 
     #[test]
     fn test_setup_includes_emitted_before_lib() {
-        let ir = CircuitIR { raw_dialect: None,
+        let ir = CircuitIR { raw_dialect: None, globals: vec![],
             top: Subcircuit {
                 name: "gf180_test".into(),
                 ports: vec![], parameters: vec![], components: vec![],
@@ -1456,7 +1467,7 @@ mod tests {
                 includes: vec![], libs: vec![], osdi_loads: vec![],
                 verilog_blocks: vec![],
             },
-            testbench: Some(Testbench {
+            testbench: Some(Testbench { prints: vec![],
                 dut: "gf180_test".into(), stimulus: vec![],
                 analyses: vec![Analysis::Op],
                 options: SimOptions::default(), saves: vec![],

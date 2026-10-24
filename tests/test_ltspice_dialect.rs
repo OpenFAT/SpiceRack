@@ -31,18 +31,18 @@ impl Cg {
             components: component.into_iter().cloned().collect(), instances: vec![], models: vec![],
             raw_spice: vec![], includes: vec![], libs: vec![], osdi_loads: vec![], verilog_blocks: vec![],
         };
-        let ir = CircuitIR { raw_dialect: None, top, testbench: Some(tb), subcircuit_defs: vec![], model_libraries: vec![] };
+        let ir = CircuitIR { raw_dialect: None, globals: vec![], top, testbench: Some(tb), subcircuit_defs: vec![], model_libraries: vec![] };
         let n = self.emit_netlist(&ir)?;
         Ok(n.strip_prefix("* t\n").unwrap().strip_suffix("\n.end").unwrap().to_string())
     }
 
     fn emit_step_param(&self, sp: &StepParam) -> Result<String, CodeGenError> {
-        self.body(None, Testbench { step_params: vec![sp.clone()], ..tb() })
+        self.body(None, Testbench { prints: vec![], step_params: vec![sp.clone()], ..tb() })
     }
 
     /// The last line: ngspice puts `.save all` ahead of a noise card.
     fn emit_analysis(&self, a: &Analysis) -> Result<String, CodeGenError> {
-        let b = self.body(None, Testbench { analyses: vec![a.clone()], ..tb() })?;
+        let b = self.body(None, Testbench { prints: vec![], analyses: vec![a.clone()], ..tb() })?;
         Ok(b.lines().last().unwrap().to_string())
     }
 
@@ -51,12 +51,12 @@ impl Cg {
     }
 
     fn emit_options(&self, o: &SimOptions) -> Result<String, CodeGenError> {
-        self.body(None, Testbench { options: o.clone(), ..tb() })
+        self.body(None, Testbench { prints: vec![], options: o.clone(), ..tb() })
     }
 }
 
 fn tb() -> Testbench {
-    Testbench {
+    Testbench { prints: vec![],
         dut: "t".into(), stimulus: vec![], analyses: vec![], options: SimOptions::default(),
         saves: vec![], measures: vec![], temperature: None, nominal_temperature: None,
         initial_conditions: vec![], node_sets: vec![], step_params: vec![], extra_lines: vec![],
@@ -163,7 +163,7 @@ fn pz_disto_and_sens_are_rejected_for_ltspice() {
 // ── .save ──
 
 fn noise_tb(saves: Vec<String>) -> CircuitIR {
-    CircuitIR { raw_dialect: None,
+    CircuitIR { raw_dialect: None, globals: vec![],
         top: Subcircuit {
             name: "nz".into(),
             ports: vec![],
@@ -183,7 +183,7 @@ fn noise_tb(saves: Vec<String>) -> CircuitIR {
             osdi_loads: vec![],
             verilog_blocks: vec![],
         },
-        testbench: Some(Testbench {
+        testbench: Some(Testbench { prints: vec![],
             dut: "nz".into(),
             stimulus: vec![],
             analyses: vec![Analysis::Noise {

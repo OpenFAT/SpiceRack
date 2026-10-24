@@ -496,7 +496,7 @@ fn sub(name: &str) -> Subcircuit {
 }
 
 fn testbench(dut: &str) -> Testbench {
-    Testbench {
+    Testbench { prints: vec![],
         dut: dut.into(),
         stimulus: vec![],
         analyses: vec![],
@@ -524,6 +524,9 @@ fn node_values(toks: &[String]) -> Option<Vec<(String, f64)>> {
 }
 
 /// A dot card that is an analysis or testbench setting; `false` if not.
+/// The analyses a `.print` card may name.
+const PRINT_KINDS: &[&str] = &["op", "dc", "ac", "tran", "noise", "disto", "tf", "sens", "pz", "four"];
+
 /// A point count: `10`, or a number written as one (`1e2`).
 fn count(tok: &str) -> Option<u32> {
     num(tok).filter(|v| *v >= 0.0 && v.fract() == 0.0).map(|v| v as u32)
@@ -614,6 +617,12 @@ fn control_card(tb: &mut Testbench, card: &str, t: &[String], d: Dialect) -> boo
         // HSPICE `.probe v(a)` selects outputs, as `.save` does elsewhere.
         // ngspice's `.probe` inserts current probes instead, and `.print`/
         // `.plot` only print: no IR field, so they stay raw rather than vanish.
+        // `.print [tran|dc|...] out...`; `.plot` asks the same of a plotter.
+        ".print" | ".plot" => {
+            let mut w = tokens(card).into_iter().skip(1).peekable();
+            let analysis = w.next_if(|x| PRINT_KINDS.contains(&x.to_ascii_lowercase().as_str())).map(|x| x.to_ascii_lowercase()).unwrap_or_default();
+            tb.prints.push(PrintCard { analysis, outputs: w.collect() });
+        }
         ".probe" if d == Dialect::Hspice => tb.saves.extend(card.split_whitespace().skip(1).filter(|x| !matches!(x.to_ascii_lowercase().as_str(), "op" | "dc" | "ac" | "tran" | "noise")).map(String::from)),
         ".meas" | ".measure" => tb.measures.push(card.to_string()),
         _ => return false,
@@ -684,6 +693,7 @@ pub fn parse(src: &str, name: &str, d: Dialect) -> Result<(CircuitIR, Report), S
         .collect();
     let mut top = sub(name);
     let mut tb = testbench(name);
+    let mut globals: Vec<String> = Vec::new();
     let mut defs: Vec<Subcircuit> = Vec::new();
     // Open `.subckt`s, innermost last: the definition, where its descendants
     // start in `defs`, and its local names renamed on hoisting.
@@ -786,6 +796,8 @@ pub fn parse(src: &str, name: &str, d: Dialect) -> Result<(CircuitIR, Report), S
                     top.raw_spice.push(card);
                 }
             },
+            // `.global` nodes name one net everywhere, wherever the card sits.
+            ".global" => globals.extend(t[1..].iter().filter(|g| !globals.contains(g)).cloned().collect::<Vec<_>>()),
             ".model" => match model(&t) {
                 Some(m) => here.models.push(m),
                 None => {
@@ -807,7 +819,7 @@ pub fn parse(src: &str, name: &str, d: Dialect) -> Result<(CircuitIR, Report), S
         close_subckt(&mut open, &mut defs);
     }
     let raw_dialect = Some(if d == Dialect::Hspice { "hspice" } else { "ngspice" }.to_string());
-    Ok((CircuitIR { raw_dialect, top, testbench: Some(tb), subcircuit_defs: defs, model_libraries: vec![] }, report))
+    Ok((CircuitIR { raw_dialect, globals, top, testbench: Some(tb), subcircuit_defs: defs, model_libraries: vec![] }, report))
 }
 
 #[cfg(test)]

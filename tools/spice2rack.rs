@@ -246,6 +246,9 @@ fn python(ir: &CircuitIR) -> Py {
     py.line(format!("dut = ps.Subcircuit({})", py_str(&ir.top.name)));
     py.block("dut", &ir.top, true);
     py.line("\ntb = ps.Testbench(dut)");
+    if !ir.globals.is_empty() {
+        py.line(format!("tb.global_nodes({})", ir.globals.iter().map(|g| py_str(g)).collect::<Vec<_>>().join(", ")));
+    }
     for i in 0..ir.subcircuit_defs.len() {
         py.line(format!("tb.add_subcircuit(sub{i})"));
     }
@@ -274,6 +277,10 @@ fn python(ir: &CircuitIR) -> Py {
         }
         for l in &tb.extra_lines {
             py.line(format!("tb.extra_line({})", py_str(l)));
+        }
+        for p in &tb.prints {
+            let outs: String = p.outputs.iter().map(|o| format!(", {}", py_str(o))).collect();
+            py.line(format!("tb.add_print({}{outs})", py_str(&p.analysis)));
         }
         for a in &tb.analyses {
             py.analysis(a);

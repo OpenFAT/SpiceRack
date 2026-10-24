@@ -605,6 +605,9 @@ pub(super) fn netlist(ir: &CircuitIR) -> Result<String, CodeGenError> {
     let title = ir.top.name.replace(['\n', '\r'], " ");
     let title = if title.trim().is_empty() { "circuit".to_string() } else { title };
     let mut lines = vec![title, String::new(), "ground 0".into(), String::new()];
+    if !ir.globals.is_empty() {
+        lines.push(format!("global {}", ir.globals.iter().map(|g| g.to_ascii_lowercase()).collect::<Vec<_>>().join(" ")));
+    }
 
     for path in &loads {
         lines.push(format!("load \"{}\"", path));
@@ -978,7 +981,7 @@ mod tests {
     }
 
     fn tb(analyses: Vec<Analysis>) -> Testbench {
-        Testbench {
+        Testbench { prints: vec![],
             dut: "t".into(), stimulus: vec![], analyses, options: SimOptions::default(),
             saves: vec![], measures: vec![], temperature: None, nominal_temperature: None,
             initial_conditions: vec![], node_sets: vec![], step_params: vec![], extra_lines: vec![],
@@ -1061,7 +1064,7 @@ mod tests {
     fn measures_are_refused() {
         let mut t = tb(vec![Analysis::Op]);
         t.measures = vec!["tran vmax MAX V(out)".into()];
-        let ir = CircuitIR { raw_dialect: None, top: sub("m"), testbench: Some(t), subcircuit_defs: vec![], model_libraries: vec![] };
+        let ir = CircuitIR { raw_dialect: None, globals: vec![], top: sub("m"), testbench: Some(t), subcircuit_defs: vec![], model_libraries: vec![] };
         assert!(netlist(&ir).is_err());
     }
 
@@ -1071,7 +1074,7 @@ mod tests {
         t.step_params = vec![StepParam { param: "rval".into(), start: 1e3, stop: 3e3, step: 1e3, sweep_type: None }];
         let mut top = sub("stepped");
         top.parameters = vec![ParamDef { name: "rval".into(), default: Some("1k".into()) }];
-        let ir = CircuitIR { raw_dialect: None, top, testbench: Some(t), subcircuit_defs: vec![], model_libraries: vec![] };
+        let ir = CircuitIR { raw_dialect: None, globals: vec![], top, testbench: Some(t), subcircuit_defs: vec![], model_libraries: vec![] };
         let n = netlist(&ir).unwrap();
         assert!(n.contains("var rval=1e3"), "{}", n);
         assert!(n.contains("sweep step_rval variable=\"rval\""), "{}", n);
@@ -1084,7 +1087,7 @@ mod tests {
         let mut backend_paths = BTreeMap::new();
         backend_paths.insert("ngspice".into(), "/pdk/ngspice/sky130.lib.spice".into());
         backend_paths.insert("vacask".into(), "/pdk/vacask/sky130.sim".into());
-        let ir = CircuitIR { raw_dialect: None,
+        let ir = CircuitIR { raw_dialect: None, globals: vec![],
             top: sub("pdk_test"), testbench: None, subcircuit_defs: vec![],
             model_libraries: vec![ModelLibrary {
                 name: "sky130".into(), path: "/pdk/default.lib".into(), corner: Some("tt".into()),
@@ -1098,7 +1101,7 @@ mod tests {
 
     #[test]
     fn model_library_falls_back_to_the_default_path() {
-        let ir = CircuitIR { raw_dialect: None,
+        let ir = CircuitIR { raw_dialect: None, globals: vec![],
             top: sub("fallback"), testbench: None, subcircuit_defs: vec![],
             model_libraries: vec![ModelLibrary {
                 name: "custom".into(), path: "/models/custom.sim".into(), corner: None,
@@ -1116,7 +1119,7 @@ mod tests {
             name: "QN".into(), kind: "NPN".into(),
             parameters: vec![("IS".into(), "1e-15".into()), ("BF".into(), "150".into())],
         }];
-        let ir = CircuitIR { raw_dialect: None, top, testbench: None, subcircuit_defs: vec![], model_libraries: vec![] };
+        let ir = CircuitIR { raw_dialect: None, globals: vec![], top, testbench: None, subcircuit_defs: vec![], model_libraries: vec![] };
         let n = netlist(&ir).unwrap();
         assert!(n.contains("load \"spice/bjt.osdi\""), "{}", n);
         assert!(n.contains("model qn sp_bjt (type=1 is=1e-15 bf=150)"), "{}", n);
@@ -1128,7 +1131,7 @@ mod tests {
         top.models = vec![ModelDef {
             name: "nm".into(), kind: "NMOS".into(), parameters: vec![("LEVEL".into(), "77".into())],
         }];
-        let ir = CircuitIR { raw_dialect: None, top, testbench: None, subcircuit_defs: vec![], model_libraries: vec![] };
+        let ir = CircuitIR { raw_dialect: None, globals: vec![], top, testbench: None, subcircuit_defs: vec![], model_libraries: vec![] };
         assert!(netlist(&ir).is_err());
     }
 
@@ -1138,7 +1141,7 @@ mod tests {
         // name-for-name would set the instance parameters instead.
         let mut top = sub("r");
         top.models = vec![ModelDef { name: "rm".into(), kind: "R".into(), parameters: vec![("tc1".into(), "1e-3".into())] }];
-        let ir = CircuitIR { raw_dialect: None, top, testbench: None, subcircuit_defs: vec![], model_libraries: vec![] };
+        let ir = CircuitIR { raw_dialect: None, globals: vec![], top, testbench: None, subcircuit_defs: vec![], model_libraries: vec![] };
         assert!(netlist(&ir).is_err());
     }
 
@@ -1146,12 +1149,12 @@ mod tests {
     fn unknown_options_refuse_instead_of_being_dropped() {
         let mut t = tb(vec![Analysis::Op]);
         t.options.portable = vec![("itl1".into(), "100".into())];
-        let ir = CircuitIR { raw_dialect: None, top: sub("o"), testbench: Some(t), subcircuit_defs: vec![], model_libraries: vec![] };
+        let ir = CircuitIR { raw_dialect: None, globals: vec![], top: sub("o"), testbench: Some(t), subcircuit_defs: vec![], model_libraries: vec![] };
         assert!(netlist(&ir).is_err());
 
         let mut t = tb(vec![Analysis::Op]);
         t.options.portable = vec![("reltol".into(), "1e-4".into()), ("noacct".into(), "".into())];
-        let ir = CircuitIR { raw_dialect: None, top: sub("o"), testbench: Some(t), subcircuit_defs: vec![], model_libraries: vec![] };
+        let ir = CircuitIR { raw_dialect: None, globals: vec![], top: sub("o"), testbench: Some(t), subcircuit_defs: vec![], model_libraries: vec![] };
         let n = netlist(&ir).unwrap();
         assert!(n.contains("reltol=1e-4"), "{}", n);
         assert!(!n.contains("noacct"), "{}", n);

@@ -28,7 +28,7 @@ fn sub(name: &str) -> Subcircuit {
 }
 
 fn tb(analyses: Vec<Analysis>) -> Testbench {
-    Testbench {
+    Testbench { prints: vec![],
         dut: "dialects".into(),
         stimulus: vec![],
         analyses,
@@ -96,7 +96,7 @@ fn circuit(analyses: Vec<Analysis>) -> CircuitIR {
         port_mapping: vec!["mid".into()],
         parameters: vec![("r".into(), "2k".into())],
     }];
-    CircuitIR { raw_dialect: None, top, testbench: Some(tb(analyses)), subcircuit_defs: vec![load], model_libraries: vec![] }
+    CircuitIR { raw_dialect: None, globals: vec![], top, testbench: Some(tb(analyses)), subcircuit_defs: vec![load], model_libraries: vec![] }
 }
 
 #[test]

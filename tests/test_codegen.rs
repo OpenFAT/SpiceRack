@@ -13,7 +13,7 @@ fn analysis(d: Dialect, a: &Analysis) -> Result<String, CodeGenError> {
 // ── Shared test fixtures ──
 
 fn resistor_divider_ir() -> CircuitIR {
-    CircuitIR { raw_dialect: None,
+    CircuitIR { raw_dialect: None, globals: vec![],
         top: Subcircuit {
             name: "Voltage Divider".into(),
             ports: vec![],
@@ -51,7 +51,7 @@ fn resistor_divider_ir() -> CircuitIR {
             osdi_loads: vec![],
             verilog_blocks: vec![],
         },
-        testbench: Some(Testbench {
+        testbench: Some(Testbench { prints: vec![],
             dut: "Voltage Divider".into(),
             stimulus: vec![],
             analyses: vec![Analysis::Op],
@@ -71,7 +71,7 @@ fn resistor_divider_ir() -> CircuitIR {
 }
 
 fn mosfet_inverter_ir() -> CircuitIR {
-    CircuitIR { raw_dialect: None,
+    CircuitIR { raw_dialect: None, globals: vec![],
         top: Subcircuit {
             name: "CMOS Inverter".into(),
             ports: vec![],
@@ -124,7 +124,7 @@ fn mosfet_inverter_ir() -> CircuitIR {
             osdi_loads: vec![],
             verilog_blocks: vec![],
         },
-        testbench: Some(Testbench {
+        testbench: Some(Testbench { prints: vec![],
             dut: "CMOS Inverter".into(),
             stimulus: vec![],
             analyses: vec![
@@ -146,7 +146,7 @@ fn mosfet_inverter_ir() -> CircuitIR {
 }
 
 fn subcircuit_ir() -> CircuitIR {
-    CircuitIR { raw_dialect: None,
+    CircuitIR { raw_dialect: None, globals: vec![],
         top: Subcircuit {
             name: "Top Level".into(),
             ports: vec![],
@@ -183,7 +183,7 @@ fn subcircuit_ir() -> CircuitIR {
             osdi_loads: vec![],
             verilog_blocks: vec![],
         },
-        testbench: Some(Testbench {
+        testbench: Some(Testbench { prints: vec![],
             dut: "Top Level".into(),
             stimulus: vec![],
             analyses: vec![Analysis::Op],
@@ -244,7 +244,7 @@ fn subcircuit_ir() -> CircuitIR {
 }
 
 fn waveform_ir() -> CircuitIR {
-    CircuitIR { raw_dialect: None,
+    CircuitIR { raw_dialect: None, globals: vec![],
         top: Subcircuit {
             name: "Waveform Test".into(),
             ports: vec![],
@@ -303,7 +303,7 @@ fn waveform_ir() -> CircuitIR {
             osdi_loads: vec![],
             verilog_blocks: vec![],
         },
-        testbench: Some(Testbench {
+        testbench: Some(Testbench { prints: vec![],
             dut: "Waveform Test".into(),
             stimulus: vec![],
             analyses: vec![

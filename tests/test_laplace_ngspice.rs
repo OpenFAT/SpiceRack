@@ -51,7 +51,7 @@ impl Deck {
         self.0.components.push(Component::BehavioralCurrent { name: name.into(), np: np.into(), nm: nm.into(), expression: expression.into() });
     }
     fn ir(&self) -> CircuitIR {
-        CircuitIR { raw_dialect: None, top: self.0.clone(), ..Default::default() }
+        CircuitIR { raw_dialect: None, globals: vec![], top: self.0.clone(), ..Default::default() }
     }
 }
 
@@ -328,7 +328,7 @@ fn the_run_pipeline_emits_and_runs_the_translated_source() {
     c.bv("1", "out", "0", "Laplace(V(in), 1/(1+s*1.591549431e-4))");
     c.r("l", "out", "0", 1e6);
     let mut ir = c.ir();
-    ir.testbench = Some(Testbench {
+    ir.testbench = Some(Testbench { prints: vec![],
         analyses: vec![Analysis::Ac { variation: "lin".into(), points: 1, start: 1000.0, stop: 1000.0 }],
         ..Default::default()
     });
