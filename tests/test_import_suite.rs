@@ -159,7 +159,11 @@ fn compare(a: &Run, b: &Run) -> Result<(), String> {
         }
         let mut shared = 0;
         for (i, v) in pa.variables.iter().enumerate().skip(1) {
-            let Some(j) = pb.variables.iter().position(|w| w.name.eq_ignore_ascii_case(&v.name)) else { continue };
+            // A name can repeat (a TXL line's two `i(y1)` branches): pair the
+            // k-th occurrence in `a` with the k-th in `b`.
+            let same = |w: &&spicerack::result::VarInfo| w.name.eq_ignore_ascii_case(&v.name);
+            let k = pa.variables[..i].iter().filter(same).count();
+            let Some(j) = pb.variables.iter().enumerate().filter(|(_, w)| same(w)).nth(k).map(|(j, _)| j) else { continue };
             shared += 1;
             let (ya, yb) = (column(pa, i), column(pb, j));
             let swing = ya.iter().map(|c| c.norm()).fold(0.0, f64::max);
