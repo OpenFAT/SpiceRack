@@ -642,13 +642,18 @@ pub fn parse(src: &str, name: &str, d: Dialect) -> Result<(CircuitIR, Report), S
             block = Some(close);
             continue;
         }
+        // Includes scope globally in every backend; they live on the top.
         match include_line(&card) {
             Some(IncludeLine::Include(p)) => {
-                here.includes.push(p);
+                if !top.includes.contains(&p) {
+                    top.includes.push(p);
+                }
                 continue;
             }
             Some(IncludeLine::Lib(p, sec)) => {
-                here.libs.push((p, sec));
+                if !top.libs.contains(&(p.clone(), sec.clone())) {
+                    top.libs.push((p, sec));
+                }
                 continue;
             }
             None if word == ".lib" => {

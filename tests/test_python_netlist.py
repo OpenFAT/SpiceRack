@@ -460,6 +460,14 @@ class TestWaveformSources:
         assert "Vclk clk 0" in netlist
         assert "PULSE(" in netlist
 
+    def test_pulse_delay_and_dc_value(self):
+        # The delay reaches the card, and the DC value is the pulse's t=0
+        # value, as a SPICE card with no DC value means: 1.2 V, not 0 V.
+        c = ps().Circuit("t")
+        c.PulseVoltageSource(name="clk", positive="clk", negative=c.gnd,
+                             initial_value=1.2, pulsed_value=0.0, delay=3e-9)
+        assert "Vclk clk 0 1.2 PULSE(1.2 0 0.000000003 " in str(c)
+
     def test_pwl_voltage(self):
         c = ps().Circuit("t")
         c.PieceWiseLinearVoltageSource(
