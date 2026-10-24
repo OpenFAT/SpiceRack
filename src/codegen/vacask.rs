@@ -869,10 +869,11 @@ fn emit_component(comp: &Component) -> Result<String, CodeGenError> {
             name.to_ascii_lowercase(), np.to_ascii_lowercase(), nm.to_ascii_lowercase(),
             model.to_ascii_lowercase(), inst_params(params),
         ),
-        Component::Bjt { name, nc, nb, ne, model, params } => format!(
-            "q{} ({} {} {}) {}{}",
-            name.to_ascii_lowercase(), nc.to_ascii_lowercase(), nb.to_ascii_lowercase(),
-            ne.to_ascii_lowercase(), model.to_ascii_lowercase(), inst_params(params),
+        Component::Bjt { name, nc, nb, ne, extra_nodes, model, params } => format!(
+            "q{} ({} {} {}{}) {}{}",
+            name.to_ascii_lowercase(), nc.to_ascii_lowercase(), nb.to_ascii_lowercase(), ne.to_ascii_lowercase(),
+            extra_nodes.iter().map(|n| format!(" {}", n.to_ascii_lowercase())).collect::<String>(),
+            model.to_ascii_lowercase(), inst_params(params),
         ),
         Component::Mosfet { name, nd, ng, ns, nb, model, params } => format!(
             "m{} ({} {} {} {}) {}{}",

@@ -468,6 +468,18 @@ class TestWaveformSources:
                              initial_value=1.2, pulsed_value=0.0, delay=3e-9)
         assert "Vclk clk 0 1.2 PULSE(1.2 0 0.000000003 " in str(c)
 
+    def test_device_params_and_bjt_terminals(self):
+        # D/Q/J/Z take instance parameters as M does; Q takes a substrate
+        # and a thermal node after the emitter.
+        c = ps().Circuit("t")
+        c.D(name="1", anode="a", cathode=c.gnd, model="dm", area=2)
+        c.Q(name="1", collector="c", base="b", emitter="e", model="qv", substrate="s", thermal="dt", m=3)
+        c.J(name="1", drain="d", gate="g", source="s", model="jm", area=1.5)
+        netlist = str(c)
+        assert "D1 a 0 dm area=2" in netlist
+        assert "Q1 c b e s dt qv m=3" in netlist
+        assert "J1 d g s jm area=1.5" in netlist
+
     def test_pwl_voltage(self):
         c = ps().Circuit("t")
         c.PieceWiseLinearVoltageSource(

@@ -388,7 +388,9 @@ pub(crate) fn component(d: Dialect, comp: &Component) -> Result<String, CodeGenE
             format!("H{} {} {} {} {}", name, np, nm, vsense, transresistance)
         }
         Component::Diode { name, np, nm, model, params: p } => format!("D{} {} {} {}{}", name, np, nm, model, params(p)),
-        Component::Bjt { name, nc, nb, ne, model, params: p } => format!("Q{} {} {} {} {}{}", name, nc, nb, ne, model, params(p)),
+        Component::Bjt { name, nc, nb, ne, extra_nodes, model, params: p } => {
+            format!("Q{} {} {} {}{} {}{}", name, nc, nb, ne, extra_nodes.iter().map(|n| format!(" {n}")).collect::<String>(), model, params(p))
+        }
         Component::Mosfet { name, nd, ng, ns, nb, model, params: p } => {
             format!("M{} {} {} {} {} {}{}", name, nd, ng, ns, nb, model, params(p))
         }

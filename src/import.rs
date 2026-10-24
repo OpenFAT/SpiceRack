@@ -427,7 +427,10 @@ fn element(t: &[String]) -> Option<Component> {
             let n: Vec<String> = pos[..pos.len() - 1].to_vec();
             match (letter, n.as_slice()) {
                 ('d', [np, nm]) => Component::Diode { name, np: np.clone(), nm: nm.clone(), model, params },
-                ('q', [nc, nb, ne]) => Component::Bjt { name, nc: nc.clone(), nb: nb.clone(), ne: ne.clone(), model, params },
+                // `Q c b e [s [t]] model`: substrate, then thermal node.
+                ('q', [nc, nb, ne, extra @ ..]) if extra.len() <= 2 => {
+                    Component::Bjt { name, nc: nc.clone(), nb: nb.clone(), ne: ne.clone(), extra_nodes: extra.to_vec(), model, params }
+                }
                 ('m', [nd, ng, ns, nb]) => Component::Mosfet { name, nd: nd.clone(), ng: ng.clone(), ns: ns.clone(), nb: nb.clone(), model, params },
                 ('j', [nd, ng, ns]) => Component::Jfet { name, nd: nd.clone(), ng: ng.clone(), ns: ns.clone(), model, params },
                 ('z', [nd, ng, ns]) => Component::Mesfet { name, nd: nd.clone(), ng: ng.clone(), ns: ns.clone(), model, params },

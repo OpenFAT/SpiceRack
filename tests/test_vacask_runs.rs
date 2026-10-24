@@ -362,7 +362,7 @@ fn a_bjt_runs_and_carries_its_polarity() {
         r("b", "vb", "base", 10_000.0),
         r("c", "vcc", "coll", 1000.0),
         Component::Bjt {
-            name: "1".into(), nc: "coll".into(), nb: "base".into(), ne: "0".into(),
+            name: "1".into(), nc: "coll".into(), nb: "base".into(), ne: "0".into(), extra_nodes: vec![],
             model: "qn".into(), params: vec![],
         },
     ];

@@ -1037,21 +1037,36 @@ impl PySubcircuit {
         self.push(Component::Ccvs { name: name.into(), np: self.net(positive), nm: self.net(negative), vsense: vsense.into(), transresistance });
     }
 
-    #[pyo3(signature = (*, name, anode, cathode, model))]
-    fn D(&mut self, name: &str, anode: &str, cathode: &str, model: &str) {
-        self.push(Component::Diode { name: name.into(), np: self.net(anode), nm: self.net(cathode), model: model.into(), params: vec![] });
+    /// `**kwargs` are instance parameters (`area=2`, `m=4`), as on `M`.
+    #[pyo3(signature = (*, name, anode, cathode, model, **kwargs))]
+    fn D(&mut self, name: &str, anode: &str, cathode: &str, model: &str, kwargs: Option<Bound<'_, PyDict>>) -> PyResult<()> {
+        self.push(Component::Diode { name: name.into(), np: self.net(anode), nm: self.net(cathode), model: model.into(), params: kw_params(kwargs)? });
+        Ok(())
     }
 
-    #[pyo3(signature = (*, name, collector, base, emitter, model))]
-    fn Q(&mut self, name: &str, collector: &str, base: &str, emitter: &str, model: &str) {
+    /// `substrate` and `thermal` are the optional 4th and 5th terminals.
+    #[pyo3(signature = (*, name, collector, base, emitter, model, substrate=None, thermal=None, **kwargs))]
+    fn Q(
+        &mut self, name: &str, collector: &str, base: &str, emitter: &str, model: &str,
+        substrate: Option<&str>, thermal: Option<&str>, kwargs: Option<Bound<'_, PyDict>>,
+    ) -> PyResult<()> {
+        if thermal.is_some() && substrate.is_none() {
+            return Err(pyo3::exceptions::PyValueError::new_err("Q: a thermal node needs a substrate node before it"));
+        }
+        let extra_nodes = substrate.into_iter().chain(thermal).map(|n| self.net(n)).collect();
         self.push(Component::Bjt {
-            name: name.into(), nc: self.net(collector), nb: self.net(base), ne: self.net(emitter), model: model.into(), params: vec![],
+            name: name.into(), nc: self.net(collector), nb: self.net(base), ne: self.net(emitter), extra_nodes,
+            model: model.into(), params: kw_params(kwargs)?,
         });
+        Ok(())
     }
 
-    #[pyo3(signature = (*, name, collector, base, emitter, model))]
-    fn BJT(&mut self, name: &str, collector: &str, base: &str, emitter: &str, model: &str) {
-        self.Q(name, collector, base, emitter, model);
+    #[pyo3(signature = (*, name, collector, base, emitter, model, substrate=None, thermal=None, **kwargs))]
+    fn BJT(
+        &mut self, name: &str, collector: &str, base: &str, emitter: &str, model: &str,
+        substrate: Option<&str>, thermal: Option<&str>, kwargs: Option<Bound<'_, PyDict>>,
+    ) -> PyResult<()> {
+        self.Q(name, collector, base, emitter, model, substrate, thermal, kwargs)
     }
 
     #[pyo3(signature = (*, name, drain, gate, source, bulk, model, **kwargs))]
@@ -1068,14 +1083,16 @@ impl PySubcircuit {
         self.M(name, drain, gate, source, bulk, model, kwargs)
     }
 
-    #[pyo3(signature = (*, name, drain, gate, source, model))]
-    fn J(&mut self, name: &str, drain: &str, gate: &str, source: &str, model: &str) {
-        self.push(Component::Jfet { name: name.into(), nd: self.net(drain), ng: self.net(gate), ns: self.net(source), model: model.into(), params: vec![] });
+    #[pyo3(signature = (*, name, drain, gate, source, model, **kwargs))]
+    fn J(&mut self, name: &str, drain: &str, gate: &str, source: &str, model: &str, kwargs: Option<Bound<'_, PyDict>>) -> PyResult<()> {
+        self.push(Component::Jfet { name: name.into(), nd: self.net(drain), ng: self.net(gate), ns: self.net(source), model: model.into(), params: kw_params(kwargs)? });
+        Ok(())
     }
 
-    #[pyo3(signature = (*, name, drain, gate, source, model))]
-    fn Z(&mut self, name: &str, drain: &str, gate: &str, source: &str, model: &str) {
-        self.push(Component::Mesfet { name: name.into(), nd: self.net(drain), ng: self.net(gate), ns: self.net(source), model: model.into(), params: vec![] });
+    #[pyo3(signature = (*, name, drain, gate, source, model, **kwargs))]
+    fn Z(&mut self, name: &str, drain: &str, gate: &str, source: &str, model: &str, kwargs: Option<Bound<'_, PyDict>>) -> PyResult<()> {
+        self.push(Component::Mesfet { name: name.into(), nd: self.net(drain), ng: self.net(gate), ns: self.net(source), model: model.into(), params: kw_params(kwargs)? });
+        Ok(())
     }
 
     #[pyo3(signature = (*, name, positive, negative, control_positive, control_negative, model))]

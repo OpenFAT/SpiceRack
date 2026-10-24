@@ -575,8 +575,9 @@ fn emit_component(comp: &Component) -> Result<String, CodeGenError> {
             s
         }
         // `[CMP]` bjt models: `Name c b e [s] ModelName parameter=value ...`
-        Component::Bjt { name, nc, nb, ne, model, params } => {
-            let mut s = format!("q{} ({} {} {}) {}", name.to_lowercase(), nc, nb, ne, model);
+        Component::Bjt { name, nc, nb, ne, extra_nodes, model, params } => {
+            let extra: String = extra_nodes.iter().map(|n| format!(" {n}")).collect();
+            let mut s = format!("q{} ({} {} {}{extra}) {}", name.to_lowercase(), nc, nb, ne, model);
             s.push_str(&emit_params(params));
             s
         }
