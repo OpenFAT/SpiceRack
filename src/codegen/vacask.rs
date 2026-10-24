@@ -87,7 +87,7 @@ const SCALES: &[(&str, &str, f64)] = &[
 ];
 
 /// Parse a SPICE number-with-suffix. Returns `(value, vacask_spelling)`.
-fn parse_spice_num(t: &str) -> Option<(f64, String)> {
+pub(super) fn parse_spice_num(t: &str) -> Option<(f64, String)> {
     let b = t.as_bytes();
     let mut end = 0;
     while end < b.len() {

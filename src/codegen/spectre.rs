@@ -32,7 +32,23 @@
 
 use super::format_spice_number;
 use crate::ir::*;
-use super::{params as emit_params, param_defs, CodeGenError};
+use super::{param_defs, CodeGenError};
+
+/// A SPICE number in a parameter value, spelled without its scale factor:
+/// Spectre reads `M` as mega where SPICE reads milli (`IKF=30M` is 30e-3),
+/// so `30M` must reach Spectre as `0.03`. Anything else (an expression, a
+/// name) passes unchanged.
+fn spectre_value(v: &str) -> String {
+    match super::vacask::parse_spice_num(v.trim()) {
+        Some((_, plain)) => plain,
+        None => v.to_string(),
+    }
+}
+
+/// ` k=v k=v`, numbers respelled for Spectre.
+fn emit_params(params: &[(String, String)]) -> String {
+    params.iter().map(|(k, v)| format!(" {k}={}", spectre_value(v))).collect()
+}
 
 
 /// Format a number for the Spectre native language.
@@ -284,12 +300,51 @@ fn emit_measure(meas: &str) -> String {
 /// `[REF]` p.498 `model nch bsim3v3 type=n mobmod=1 capmod=2 version=3.1`.
 /// No Cadence example parenthesises model parameters; the previous version
 /// of this file did.
-fn emit_model(m: &ModelDef) -> String {
-    let mut s = format!("model {} {}", m.name, m.kind);
-    for (k, v) in &m.parameters {
-        s.push_str(&format!(" {}={}", k, v));
+/// `.model` type (and LEVEL) -> Spectre master and its `type=`. A model that
+/// is not here is refused: written as its SPICE type it names no Spectre
+/// master, and "the nearest model" would be a different set of equations.
+/// `.model` types SPICE defines; a kind outside this list is a Spectre master.
+const SPICE_MODEL_TYPES: &[&str] = &["nmos", "pmos", "npn", "pnp", "d", "njf", "pjf", "nmf", "pmf", "r", "c", "l", "sw", "csw", "vdmos", "ltra", "txl", "cpl", "urc"];
+
+/// The Spectre master for `m` (`None`: write `m.kind` as it is) and its `type=`.
+fn spectre_master(m: &ModelDef) -> Result<(Option<&'static str>, Option<&'static str>), CodeGenError> {
+    let level = m.parameters.iter().find(|(k, _)| k.eq_ignore_ascii_case("level")).and_then(|(_, v)| super::vacask::parse_spice_num(v.trim())).map_or(1, |(l, _)| l as u32);
+    let kind = m.kind.to_ascii_lowercase();
+    let mos = |l: u32| match l {
+        1 => Some("mos1"),
+        2 => Some("mos2"),
+        3 => Some("mos3"),
+        8 | 49 => Some("bsim3v3"),
+        14 | 54 => Some("bsim4"),
+        _ => None,
+    };
+    let found = match kind.as_str() {
+        "nmos" => mos(level).map(|m| (m, Some("n"))),
+        "pmos" => mos(level).map(|m| (m, Some("p"))),
+        "npn" if level == 1 => Some(("bjt", Some("npn"))),
+        "pnp" if level == 1 => Some(("bjt", Some("pnp"))),
+        "d" if level == 1 => Some(("diode", None)),
+        // Not a SPICE type: already a Spectre master (`bsim3v3`), kept.
+        k if !SPICE_MODEL_TYPES.contains(&k) => return Ok((None, None)),
+        _ => None,
+    };
+    found.map(|(m, t)| (Some(m), t)).ok_or_else(|| unsupported_component(&format!("model {} ({} level {level}): no Spectre master mapped", m.name, m.kind)))
+}
+
+fn emit_model(m: &ModelDef) -> Result<String, CodeGenError> {
+    let (master, ty) = spectre_master(m)?;
+    let mut s = format!("model {} {}", m.name, master.unwrap_or(&m.kind));
+    if let Some(t) = ty {
+        s.push_str(&format!(" type={t}"));
     }
-    s
+    // A mapped SPICE model: LEVEL chose the master, which takes no `level`,
+    // and Spectre's names are lowercase. A Spectre master's card is kept.
+    let kept: Vec<(String, String)> = match master {
+        Some(_) => m.parameters.iter().filter(|(k, _)| !k.eq_ignore_ascii_case("level")).map(|(k, v)| (k.to_ascii_lowercase(), v.clone())).collect(),
+        None => m.parameters.clone(),
+    };
+    s.push_str(&emit_params(&kept));
+    Ok(s)
 }
 
 /// `[REF]` p.535: `Coax1 pin nin out gnd coax zin=75 zout=150 len=35m`
@@ -318,7 +373,7 @@ fn emit_subcircuit_body(sc: &Subcircuit) -> Result<String, CodeGenError> {
     }
 
     for m in &sc.models {
-        lines.push(emit_model(m));
+        lines.push(emit_model(m)?);
     }
 
     for comp in &sc.components {
@@ -397,7 +452,7 @@ pub(super) fn netlist(ir: &CircuitIR) -> Result<String, CodeGenError> {
     }
 
     for m in &ir.top.models {
-        lines.push(emit_model(m));
+        lines.push(emit_model(m)?);
     }
 
     for sc in &ir.subcircuit_defs {
@@ -447,7 +502,14 @@ pub(super) fn netlist(ir: &CircuitIR) -> Result<String, CodeGenError> {
         // `[REF]` p.517-518: `save 7 out OpAmp1.comp M1:currents ...` —
         // bare signal names, not `V(...)`.
         for save in &tb.saves {
-            lines.push(format!("save {}", bare_node(save)));
+            // `i(V1)` is the source's current: its terminal, under the
+            // lowercased name the instance is written with.
+            let t = save.trim();
+            let current = t.strip_prefix("i(").or_else(|| t.strip_prefix("I(")).and_then(|r| r.strip_suffix(')'));
+            lines.push(match current {
+                Some(dev) => format!("save {}:p", inst_ref(dev.trim())),
+                None => format!("save {}", bare_node(save)),
+            });
         }
 
         for meas in &tb.measures {
@@ -651,6 +713,11 @@ fn emit_analysis(analysis: &Analysis) -> Result<String, CodeGenError> {
         // `dev` = "Device instance whose parameter value is to be swept".
         // SPICE `.dc Vin 0 5 0.1` sweeps the *dc value of a source*, which
         // in Spectre is `dev=vin param=dc` — not `param=Vin`.
+        // A second sweep needs a `sweep` block around the first; written as
+        // one `dc` it would silently drop the outer sweep.
+        Analysis::Dc { sweeps } if sweeps.len() > 1 => {
+            return Err(unsupported_analysis("a .dc with nested sweeps (only one is written as a Spectre dc)"));
+        }
         Analysis::Dc { sweeps } => {
             if let Some(sw) = sweeps.first() {
                 let selector = dc_sweep_selector(&sw.source);
@@ -681,7 +748,7 @@ fn emit_analysis(analysis: &Analysis) -> Result<String, CodeGenError> {
         // by the simulator solely to maintain the aesthetics of the
         // computed waveforms") — the closest analogue of SPICE's tstep.
         // Verbatim example `[REF]` p.433: `tran1 tran stop=0.5u ...`.
-        Analysis::Transient { step, stop, start, max_step, .. } => {
+        Analysis::Transient { step, stop, start, max_step, uic } => {
             let mut s = format!(
                 "tran1 tran step={} stop={}",
                 spectre_num(*step),
@@ -692,6 +759,10 @@ fn emit_analysis(analysis: &Analysis) -> Result<String, CodeGenError> {
             }
             if let Some(ms) = max_step {
                 s.push_str(&format!(" maxstep={}", spectre_num(*ms)));
+            }
+            // SPICE `uic`: start from the initial conditions, no DC solve.
+            if *uic {
+                s.push_str(" skipdc=yes");
             }
             s
         }

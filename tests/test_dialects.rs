@@ -176,6 +176,28 @@ fn raw_spice_is_refused_not_dropped() {
     }
 }
 
+/// Spectre deck text that would parse but mean something else.
+#[test]
+fn spectre_keeps_spice_meaning() {
+    let mut ir = circuit(vec![Analysis::Transient { step: 1e-9, stop: 1e-6, start: None, max_step: None, uic: true }]);
+    ir.top.components.retain(|c| !matches!(c, Component::BehavioralVoltage { .. }));
+    ir.top.models = vec![ModelDef { name: "qn".into(), kind: "NPN".into(), parameters: vec![("IKF".into(), "30M".into())] }];
+    ir.testbench.as_mut().unwrap().saves = vec!["i(V1)".into()];
+    let n = netlist(&ir, Dialect::Spectre).unwrap();
+    // SPICE 30M is milli; Spectre's M is mega, its m milli.
+    assert!(n.contains("model qn bjt type=npn ikf=30m"), "{n}");
+    assert!(n.contains("skipdc=yes"), "uic: {n}");
+    assert!(n.contains("save v1:p"), "current save: {n}");
+
+    let tb = ir.testbench.as_mut().unwrap();
+    let sweep = |s: &str| DcSweep { source: s.into(), start: 0.0, stop: 1.0, step: 0.1 };
+    tb.analyses = vec![Analysis::Dc { sweeps: vec![sweep("V1"), sweep("temp")] }];
+    assert!(netlist(&ir, Dialect::Spectre).is_err(), "a nested .dc must not lose a sweep");
+    ir.top.models[0].kind = "VDMOS".into();
+    ir.testbench.as_mut().unwrap().analyses = vec![Analysis::Op];
+    assert!(netlist(&ir, Dialect::Spectre).unwrap_err().to_string().contains("no Spectre master"));
+}
+
 /// An empty option value is a flag: bare in SPICE, refused by Spectre, whose
 /// `options` statement takes `name=value` only.
 #[test]

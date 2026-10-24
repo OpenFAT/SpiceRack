@@ -377,7 +377,8 @@ fn test_spectre_mosfet_circuit() {
 
     assert!(netlist.contains("mp1 (out in vdd vdd) pmos_3p3 W=2u L=180n"), "mosfet: {}", netlist);
     assert!(netlist.contains("mn1 (out in 0 0) nmos_3p3 W=1u L=180n"), "mosfet n: {}", netlist);
-    assert!(netlist.contains("model nmos_3p3 NMOS VTO=0.7"), "model: {}", netlist);
+    // SPICE NMOS level 1 is Spectre's mos1 with type=n; keys lowercased.
+    assert!(netlist.contains("model nmos_3p3 mos1 type=n vto=0.7"), "model: {}", netlist);
     assert!(netlist.contains("dc1 dc"), "dc: {}", netlist);
     assert!(netlist.contains("mytemp options temp=27"), "temp: {}", netlist);
 }
