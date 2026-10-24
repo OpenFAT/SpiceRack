@@ -1,12 +1,11 @@
 use spicerack::circuit::*;
-use spicerack::unit::*;
 
 #[test]
 fn test_resistor_divider() {
     let mut c = Circuit::new("resistor_divider");
     c.v("in", "vin", Node::Ground, 5.0);
-    c.r("1", "vin", "vout", UnitValue::new(1.0, U_KOHM));
-    c.r("2", "vout", Node::Ground, UnitValue::new(1.0, U_KOHM));
+    c.r("1", "vin", "vout", 1e3);
+    c.r("2", "vout", Node::Ground, 1e3);
 
     let netlist = c.to_string();
     assert!(netlist.contains(".title resistor_divider"));
@@ -259,11 +258,11 @@ fn test_ground_node() {
 #[test]
 fn test_unit_values_in_components() {
     let mut c = Circuit::new("units");
-    c.r("1", "in", "out", UnitValue::new(1.0, U_KOHM));
-    c.c("1", "out", Node::Ground, UnitValue::new(10.0, U_PF));
-    c.l("1", "in", "out2", UnitValue::new(1.0, U_UH));
-    c.v("dd", "vdd", Node::Ground, UnitValue::new(3.3, U_V));
-    c.i("bias", Node::Ground, "base", UnitValue::new(10.0, U_UA));
+    c.r("1", "in", "out", 1e3);
+    c.c("1", "out", Node::Ground, 10e-12);
+    c.l("1", "in", "out2", 1e-6);
+    c.v("dd", "vdd", Node::Ground, 3.3);
+    c.i("bias", Node::Ground, "base", 10e-6);
 
     let netlist = c.to_string();
     assert!(netlist.contains("R1 in out 1k"));
@@ -279,9 +278,9 @@ fn test_full_circuit_all_elements() {
     let mut c = Circuit::new("folded_cascode");
     c.m("1", "drain_1", "gate_1", "source_1", "bulk", "nmos_3p3");
     c.m("2", "drain_2", "gate_2", "source_2", "bulk", "pmos_3p3");
-    c.r("1", "vdd", "drain_1", UnitValue::new(1.0, U_KOHM));
-    c.c("1", "out", Node::Ground, UnitValue::new(10.0, U_PF));
-    c.v("dd", "vdd", Node::Ground, UnitValue::new(3.3, U_V));
+    c.r("1", "vdd", "drain_1", 1e3);
+    c.c("1", "out", Node::Ground, 10e-12);
+    c.v("dd", "vdd", Node::Ground, 3.3);
 
     let netlist = c.to_string();
     assert!(netlist.contains("M1 drain_1 gate_1 source_1 bulk nmos_3p3"));

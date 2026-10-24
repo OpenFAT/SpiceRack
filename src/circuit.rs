@@ -66,10 +66,8 @@ impl ComponentValue {
 
 /// Format f64 in SPICE notation (use SI prefix when clean)
 pub fn format_spice_number(v: f64) -> String {
-    use crate::unit::SiPrefix;
-    let prefix = SiPrefix::best_for(v);
-    let mantissa = v / prefix.multiplier();
-    let suffix = prefix.spice_suffix();
+    let (mult, suffix) = crate::unit::si_prefix(v);
+    let mantissa = v / mult;
     // Round to avoid floating point artifacts (10e-6/1e-6 = 10.000000000000002)
     let rounded = mantissa.round();
     if (mantissa - rounded).abs() < 1e-9 && rounded.abs() < 1e15 {
