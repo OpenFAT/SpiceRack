@@ -19,7 +19,7 @@ num-complex = "0.4"
 thiserror = "2"
 tempfile = "3"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "1", features = ["float_roundtrip"] }
 regex = "1"
 
 [dev-dependencies]
@@ -28,3 +28,7 @@ pretty_assertions = "1"
 [features]
 default = ["python"]
 python = ["dep:pyo3"]
+
+[[bin]]
+name = "spice2rack"
+path = "tools/spice2rack.rs"

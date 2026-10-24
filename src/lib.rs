@@ -10,6 +10,8 @@ pub mod backend;
 pub mod simulation;
 pub mod measure_parse;
 pub mod lint;
+pub mod import;
+pub mod peg;
 pub mod ir;
 pub mod codegen;
 pub mod veriloga;
