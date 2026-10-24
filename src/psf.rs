@@ -67,40 +67,14 @@ pub fn is_psf(data: &[u8]) -> bool {
 mod tests {
     use super::*;
 
-    /// A PSF file shaped as libpsf describes: magic in the trailer, sections
-    /// reached through a table of contents just before it.
+    /// Sections + TOC, then the trailer: magic and a 4-byte data size.
     fn spec_shaped_psf() -> Vec<u8> {
-        let data = vec![0u8; 64];
-        let mut blob = data.clone();
-        for (n, offset) in [(0u32, 0u32), (1, 32)] {
-            blob.extend_from_slice(&n.to_be_bytes());
-            blob.extend_from_slice(&offset.to_be_bytes());
-        }
-        blob.extend_from_slice(PSF_MAGIC);
-        blob.extend_from_slice(&(data.len() as u32).to_be_bytes());
-        blob
-    }
-
-    #[test]
-    fn magic_lives_in_the_trailer_not_the_head() {
-        let blob = spec_shaped_psf();
-        let n = blob.len();
-        assert_eq!(&blob[n - 12..n - 4], PSF_MAGIC);
-        assert_ne!(&blob[..8], PSF_MAGIC);
+        [vec![0u8; 80], PSF_MAGIC.to_vec(), 64u32.to_be_bytes().to_vec()].concat()
     }
 
     #[test]
     fn detects_a_spec_correct_file() {
         assert!(is_psf(&spec_shaped_psf()));
-    }
-
-    #[test]
-    fn toc_arithmetic_matches_libpsf() {
-        let blob = spec_shaped_psf();
-        let size = blob.len();
-        let datasize =
-            u32::from_be_bytes(blob[size - 4..].try_into().unwrap()) as usize;
-        assert_eq!((size - datasize - 12) / 8, 2, "two TOC entries");
     }
 
     #[test]

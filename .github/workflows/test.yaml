@@ -24,11 +24,11 @@ jobs:
         uses: DeterminateSystems/magic-nix-cache-action@f69a2d3e148e90223fe63ab6e3f6331f2e7e33dc # main
 
       - name: Cargo tests
-        run: nix develop --command cargo test
+        run: nix develop .#testing --command cargo test
 
       - name: Python tests
         run: |
-          nix develop --command bash -c '
+          nix develop .#testing --command bash -c '
             python3 -m venv .venv --system-site-packages
             source .venv/bin/activate
             maturin develop

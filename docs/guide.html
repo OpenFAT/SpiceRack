@@ -44,7 +44,7 @@
 source .venv/bin/activate
 pip install maturin pytest
 maturin develop</code></pre>
-<p>Or, with Nix: <code>nix develop</code>.</p>
+<p>Or, with Nix: <code>nix develop</code> (build tools only). <code>nix develop .#testing</code> adds the simulators and PDKs the integration tests use.</p>
 <p>External tools, by feature:</p>
 <table>
 <tr><th>Tool</th><th>Needed for</th></tr>

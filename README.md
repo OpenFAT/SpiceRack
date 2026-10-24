@@ -20,7 +20,7 @@ pip install maturin pytest
 maturin develop
 ```
 
-Or with Nix: `nix develop`.
+Or with Nix: `nix develop` (build tools only; SpiceRack does not ship a simulator). `nix develop .#testing` adds ngspice, OpenVAF, VACASK and the sky130/gf180 PDKs used by the integration tests.
 
 You also need at least one simulator to actually run an analysis. Start with `ngspice` unless you need something specific. Other tools are optional and only matter for particular features:
 

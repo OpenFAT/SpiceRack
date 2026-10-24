@@ -1,7 +1,7 @@
 """Reusable testbench recipes for common analog and mixed-signal blocks.
 
-The functions in this module intentionally build ordinary ``spicerack.Testbench``
-objects. They are small recipes, not a second simulation framework.
+Each recipe builds an ordinary ``spicerack.Testbench`` plus an extractor that
+turns its result into metrics. Recipes, not a second simulation framework.
 """
 
 from __future__ import annotations
@@ -9,6 +9,10 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 from typing import Any, Callable
+
+import numpy as np
+
+from .analysis import ac_bandwidth_hz, ac_passband_db, ac_phase_margin_deg, crossings
 
 
 @dataclass
@@ -50,15 +54,26 @@ class DesignBench:
         values = self.extractor(result)
         missing = [m for m in self.measurements if m not in values]
         if missing:
-            raise RuntimeError(
-                f"bench '{self.name}' declared {missing} but did not compute them"
-            )
+            raise RuntimeError(f"bench '{self.name}' declared {missing} but did not compute them")
         return values
 
 
-def _save(tb: Any, *signals: str) -> None:
-    if signals:
-        tb.save(*signals)
+def _sample(res: Any, node: str, at: Any) -> np.ndarray:
+    """``node`` linearly interpolated at time(s) ``at``."""
+    return np.interp(at, np.asarray(res.time, float), np.asarray(res[node], float))
+
+
+def _step_pwl(tb: Any, name: str, node: str, ref: str, levels: Any, period: float) -> None:
+    """Hold ``levels[k]`` over ``[k*period, (k+1)*period)`` with period/1000 edges.
+
+    Explicit PWL, because pulse sources with unrelated periods do not enumerate
+    the states: some get visited twice and others never.
+    """
+    edge = period / 1000.0
+    points = [(0.0, float(levels[0]))]
+    for k in range(1, len(levels)):
+        points += [(k * period, float(levels[k - 1])), (k * period + edge, float(levels[k]))]
+    tb.PieceWiseLinearVoltageSource(name=name, positive=node, negative=ref, values=points)
 
 
 def amplifier_voltage_gain(
@@ -78,7 +93,7 @@ def amplifier_voltage_gain(
     tb.V(name=source_name, positive=input_node, negative=reference_node, value=0.0, ac=ac_magnitude)
     if load_resistance is not None:
         tb.R(name="load", positive=output_node, negative=reference_node, value=load_resistance)
-    _save(tb, f"V({input_node})", f"V({output_node})")
+    tb.save(f"V({input_node})", f"V({output_node})")
     tb.add_operating_point()
     tb.add_ac(variation="dec", number_of_points=100, start_frequency=start_frequency, stop_frequency=stop_frequency)
     # Simulator-side cross-check on the extractor below: ngspice evaluates this
@@ -86,19 +101,16 @@ def amplifier_voltage_gain(
     tb.measure("ac", "gain_at_1khz_db", "find", f"vdb({output_node})", "at=1k")
 
     def extract(ac: Any) -> dict[str, float]:
-        from .analysis import ac_bandwidth_hz, ac_passband_db, ac_phase_margin_deg
-
-        metrics = {
+        # A sub-unity-gain stage has no 0 dB crossing, so no phase margin.
+        try:
+            pm = ac_phase_margin_deg(ac, output_node)
+        except ValueError:
+            pm = float("nan")
+        return {
             "gain_midband_db": ac_passband_db(ac, output_node),
             "bandwidth_hz": ac_bandwidth_hz(ac, output_node),
+            "phase_margin_deg": pm,
         }
-        # Only defined if the response actually reaches 0 dB in the sweep;
-        # a sub-unity-gain stage has no unity-gain crossing.
-        try:
-            metrics["phase_margin_deg"] = ac_phase_margin_deg(ac, output_node)
-        except ValueError:
-            metrics["phase_margin_deg"] = float("nan")
-        return metrics
 
     return DesignBench(
         name="voltage_gain",
@@ -125,25 +137,21 @@ def amplifier_current_gain(
 ) -> DesignBench:
     tb = ps.Testbench(dut)
     tb.I(name=source_name, positive=input_node, negative=reference_node, value=0.0, ac=ac_magnitude)
-    # The sense source is the output's return path to the reference, not a
-    # dangling stub: a floating sense node carries no current, so the branch
-    # would read exactly 0 for every DUT.
+    # The sense source is the output's return path to the reference: a floating
+    # sense node carries no current, so the branch would read 0 for every DUT.
     if load_resistance is None:
         tb.V(name="out_sense", positive=output_node, negative=reference_node, value=0.0)
     else:
         tb.V(name="out_sense", positive=output_node, negative="out_sense_n", value=0.0)
         tb.R(name="load", positive="out_sense_n", negative=reference_node, value=load_resistance)
-    _save(tb, "I(Vout_sense)", f"V({output_node})")
+    tb.save("I(Vout_sense)", f"V({output_node})")
     tb.add_operating_point()
     tb.add_ac(variation="dec", number_of_points=80, start_frequency=1.0, stop_frequency=100e6)
 
     def extract(ac: Any) -> dict[str, float]:
-        from .analysis import ac_bandwidth_hz, ac_passband_db
-
         branch = "i(vout_sense)"
-        peak_db = ac_passband_db(ac, branch)
         return {
-            "current_gain_midband": (10.0 ** (peak_db / 20.0)) / ac_magnitude,
+            "current_gain_midband": 10.0 ** (ac_passband_db(ac, branch) / 20.0) / ac_magnitude,
             "current_gain_bandwidth_hz": ac_bandwidth_hz(ac, branch),
         }
 
@@ -171,16 +179,14 @@ def amplifier_transimpedance(
 ) -> DesignBench:
     tb = ps.Testbench(dut)
     tb.I(name=source_name, positive=input_node, negative=reference_node, value=0.0, ac=ac_current)
-    _save(tb, f"V({output_node})", f"I(V{source_name})")
+    tb.save(f"V({output_node})", f"I(V{source_name})")
     tb.add_operating_point()
     tb.add_ac(variation="dec", number_of_points=100, start_frequency=1.0, stop_frequency=1e9)
-    def extract(ac: Any) -> dict[str, float]:
-        from .analysis import ac_bandwidth_hz, ac_passband_db
 
-        # |V_out| / |I_in| in ohms. The AC source magnitude is the denominator.
-        peak_db = ac_passband_db(ac, output_node)
+    def extract(ac: Any) -> dict[str, float]:
+        # |V_out| / |I_in| in ohms; the AC source magnitude is the denominator.
         return {
-            "transimpedance_ohm": (10.0 ** (peak_db / 20.0)) / ac_current,
+            "transimpedance_ohm": 10.0 ** (ac_passband_db(ac, output_node) / 20.0) / ac_current,
             "tia_bandwidth_hz": ac_bandwidth_hz(ac, output_node),
         }
 
@@ -207,42 +213,33 @@ def charge_amplifier(
     pulse_width: float = 10e-9,
 ) -> DesignBench:
     edge = pulse_width / 100
-    # A trapezoidal pulse carries pulsed_value * (width + (rise + fall) / 2).
-    # Dividing by pulse_width alone over-injects by (rise + fall) / 2.
-    effective_width = pulse_width + edge
-    pulse_current = charge_coulombs / effective_width
     period = 10 * pulse_width
     tb = ps.Testbench(dut)
+    # A trapezoidal pulse carries pulsed_value * (width + (rise + fall) / 2);
+    # dividing by pulse_width alone over-injects by (rise + fall) / 2.
     tb.PulseCurrentSource(
         name="qstep",
         positive=input_node,
         negative=reference_node,
         initial_value=0.0,
-        pulsed_value=pulse_current,
+        pulsed_value=charge_coulombs / (pulse_width + edge),
         pulse_width=pulse_width,
         period=period,
         rise_time=edge,
         fall_time=edge,
     )
-    _save(tb, f"V({output_node})")
+    tb.save(f"V({output_node})")
     tb.add_transient(step_time=edge, end_time=20 * pulse_width)
 
     def extract(tran: Any) -> dict[str, float]:
-        from .analysis import _interp_at
-
-        time = [float(t) for t in tran.time]
-        vout = list(tran[output_node])
-        # A second pulse arrives at `period`; measure the first one only.
-        settled = pulse_width + 2 * edge
-        v_pre = _interp_at(time, vout, 0.0)
-        v_post = _interp_at(time, vout, settled)
-        # Droop over the hold window, clear of both the step and the next pulse.
+        # First pulse only (the next arrives at `period`); droop over the hold
+        # window, clear of both the step and the next pulse.
         t1, t2 = 2 * pulse_width, 0.9 * period
-        droop = (_interp_at(time, vout, t2) - _interp_at(time, vout, t1)) / (t2 - t1)
+        v_pre, v_post, v1, v2 = _sample(tran, output_node, [0.0, pulse_width + 2 * edge, t1, t2])
         return {
             "q_injected": charge_coulombs,
-            "delta_vout": v_post - v_pre,
-            "droop_rate": droop,
+            "delta_vout": float(v_post - v_pre),
+            "droop_rate": float((v2 - v1) / (t2 - t1)),
         }
 
     return DesignBench(
@@ -269,48 +266,31 @@ def dac_static_linearity(
     code_period: float = 1e-6,
     full_scale: float | None = None,
 ) -> DesignBench:
-    n_bits = len(code_nodes)
-    n_codes = 2 ** n_bits
+    n_codes = 2 ** len(code_nodes)
+    codes = np.arange(n_codes)
     tb = ps.Testbench(dut)
-    # Walk every code with one PWL per bit forming a binary counter. Stepping
-    # each bit and then sweeping only bit 0 leaves bits 1..N-1 parked at zero,
-    # so a multi-bit DAC is never actually exercised.
-    edge = code_period / 1000.0
+    # Walk every code: one PWL per bit forming a binary counter. Stepping each
+    # bit and then sweeping only bit 0 would leave the upper bits parked at zero.
     for idx, node in enumerate(code_nodes):
-        points = [(0.0, v_high if (0 >> idx) & 1 else 0.0)]
-        for code in range(1, n_codes):
-            level = v_high if (code >> idx) & 1 else 0.0
-            t = code * code_period
-            points.append((t, points[-1][1]))
-            points.append((t + edge, level))
-        tb.PieceWiseLinearVoltageSource(
-            name=f"code{idx}", positive=node, negative=reference_node, values=points
-        )
+        _step_pwl(tb, f"code{idx}", node, reference_node, v_high * ((codes >> idx) & 1), code_period)
     if load_resistance is not None:
         tb.R(name="load", positive=output_node, negative=reference_node, value=load_resistance)
-    _save(tb, f"V({output_node})")
+    tb.save(f"V({output_node})")
     tb.add_transient(step_time=code_period / 50.0, end_time=n_codes * code_period)
 
     def extract(tran: Any) -> dict[str, float]:
-        from .analysis import _interp_at
-
-        time = [float(t) for t in tran.time]
-        vout = list(tran[output_node])
         # Sample each code late in its interval, after the bits have settled.
-        levels = [
-            _interp_at(time, vout, (code + 0.9) * code_period)
-            for code in range(n_codes)
-        ]
+        levels = _sample(tran, output_node, (codes + 0.9) * code_period)
         lsb = (levels[-1] - levels[0]) / (n_codes - 1)
-        ideal_lsb = v_high / (n_codes - 1) if full_scale is None else full_scale / (n_codes - 1)
-        dnl = [(levels[k] - levels[k - 1]) / lsb - 1.0 for k in range(1, n_codes)]
-        inl = [(levels[k] - (levels[0] + k * lsb)) / lsb for k in range(n_codes)]
+        ideal_lsb = (v_high if full_scale is None else full_scale) / (n_codes - 1)
+        steps = np.diff(levels)
+        inl = (levels - (levels[0] + codes * lsb)) / lsb
         return {
-            "offset_error_lsb": levels[0] / ideal_lsb,
-            "gain_error": lsb / ideal_lsb - 1.0,
-            "dnl_max_lsb": max(abs(d) for d in dnl),
-            "inl_max_lsb": max(abs(i) for i in inl),
-            "monotonic": float(all(levels[k] >= levels[k - 1] for k in range(1, n_codes))),
+            "offset_error_lsb": float(levels[0] / ideal_lsb),
+            "gain_error": float(lsb / ideal_lsb - 1.0),
+            "dnl_max_lsb": float(np.max(np.abs(steps / lsb - 1.0))),
+            "inl_max_lsb": float(np.max(np.abs(inl))),
+            "monotonic": float(np.all(steps >= 0)),
         }
 
     return DesignBench(
@@ -345,7 +325,6 @@ def adc_ramp(
     its conversion period and thresholding at half the logic swing.
     """
     output_nodes = output_nodes or ["d0"]
-    n_bits = len(output_nodes)
     end_time = conversion_period * conversions
     tb = ps.Testbench(dut)
     tb.PieceWiseLinearVoltageSource(
@@ -365,40 +344,23 @@ def adc_ramp(
         rise_time=conversion_period / 1000,
         fall_time=conversion_period / 1000,
     )
-    _save(tb, f"V({input_node})", f"V({clock_node})",
-          *(f"V({node})" for node in output_nodes))
+    tb.save(f"V({input_node})", f"V({clock_node})", *(f"V({node})" for node in output_nodes))
     tb.add_transient(step_time=conversion_period / 50, end_time=end_time)
 
     def extract(tran: Any) -> dict[str, float]:
-        from .analysis import _interp_at
-
-        time = [float(t) for t in tran.time]
-        vin = list(tran[input_node])
-        bits = [list(tran[node]) for node in output_nodes]
-        threshold = logic_high / 2.0
-
-        codes, inputs = [], []
-        for k in range(conversions):
-            t = (k + 0.9) * conversion_period
-            code = sum(
-                (1 << b) if _interp_at(time, bits[b], t) > threshold else 0
-                for b in range(n_bits)
-            )
-            codes.append(code)
-            inputs.append(_interp_at(time, vin, t))
-
-        seen = set(codes)
-        # Missing codes are counted over full scale, the conventional definition.
-        # This assumes the ramp spans full scale -- a partial ramp reports the
-        # codes it never reached as missing, which is why `codes_seen` is also
-        # reported: compare it against 2**n_bits to tell the two apart.
-        expected = set(range(1 << n_bits))
-        transitions = sum(1 for k in range(1, len(codes)) if codes[k] != codes[k - 1])
+        t = (np.arange(conversions) + 0.9) * conversion_period
+        bits = np.array([_sample(tran, node, t) > logic_high / 2.0 for node in output_nodes])
+        codes = (bits.astype(int) << np.arange(len(output_nodes))[:, None]).sum(axis=0)
+        steps = np.diff(codes)
+        # Missing codes are counted over full scale, the conventional definition,
+        # so a partial ramp reports codes it never reached as missing; compare
+        # `codes_seen` against 2**n_bits to tell the two apart.
+        seen = len(np.unique(codes))
         return {
-            "codes_seen": float(len(seen)),
-            "missing_codes": float(len(expected - seen)),
-            "transition_count": float(transitions),
-            "code_monotonic": float(all(codes[k] >= codes[k - 1] for k in range(1, len(codes)))),
+            "codes_seen": float(seen),
+            "missing_codes": float((1 << len(output_nodes)) - seen),
+            "transition_count": float(np.count_nonzero(steps)),
+            "code_monotonic": float(np.all(steps >= 0)),
         }
 
     return DesignBench(
@@ -406,8 +368,7 @@ def adc_ramp(
         category="adc",
         testbench=tb,
         intent="Ramp-code coverage, missing codes and code monotonicity.",
-        # Latency needs a DUT with a known pipeline depth to align against; it is
-        # not recoverable from a combinational converter's record.
+        # Latency needs a DUT with a known pipeline depth to align against.
         measurements=["codes_seen", "missing_codes", "transition_count", "code_monotonic"],
         result_fields=["tran.time", f"tran['{input_node}']", "digital output nodes"],
         validation=["codes increase monotonically", "no missing codes in target range"],
@@ -429,31 +390,25 @@ def switch_characterization(
 ) -> DesignBench:
     """On- and off-resistance from a control sweep across a known load.
 
-    The load is what makes the switch observable. Driving an ideal source into a
-    capacitor-only load passes no DC current, so V(out) equals V(in) for any
-    on-resistance and nothing about the switch can be recovered.
+    The load is what makes the switch observable: into a capacitor-only load no
+    DC current flows, V(out) equals V(in) for any on-resistance.
     """
     tb = ps.Testbench(dut)
     tb.V(name="sig", positive=input_node, negative=reference_node, value=signal_voltage)
     tb.V(name="ctrl", positive=control_node, negative=reference_node, value=0.0)
     tb.R(name="load", positive=output_node, negative=reference_node, value=load_resistance)
-    _save(tb, f"V({input_node})", f"V({output_node})", f"V({control_node})")
+    tb.save(f"V({input_node})", f"V({output_node})", f"V({control_node})")
     tb.add_dc(Vctrl=slice(0.0, control_high, control_high / 20.0))
 
     def extract(dc: Any) -> dict[str, float]:
-        vout = list(dc[output_node])
-        # Resistive divider: Vout = Vin * RL / (RL + Rsw)  ->  Rsw = RL*(Vin/Vout - 1)
-        def r_switch(v_out: float) -> float:
-            if v_out <= 0.0:
-                return float("inf")
-            return load_resistance * (signal_voltage / v_out - 1.0)
-
+        vout = dc[output_node]
+        v_off, v_on = float(vout[0]), float(vout[-1])
+        # Divider: Vout = Vin * RL / (RL + Rsw)  ->  Rsw = RL * (Vin/Vout - 1)
+        r_sw = lambda v: load_resistance * (signal_voltage / v - 1.0) if v > 0.0 else math.inf
         return {
-            "ron_ohm": r_switch(vout[-1]),
-            "roff_ohm": r_switch(vout[0]),
-            "off_isolation_db": 20.0 * math.log10(vout[0] / signal_voltage)
-            if vout[0] > 0.0
-            else float("-inf"),
+            "ron_ohm": r_sw(v_on),
+            "roff_ohm": r_sw(v_off),
+            "off_isolation_db": 20.0 * math.log10(v_off / signal_voltage) if v_off > 0.0 else -math.inf,
         }
 
     return DesignBench(
@@ -472,22 +427,10 @@ def switch_characterization(
 
 def _one_hot_walk(tb: Any, select_nodes: list[str], reference_node: str,
                   v_high: float, phase: float) -> None:
-    """Drive select lines one-hot, one channel per phase, via explicit PWL.
-
-    Pulse sources with unrelated periods do not enumerate the channels: some
-    codes get visited twice and others never, so channels silently go untested.
-    """
-    edge = phase / 1000.0
+    """Drive select lines one-hot, one channel per phase."""
+    hot = np.eye(len(select_nodes)) * v_high
     for idx, node in enumerate(select_nodes):
-        points = [(0.0, v_high if idx == 0 else 0.0)]
-        for k in range(1, len(select_nodes)):
-            level = v_high if k == idx else 0.0
-            t = k * phase
-            points.append((t, points[-1][1]))
-            points.append((t + edge, level))
-        tb.PieceWiseLinearVoltageSource(
-            name=f"sel{idx}", positive=node, negative=reference_node, values=points
-        )
+        _step_pwl(tb, f"sel{idx}", node, reference_node, hot[idx], phase)
 
 
 def mux_routing(
@@ -508,31 +451,25 @@ def mux_routing(
     on-resistance, so path gain and channel matching are unobservable.
     """
     select_nodes = select_nodes or [f"sel{i}" for i in range(len(input_nodes))]
-    levels = [float(idx + 1) for idx in range(len(input_nodes))]
+    levels = np.arange(1, len(input_nodes) + 1, dtype=float)
     tb = ps.Testbench(dut)
     for idx, node in enumerate(input_nodes):
-        tb.V(name=f"in{idx}", positive=node, negative=reference_node, value=levels[idx])
+        tb.V(name=f"in{idx}", positive=node, negative=reference_node, value=float(levels[idx]))
     _one_hot_walk(tb, select_nodes, reference_node, v_high, phase)
     tb.R(name="load", positive=output_node, negative=reference_node, value=load_resistance)
-    _save(tb, f"V({output_node})", *(f"V({n})" for n in input_nodes + select_nodes))
+    tb.save(f"V({output_node})", *(f"V({n})" for n in input_nodes + select_nodes))
     tb.add_transient(step_time=phase / 100.0, end_time=len(input_nodes) * phase)
 
     def extract(tran: Any) -> dict[str, float]:
-        from .analysis import _interp_at
-
-        time = [float(t) for t in tran.time]
-        vout = list(tran[output_node])
-        gains, routed = [], True
-        for idx, level in enumerate(levels):
-            v = _interp_at(time, vout, (idx + 0.9) * phase)
-            gains.append(v / level)
-            # The output must sit nearer its own channel than any other.
-            routed &= min(range(len(levels)), key=lambda k: abs(v - levels[k])) == idx
+        v = _sample(tran, output_node, (np.arange(len(levels)) + 0.9) * phase)
+        gains = v / levels
+        # The output must sit nearer its own channel than any other.
+        nearest = np.argmin(np.abs(v[:, None] - levels[None, :]), axis=1)
         return {
-            "selected_gain_min": min(gains),
-            "selected_gain_max": max(gains),
-            "channel_gain_mismatch": max(gains) - min(gains),
-            "all_channels_routed": float(routed),
+            "selected_gain_min": float(gains.min()),
+            "selected_gain_max": float(gains.max()),
+            "channel_gain_mismatch": float(np.ptp(gains)),
+            "all_channels_routed": float(np.all(nearest == np.arange(len(levels)))),
         }
 
     return DesignBench(
@@ -568,26 +505,20 @@ def demux_routing(
     _one_hot_walk(tb, select_nodes, reference_node, v_high, phase)
     for idx, node in enumerate(output_nodes):
         tb.R(name=f"load{idx}", positive=node, negative=reference_node, value=load_resistance)
-    _save(tb, f"V({input_node})", *(f"V({n})" for n in output_nodes + select_nodes))
+    tb.save(f"V({input_node})", *(f"V({n})" for n in output_nodes + select_nodes))
     tb.add_transient(step_time=phase / 100.0, end_time=len(output_nodes) * phase)
 
     def extract(tran: Any) -> dict[str, float]:
-        from .analysis import _interp_at
-
-        time = [float(t) for t in tran.time]
-        outs = [list(tran[n]) for n in output_nodes]
-        sel_gain, off_leak = [], []
-        for idx in range(len(output_nodes)):
-            t = (idx + 0.9) * phase
-            for k, wave in enumerate(outs):
-                v = _interp_at(time, wave, t)
-                (sel_gain if k == idx else off_leak).append(v / input_voltage)
+        n = len(output_nodes)
+        t = (np.arange(n) + 0.9) * phase
+        # gain[k, phase]: output k during the phase that selects channel `phase`.
+        gain = np.array([_sample(tran, node, t) for node in output_nodes]) / input_voltage
+        off = gain[~np.eye(n, dtype=bool)]
+        off_max = float(off.max()) if off.size else 0.0
         return {
-            "selected_gain_min": min(sel_gain),
-            "inactive_output_max": max(off_leak) if off_leak else 0.0,
-            "off_isolation_db": 20.0 * math.log10(max(off_leak))
-            if off_leak and max(off_leak) > 0.0
-            else float("-inf"),
+            "selected_gain_min": float(np.diag(gain).min()),
+            "inactive_output_max": off_max,
+            "off_isolation_db": 20.0 * math.log10(off_max) if off_max > 0.0 else -math.inf,
         }
 
     return DesignBench(
@@ -616,11 +547,8 @@ def sample_hold(
     clock_edge: float | None = None,
 ) -> DesignBench:
     # The clock must run well above the input, or the sampler catches the same
-    # input phase every cycle and every held value is identical -- a DC record
-    # from which no sampling metric can be extracted.
-    if sample_frequency is None:
-        sample_frequency = 20.0 * input_frequency
-    period = 1.0 / sample_frequency
+    # input phase every cycle and the record is DC.
+    period = 1.0 / (sample_frequency or 20.0 * input_frequency)
     edge = clock_edge if clock_edge is not None else period / 1000.0
 
     tb = ps.Testbench(dut)
@@ -644,28 +572,19 @@ def sample_hold(
         fall_time=edge,
     )
     tb.C(name="hold", positive=output_node, negative=reference_node, value=hold_capacitance)
-    _save(tb, f"V({input_node})", f"V({output_node})", f"V({clock_node})")
+    tb.save(f"V({input_node})", f"V({output_node})", f"V({clock_node})")
     # Resolve the track->hold edge, not the input period.
     tb.add_transient(step_time=period / 500.0, end_time=2.0 / input_frequency)
 
     def extract(tran: Any) -> dict[str, float]:
-        from .analysis import _interp_at
-
-        time = [float(t) for t in tran.time]
-        vin = list(tran[input_node])
-        vout = list(tran[output_node])
-
-        # Use a late clock period so start-up transients are behind us.
-        n = int(time[-1] / period) - 1
-        t_fall = n * period + period / 2.0        # clock falls at mid-period
-        settle = 10.0 * edge
-        v_track = _interp_at(time, vout, t_fall - edge)
-        v_held = _interp_at(time, vout, t_fall + settle)
-        t1, t2 = t_fall + settle, t_fall + 0.9 * (period / 2.0)
+        # A late clock period, past start-up; the clock falls at mid-period.
+        t_fall = (int(tran.time[-1] / period) - 1) * period + period / 2.0
+        t1, t2 = t_fall + 10.0 * edge, t_fall + 0.45 * period
+        v_track, v1, v2 = _sample(tran, output_node, [t_fall - edge, t1, t2])
         return {
-            "acquisition_error": v_track - _interp_at(time, vin, t_fall),
-            "hold_droop": (_interp_at(time, vout, t2) - _interp_at(time, vout, t1)) / (t2 - t1),
-            "pedestal_step": v_held - v_track,
+            "acquisition_error": float(v_track - _sample(tran, input_node, t_fall)),
+            "hold_droop": float((v2 - v1) / (t2 - t1)),
+            "pedestal_step": float(v1 - v_track),
         }
 
     return DesignBench(
@@ -713,24 +632,27 @@ def pll_lock(
         rise_time=period / 100,
         fall_time=period / 100,
     )
-    _save(tb, f"V({reference_node})", f"V({output_node})", f"V({control_node})")
+    tb.save(f"V({reference_node})", f"V({output_node})", f"V({control_node})")
     tb.add_transient(step_time=period / 200, end_time=period * cycles)
 
     def extract(tran: Any) -> dict[str, float]:
-        from .analysis import _interp_at, frequency_from_crossings
-
-        time = [float(t) for t in tran.time]
-        vco = list(tran[output_node])
-        vctrl = list(tran[control_node])
+        time = np.asarray(tran.time, float)
+        vco = np.asarray(tran[output_node], float)
+        vctrl = np.asarray(tran[control_node], float)
         settle_from = 0.5 * time[-1]
-        f_out = frequency_from_crossings(time, vco, skip=settle_from)
-        target = reference_frequency * divide_ratio
-        tail = [v for t, v in zip(time, vctrl) if t >= settle_from]
+        # Mean frequency over every rising edge in the second half: one period
+        # alone inherits the timestep quantisation of its two edges.
+        edges = [x for x in crossings(time, vco, (vco.max() + vco.min()) / 2.0, rising=True)
+                 if x >= settle_from]
+        if len(edges) < 2:
+            raise ValueError(f"need at least 2 rising crossings after {settle_from:g}s, got {len(edges)}")
+        f_out = (len(edges) - 1) / (edges[-1] - edges[0])
+        tail = vctrl[time >= settle_from]
         return {
             "output_frequency_hz": f_out,
-            "frequency_error_ratio": f_out / target - 1.0,
-            "control_settling_v": (max(tail) - min(tail)) if tail else float("nan"),
-            "control_final_v": _interp_at(time, vctrl, time[-1]),
+            "frequency_error_ratio": f_out / (reference_frequency * divide_ratio) - 1.0,
+            "control_settling_v": float(np.ptp(tail)) if tail.size else math.nan,
+            "control_final_v": float(vctrl[-1]),
         }
 
     return DesignBench(
@@ -758,7 +680,7 @@ def bandgap_reference(
 ) -> DesignBench:
     tb = ps.Testbench(dut)
     tb.V(name="dd", positive=supply_node, negative=ground, value=supply_stop)
-    _save(tb, f"V({supply_node})", f"V({output_node})")
+    tb.save(f"V({supply_node})", f"V({output_node})")
     tb.temperature = 27.0
     tb.nominal_temperature = 27.0
     # Sweep only the in-regulation window; below dropout the "reference" is just
@@ -766,13 +688,12 @@ def bandgap_reference(
     tb.add_dc(Vdd=slice(supply_start, supply_stop, (supply_stop - supply_start) / 20))
 
     def extract(dc: Any) -> dict[str, float]:
-        vref = list(dc[output_node])
-        sweep = [float(v) for v in dc.sweep]
-        v_lo, v_hi = vref[0], vref[-1]
-        span = sweep[-1] - sweep[0]
+        vref = dc[output_node]
+        sweep = dc.sweep
+        v_lo, v_hi = float(vref[0]), float(vref[-1])
         return {
             "vref": (v_lo + v_hi) / 2.0,
-            "line_regulation_ppm_v": 1e6 * (v_hi - v_lo) / (v_lo * span),
+            "line_regulation_ppm_v": 1e6 * (v_hi - v_lo) / (v_lo * (sweep[-1] - sweep[0])),
         }
 
     return DesignBench(
@@ -808,25 +729,22 @@ def bandgap_tempco(
     """
     tb = ps.Testbench(dut)
     tb.V(name="dd", positive=supply_node, negative=ground, value=supply)
-    _save(tb, f"V({output_node})")
+    tb.save(f"V({output_node})")
     tb.nominal_temperature = 27.0
     tb.add_dc(temp=slice(t_min, t_max, t_step))
 
     def extract(dc: Any) -> dict[str, float]:
-        from .analysis import _interp_at
-
-        temps = [float(t) for t in dc.sweep]
-        vref = list(dc[output_node])
-        v_ref27 = _interp_at(temps, vref, 27.0)
-        span = temps[-1] - temps[0]
-        v_max, v_min = max(vref), min(vref)
+        temps = np.asarray(dc.sweep, float)
+        vref = np.asarray(dc[output_node], float)
+        v27 = float(np.interp(27.0, temps, vref))
+        scale = 1e6 / (v27 * (temps[-1] - temps[0]))
         return {
-            "vref_27c": v_ref27,
+            "vref_27c": v27,
             # Box method: the industry default, and what datasheets guarantee.
-            "tempco_box_ppm_c": 1e6 * (v_max - v_min) / (v_ref27 * span),
-            # Endpoint method, reported alongside because the two disagree on a
-            # curved response and datasheets do not always say which they used.
-            "tempco_endpoint_ppm_c": 1e6 * (vref[-1] - vref[0]) / (v_ref27 * span),
+            "tempco_box_ppm_c": float(np.ptp(vref) * scale),
+            # Endpoint method, reported alongside: the two disagree on a curved
+            # response and datasheets do not always say which they used.
+            "tempco_endpoint_ppm_c": float((vref[-1] - vref[0]) * scale),
         }
 
     return DesignBench(

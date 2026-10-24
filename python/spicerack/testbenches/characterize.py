@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from typing import Any, Callable, Mapping, Sequence
 
+import numpy as np
+
 from .analysis import _interp_at, crossings
 
 
@@ -31,19 +33,11 @@ def _run(tb: Any, end: float, edge: float) -> Any:
     return tb.transient(step_time=edge / 50.0, end_time=end, max_time=edge / 20.0)
 
 
-def _integral(t: Sequence[float], y: Sequence[float], t0: float, t1: float) -> float:
-    """Trapezoidal integral of y dt over [t0, t1] (sample-aligned)."""
-    total = 0.0
-    for k in range(1, len(t)):
-        a, b = max(t[k - 1], t0), min(t[k], t1)
-        if b <= a:
-            continue
-        # Interpolate the segment ends so a window edge inside a step is exact.
-        span = t[k] - t[k - 1]
-        ya = y[k - 1] + (y[k] - y[k - 1]) * (a - t[k - 1]) / span
-        yb = y[k - 1] + (y[k] - y[k - 1]) * (b - t[k - 1]) / span
-        total += (b - a) * (ya + yb) / 2.0
-    return total
+def _integral(t: np.ndarray, y: np.ndarray, t0: float, t1: float) -> float:
+    """Trapezoidal integral of y dt over [t0, t1], window ends interpolated."""
+    g = np.concatenate(([t0], t[(t > t0) & (t < t1)], [t1]))
+    yg = np.interp(g, t, y)
+    return float(np.sum(np.diff(g) * (yg[1:] + yg[:-1])) / 2.0)
 
 
 def input_capacitance(
@@ -81,8 +75,8 @@ def input_capacitance(
                 (t_f, vdd), (t_f + slew, 0.0), (end, 0.0)])
     tb.save(f"V({pin})", f"I(V{src})")
     tran = _run(tb, end, slew)
-    t = [float(x) for x in tran.time]
-    i = [float(x) for x in tran[f"i(v{src})"]]
+    t = np.asarray(tran.time, float)
+    i = np.asarray(tran[f"i(v{src})"], float)
     # SPICE source current flows + -> -, so charging the pin is negative.
     q_rise = -_integral(t, i, t_r, t_r + slew + settle)
     q_fall = -_integral(t, i, t_f, t_f + slew + settle)
@@ -151,9 +145,9 @@ def delay_table(
             # PWL corners are breakpoints, so a fast input ramp needs no tiny
             # global step; the output edge is resolved to window/1000.
             tran = _run(tb, end, max(min(ramp, window), window / 50.0))
-            t = [float(x) for x in tran.time]
-            vi = [float(x) for x in tran[input_pin]]
-            vo = [float(x) for x in tran[output_pin]]
+            t = np.asarray(tran.time, float)
+            vi = np.asarray(tran[input_pin], float)
+            vo = np.asarray(tran[output_pin], float)
             for t_in, in_rising in ((t_r, True), (t_f, False)):
                 # The output edge's direction is whatever the cell did across
                 # this input edge, so inverting cells need no flag.

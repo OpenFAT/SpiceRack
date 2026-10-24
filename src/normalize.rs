@@ -1,143 +1,47 @@
 //! Variable name normalization for cross-backend consistency.
 //!
-//! Different SPICE backends use different naming conventions for node
-//! voltages, branch currents, and hierarchy separators. This module
-//! normalizes all names to a canonical lowercase form:
-//!
-//! - Node voltages: strip `v()`/`V()` wrappers, lowercase
-//! - Branch currents: normalize to `i(name)` canonical format
-//! - Hierarchy separators: `%` and LTspice `:` become `.`
-//! - Sweep variables (`time`, `frequency`) pass through as-is
+//! Every backend's vector names map to one lowercase canonical form:
+//! - node voltages lose their `v()` wrapper and reference node: `V(OUT,0)` -> `out`
+//! - branch currents become `i(name)`: `I(V1)`, `v1#branch`, Spectre/VACASK `V1:p` -> `i(v1)`
+//! - LTspice's `:` hierarchy separator becomes `.`: `V(x1:internal)` -> `x1.internal`
+//! - anything else (`time`, `frequency`, `onoise_spectrum`, bare Spectre nodes) is lowercased
 
-/// Normalize a variable name from any backend to canonical form.
-///
-/// Rules:
-/// - Node voltages: strip v()/V() wrappers, lowercase the inner name
-///   `"v(out)"` -> `"out"`, `"V(OUT)"` -> `"out"`
-/// - Branch currents: normalize to `"i(name)"` canonical format
-///   `"i(v1)"` -> `"i(v1)"`, `"I(V1)"` -> `"i(v1)"`, `"V1:p"` -> `"i(v1)"`
-/// - Hierarchy separators: `%` and LTspice `:` become `.`
-///   `"v(x1%internal)"` -> `"x1.internal"`, `"v(x1:internal)"` -> `"x1.internal"`
-/// - Sweep variables: `"time"`, `"frequency"` stay as-is (already lowercase)
-/// - Noise spectra: `"inoise_spectrum"`, `"onoise_spectrum"` preserved
-/// - Spectre bare node names: `"out"` -> `"out"`, `"OUT"` -> `"out"`
+/// Canonical form of a raw vector name from `backend`.
 pub fn normalize_var_name(name: &str, backend: &str) -> String {
     let lower = name.to_lowercase();
-
-    // Sweep variables pass through
-    if lower == "time" || lower == "frequency" || lower == "sweep" {
-        return lower;
+    if let Some(current) = as_current(&lower, backend) {
+        return current;
     }
-
-    // Noise spectra pass through (lowercased)
-    if lower == "inoise_spectrum" || lower == "onoise_spectrum" {
-        return lower;
-    }
-
-    // Check if this is a current variable
-    if is_current_name(name, backend) {
-        return normalize_current(name, backend);
-    }
-
-    // Voltage wrapped in v()/V()
-    if (lower.starts_with("v(") || lower.starts_with("v ("))
-        && lower.ends_with(')')
-    {
-        let start = lower.find('(').unwrap() + 1;
-        let inner = &lower[start..lower.len() - 1];
-        // Strip reference node if present: v(out,0) -> out
-        let node = inner.split(',').next().unwrap_or(inner).trim();
-        return normalize_hierarchy(node, backend);
-    }
-
-    // Spectre/Vacask bare node name (no wrapper)
-    if backend == "spectre" || backend == "vacask" || backend == "vacask-shared" {
-        return normalize_hierarchy(&lower, backend);
-    }
-
-    // Fallback: just lowercase
-    normalize_hierarchy(&lower, backend)
+    let wrapped = lower.strip_prefix("v(").or_else(|| lower.strip_prefix("v ("));
+    let node = match wrapped.and_then(|s| s.strip_suffix(')')) {
+        Some(inner) => inner.split(',').next().unwrap_or(inner).trim(),
+        None => &lower,
+    };
+    hierarchy(node, backend)
 }
 
-/// Detect whether a variable name represents a current measurement.
+/// True if `name` is a branch/terminal current in `backend`'s naming.
 pub fn is_current_name(name: &str, backend: &str) -> bool {
-    let lower = name.to_lowercase();
-
-    // Explicit i() wrapper (all backends)
-    if lower.starts_with("i(") && lower.ends_with(')') {
-        return true;
-    }
-
-    // ngspice #branch suffix (e.g. "vdd#branch", "v1#branch")
-    if lower.contains("#branch") {
-        return true;
-    }
-
-    // Spectre/Vacask current notation: "V1:p", "I0:src"
-    // These are terminal currents, identified by <name>:<terminal>
-    // But only when NOT inside a v() wrapper (which would be hierarchy)
-    if (backend == "spectre" || backend == "vacask" || backend == "vacask-shared")
-        && !lower.starts_with("v(") && name.contains(':') {
-            return true;
-        }
-
-    false
+    as_current(&name.to_lowercase(), backend).is_some()
 }
 
-/// Normalize a branch/current name to canonical `i(name)` format.
-///
-/// `"i(v1)"` -> `"i(v1)"`, `"I(V1)"` -> `"i(v1)"`,
-/// `"V1:p"` -> `"i(v1)"`, `"I0:src"` -> `"i(i0)"`
-/// `"vdd#branch"` -> `"i(vdd)"`, `"v1#branch"` -> `"i(v1)"`
-fn normalize_current(name: &str, backend: &str) -> String {
-    let lower = name.to_lowercase();
-
-    // Already in i() format
-    if lower.starts_with("i(") && lower.ends_with(')') {
-        let inner = &lower[2..lower.len() - 1];
-        let normalized_inner = normalize_hierarchy(inner, backend);
-        return format!("i({})", normalized_inner);
+/// `Some("i(dev)")` when lowercased `lower` names a current, else `None`.
+fn as_current(lower: &str, backend: &str) -> Option<String> {
+    if let Some(inner) = lower.strip_prefix("i(").and_then(|s| s.strip_suffix(')')) {
+        return Some(format!("i({})", hierarchy(inner, backend)));
     }
-
-    // ngspice #branch suffix: "vdd#branch" -> "i(vdd)"
-    if let Some(hash_pos) = lower.find("#branch") {
-        let device = &lower[..hash_pos];
-        return format!("i({})", device);
+    if let Some((dev, _)) = lower.split_once("#branch") {
+        return Some(format!("i({dev})"));
     }
-
-    // Spectre/Vacask terminal current: "V1:p" -> "i(v1)"
-    if (backend == "spectre" || backend == "vacask" || backend == "vacask-shared")
-        && let Some(colon_pos) = name.find(':') {
-            let device = name[..colon_pos].to_lowercase();
-            return format!("i({})", device);
-        }
-
-    // Fallback: wrap in i()
-    format!("i({})", lower)
+    // Spectre/VACASK terminal currents are `<device>:<terminal>`; inside v() a `:` is hierarchy.
+    if matches!(backend, "spectre" | "vacask" | "vacask-shared") && !lower.starts_with("v(") {
+        return lower.split_once(':').map(|(dev, _)| format!("i({dev})"));
+    }
+    None
 }
 
-/// Normalize hierarchy separators to `.`.
-///
-/// - `%` hierarchy separators become `.`: `x1%internal` -> `x1.internal`
-/// - LTspice uses `:` for hierarchy: `x1:internal` -> `x1.internal`
-///   (But in Spectre, `:` denotes terminal current, handled elsewhere)
-/// - ngspice/Spectre already use `.`: no change needed
-fn normalize_hierarchy(name: &str, backend: &str) -> String {
-    match backend {
-        "ltspice" => {
-            // LTspice uses `:` for hierarchy separators in node names
-            name.replace(':', ".")
-        }
-        _ => {
-            // ngspice, spectre, vacask already use `.` for hierarchy
-            name.to_string()
-        }
-    }
-}
-
-/// Normalize a `.meas` result name to lowercase.
-pub fn normalize_measure_name(name: &str) -> String {
-    name.to_lowercase()
+fn hierarchy(name: &str, backend: &str) -> String {
+    if backend == "ltspice" { name.replace(':', ".") } else { name.to_string() }
 }
 
 #[cfg(test)]
@@ -238,15 +142,6 @@ mod tests {
     fn test_noise_vars_preserved() {
         assert_eq!(normalize_var_name("inoise_spectrum", "ngspice"), "inoise_spectrum");
         assert_eq!(normalize_var_name("onoise_spectrum", "ngspice"), "onoise_spectrum");
-    }
-
-    // ── Measure normalization ──
-
-    #[test]
-    fn test_measure_normalization() {
-        assert_eq!(normalize_measure_name("Gain_dB"), "gain_db");
-        assert_eq!(normalize_measure_name("BANDWIDTH"), "bandwidth");
-        assert_eq!(normalize_measure_name("rise_time"), "rise_time");
     }
 
     // ── is_current_name ──

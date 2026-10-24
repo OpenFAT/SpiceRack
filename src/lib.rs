@@ -1,7 +1,6 @@
 #![allow(clippy::too_many_arguments)]
 
 pub mod unit;
-pub mod circuit;
 pub mod rawfile;
 pub mod psf;
 pub mod normalize;

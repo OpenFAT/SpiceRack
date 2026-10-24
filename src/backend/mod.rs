@@ -1,14 +1,21 @@
+//! Simulator backends: a closed set, one `enum`, one `match` per question.
+//!
+//! A backend executes netlist text verbatim. Turning IR into that text is the
+//! codegen's job; [`BackendKind::dialect`] names which dialect to ask it for.
+
 pub mod ngspice;
 pub mod ltspice;
 pub mod vacask;
 pub mod spectre;
 pub mod espice;
-pub mod detect;
 
-use crate::result::RawData;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::OnceLock;
+
+use crate::ir::FeatureFlags;
 use crate::rawfile;
-use crate::codegen::CodeGen;
-use crate::codegen::spice3::{Spice3CodeGen, Spice3Dialect};
+use crate::result::RawData;
 
 #[derive(Debug, thiserror::Error)]
 pub enum BackendError {
@@ -37,100 +44,20 @@ pub enum BackendError {
     Io(#[from] std::io::Error),
 }
 
-/// Backend trait — each simulator implements this
-pub trait Backend: Send + Sync {
-    fn name(&self) -> &str;
-    fn run(&self, netlist: &str) -> Result<RawData, BackendError>;
-    fn capabilities(&self) -> BackendCapabilities;
+pub use crate::codegen::{netlist, Dialect};
 
-    /// The `CodeGen` that turns backend-neutral IR into this backend's netlist
-    /// dialect. This is the only path from IR to text. The default
-    /// emits the SPICE3/ngspice dialect; backends override to name their own.
-    fn codegen(&self) -> Box<dyn CodeGen> {
-        Box::new(Spice3CodeGen { dialect: Spice3Dialect::Ngspice })
-    }
-
-    /// Execute an already-emitted netlist with no further string translation.
-    /// Backends still carrying legacy string post-processing in `run` (vacask
-    /// `spice_to_vacask`, spectre `wrap_spice_for_spectre`) keep the default,
-    /// which routes through `run`; once a backend's `codegen` emits its native
-    /// dialect it overrides this to execute the text verbatim.
-    fn run_netlist(&self, netlist: &str) -> Result<RawData, BackendError> {
-        self.run(netlist)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
+/// Every simulator SpiceRack can drive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackendKind {
-    NgspiceSubprocess,
-    NgspiceShared,
-    Ltspice {
-        executable: std::path::PathBuf,
-        use_wine: bool,
-    },
+    /// `ngspice -b` subprocess.
+    Ngspice,
+    Ltspice,
     Vacask,
-    VacaskShared,
     Spectre,
     Espice,
 }
 
-impl BackendKind {
-    #[allow(clippy::should_implement_trait)]
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s {
-            "ngspice-subprocess" | "ngspice" => Some(Self::NgspiceSubprocess),
-            "ngspice-shared" => Some(Self::NgspiceShared),
-            "ltspice" => Some(Self::Ltspice {
-                executable: std::path::PathBuf::from("ltspice"),
-                use_wine: false,
-            }),
-            "vacask" => Some(Self::Vacask),
-            "vacask-shared" => Some(Self::VacaskShared),
-            "spectre" => Some(Self::Spectre),
-            "espice" => Some(Self::Espice),
-            _ => None,
-        }
-    }
-
-    pub fn display_name(&self) -> &str {
-        match self {
-            Self::NgspiceSubprocess => "ngspice",
-            Self::NgspiceShared => "ngspice-shared",
-            Self::Ltspice { .. } => "ltspice",
-            Self::Vacask => "vacask",
-            Self::VacaskShared => "vacask-shared",
-            Self::Spectre => "spectre",
-            Self::Espice => "espice",
-        }
-    }
-
-    pub fn capabilities(&self) -> BackendCapabilities {
-        match self {
-            Self::NgspiceSubprocess | Self::NgspiceShared => ngspice::NGSPICE_CAPS,
-            Self::Ltspice { .. } => BackendCapabilities {
-                xspice: false,
-                osdi: false,
-                measures: true,
-                step_params: true,
-                control_blocks: false,
-                laplace_sources: true,
-                verilog_cosim: false,
-            },
-            Self::Vacask | Self::VacaskShared => vacask::VACASK_CAPS,
-            Self::Spectre => BackendCapabilities {
-                xspice: false,
-                osdi: true,
-                measures: true,
-                step_params: true,
-                control_blocks: false,
-                laplace_sources: false,
-                verilog_cosim: true,
-            },
-            Self::Espice => espice::ESPICE_CAPS,
-        }
-    }
-}
-
+/// What a simulator can do, checked against `ir::FeatureFlags`.
 #[derive(Debug, Clone, Copy)]
 pub struct BackendCapabilities {
     pub xspice: bool,
@@ -143,213 +70,247 @@ pub struct BackendCapabilities {
 }
 
 impl BackendCapabilities {
-    pub fn supports_features(&self, features: &CircuitFeatures) -> bool {
-        if features.has_xspice && !self.xspice { return false; }
-        if features.has_osdi && !self.osdi { return false; }
-        if features.has_measures && !self.measures { return false; }
-        if features.has_step_params && !self.step_params { return false; }
-        if features.has_control_blocks && !self.control_blocks { return false; }
-        if features.has_laplace_sources && !self.laplace_sources { return false; }
-        if features.has_verilog_cosim && !self.verilog_cosim { return false; }
-        true
+    pub fn supports_features(&self, f: &FeatureFlags) -> bool {
+        (!f.has_xspice || self.xspice)
+            && (!f.has_osdi || self.osdi)
+            && (!f.has_measures || self.measures)
+            && (!f.has_step_params || self.step_params)
+            && (!f.has_control_blocks || self.control_blocks)
+            && (!f.has_laplace_sources || self.laplace_sources)
+            && (!f.has_verilog_cosim || self.verilog_cosim)
     }
 }
 
-/// Circuit feature flags that affect backend selection.
-///
-/// Built from both the `Circuit` (element types, raw lines, OSDI loads)
-/// and the `CircuitSimulator` config (measures, step params). Each flag
-/// acts as a hard constraint — backends that don't support the feature
-/// are filtered out during auto-selection.
-#[derive(Debug, Default, Clone)]
-pub struct CircuitFeatures {
-    /// Circuit uses XSPICE A-elements (only ngspice supports these)
-    pub has_xspice: bool,
-    /// Circuit loads OSDI/Verilog-A compiled models
-    pub has_osdi: bool,
-    /// Simulator uses .meas directives (ngspice, ltspice, spectre)
-    pub has_measures: bool,
-    /// Simulator uses .step param sweeps (ltspice, spectre)
-    pub has_step_params: bool,
-    /// Circuit contains .control blocks in raw lines (ngspice only)
-    pub has_control_blocks: bool,
-    /// Circuit uses Laplace-domain B-sources (ngspice, ltspice)
-    pub has_laplace_sources: bool,
-    /// Circuit uses Verilog co-simulation (ngspice d_cosim, spectre xrun)
-    pub has_verilog_cosim: bool,
-    /// Total element count
-    pub element_count: usize,
+const fn caps(xspice: bool, osdi: bool, measures: bool, step_params: bool, control_blocks: bool, laplace_sources: bool, verilog_cosim: bool) -> BackendCapabilities {
+    BackendCapabilities { xspice, osdi, measures, step_params, control_blocks, laplace_sources, verilog_cosim }
 }
 
-impl From<&crate::ir::FeatureFlags> for CircuitFeatures {
-    fn from(f: &crate::ir::FeatureFlags) -> Self {
-        CircuitFeatures {
-            has_xspice: f.has_xspice,
-            has_osdi: f.has_osdi,
-            has_measures: f.has_measures,
-            has_step_params: f.has_step_params,
-            has_control_blocks: f.has_control_blocks,
-            has_laplace_sources: f.has_laplace_sources,
-            has_verilog_cosim: f.has_verilog_cosim,
-            element_count: f.element_count,
+//                                           xspice osdi  meas  step  ctrl  laplace cosim
+const NGSPICE_CAPS: BackendCapabilities = caps(true,  true, true, false, true,  true,  true);
+const LTSPICE_CAPS: BackendCapabilities = caps(false, false, true, true, false, true,  false);
+// VACASK: `load "x.osdi"`; no measurement statement ("Command not found");
+// `var` + `sweep` does parameter sweeps; its `control` is not ngspice's.
+const VACASK_CAPS: BackendCapabilities = caps(false, true, false, true, false, false, false);
+// Spectre: `.measure` per Spectre Reference 19.1 p.17; xrun co-simulation.
+const SPECTRE_CAPS: BackendCapabilities = caps(false, true, true, true, false, false, true);
+// ESPice: Verilog-A via VerA `.hdl` (counts as osdi); `.step` lands every
+// point as a separate plot in one raw file, which parse_raw does not split.
+const ESPICE_CAPS: BackendCapabilities = caps(false, true, true, false, false, false, false);
+
+/// Analysis kinds (`ir::Analysis::kind_str`) → dialects that run them, in
+/// preference order, and the workaround to suggest without one. A kind not
+/// listed runs on every dialect in `ANYWHERE`.
+const ROUTES: &[(&[&str], &[Dialect], &str)] = {
+    use Dialect::*;
+    &[
+        (&["pz"], &[Ngspice], ".ac() + post-process for poles/zeros"),
+        (&["disto"], &[Ngspice], ".transient() + FFT post-processing"),
+        (&["tf"], &[Ngspice, Ltspice, Vacask, Spectre, Espice], ".dc() with small-signal sweep"),
+        (&["sens"], &[Ngspice, Spectre, Espice], "N/A"),
+        (&["sens_ac"], &[Ngspice, Spectre], "N/A"),
+        (&["hb"], &[Vacask, Spectre], "long .tran() + discard startup + FFT"),
+        (&["sp", "s_param"], &[Vacask, Spectre, Ngspice], "N/A"),
+        (&["stb", "stability"], &[Vacask, Spectre], ".ac() + Middlebrook method"),
+        (&["pss"], &[Spectre, Ngspice], "long .tran() + discard startup"),
+        (&["trannoise"], &[Vacask], ".tran() with trnoise sources"),
+        (&["sampling", "pce", "embedded_sampling"], &[Spectre], ".control Monte Carlo loops (ngspice)"),
+        (&["sens_tran", "sens_adjoint"], &[Spectre], "N/A"),
+        (&["pac", "pnoise", "pxf", "pstb", "psp", "pdisto", "hbac", "hbnoise", "hbsp"], &[Spectre], "N/A"),
+    ]
+};
+const ANYWHERE: &[Dialect] = &[Dialect::Ngspice, Dialect::Ltspice, Dialect::Vacask, Dialect::Spectre, Dialect::Espice];
+
+fn route(analysis: &str) -> (&'static [Dialect], &'static str) {
+    ROUTES
+        .iter()
+        .find(|(kinds, _, _)| kinds.contains(&analysis))
+        .map_or((ANYWHERE, "N/A"), |&(_, d, alt)| (d, alt))
+}
+
+impl BackendKind {
+    /// Parse a user-facing backend name. `ngspice-shared` and
+    /// `vacask-shared` are kept as aliases of the executables.
+    #[allow(clippy::should_implement_trait)]
+    pub fn from_str(s: &str) -> Option<Self> {
+        Some(match s {
+            "ngspice" | "ngspice-subprocess" | "ngspice-shared" => Self::Ngspice,
+            "ltspice" => Self::Ltspice,
+            "vacask" | "vacask-shared" => Self::Vacask,
+            "spectre" => Self::Spectre,
+            "espice" => Self::Espice,
+            _ => return None,
+        })
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Ngspice => "ngspice",
+            Self::Ltspice => "ltspice",
+            Self::Vacask => "vacask",
+            Self::Spectre => "spectre",
+            Self::Espice => "espice",
+        }
+    }
+
+    pub fn dialect(self) -> Dialect {
+        match self {
+            Self::Ngspice => Dialect::Ngspice,
+            Self::Ltspice => Dialect::Ltspice,
+            Self::Vacask => Dialect::Vacask,
+            Self::Spectre => Dialect::Spectre,
+            Self::Espice => Dialect::Espice,
+        }
+    }
+
+    pub fn capabilities(self) -> BackendCapabilities {
+        match self {
+            Self::Ngspice => NGSPICE_CAPS,
+            Self::Ltspice => LTSPICE_CAPS,
+            Self::Vacask => VACASK_CAPS,
+            Self::Spectre => SPECTRE_CAPS,
+            Self::Espice => ESPICE_CAPS,
+        }
+    }
+
+    /// Execute `netlist` (already in `self.dialect()`) and read the results.
+    pub fn run(self, netlist: &str) -> Result<RawData, BackendError> {
+        match self {
+            Self::Ngspice => ngspice::run(netlist),
+            Self::Ltspice => ltspice::run(netlist),
+            Self::Vacask => vacask::run(netlist),
+            Self::Spectre => spectre::run(netlist),
+            Self::Espice => espice::run(netlist),
         }
     }
 }
 
-/// Analysis routing preferences — which backends support which analyses
-fn analysis_backend_preference(analysis_type: &str) -> &'static [&'static str] {
-    match analysis_type {
-        // NGSpice-only
-        "pz" | "disto" => &["ngspice"],
-        // TF: ngspice and ltspice have native .tf, vacask has dcxf, spectre has xf
-        "tf" => &["ngspice", "ltspice", "vacask", "spectre"],
-        // Harmonic Balance: vacask, spectre
-        "hb" => &["vacask", "spectre"],
-        // S-parameters
-        "sp" | "s_param" => &["vacask", "spectre", "ngspice"],
-        // Stability (loop gain)
-        "stb" | "stability" => &["vacask", "spectre"],
-        // PSS
-        "pss" => &["spectre", "ngspice"],
-        // Transient noise
-        "trannoise" => &["vacask"],
-        "sampling" | "pce" | "embedded_sampling" => &["spectre"],
-        "sens_tran" | "sens_adjoint" => &["spectre"],
-        // AC sensitivity
-        "sens_ac" => &["ngspice", "spectre"],
-        // Spectre-only periodic analyses
-        "pac" | "pnoise" | "pxf" | "pstb" | "psp" | "pdisto" |
-        "hbac" | "hbnoise" | "hbsp" => &["spectre"],
-        // Universal analyses — all backends
-        _ => &["ngspice", "ltspice", "vacask", "spectre", "espice"],
-    }
+/// Backends installed on this machine, in preference order. Cached.
+pub fn available() -> &'static [BackendKind] {
+    static CACHE: OnceLock<Vec<BackendKind>> = OnceLock::new();
+    CACHE.get_or_init(|| {
+        let found = [
+            (BackendKind::Ngspice, is_on_path("ngspice")),
+            (BackendKind::Ltspice, ltspice::find().is_some()),
+            (BackendKind::Vacask, is_on_path("vacask")),
+            (BackendKind::Spectre, is_on_path("spectre")),
+            (BackendKind::Espice, is_on_path("espice")),
+        ];
+        found.into_iter().filter(|&(_, ok)| ok).map(|(k, _)| k).collect()
+    })
 }
 
-/// Auto-detect and select best backend, considering circuit features
-/// (XSPICE, OSDI) in addition to analysis type.
-pub fn detect_and_select_with_features(
-    analysis_type: &str,
-    override_backend: Option<&str>,
-    features: &CircuitFeatures,
-) -> Result<Box<dyn Backend>, BackendError> {
-    // An explicit choice wins; otherwise `$SPICERACK_BACKEND` picks one for
-    // every run in the process (a Makefile's BACKEND= reaches all benches).
-    let env_backend = std::env::var("SPICERACK_BACKEND").ok().filter(|s| !s.is_empty());
-    if let Some(name) = override_backend.or(env_backend.as_deref()) {
-        return create_backend_by_name(name, analysis_type);
+/// Pick the backend for one analysis kind. An explicit name (argument, else
+/// `$SPICERACK_BACKEND`) wins if it can run the analysis; otherwise the first
+/// installed backend, in `ROUTES` order, that supports the circuit's features.
+pub fn select(analysis: &str, override_backend: Option<&str>, features: &FeatureFlags) -> Result<BackendKind, BackendError> {
+    let (dialects, alternative) = route(analysis);
+    let env = std::env::var("SPICERACK_BACKEND").ok().filter(|s| !s.is_empty());
+    if let Some(name) = override_backend.or(env.as_deref()) {
+        let kind = BackendKind::from_str(name)
+            .ok_or_else(|| BackendError::SimulationError(format!("Unknown backend: {name}")))?;
+        if !dialects.contains(&kind.dialect()) {
+            return Err(unsupported(analysis, name, dialects[0], alternative));
+        }
+        return Ok(kind);
     }
 
-    let available = detect::detect_backends();
+    let available = available();
     if available.is_empty() {
         return Err(BackendError::NoBackend);
     }
-
-    let preferences = analysis_backend_preference(analysis_type);
-
-    // Try each preferred backend in order, filtering by circuit feature support
-    for &pref in preferences {
-        for kind in available.iter() {
-            let name = kind.display_name();
-            if !name.starts_with(pref) {
-                continue;
-            }
-            if !kind.capabilities().supports_features(features) {
-                continue;
-            }
-            return create_backend_from_kind(kind);
+    for d in dialects {
+        if let Some(&k) = available.iter().find(|k| k.dialect() == *d && k.capabilities().supports_features(features)) {
+            return Ok(k);
         }
     }
-
-    // Fallback: if no preferred backend found, give a helpful error
-    if !preferences.is_empty() && preferences[0] != "ngspice" {
-        let required = preferences[0];
-        let alt = match analysis_type {
-            "pz" => ".ac() + post-process for poles/zeros",
-            "tf" => ".dc() with small-signal sweep",
-            "disto" => ".transient() + FFT post-processing",
-            "hb" => "long .tran() + discard startup + FFT",
-            "stb" | "stability" => ".ac() + Middlebrook method",
-            "pss" => "long .tran() + discard startup",
-            "trannoise" => ".tran() with trnoise sources",
-            "sampling" | "pce" | "embedded_sampling" => ".control Monte Carlo loops (ngspice)",
-            _ => "N/A",
-        };
-        return Err(BackendError::UnsupportedAnalysis {
-            analysis: analysis_type.to_string(),
-            backend: available.iter().map(|b| b.display_name()).collect::<Vec<_>>().join(", "),
-            required: required.to_string(),
-            install_cmd: format!("See docs/backends/{}.md", required),
-            alternative: alt.to_string(),
-        });
+    if dialects[0] != Dialect::Ngspice {
+        let names: Vec<_> = available.iter().map(|k| k.name()).collect();
+        return Err(unsupported(analysis, &names.join(", "), dialects[0], alternative));
     }
-
-    // Absolute fallback: use first available
-    create_backend_from_kind(&available[0])
+    // ponytail: universal analysis, no backend matches the features — run on
+    // the first one and let the simulator report what it cannot do.
+    Ok(available[0])
 }
 
-fn create_backend_from_kind(kind: &BackendKind) -> Result<Box<dyn Backend>, BackendError> {
-    match kind {
-        BackendKind::NgspiceSubprocess => Ok(Box::new(ngspice::NgspiceSubprocess)),
-        BackendKind::NgspiceShared => {
-            Ok(Box::new(ngspice::NgspiceShared::new()?))
-        }
-        BackendKind::Ltspice { executable, use_wine } => Ok(Box::new(ltspice::LtspiceSubprocess {
-            executable: executable.clone(),
-            use_wine: *use_wine,
-            fast_access: false,
-        })),
-        BackendKind::Vacask => Ok(Box::new(vacask::VacaskSubprocess)),
-        BackendKind::VacaskShared => {
-            Ok(Box::new(vacask::VacaskLibrary::new()?))
-        }
-        BackendKind::Spectre => Ok(Box::new(spectre::SpectreSubprocess)),
-        BackendKind::Espice => Ok(Box::new(espice::EspiceSubprocess)),
+fn unsupported(analysis: &str, backend: &str, required: Dialect, alternative: &str) -> BackendError {
+    let required = format!("{required:?}").to_lowercase();
+    BackendError::UnsupportedAnalysis {
+        analysis: analysis.to_string(),
+        backend: backend.to_string(),
+        install_cmd: format!("See docs/backends/{required}.md"),
+        required,
+        alternative: alternative.to_string(),
     }
 }
 
-fn create_backend_by_name(name: &str, analysis_type: &str) -> Result<Box<dyn Backend>, BackendError> {
-    // Check for analysis compatibility with the requested backend
-    let incompatible = match name {
-        "ltspice" => {
-            matches!(analysis_type, "pz" | "disto" | "sens" | "sens_ac" | "hb" | "pss" | "stb")
-        }
-        "vacask" => {
-            matches!(analysis_type, "pz" | "disto" | "sens" | "sens_ac" | "dc")
-        }
-        // Not wired: these need result layouts (multi-plot, periodic) the
-        // backend does not map yet, or ESPice has no counterpart.
-        "espice" => {
-            matches!(analysis_type, "sens_ac" | "sens_tran" | "sens_adjoint" | "sampling" | "pce" | "embedded_sampling")
-        }
-        _ => false,
+// ── Subprocess plumbing shared by every backend ──
+
+fn is_on_path(program: &str) -> bool {
+    Command::new("which").arg(program).output().is_ok_and(|o| o.status.success())
+}
+
+/// A scratch directory holding `netlist` as `file_name`. The directory (and
+/// everything the simulator writes into it) is deleted on drop.
+fn scratch(netlist: &str, file_name: &str) -> Result<(tempfile::TempDir, PathBuf), BackendError> {
+    let dir = tempfile::TempDir::new()?;
+    let deck = dir.path().join(file_name);
+    std::fs::write(&deck, netlist)?;
+    Ok((dir, deck))
+}
+
+/// Run `cmd` and return its stdout. A nonzero exit becomes an error carrying
+/// the lines that mention an error (from stdout, stderr and the `log` file
+/// the simulator wrote), or the output tails when none do.
+fn exec(cmd: &mut Command, program: &str, log: Option<&Path>) -> Result<String, BackendError> {
+    let out = cmd.output().map_err(|e| match e.kind() {
+        std::io::ErrorKind::NotFound => BackendError::SimulationError(format!("{program} not found on $PATH")),
+        _ => BackendError::Io(e),
+    })?;
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    if out.status.success() {
+        return Ok(stdout);
+    }
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let log = log.and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_default();
+    let errors: Vec<&str> = stdout.lines().chain(stderr.lines()).chain(log.lines())
+        .filter(|l| l.contains("rror") || l.contains("failed"))
+        .collect();
+    let detail = if errors.is_empty() {
+        format!("stdout: {}\nstderr: {}\nlog: {}", tail(&stdout), tail(&stderr), tail(&log))
+    } else {
+        errors.join("\n")
     };
+    Err(BackendError::SimulationError(format!("{program} exited with {}\n{detail}", out.status)))
+}
 
-    if incompatible {
-        return Err(BackendError::UnsupportedAnalysis {
-            analysis: analysis_type.to_string(),
-            backend: name.to_string(),
-            required: analysis_backend_preference(analysis_type).first().unwrap_or(&"ngspice").to_string(),
-            install_cmd: "See docs/backends/ for installation instructions".to_string(),
-            alternative: "See docs/backends/analysis-map.md for emulation strategies".to_string(),
-        });
+fn tail(s: &str) -> &str {
+    let mut start = s.len().saturating_sub(1000);
+    while !s.is_char_boundary(start) {
+        start += 1;
     }
+    &s[start..]
+}
 
-    match name {
-        "ngspice-subprocess" | "ngspice" => Ok(Box::new(ngspice::NgspiceSubprocess)),
-        "ngspice-shared" => Ok(Box::new(ngspice::NgspiceShared::new()?)),
-        "ltspice" => {
-            if let Some((exe, wine)) = ltspice::detect_ltspice() {
-                Ok(Box::new(ltspice::LtspiceSubprocess { executable: exe, use_wine: wine, fast_access: false }))
-            } else {
-                Err(BackendError::SimulationError("LTspice not found on this system".to_string()))
-            }
-        }
-        "vacask" => Ok(Box::new(vacask::VacaskSubprocess)),
-        "vacask-shared" => Ok(Box::new(vacask::VacaskLibrary::new()?)),
-        "spectre" => Ok(Box::new(spectre::SpectreSubprocess)),
-        "espice" => Ok(Box::new(espice::EspiceSubprocess)),
-        _ => Err(BackendError::SimulationError(format!("Unknown backend: {}", name))),
-    }
+/// Read a result file, nutmeg raw or PSF (sniffed from its content).
+fn read_results(path: &Path, stdout: String) -> Result<RawData, BackendError> {
+    let bytes = std::fs::read(path).map_err(|e| {
+        BackendError::SimulationError(format!("no result file '{}': {e}\nstdout: {}", path.display(), tail(&stdout)))
+    })?;
+    let mut raw = if crate::psf::is_psf(&bytes) {
+        crate::psf::parse_psf(&bytes).map_err(|e| BackendError::SimulationError(format!("PSF parse error: {e}")))?
+    } else {
+        rawfile::parse_raw(&bytes)?
+    };
+    raw.stdout = stdout;
+    Ok(raw)
+}
+
+/// Regular files directly inside `dir`, sorted (read_dir order is not stable).
+fn sorted_files(dir: &Path) -> Vec<PathBuf> {
+    let mut v: Vec<PathBuf> = std::fs::read_dir(dir).into_iter().flatten().flatten()
+        .map(|e| e.path()).filter(|p| p.is_file()).collect();
+    v.sort();
+    v
 }
 
 #[cfg(test)]
@@ -357,253 +318,52 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_capabilities_supports_features_xspice() {
-        let caps_with = BackendCapabilities {
-            xspice: true,
-            osdi: false,
-            measures: false,
-            step_params: false,
-            control_blocks: false,
-            laplace_sources: false,
-            verilog_cosim: false,
-        };
-        let caps_without = BackendCapabilities {
-            xspice: false,
-            ..caps_with
-        };
-        let features = CircuitFeatures { has_xspice: true, ..Default::default() };
-        assert!(caps_with.supports_features(&features));
-        assert!(!caps_without.supports_features(&features));
+    fn capability_table_filters_by_feature() {
+        let f = |g: fn(&mut FeatureFlags)| { let mut f = FeatureFlags::default(); g(&mut f); f };
+        let xspice = f(|f| f.has_xspice = true);
+        assert!(BackendKind::Ngspice.capabilities().supports_features(&xspice));
+        assert!(!BackendKind::Vacask.capabilities().supports_features(&xspice));
+        assert!(!BackendKind::Spectre.capabilities().supports_features(&xspice));
+
+        let osdi = f(|f| f.has_osdi = true);
+        assert!(!BackendKind::Ltspice.capabilities().supports_features(&osdi));
+        assert!(BackendKind::Espice.capabilities().supports_features(&osdi));
+
+        let step_meas = f(|f| { f.has_step_params = true; f.has_measures = true; });
+        assert!(!BackendKind::Ngspice.capabilities().supports_features(&step_meas));
+        assert!(!BackendKind::Vacask.capabilities().supports_features(&step_meas));
+        assert!(BackendKind::Spectre.capabilities().supports_features(&step_meas));
+        assert!(BackendKind::Ltspice.capabilities().supports_features(&step_meas));
+        assert!(BackendKind::Ngspice.capabilities().supports_features(&FeatureFlags::default()));
     }
 
     #[test]
-    fn test_capabilities_supports_features_all_false_passes() {
-        let caps = BackendCapabilities {
-            xspice: false,
-            osdi: false,
-            measures: false,
-            step_params: false,
-            control_blocks: false,
-            laplace_sources: false,
-            verilog_cosim: false,
-        };
-        let features = CircuitFeatures::default();
-        assert!(caps.supports_features(&features));
+    fn routes_are_data() {
+        use Dialect::*;
+        assert_eq!(route("pz").0, &[Ngspice]);
+        assert_eq!(route("hb").0, &[Vacask, Spectre]);
+        assert_eq!(route("trannoise").0, &[Vacask]);
+        assert_eq!(route("pnoise").0, &[Spectre]);
+        assert_eq!(route("tran").0, ANYWHERE);
+        assert_eq!(route("tran").0.last(), Some(&Espice), "espice is never preferred first");
     }
 
     #[test]
-    fn test_capabilities_supports_features_combined() {
-        let caps = BackendCapabilities {
-            xspice: true,
-            osdi: false,
-            measures: true,
-            step_params: false,
-            control_blocks: false,
-            laplace_sources: false,
-            verilog_cosim: false,
-        };
-        let features_both = CircuitFeatures {
-            has_xspice: true,
-            has_measures: true,
-            ..Default::default()
-        };
-        let features_missing = CircuitFeatures {
-            has_xspice: true,
-            has_osdi: true,
-            ..Default::default()
-        };
-        assert!(caps.supports_features(&features_both));
-        assert!(!caps.supports_features(&features_missing));
+    fn explicit_backend_must_run_the_analysis() {
+        let none = FeatureFlags::default();
+        assert_eq!(select("pz", Some("ngspice"), &none).unwrap(), BackendKind::Ngspice);
+        assert_eq!(select("dc", Some("vacask-shared"), &none).unwrap(), BackendKind::Vacask);
+        assert!(matches!(select("pz", Some("ltspice"), &none), Err(BackendError::UnsupportedAnalysis { .. })));
+        assert!(matches!(select("hb", Some("ngspice"), &none), Err(BackendError::UnsupportedAnalysis { .. })));
+        assert!(select("op", Some("xyce"), &none).is_err());
     }
 
     #[test]
-    fn test_ngspice_capabilities() {
-        let b = ngspice::NgspiceSubprocess;
-        let c = b.capabilities();
-        assert!(c.xspice);
-        assert!(c.osdi);
-        assert!(c.measures);
-        assert!(!c.step_params);
-        assert!(c.control_blocks);
-        assert!(c.laplace_sources);
-        assert!(c.verilog_cosim);
-    }
-
-    #[test]
-    fn test_ltspice_capabilities() {
-        let b = ltspice::LtspiceSubprocess {
-            executable: std::path::PathBuf::from("ltspice"),
-            use_wine: false,
-            fast_access: false,
-        };
-        let c = b.capabilities();
-        assert!(!c.xspice);
-        assert!(!c.osdi);
-        assert!(c.measures);
-        assert!(c.step_params);
-        assert!(!c.control_blocks);
-        assert!(c.laplace_sources);
-        assert!(!c.verilog_cosim);
-    }
-
-    #[test]
-    fn test_vacask_capabilities() {
-        let b = vacask::VacaskSubprocess;
-        let c = b.capabilities();
-        assert!(c.step_params, "VACASK has sweep/var parameter sweeps");
-        assert!(!c.xspice);
-        assert!(c.osdi);
-        assert!(!c.measures, "VACASK has no measurement statement");
-        assert!(!c.control_blocks);
-        assert!(!c.laplace_sources);
-        assert!(!c.verilog_cosim);
-    }
-
-    #[test]
-    fn test_spectre_capabilities() {
-        let b = spectre::SpectreSubprocess;
-        let c = b.capabilities();
-        assert!(!c.xspice);
-        assert!(c.osdi);
-        // Spectre supports SPICE .measure (Spectre Reference, Product Version 19.1, p.17).
-        assert!(c.measures);
-        assert!(c.step_params);
-        assert!(!c.control_blocks);
-        assert!(!c.laplace_sources);
-        assert!(c.verilog_cosim);
-    }
-
-    #[test]
-    fn test_backendkind_capabilities_match_trait() {
-        let cases: Vec<(BackendKind, Box<dyn Backend>)> = vec![
-            (BackendKind::NgspiceSubprocess, Box::new(ngspice::NgspiceSubprocess)),
-            (BackendKind::Ltspice {
-                executable: std::path::PathBuf::from("ltspice"),
-                use_wine: false,
-            }, Box::new(ltspice::LtspiceSubprocess {
-                executable: std::path::PathBuf::from("ltspice"),
-                use_wine: false,
-                fast_access: false,
-            })),
-            (BackendKind::Vacask, Box::new(vacask::VacaskSubprocess)),
-            (BackendKind::Spectre, Box::new(spectre::SpectreSubprocess)),
-            (BackendKind::Espice, Box::new(espice::EspiceSubprocess)),
-        ];
-
-        for (kind, backend) in &cases {
-            let kc = kind.capabilities();
-            let bc = backend.capabilities();
-            assert_eq!(kc.xspice, bc.xspice, "{}", kind.display_name());
-            assert_eq!(kc.osdi, bc.osdi, "{}", kind.display_name());
-            assert_eq!(kc.measures, bc.measures, "{}", kind.display_name());
-            assert_eq!(kc.step_params, bc.step_params, "{}", kind.display_name());
-            assert_eq!(kc.control_blocks, bc.control_blocks, "{}", kind.display_name());
-            assert_eq!(kc.laplace_sources, bc.laplace_sources, "{}", kind.display_name());
-            assert_eq!(kc.verilog_cosim, bc.verilog_cosim, "{}", kind.display_name());
+    fn names_round_trip() {
+        for k in [BackendKind::Ngspice, BackendKind::Ltspice,
+                  BackendKind::Vacask, BackendKind::Spectre, BackendKind::Espice] {
+            assert_eq!(BackendKind::from_str(k.name()), Some(k));
         }
+        assert_eq!(BackendKind::from_str("ngspice-subprocess"), Some(BackendKind::Ngspice));
     }
-
-    #[test]
-    fn test_kind_supports_features_xspice_filters_non_ngspice() {
-        let f = CircuitFeatures { has_xspice: true, ..Default::default() };
-        assert!(BackendKind::NgspiceSubprocess.capabilities().supports_features(&f));
-        assert!(!BackendKind::Vacask.capabilities().supports_features(&f));
-        assert!(!BackendKind::Spectre.capabilities().supports_features(&f));
-    }
-
-    #[test]
-    fn test_kind_supports_features_osdi_filters_ltspice() {
-        let f = CircuitFeatures { has_osdi: true, ..Default::default() };
-        assert!(BackendKind::NgspiceSubprocess.capabilities().supports_features(&f));
-        assert!(BackendKind::Vacask.capabilities().supports_features(&f));
-        assert!(BackendKind::Spectre.capabilities().supports_features(&f));
-    }
-
-    #[test]
-    fn test_kind_supports_features_step_and_measures() {
-        let f = CircuitFeatures {
-            has_step_params: true,
-            has_measures: true,
-            ..Default::default()
-        };
-        assert!(!BackendKind::NgspiceSubprocess.capabilities().supports_features(&f));
-        // VACASK has parameter sweeps but no measurement statement.
-        assert!(!BackendKind::Vacask.capabilities().supports_features(&f));
-        assert!(BackendKind::Spectre.capabilities().supports_features(&f));
-    }
-
-    #[test]
-    fn test_espice_kind_round_trips_and_is_never_preferred_first() {
-        assert_eq!(BackendKind::from_str("espice"), Some(BackendKind::Espice));
-        assert_eq!(BackendKind::Espice.display_name(), "espice");
-        let prefs = analysis_backend_preference("tran");
-        assert_eq!(prefs.last(), Some(&"espice"));
-        // OSDI-flagged circuits mean Verilog-A loads, which ESPice compiles itself.
-        let f = CircuitFeatures { has_osdi: true, has_measures: true, ..Default::default() };
-        assert!(BackendKind::Espice.capabilities().supports_features(&f));
-        let f = CircuitFeatures { has_step_params: true, ..Default::default() };
-        assert!(!BackendKind::Espice.capabilities().supports_features(&f));
-    }
-
-    #[test]
-    fn test_analysis_backend_preference_pz_ngspice_only() {
-        let prefs = analysis_backend_preference("pz");
-        assert_eq!(prefs, &["ngspice"]);
-    }
-
-    #[test]
-    fn test_analysis_backend_preference_disto_ngspice_only() {
-        let prefs = analysis_backend_preference("disto");
-        assert_eq!(prefs, &["ngspice"]);
-    }
-
-    #[test]
-    fn test_analysis_backend_preference_hb() {
-        let prefs = analysis_backend_preference("hb");
-        assert_eq!(prefs, &["vacask", "spectre"]);
-    }
-
-    #[test]
-    fn test_analysis_backend_preference_stability() {
-        let prefs = analysis_backend_preference("stb");
-        assert_eq!(prefs, &["vacask", "spectre"]);
-    }
-
-    #[test]
-    fn test_analysis_backend_preference_trannoise_vacask_only() {
-        let prefs = analysis_backend_preference("trannoise");
-        assert_eq!(prefs, &["vacask"]);
-    }
-
-    #[test]
-    fn test_analysis_backend_preference_universal_includes_all() {
-        let prefs = analysis_backend_preference("tran");
-        assert!(prefs.contains(&"ngspice"));
-        assert!(prefs.contains(&"ltspice"));
-        assert!(prefs.contains(&"vacask"));
-        assert!(prefs.contains(&"spectre"));
-    }
-
-    #[test]
-    fn test_analysis_backend_preference_spectre_only_analyses() {
-        for analysis in &["pac", "pnoise", "pxf", "pstb", "psp", "pdisto", "hbac", "hbnoise", "hbsp"] {
-            let prefs = analysis_backend_preference(analysis);
-            assert_eq!(prefs, &["spectre"], "Expected spectre-only for {}", analysis);
-        }
-    }
-
-
-    #[test]
-    fn test_circuit_features_default_all_false() {
-        let f = CircuitFeatures::default();
-        assert!(!f.has_xspice);
-        assert!(!f.has_osdi);
-        assert!(!f.has_measures);
-        assert!(!f.has_step_params);
-        assert!(!f.has_control_blocks);
-        assert!(!f.has_laplace_sources);
-        assert!(!f.has_verilog_cosim);
-        assert_eq!(f.element_count, 0);
-    }
-
 }
