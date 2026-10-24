@@ -319,8 +319,12 @@ impl Writer<'_, '_> {
         out.push(' ');
         out.push_str(self.deck.title.as_deref().unwrap_or(&self.deck.ir.top.name));
         out.push('\n');
-        if self.d == Dialect::Spectre {
-            out.push_str("simulator lang=spectre\n");
+        match self.d {
+            Dialect::Spectre => out.push_str("simulator lang=spectre\n"),
+            // LTspice compresses waveforms (lossy) and stores them in single precision
+            // unless told otherwise; a deck written for reading back keeps every point.
+            Dialect::Ltspice => out.push_str(".options plotwinsize=0 numdgt=15\n"),
+            _ => {}
         }
     }
 
@@ -862,6 +866,7 @@ mod tests {
             "{h}"
         );
         let l = emit(Dialect::Ltspice);
+        assert!(l.starts_with("* tb (test)\n.options plotwinsize=0 numdgt=15\n"), "{l}");
         assert!(
             l.contains("* error: ltspice loads no Verilog-A (dev.va)\n"),
             "{l}"
