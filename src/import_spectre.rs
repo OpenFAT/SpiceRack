@@ -119,8 +119,23 @@ fn unescape(f: &str) -> String {
     out
 }
 
+/// `k=v` fields; a field with no `=` after a value continues it (an
+/// expression may hold blanks).
 fn pairs(fs: &[String]) -> Vec<(String, String)> {
-    fs.iter().filter_map(|f| f.split_once('=').map(|(k, v)| (k.to_string(), v.to_string()))).collect()
+    let mut out: Vec<(String, String)> = Vec::new();
+    for f in fs {
+        // A new pair's key is a name; `>=` in `a=3 >= 2` is not one.
+        let kv = f.split_once('=').filter(|(k, _)| k.starts_with(|c: char| c.is_alphabetic() || c == '_') && k.chars().all(|c| c.is_alphanumeric() || c == '_'));
+        match (kv, out.last_mut()) {
+            (Some((k, v)), _) => out.push((k.to_string(), v.to_string())),
+            (None, Some((_, prev))) => {
+                prev.push(' ');
+                prev.push_str(f);
+            }
+            _ => {}
+        }
+    }
+    out
 }
 
 fn get<'a>(p: &'a [(String, String)], k: &str) -> Option<&'a str> {

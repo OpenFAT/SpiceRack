@@ -1,0 +1,141 @@
+# VACASK: logical lines -> statements. Sources: lib/dflparser.y (P = line),
+# lib/dfllexer.l (L = line), docs/*.md. Input: vacask_lines.peg's logical
+# lines, case kept, each ended by `\n`; the title is not part of it.
+#
+# Captures the lowering reads:
+#   statements  Include Lang Section Load Embed Global Ground Parameters
+#               ParamDecl Model Subckt Ends AtIf AtElseIf AtElse
+#               ControlBlock Analysis Sweep Save Signal Control Instance
+#   fields      Name Node Master Kind Param Key Expr (and its levels)
+#               Vector List Select String Num Ref Call
+
+VDeck      <- line*
+# An included library file: sections, or plain statements.
+VLib       <- line*
+line       <- stmt? nl
+# Keywords are keywords only at the start of a statement (L783-L868).
+stmt       <- Include / Section / Load / Embed / Global / Ground / Parameters
+            / Model / Subckt / AtIf / ControlBlock / Instance
+
+# L272-L557: `include "f" [lang=x] [section=s]`, either order.
+Include    <- 'include' !nc s? String (s? ('lang' s? '=' s? Lang / 'section' s? '=' s? Name))*
+Lang       <- [a-zA-Z_$] nc*
+# L536-L557: a library file's `section name` ... `endsection`.
+Section    <- 'section' !nc s? Name nl line* 'endsection' !nc
+
+# P1161: `load "file.osdi" [map=[...]]`; P1090: `embed "name" <<<M ... >>>M`.
+Load       <- 'load' !nc s? String (s? plist)?
+Embed      <- 'embed' !nc s? String s? String
+# P1145-P1158: `global a b`, `ground (0 gnd)`.
+Global     <- 'global' !nc s? nodes
+Ground     <- 'ground' !nc s? nodes
+nodes      <- '(' s? Node (s? Node)* s? ')' / Node (s? Node)*
+
+# P1085: `parameters a=1 b=a*2`, every one with a value.
+Parameters <- 'parameters' !nc s? ('(' s? ParamDecl (s? ParamDecl)* s? ')' / ParamDecl (s? ParamDecl)*)
+ParamDecl  <- Key s? '=' s? Expr
+
+# P1067: `model name master [params]`.
+Model      <- 'model' !nc s? Name s? Master (s? plist)?
+
+# P324-P457: `subckt name (ports)` ... `ends [name]`; the parentheses are
+# required; definitions nest.
+Subckt     <- 'subckt' !nc s? Name s? '(' s? (Node (s? Node)*)? s? ')' nl sline* Ends
+sline      <- (Include / Parameters / Model / Subckt / AtIf / Instance)? nl
+Ends       <- 'ends' !nc (s? Name)?
+
+# P462-P509: `@if c` ... [`@elseif c` ...]* [`@else` ...] `@end`; branches
+# hold instances, models and nested blocks.
+AtIf       <- '@if' !nc s? Expr nl cline* AtElseIf* AtElse? '@end' !nc
+AtElseIf   <- '@elseif' !nc s? Expr nl cline*
+AtElse     <- '@else' !nc s? nl cline*
+cline      <- (Include / Model / AtIf / Instance)? nl
+
+# P1267-P1296: `control` ... `endc`; `analysis`, `sweep`, `save` are
+# keywords only here (L811-L868).
+ControlBlock <- 'control' !nc s? nl ((Include / Analysis / Save / Control)? nl)* 'endc' !nc
+# P1174-P1217: sweeps on the lines before an analysis belong to it.
+Analysis   <- (Sweep s? nl)* 'analysis' !nc s? Name s Kind (s? plist)?
+Sweep      <- 'sweep' !nc s? Name (s? plist)?
+Kind       <- [a-zA-Z_$] nc*
+# P1095-P1143: `save v(out) i(v1) p('x1:m1', id) default`.
+Save       <- 'save' !nc s? ('(' s? sigs s? ')' / sigs)
+sigs       <- Signal (s? Signal)*
+Signal     <- Name (s? '(' s? sarg (s? ',' s? sarg)? s? ')')?
+sarg       <- String / Node
+# P1229-P1265: any other command: `name [words] [(args)] [params]`
+# (options, var, print, postprocess, alter, elaborate, clear, abort, mc...).
+Control    <- !ckw Kind (s Name !(s? '='))* (s? '(' s? Expr (s? ',' s? Expr)* s? ')')? (s? plist)?
+ckw        <- ('analysis' / 'sweep' / 'save' / 'endc') !nc
+
+# P856-P1065: `name (nodes) master [params]`; with no master it is a
+# behavioral source `name (p n) v=expr [, params]`.
+Instance   <- !kw Name s? '(' s? (Node (s? Node)*)? s? ')' (s? Master !(s? '='))? (s? plist)? (s? ',' s? plist)?
+kw         <- ('include' / 'section' / 'endsection' / 'load' / 'embed' / 'global' / 'ground'
+            / 'parameters' / 'model' / 'subckt' / 'ends' / 'control' / 'endc') !nc
+
+# P848: a parameter list, or one in parentheses; no commas.
+plist      <- '(' s? Param (s? Param)* s? ')' / Param (s? Param)*
+Param      <- Key s? '=' s? Expr
+
+# P216-P230, docs/expr-operators.md: `?:` (right) < `||` < `&&` < `|` < `^`
+# < `&` < `== !=` < `< > <= >=` < `<< >>` < `+ -` < `* /` < `**` (right)
+# < unary `- + ! ~` < `[]` selection.
+Expr       <- Ternary
+Ternary    <- Or (s? '?' s? Ternary s? ':' s? Ternary)?
+Or         <- And (s? OrOp s? And)*
+And        <- BitOr (s? AndOp s? BitOr)*
+BitOr      <- BitXor (s? BitOrOp s? BitXor)*
+BitXor     <- BitAnd (s? XorOp s? BitAnd)*
+BitAnd     <- Eq (s? BitAndOp s? Eq)*
+Eq         <- Rel (s? EqOp s? Rel)*
+Rel        <- Shift (s? RelOp s? Shift)*
+Shift      <- Add (s? ShiftOp s? Add)*
+Add        <- Mul (s? AddOp s? Mul)*
+Mul        <- Pow (s? MulOp s? Pow)*
+Pow        <- Unary (s? PowOp s? Pow)?
+Unary      <- SignOp s? Unary / postfix
+postfix    <- Select / primary
+Select     <- primary (s? '[' s? Expr s? ']')+
+primary    <- Paren / String / Vector / List / Call / Num / Ref
+Paren      <- '(' s? Expr s? ')'
+Call       <- Ref s? '(' s? (Expr (s? ',' s? Expr)*)? s? ')'
+Ref        <- Name
+# P740-P781: `[a, b]` vector, `{a, b}` list; `[]` `[,]` `{}` `{,}` empty.
+Vector     <- '[' s? (',' / Expr (s? ',' s? Expr)*)? s? ']'
+List       <- '{' s? (',' / Expr (s? ',' s? Expr)*)? s? '}'
+OrOp       <- '||'
+AndOp      <- '&&'
+BitOrOp    <- '|' !'|'
+XorOp      <- '^'
+BitAndOp   <- '&' !'&'
+EqOp       <- '==' / '!='
+RelOp      <- '<=' / '>=' / '<' !'<' / '>' !'>'
+ShiftOp    <- '<<' / '>>'
+AddOp      <- [+\-]
+MulOp      <- '*' !'*' / '/'
+PowOp      <- '**'
+SignOp     <- [+\-!~] !'='
+
+# L594-L693: integer, 0x hex, float, SI prefix then letters (`1kOhm`),
+# case-blind inf/nan. `M` `x` `X` `meg` are mega, `m` milli, `mil` 25.4u.
+# A letter right after an exponent or plain number is an error (`1e3k`, `1V`).
+Num        <- ('0' [xX] [0-9a-fA-F]+ / Mantissa (Exponent / Scale [a-zA-Z_]*)? / 'inf'i / 'nan'i) !nc
+Mantissa   <- [0-9]+ ('.' [0-9]*)? / '.' [0-9]+
+Exponent   <- [eE] [+\-]? [0-9]+
+Scale      <- 'meg' / 'mil' / [munpfakKMGTxX]
+
+# L869: letters, digits, `_`, `$`, not starting with a digit; `'...'`
+# parts take any non-space bytes (`'x1:out'`, `'v1:flow(br)'`).
+Name       <- (namestart / sq) (nc+ / sq)*
+namestart  <- [a-zA-Z_$]
+sq         <- "'" ("''" / ![' \t\r\n] .)* "'"
+nc         <- [0-9a-zA-Z_$]
+# P511: a node is an identifier or a non-negative integer.
+Node       <- Name / '0' !nc / [1-9] [0-9]* !nc
+Master     <- Name
+Key        <- Name
+String     <- '"' ('\\' !nl . / !'"' !nl .)* '"'
+            / '<<<' [a-zA-Z0-9_]+ [ \t\r]* nl (!('>>>' [a-zA-Z0-9_]) .)* '>>>' [a-zA-Z0-9_]+
+s          <- [ \t\r]+
+nl         <- '\n'

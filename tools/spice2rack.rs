@@ -388,13 +388,14 @@ fn main() {
         Some("ltspice") => Dialect::Ltspice,
         Some("xyce") => Dialect::Xyce,
         Some("spectre") => Dialect::Spectre,
+        Some("vacask") => Dialect::Vacask,
         Some(other) => {
-            eprintln!("--dialect {other}: reads ngspice, hspice, ltspice, xyce or spectre");
+            eprintln!("--dialect {other}: reads ngspice, hspice, ltspice, xyce, spectre or vacask");
             std::process::exit(2);
         }
     };
     if args.is_empty() {
-        eprintln!("usage: spice2rack [-o DIR] [--dialect ngspice|hspice|ltspice|xyce|spectre] [--python [--check]] DECK...");
+        eprintln!("usage: spice2rack [-o DIR] [--dialect ngspice|hspice|ltspice|xyce|spectre|vacask] [--python [--check]] DECK...");
         std::process::exit(2);
     }
     std::fs::create_dir_all(&out).expect("output directory");

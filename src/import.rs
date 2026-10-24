@@ -15,6 +15,8 @@ use crate::peg::Grammar;
 
 #[path = "import_spectre.rs"]
 mod spectre;
+#[path = "import_vacask.rs"]
+mod vacask;
 
 // ── Grammars ──
 
@@ -36,7 +38,9 @@ fn grammars(d: Dialect) -> Result<&'static Grammars, String> {
     static LT: OnceLock<Grammars> = OnceLock::new();
     static XY: OnceLock<Grammars> = OnceLock::new();
     static SP: OnceLock<Grammars> = OnceLock::new();
+    static VA: OnceLock<Grammars> = OnceLock::new();
     let (cell, lines, cards) = match d {
+        Dialect::Vacask => (&VA, peg!("vacask_lines.peg"), peg!("vacask.peg", "vacask_one.peg")),
         Dialect::Spectre => (&SP, peg!("spectre_lines.peg"), peg!("spectre.peg", "spectre_one.peg")),
         Dialect::Xyce => (&XY, peg!("xyce_lines.peg"), peg!("spice_cards.peg", "xyce.peg", "spicerack.peg")),
         Dialect::Ltspice => (&LT, peg!("ltspice_lines.peg"), peg!("spice_cards.peg", "ltspice.peg", "spicerack.peg")),
@@ -48,7 +52,7 @@ fn grammars(d: Dialect) -> Result<&'static Grammars, String> {
         let cards = Grammar::compile(cards).expect("card grammar");
         // A dialect file may front OneCard with its own entry (LTspice's
         // LtCard reads the cards spice_cards.peg refuses).
-        let one_card = ["LtCard", "XyCard", "OneCard", "OneStmt"].iter().find_map(|r| cards.rule(r)).unwrap();
+        let one_card = ["LtCard", "XyCard", "OneCard", "OneStmt", "OneLine"].iter().find_map(|r| cards.rule(r)).unwrap();
         Grammars { lines: Grammar::compile(lines).expect("line grammar"), one_card, cards }
     }))
 }
@@ -903,8 +907,10 @@ fn close_subckt(open: &mut Vec<(Subcircuit, usize, Vec<(String, String)>)>, defs
 /// Parses deck text in dialect `d` (line 1 is the title) into IR named `name`.
 pub fn parse(src: &str, name: &str, d: Dialect) -> Result<(CircuitIR, Report), String> {
     let g = grammars(d)?;
-    if d == Dialect::Spectre {
-        return spectre::parse(src, name, g);
+    match d {
+        Dialect::Spectre => return spectre::parse(src, name, g),
+        Dialect::Vacask => return vacask::parse(src, name, g),
+        _ => {}
     }
     let (_title, lines) = logical_lines(src, g).map_err(|at| format!("line grammar stops at byte {at}"))?;
     let mut report = Report::default();

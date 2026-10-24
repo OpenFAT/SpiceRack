@@ -295,6 +295,12 @@ fn spectre_corpus_fixpoint() {
     corpus_fixpoint("SPECTRE_CORPUS", Dialect::Spectre, "scs", |p| !p.contains("/err_"));
 }
 
+/// VACASK decks (`$VACASK_CORPUS`, e.g. VACASK's `test`, `demo`, `benchmark`).
+#[test]
+fn vacask_corpus_fixpoint() {
+    corpus_fixpoint("VACASK_CORPUS", Dialect::Vacask, "sim", |_| true);
+}
+
 /// LTspice netlists (`$LTSPICE_CORPUS`, e.g. the spice-datasets collection's `*.net`).
 #[test]
 fn ltspice_corpus_fixpoint() {

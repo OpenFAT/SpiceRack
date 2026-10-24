@@ -1,0 +1,37 @@
+# VACASK: physical lines -> the title and logical statements.
+# Source: lib/dfllexer.l (L = line) and docs/input-overview.md.
+# Captures: Title; Line, made of Piece (joined to the previous part with a
+# blank) and Glue (a bracket, joined with nothing).
+# A statement ends at a newline outside (), [], {} (L913-L919); `\` right
+# before the newline joins the next line (L921); `//` and `/* */` are
+# comments anywhere outside strings (L176-L187). Case is kept.
+
+File     <- Title (eol body)? !.
+# L159: line 1, whatever it holds, is the title.
+Title    <- (!eol .)*
+body     <- (skip / Line)*
+skip     <- sep* eol / sep+ !.
+Line     <- sep* unit (sep* unit)* sep* eolx
+unit     <- Piece / group
+sep      <- blank / lcomment / bcomment / bs
+# L559-L585: newlines inside brackets are not statement ends. The lexer
+# counts each bracket kind; pairing is checked here.
+group    <- &'(' Glue gin* &')' Glue / &'[' Glue gin* &']' Glue / &'{' Glue gin* &'}' Glue
+gin      <- sep / eol / unit
+Glue     <- [()\[\]{}]
+Piece    <- atom (atom / blank)*
+atom     <- longstr / dstring / sqname / !sepstart !eol ![()\[\]{}] .
+sepstart <- '//' / '/*' / bs
+bs       <- '\\' '\r'? '\n'
+lcomment <- '//' (!eol .)*
+bcomment <- '/*' (!'*/' .)* '*/'
+# L705, L214-L271: "..." with backslash escapes, never across a newline.
+dstring  <- '"' ('\\' !eol . / !'"' !eol .)* '"'
+# L869: a quoted identifier part, any non-space bytes, '' is a quote.
+sqname   <- "'" ("''" / ![' \t\r\n] .)* "'"
+# L695, L188: <<<MARK newline ... >>>MARK. ponytail: ends at the first
+# `>>>word`, not only the matching marker (PEG has no back-reference).
+longstr  <- '<<<' [a-zA-Z0-9_]+ [ \t\r]* '\n' (!('>>>' [a-zA-Z0-9_]) .)* '>>>' [a-zA-Z0-9_]+
+blank    <- [ \t\r]
+eol      <- '\r'? '\n'
+eolx     <- eol / !.

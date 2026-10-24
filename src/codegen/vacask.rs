@@ -109,6 +109,11 @@ pub(super) fn parse_spice_num(t: &str) -> Option<(f64, String)> {
     }
     let mantissa: f64 = t[..end].parse().ok()?;
     let suffix = t[end..].to_ascii_lowercase();
+    // A scale and a unit, nothing else: `1k*(1+x)` is an expression, and
+    // reading it as `1k` would drop the rest.
+    if !suffix.chars().all(|c| c.is_ascii_alphabetic()) {
+        return None;
+    }
     for (spice, vacask, mult) in SCALES {
         if suffix.starts_with(spice) {
             // A decimal shift, not a multiply: `108f` is 1.08e-13 exactly.
@@ -130,7 +135,8 @@ fn respell(s: &str) -> String {
     let t = t.strip_prefix('{').and_then(|r| r.strip_suffix('}')).unwrap_or(t).trim();
     match parse_spice_num(t) {
         Some((_, spelled)) => spelled,
-        None => t.to_ascii_lowercase(),
+        // Case is settled by `prepared` (lowercased for SPICE-origin text).
+        None => t.to_string(),
     }
 }
 
@@ -357,6 +363,9 @@ fn sweep_line(scale: &str, target: &str, name: &str, param: &str, start: f64, st
         )));
     }
     let last = start + (stop - start).signum() * n * step.abs();
+    // Within rounding of the stop, the stop is the endpoint (a VACASK-origin
+    // sweep's step is (to - from) / points, which multiplies back an ulp off).
+    let last = if (last - stop).abs() <= 1e-9 * step.abs() { stop } else { last };
     Ok(format!(
         "sweep {} {}=\"{}\" parameter=\"{}\" from={} to={} mode=\"lin\" points={}",
         scale, target, name.to_ascii_lowercase(), param, num(start), num(last), n as u64,
@@ -405,7 +414,9 @@ fn freq_sweep(variation: &str, points: u32, start: f64, stop: f64)
 }
 
 /// The `analysis` statement plus any `sweep` lines that must precede it.
-fn analysis_block(idx: usize, a: &Analysis) -> Result<Vec<String>, CodeGenError> {
+/// `native`: the IR was read from a VACASK deck, whose `tran` without a
+/// `maxstep` means VACASK's own default, not SPICE's TMAX.
+fn analysis_block(idx: usize, a: &Analysis, native: bool) -> Result<Vec<String>, CodeGenError> {
     let name = format!("{}{}", a.kind_str(), idx + 1);
     let mut out = Vec::new();
     match a {
@@ -445,11 +456,11 @@ fn analysis_block(idx: usize, a: &Analysis) -> Result<Vec<String>, CodeGenError>
                     "transient with a nonzero start time (VACASK always saves from t=0)",
                 ));
             }
-            let tmax = max_step.unwrap_or_else(|| step.min(stop / 50.0));
-            let mut s = format!(
-                "analysis {} tran step={} stop={} maxstep={}",
-                name, num(*step), num(*stop), num(tmax)
-            );
+            let tmax = max_step.or((!native).then(|| step.min(stop / 50.0)));
+            let mut s = format!("analysis {} tran step={} stop={}", name, num(*step), num(*stop));
+            if let Some(t) = tmax {
+                s.push_str(&format!(" maxstep={}", num(t)));
+            }
             s.push_str(if *uic { " icmode=\"uic\"" } else { " icmode=\"op\"" });
             out.push(s);
         }
@@ -565,8 +576,79 @@ fn sanitize(s: &str) -> String {
         .collect()
 }
 
+/// A name as a VACASK identifier: `[a-zA-Z_$][0-9a-zA-Z_$]*`, a number, or
+/// else quoted, `''` for a quote (docs/input-identifiers.md). SPICE names
+/// carry `#` `/` `-` `+` freely (`mnd#/mp1`, `Net-_R1-Pad2_`).
+fn quote(name: &str) -> String {
+    let plain = name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
+        && (name.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_' || c == '$')
+            // A number node is `0` or has no leading zero (`06` is not one).
+            || (name.chars().all(|c| c.is_ascii_digit()) && (name == "0" || !name.starts_with('0'))));
+    if plain || name.is_empty() { name.to_string() } else { format!("'{}'", name.replace('\'', "''")) }
+}
+
+/// `ir` with every node, instance, model and subcircuit name a VACASK
+/// identifier. A SPICE-origin IR's expressions are lowercased too: SPICE
+/// names are case-blind (`Rload` and `rload` are one parameter) and VACASK's
+/// are not. A VACASK-origin IR keeps its case (`M_PI` is not `m_pi`).
+fn prepared(ir: &CircuitIR) -> CircuitIR {
+    let mut ir = ir.clone();
+    if ir.raw_dialect.as_deref() != Some("vacask") {
+        let low = |v: &mut String| {
+            if parse_spice_num(v.trim()).is_none() {
+                *v = v.to_ascii_lowercase();
+            }
+        };
+        let tb_comps = ir.testbench.iter_mut().flat_map(|tb| tb.stimulus.iter_mut());
+        let blocks = std::iter::once(&mut ir.top).chain(ir.subcircuit_defs.iter_mut());
+        for sc in blocks {
+            sc.parameters.iter_mut().filter_map(|p| p.default.as_mut()).for_each(low);
+            sc.models.iter_mut().flat_map(|m| m.parameters.iter_mut()).for_each(|(_, v)| low(v));
+            sc.instances.iter_mut().flat_map(|i| i.parameters.iter_mut()).for_each(|(_, v)| low(v));
+            for c in &mut sc.components {
+                lower_values(c, &low);
+            }
+        }
+        for c in tb_comps {
+            lower_values(c, &low);
+        }
+    }
+    let q = |s: &mut String| *s = quote(s);
+    ir.subcircuit_defs.iter_mut().for_each(|sc| q(&mut sc.name));
+    for sc in std::iter::once(&mut ir.top).chain(ir.subcircuit_defs.iter_mut()) {
+        sc.ports.iter_mut().for_each(|p| q(&mut p.name));
+        sc.models.iter_mut().for_each(|m| q(&mut m.name));
+        for i in &mut sc.instances {
+            q(&mut i.name);
+            q(&mut i.subcircuit);
+            i.port_mapping.iter_mut().for_each(q);
+        }
+        sc.components.iter_mut().for_each(|c| c.names_mut().into_iter().for_each(q));
+    }
+    ir.testbench.iter_mut().flat_map(|tb| tb.stimulus.iter_mut()).for_each(|c| c.names_mut().into_iter().for_each(q));
+    ir.globals.iter_mut().for_each(q);
+    ir
+}
+
+/// A component's value and parameter texts through `low`.
+fn lower_values(c: &mut Component, low: &impl Fn(&mut String)) {
+    use Component::*;
+    match c {
+        Resistor { value, params, .. } | Capacitor { value, params, .. } | Inductor { value, params, .. } => {
+            if let IrValue::Expression { expr } = value {
+                low(expr);
+            }
+            params.iter_mut().for_each(|(_, v)| low(v));
+        }
+        VoltageSource { value: IrValue::Expression { expr }, .. } | CurrentSource { value: IrValue::Expression { expr }, .. } => low(expr),
+        Diode { params, .. } | Bjt { params, .. } | Mosfet { params, .. } | Jfet { params, .. } | Mesfet { params, .. } => params.iter_mut().for_each(|(_, v)| low(v)),
+        _ => {}
+    }
+}
+
 pub(super) fn netlist(ir: &CircuitIR) -> Result<String, CodeGenError> {
     super::refuse_raw_spice(ir, "vacask")?;
+    let ir = &prepared(ir);
     if let Some(f) = ir.functions.first() {
         return Err(unsupported_comp(format!(".func {}: VACASK has no user functions", f.name)));
     }
@@ -589,12 +671,15 @@ pub(super) fn netlist(ir: &CircuitIR) -> Result<String, CodeGenError> {
         }
     }
 
-    // Models first: they contribute loads too.
+    // Models first: they contribute loads too. A subcircuit's models stay in
+    // it, where VACASK scopes them (two subcircuits may both define `qmod`).
     let mut model_lines = Vec::new();
-    for sub in &subs {
-        for m in &sub.models {
-            model_lines.push(emit_model(m, &mut loads)?);
-        }
+    for m in &ir.top.models {
+        model_lines.push(emit_model(m, &mut loads)?);
+    }
+    let mut sub_models: Vec<Vec<String>> = Vec::new();
+    for sc in &ir.subcircuit_defs {
+        sub_models.push(sc.models.iter().map(|m| emit_model(m, &mut loads)).collect::<Result<_, _>>()?);
     }
 
     for n in &needs {
@@ -602,7 +687,14 @@ pub(super) fn netlist(ir: &CircuitIR) -> Result<String, CodeGenError> {
             loads.insert(format!("spice/{}.osdi", m));
         }
     }
-    for path in crate::veriloga::osdi_loads(&ir.top.osdi_loads).map_err(CodeGenError::Other)? {
+    // A VACASK deck's own `load` lines are VACASK's (it compiles a `.va`
+    // itself); a SPICE-origin Verilog-A load goes through OpenVAF first.
+    let user_loads = if ir.raw_dialect.as_deref() == Some("vacask") {
+        ir.top.osdi_loads.clone()
+    } else {
+        crate::veriloga::osdi_loads(&ir.top.osdi_loads).map_err(CodeGenError::Other)?
+    };
+    for path in user_loads {
         loads.insert(path);
     }
 
@@ -684,8 +776,8 @@ pub(super) fn netlist(ir: &CircuitIR) -> Result<String, CodeGenError> {
         lines.push(String::new());
     }
 
-    for sc in &ir.subcircuit_defs {
-        lines.push(emit_subcircuit(sc)?);
+    for (sc, models) in ir.subcircuit_defs.iter().zip(&sub_models) {
+        lines.push(emit_subcircuit(sc, models)?);
         lines.push(String::new());
     }
 
@@ -695,6 +787,9 @@ pub(super) fn netlist(ir: &CircuitIR) -> Result<String, CodeGenError> {
     for inst in &ir.top.instances {
         lines.push(emit_instance(inst));
     }
+    // VACASK text kept verbatim on import (`refuse_raw_spice` has checked
+    // that it is VACASK's).
+    lines.extend(ir.top.raw_spice.iter().cloned());
 
     if let Some(tb) = &ir.testbench {
         for comp in &tb.stimulus {
@@ -755,7 +850,7 @@ pub(super) fn netlist(ir: &CircuitIR) -> Result<String, CodeGenError> {
             for s in &step_sweeps {
                 lines.push(format!("  {}", s));
             }
-            for l in analysis_block(idx, a)? {
+            for l in analysis_block(idx, a, ir.raw_dialect.as_deref() == Some("vacask"))? {
                 let l = if l.trim_start().starts_with("analysis") {
                     format!("{}{}", l, ic)
                 } else {
@@ -772,9 +867,10 @@ pub(super) fn netlist(ir: &CircuitIR) -> Result<String, CodeGenError> {
     Ok(out)
 }
 
-fn emit_subcircuit(sc: &Subcircuit) -> Result<String, CodeGenError> {
+fn emit_subcircuit(sc: &Subcircuit, models: &[String]) -> Result<String, CodeGenError> {
     let ports: Vec<String> = sc.ports.iter().map(|p| p.name.to_ascii_lowercase()).collect();
     let mut lines = vec![format!("subckt {} ({})", sc.name.to_ascii_lowercase(), ports.join(" "))];
+    lines.extend(models.iter().map(|m| format!("  {m}")));
     if !sc.parameters.is_empty() {
         let body: Vec<String> = sc
             .parameters
@@ -792,6 +888,7 @@ fn emit_subcircuit(sc: &Subcircuit) -> Result<String, CodeGenError> {
     for inst in &sc.instances {
         lines.push(format!("  {}", emit_instance(inst)));
     }
+    lines.extend(sc.raw_spice.iter().map(|l| format!("  {l}")));
     lines.push("ends".into());
     Ok(lines.join("\n"))
 }
@@ -975,7 +1072,7 @@ mod tests {
     use super::*;
 
     fn emit_analysis(a: &Analysis) -> Result<String, CodeGenError> {
-        Ok(analysis_block(0, a)?.join("\n"))
+        Ok(analysis_block(0, a, false)?.join("\n"))
     }
     use std::collections::BTreeMap;
 
@@ -1165,5 +1262,16 @@ mod tests {
         let n = netlist(&ir).unwrap();
         assert!(n.contains("reltol=1e-4"), "{}", n);
         assert!(!n.contains("noacct"), "{}", n);
+    }
+}
+
+#[cfg(test)]
+mod number_tests {
+    /// An expression that starts like a number is not one.
+    #[test]
+    fn expressions_are_not_truncated_to_their_leading_number() {
+        assert_eq!(super::parse_spice_num("1k*(1+x)"), None);
+        assert_eq!(super::parse_spice_num("108f").map(|x| x.0), Some(1.08e-13));
+        assert_eq!(super::parse_spice_num("5V").map(|x| x.0), Some(5.0));
     }
 }
