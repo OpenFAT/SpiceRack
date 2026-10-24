@@ -1,0 +1,17 @@
+# SpiceRack: one Spectre logical line at a time, as spicerack.peg's OneCard
+# does for SPICE; a block's opener and closer are separate lines, which the
+# lowering pairs.
+OneStmt    <- (SubcktHead / EndBlock / Ends / BlockHead / Close / SimSpice / stmt) nl !.
+SubcktHead <- ('inline' s)? 'subckt' s Name ports?
+# A line that opens a brace block: model group, if branch, sweep or
+# montecarlo, altergroup, function body, statistics.
+BlockHead  <- 'model' s Name s Master (s param)* s? '{'
+            / 'if' s? '(' s? Expr s? ')' s? '{'?
+            / 'statistics' s? '{'
+            / 'real' s Name s? '(' s? (FArg (s? ',' s? FArg)*)? s? ')' s? '{'
+            / Name s? (nodelist s?)? (Kind / Kind2) !wchar (s param)* s? '{'
+# `}`, `} else {`, `} else if (c) {`.
+Close      <- '}' (s? 'else' (s 'if' s? '(' s? Expr s? ')')? s? '{')? / '{'
+SimSpice   <- 'simulator' s 'lang' s? '=' s? 'spice' (s Param)*
+# A library file's closers (§3.4) and its openers, line by line.
+EndBlock   <- ('endsection' / 'endlibrary') (s Name)? / ('section' / 'library') s Name

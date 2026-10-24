@@ -13,6 +13,9 @@ use crate::codegen::Dialect;
 use crate::ir::*;
 use crate::peg::Grammar;
 
+#[path = "import_spectre.rs"]
+mod spectre;
+
 // ── Grammars ──
 
 /// One dialect's grammars, compiled once: physical lines -> logical lines,
@@ -32,7 +35,9 @@ fn grammars(d: Dialect) -> Result<&'static Grammars, String> {
     static HS: OnceLock<Grammars> = OnceLock::new();
     static LT: OnceLock<Grammars> = OnceLock::new();
     static XY: OnceLock<Grammars> = OnceLock::new();
+    static SP: OnceLock<Grammars> = OnceLock::new();
     let (cell, lines, cards) = match d {
+        Dialect::Spectre => (&SP, peg!("spectre_lines.peg"), peg!("spectre.peg", "spectre_one.peg")),
         Dialect::Xyce => (&XY, peg!("xyce_lines.peg"), peg!("spice_cards.peg", "xyce.peg", "spicerack.peg")),
         Dialect::Ltspice => (&LT, peg!("ltspice_lines.peg"), peg!("spice_cards.peg", "ltspice.peg", "spicerack.peg")),
         Dialect::Ngspice | Dialect::Espice => (&NG, peg!("ngspice_lines.peg"), peg!("spice_cards.peg", "ngspice.peg", "spicerack.peg")),
@@ -43,7 +48,7 @@ fn grammars(d: Dialect) -> Result<&'static Grammars, String> {
         let cards = Grammar::compile(cards).expect("card grammar");
         // A dialect file may front OneCard with its own entry (LTspice's
         // LtCard reads the cards spice_cards.peg refuses).
-        let one_card = cards.rule("LtCard").or(cards.rule("XyCard")).or(cards.rule("OneCard")).unwrap();
+        let one_card = ["LtCard", "XyCard", "OneCard", "OneStmt"].iter().find_map(|r| cards.rule(r)).unwrap();
         Grammars { lines: Grammar::compile(lines).expect("line grammar"), one_card, cards }
     }))
 }
@@ -65,11 +70,13 @@ fn logical_lines(src: &str, g: &Grammars) -> Result<(String, Vec<String>), usize
     for row in tree.children(Some(0)) {
         match g.lines.name(tree.rows[row].rule) {
             "Title" => title = tree.text(row).trim().to_string(),
-            "Line" => {
+            // Spectre's `SpiceLine` (a `simulator lang=spice` region) is built
+            // the same way, from `HPiece`/`HGlue`.
+            "Line" | "SpiceLine" => {
                 let mut line = String::new();
                 for part in tree.children(Some(row)) {
                     let text = tree.text(part).trim();
-                    if !line.is_empty() && !text.is_empty() && g.lines.name(tree.rows[part].rule) == "Piece" {
+                    if !line.is_empty() && !text.is_empty() && g.lines.name(tree.rows[part].rule).ends_with("Piece") {
                         line.push(' ');
                     }
                     line.push_str(text);
@@ -896,6 +903,9 @@ fn close_subckt(open: &mut Vec<(Subcircuit, usize, Vec<(String, String)>)>, defs
 /// Parses deck text in dialect `d` (line 1 is the title) into IR named `name`.
 pub fn parse(src: &str, name: &str, d: Dialect) -> Result<(CircuitIR, Report), String> {
     let g = grammars(d)?;
+    if d == Dialect::Spectre {
+        return spectre::parse(src, name, g);
+    }
     let (_title, lines) = logical_lines(src, g).map_err(|at| format!("line grammar stops at byte {at}"))?;
     let mut report = Report::default();
     let models: HashSet<String> = lines

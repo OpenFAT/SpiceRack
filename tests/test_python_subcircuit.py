@@ -477,7 +477,7 @@ class TestSubcircuitInstances:
         cards = {
             "ngspice": "X1 a 0 rload r=3e3 nf=2 w={wn*2}",
             "ltspice": "X1 a 0 rload r=3e3 nf=2 w={wn*2}",
-            "spectre": "x1 (a 0) rload r=3e3 nf=2 w={wn*2}",
+            "spectre": "x1 (a 0) rload r=3k nf=2 w={wn*2}",  # numbers in Spectre's suffixes
         }
         for backend, card in cards.items():
             assert card in tb.netlist(backend).splitlines(), backend

@@ -111,7 +111,8 @@ pub(super) fn parse_spice_num(t: &str) -> Option<(f64, String)> {
     let suffix = t[end..].to_ascii_lowercase();
     for (spice, vacask, mult) in SCALES {
         if suffix.starts_with(spice) {
-            return Some((mantissa * mult, format!("{}{}", &t[..end], vacask)));
+            // A decimal shift, not a multiply: `108f` is 1.08e-13 exactly.
+            return Some((crate::unit::scale(mantissa, *mult), format!("{}{}", &t[..end], vacask)));
         }
     }
     // A trailing unit with no scale letter (`5V`, `1ohm`) is ignored by SPICE.

@@ -32,20 +32,33 @@
 
 use super::format_spice_number;
 use crate::ir::*;
-use super::{param_defs, CodeGenError};
+use super::CodeGenError;
 
 /// A SPICE number in a parameter value, spelled without its scale factor:
 /// Spectre reads `M` as mega where SPICE reads milli (`IKF=30M` is 30e-3),
 /// so `30M` must reach Spectre as `0.03`. Anything else (an expression, a
 /// name) passes unchanged.
 fn spectre_value(v: &str) -> String {
+    // The value, written in Spectre's own suffixes: VACASK's spelling of
+    // mega is `meg`, which Spectre reads as milli with a unit tail.
     match super::vacask::parse_spice_num(v.trim()) {
-        Some((_, plain)) => plain,
+        Some((x, _)) => spectre_num(x),
         None => v.to_string(),
     }
 }
 
 /// ` k=v k=v`, numbers respelled for Spectre.
+/// ` a=1 b`: parameter declarations, defaults respelled as `emit_params`
+/// does (a SPICE `1meg` default would read as milli in Spectre).
+fn param_defs(defs: &[ParamDef]) -> String {
+    defs.iter()
+        .map(|p| match &p.default {
+            Some(d) => format!(" {}={}", p.name, spectre_value(d)),
+            None => format!(" {}", p.name),
+        })
+        .collect()
+}
+
 fn emit_params(params: &[(String, String)]) -> String {
     params.iter().map(|(k, v)| format!(" {k}={}", spectre_value(v))).collect()
 }
@@ -383,6 +396,9 @@ fn emit_subcircuit_body(sc: &Subcircuit) -> Result<String, CodeGenError> {
     for inst in &sc.instances {
         lines.push(emit_instance(inst));
     }
+    // Spectre text kept verbatim on import (`refuse_raw_spice` has checked
+    // that it is Spectre's).
+    lines.extend(sc.raw_spice.iter().cloned());
 
     Ok(lines.join("\n"))
 }
@@ -405,8 +421,64 @@ fn map_option_name(canonical: &str) -> &str {
     }
 }
 
+/// A name in Spectre's spelling: any byte outside `[A-Za-z0-9_!]` gets a `\`
+/// (UG p.62). SPICE names carry `:` `/` `#` `[ ]` `.` `-` freely
+/// (post-layout `xssram/X1/M1:DRN`, KiCad `Net-_R1-Pad2_`).
+fn escape(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    // A name that starts with a digit is read as digits only (`spectre.peg`
+    // Node), so one needing escapes escapes its first digit too: `\15\+`.
+    let needs = name.chars().any(|c| !(c.is_ascii_alphanumeric() || c == '_' || c == '!'));
+    if needs && name.starts_with(|c: char| c.is_ascii_digit()) {
+        out.push('\\');
+    }
+    for c in name.chars() {
+        if !(c.is_ascii_alphanumeric() || c == '_' || c == '!') {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// `ir` with every node, instance, model and subcircuit name escaped.
+fn escaped(ir: &CircuitIR) -> CircuitIR {
+    let mut ir = ir.clone();
+    let esc = |s: &mut String| *s = escape(s);
+    let tb_comps = ir.testbench.iter_mut().flat_map(|tb| tb.stimulus.iter_mut());
+    // The top's name is the title comment; definitions are identifiers.
+    ir.subcircuit_defs.iter_mut().for_each(|sc| esc(&mut sc.name));
+    for sc in std::iter::once(&mut ir.top).chain(ir.subcircuit_defs.iter_mut()) {
+        sc.ports.iter_mut().for_each(|p| esc(&mut p.name));
+        sc.models.iter_mut().for_each(|m| esc(&mut m.name));
+        for i in &mut sc.instances {
+            esc(&mut i.name);
+            esc(&mut i.subcircuit);
+            i.port_mapping.iter_mut().for_each(esc);
+        }
+        sc.components.iter_mut().for_each(|c| c.names_mut().into_iter().for_each(esc));
+    }
+    tb_comps.for_each(|c| c.names_mut().into_iter().for_each(esc));
+    ir.globals.iter_mut().for_each(esc);
+    // A signal (`v(x)`, `i(x)`, bare `x`) keeps its wrapper; the name inside
+    // is escaped.
+    let signal = |s: &mut String| {
+        let t = s.trim().to_string();
+        *s = match t.split_once('(').filter(|(w, r)| matches!(*w, "v" | "V" | "i" | "I") && r.ends_with(')')) {
+            Some((w, r)) => format!("{w}({})", escape(&r[..r.len() - 1])),
+            None => escape(&t),
+        };
+    };
+    if let Some(tb) = &mut ir.testbench {
+        tb.initial_conditions.iter_mut().chain(tb.node_sets.iter_mut()).for_each(|(n, _)| signal(n));
+        tb.saves.iter_mut().for_each(signal);
+    }
+    ir
+}
+
 pub(super) fn netlist(ir: &CircuitIR) -> Result<String, CodeGenError> {
     super::refuse_raw_spice(ir, "spectre")?;
+    let ir = &escaped(ir);
     let mut lines = Vec::new();
 
     // `[KUN]` B.2: `//` is a Spectre comment; "all Spectre netlists must
@@ -423,7 +495,7 @@ pub(super) fn netlist(ir: &CircuitIR) -> Result<String, CodeGenError> {
             return Err(unsupported_component(&format!(".func {}: a body over v()/i() has no Spectre function form", f.name)));
         }
         let args: Vec<String> = f.args.iter().map(|a| format!("real {a}")).collect();
-        lines.push(format!("real {}({}) {{ return {}; }}", f.name, args.join(", "), f.body));
+        lines.push(format!("real {}({}) {{\n    return {};\n}}", f.name, args.join(", "), f.body));
     }
     // `global 0 a b`: Spectre takes the first global as ground (R5 p.871).
     if !ir.globals.is_empty() {
@@ -483,6 +555,7 @@ pub(super) fn netlist(ir: &CircuitIR) -> Result<String, CodeGenError> {
     for inst in &ir.top.instances {
         lines.push(emit_instance(inst));
     }
+    lines.extend(ir.top.raw_spice.iter().cloned());
 
     if let Some(ref tb) = ir.testbench {
         for comp in &tb.stimulus {
@@ -1044,7 +1117,12 @@ fn emit_options(opts: &SimOptions) -> Result<String, CodeGenError> {
     if let Some((k, _)) = opts.portable.iter().find(|(_, v)| v.is_empty()) {
         return Err(CodeGenError::UnsupportedAnalysis { backend: "spectre".into(), analysis: format!("option flag '{k}' (Spectre options take name=value)") });
     }
-    let parts = super::option_pairs(opts, "spectre", map_option_name);
+    // Portable options are SPICE's: lowercase Spectre names, and numbers
+    // respelled (SPICE `VNTOL=1M` is milli; Spectre's M is mega).
+    // Spectre-specific ones are Spectre text already.
+    let portable = opts.portable.iter().map(|(k, v)| format!("{}={}", map_option_name(&k.to_ascii_lowercase()), spectre_value(v)));
+    let native = opts.backend_specific.get("spectre").into_iter().flatten().map(|(k, v)| format!("{k}={v}"));
+    let parts: Vec<String> = portable.chain(native).collect();
     Ok(if parts.is_empty() { String::new() } else { format!("myopts options {}", parts.join(" ")) })
 }
 
@@ -1272,7 +1350,7 @@ mod tests {
         };
         let s = emit_options(&opts).unwrap();
         assert!(s.contains("myopts options"), "opts header: {}", s);
-        assert!(s.contains("reltol=1e-3"), "reltol: {}", s);
+        assert!(s.contains("reltol=1m"), "reltol: {}", s);
         assert!(s.contains("dcmaxiters=200"), "dcmaxiters: {}", s);
     }
 

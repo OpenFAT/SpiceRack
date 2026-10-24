@@ -288,6 +288,13 @@ fn xyce_corpus_fixpoint() {
     corpus_fixpoint("XYCE_CORPUS", Dialect::Xyce, "cir", |_| true);
 }
 
+/// Spectre decks (`$SPECTRE_CORPUS`, e.g. ESPice's
+/// `tests/frontend/spectre_fixtures`; `err_*` decks are deliberately invalid).
+#[test]
+fn spectre_corpus_fixpoint() {
+    corpus_fixpoint("SPECTRE_CORPUS", Dialect::Spectre, "scs", |p| !p.contains("/err_"));
+}
+
 /// LTspice netlists (`$LTSPICE_CORPUS`, e.g. the spice-datasets collection's `*.net`).
 #[test]
 fn ltspice_corpus_fixpoint() {

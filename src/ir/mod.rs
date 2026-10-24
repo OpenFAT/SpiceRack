@@ -150,6 +150,30 @@ pub enum Component {
 }
 
 impl Component {
+    /// Every name the component carries, for renaming: its own name, its
+    /// nodes, sensing sources and model. XSPICE connections and raw lines
+    /// are text and are not included.
+    pub fn names_mut(&mut self) -> Vec<&mut String> {
+        use Component::*;
+        match self {
+            Resistor { name, n1, n2, .. } | Capacitor { name, n1, n2, .. } | Inductor { name, n1, n2, .. } => vec![name, n1, n2],
+            MutualInductor { name, inductor1, inductor2, .. } => vec![name, inductor1, inductor2],
+            VoltageSource { name, np, nm, .. } | CurrentSource { name, np, nm, .. } | BehavioralVoltage { name, np, nm, .. } | BehavioralCurrent { name, np, nm, .. } => vec![name, np, nm],
+            Vcvs { name, np, nm, ncp, ncm, .. } | Vccs { name, np, nm, ncp, ncm, .. } => vec![name, np, nm, ncp, ncm],
+            Cccs { name, np, nm, vsense, .. } | Ccvs { name, np, nm, vsense, .. } => vec![name, np, nm, vsense],
+            Diode { name, np, nm, model, .. } => vec![name, np, nm, model],
+            Bjt { name, nc, nb, ne, extra_nodes, model, .. } => [name, nc, nb, ne, model].into_iter().chain(extra_nodes.iter_mut()).collect(),
+            Mosfet { name, nd, ng, ns, nb, extra_nodes, model, .. } => [name, nd, ng, ns, model].into_iter().chain(nb.iter_mut()).chain(extra_nodes.iter_mut()).collect(),
+            Jfet { name, nd, ng, ns, model, .. } | Mesfet { name, nd, ng, ns, model, .. } => vec![name, nd, ng, ns, model],
+            VSwitch { name, np, nm, ncp, ncm, model } => vec![name, np, nm, ncp, ncm, model],
+            ISwitch { name, np, nm, vcontrol, model } => vec![name, np, nm, vcontrol, model],
+            TLine { name, inp, inm, outp, outm, .. } => vec![name, inp, inm, outp, outm],
+            Xspice { name, .. } => vec![name],
+            Poly { name, np, nm, controls, .. } => [name, np, nm].into_iter().chain(controls.iter_mut()).collect(),
+            RawSpice { .. } => vec![],
+        }
+    }
+
     /// Instance name without its SPICE letter; `None` for a raw line.
     pub fn name(&self) -> Option<&str> {
         use Component::*;

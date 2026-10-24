@@ -221,7 +221,7 @@ fn spectre_options_use_documented_parameter_names() {
     let s = deck.lines().find(|l| l.starts_with("myopts")).unwrap();
     assert_eq!(
         s,
-        "myopts options reltol=1e-4 iabstol=1e-13 vabstol=1e-7 gmin=1e-13 dcmaxiters=150",
+        "myopts options reltol=100u iabstol=100f vabstol=100n gmin=100f dcmaxiters=150",
     );
     assert!(!s.contains(" maxiters="), "maxiters is a dc parameter, not an option: {s}");
 }
