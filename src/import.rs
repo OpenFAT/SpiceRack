@@ -268,7 +268,7 @@ fn args(tok: &str) -> Option<Vec<f64>> {
 }
 
 fn waveform(tok: &str) -> Option<IrWaveform> {
-    let kind = tok.split_once('(')?.0.to_ascii_lowercase();
+    let kind = tok.split_once('(')?.0.trim().to_ascii_lowercase(); // `pwl (0 0 ...)`: one group, blank before `(`
     let a = args(tok)?;
     let g = |i: usize, d: f64| a.get(i).copied().unwrap_or(d);
     Some(match kind.as_str() {
@@ -828,6 +828,9 @@ Rp p 0 1k
         // `.control` analyses become dot cards; the scripting goes.
         let c = parse("t\nR1 a 0 1k\n.control\nTRAN 1n 10n\nplot v(a)\n.endc\n", "t", Dialect::Ngspice).unwrap().0;
         assert!(matches!(c.testbench.as_ref().unwrap().analyses[..], [Analysis::Transient { stop, .. }] if stop == 10e-9));
+        // A blank before the waveform's `(` is still the waveform.
+        let b = parse("t\nV1 a 0 pwl (0 0 1n 1)\n", "t", Dialect::Ngspice).unwrap().0;
+        assert!(matches!(&b.top.components[0], Component::VoltageSource { waveform: Some(IrWaveform::Pwl { .. }), .. }), "{:?}", b.top);
         // A waveform-only source keeps its t=0 value as the DC value.
         let w = parse("t\nV2 x 0 pulse(3 0 1n 1n 1n 5n 10n)\n", "t", Dialect::Ngspice).unwrap().0;
         assert!(matches!(w.top.components[0], Component::VoltageSource { value: IrValue::Numeric { value: 3.0 }, .. }));

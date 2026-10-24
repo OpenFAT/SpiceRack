@@ -148,6 +148,9 @@ fn dc_sweeps(kwargs: Option<Bound<'_, PyDict>>) -> PyResult<Analysis> {
 enum PyValueArg {
     Float(f64),
     Unit(PyUnitValue),
+    /// An expression over parameters (`"rv*2"`, `"{rv*2}"`), written in each
+    /// dialect's own quoting.
+    Expr(String),
 }
 
 impl PyValueArg {
@@ -155,6 +158,11 @@ impl PyValueArg {
         match self {
             Self::Float(value) => IrValue::Numeric { value },
             Self::Unit(uv) => IrValue::Numeric { value: uv.inner.value },
+            Self::Expr(e) => {
+                let t = e.trim();
+                let inner = t.strip_prefix('{').and_then(|t| t.strip_suffix('}')).unwrap_or(t);
+                IrValue::Expression { expr: inner.trim().to_string() }
+            }
         }
     }
 }
@@ -974,23 +982,28 @@ impl PySubcircuit {
 
     // ── Elements ──
 
-    #[pyo3(signature = (*, name, positive, negative, value, raw_spice=None))]
-    fn R(&mut self, name: &str, positive: &str, negative: &str, value: PyValueArg, raw_spice: Option<&str>) {
+    /// `value` is a number, a `UnitValue` or an expression string; `**kwargs`
+    /// are instance parameters (`tc1=1e-3`, `m=2`).
+    #[pyo3(signature = (*, name, positive, negative, value, raw_spice=None, **kwargs))]
+    fn R(&mut self, name: &str, positive: &str, negative: &str, value: PyValueArg, raw_spice: Option<&str>, kwargs: Option<Bound<'_, PyDict>>) -> PyResult<()> {
         let value = match raw_spice {
             Some(text) => IrValue::Raw { text: text.to_string() },
             None => value.ir(),
         };
-        self.push(Component::Resistor { name: name.into(), n1: self.net(positive), n2: self.net(negative), value, params: vec![] });
+        self.push(Component::Resistor { name: name.into(), n1: self.net(positive), n2: self.net(negative), value, params: kw_params(kwargs)? });
+        Ok(())
     }
 
-    #[pyo3(signature = (*, name, positive, negative, value))]
-    fn C(&mut self, name: &str, positive: &str, negative: &str, value: PyValueArg) {
-        self.push(Component::Capacitor { name: name.into(), n1: self.net(positive), n2: self.net(negative), value: value.ir(), params: vec![] });
+    #[pyo3(signature = (*, name, positive, negative, value, **kwargs))]
+    fn C(&mut self, name: &str, positive: &str, negative: &str, value: PyValueArg, kwargs: Option<Bound<'_, PyDict>>) -> PyResult<()> {
+        self.push(Component::Capacitor { name: name.into(), n1: self.net(positive), n2: self.net(negative), value: value.ir(), params: kw_params(kwargs)? });
+        Ok(())
     }
 
-    #[pyo3(signature = (*, name, positive, negative, value))]
-    fn L(&mut self, name: &str, positive: &str, negative: &str, value: PyValueArg) {
-        self.push(Component::Inductor { name: name.into(), n1: self.net(positive), n2: self.net(negative), value: value.ir(), params: vec![] });
+    #[pyo3(signature = (*, name, positive, negative, value, **kwargs))]
+    fn L(&mut self, name: &str, positive: &str, negative: &str, value: PyValueArg, kwargs: Option<Bound<'_, PyDict>>) -> PyResult<()> {
+        self.push(Component::Inductor { name: name.into(), n1: self.net(positive), n2: self.net(negative), value: value.ir(), params: kw_params(kwargs)? });
+        Ok(())
     }
 
     #[pyo3(signature = (*, name, inductor1, inductor2, coupling))]

@@ -36,6 +36,15 @@ fn py_num(v: f64) -> String {
     format!("{v:?}")
 }
 
+/// A value argument: a number, or an expression string.
+fn py_value(v: &IrValue) -> Option<String> {
+    match v {
+        IrValue::Numeric { value } => Some(py_num(*value)),
+        IrValue::Expression { expr } => Some(py_str(expr)),
+        IrValue::Raw { .. } => None,
+    }
+}
+
 /// `**{"k": "v", ...}` for parameters whose names need not be identifiers.
 fn py_kwargs(params: &[(String, String)]) -> String {
     if params.is_empty() {
@@ -69,10 +78,9 @@ impl Py {
         match c {
             Component::Resistor { name, n1, n2, value, params } | Component::Capacitor { name, n1, n2, value, params } | Component::Inductor { name, n1, n2, value, params } => {
                 let letter = match c { Component::Resistor { .. } => "R", Component::Capacitor { .. } => "C", _ => "L" };
-                match (value, params.is_empty()) {
-                    (IrValue::Numeric { value }, true) => self.line(format!("{obj}.{letter}(name={}, positive={}, negative={}, value={})", n(name), n(n1), n(n2), py_num(*value))),
-                    (IrValue::Numeric { .. }, false) => self.gap(obj, "R/C/L take no instance parameters", &raw),
-                    _ => self.gap(obj, "element values take numbers only, no expressions", &raw),
+                match py_value(value) {
+                    Some(v) => self.line(format!("{obj}.{letter}(name={}, positive={}, negative={}, value={v}{})", n(name), n(n1), n(n2), py_kwargs(params))),
+                    None => self.gap(obj, "raw element value", &raw),
                 }
             }
             Component::MutualInductor { name, inductor1, inductor2, coupling } => {
@@ -89,8 +97,11 @@ impl Py {
                 let dc = match value { IrValue::Numeric { value } => Some(*value), _ => None };
                 let head = format!("name={}, positive={}, negative={}", n(name), n(np), n(nm));
                 match (waveform, dc) {
-                    (_, None) => self.gap(obj, "element values take numbers only, no expressions", &raw),
-                    (None, Some(v)) => self.line(format!("{obj}.{letter}({head}, value={}{ac})", py_num(v))),
+                    (None, _) => match py_value(value) {
+                        Some(v) => self.line(format!("{obj}.{letter}({head}, value={v}{ac})")),
+                        None => self.gap(obj, "raw element value", &raw),
+                    },
+                    (_, None) => self.gap(obj, "waveform sources take no expression DC value", &raw),
                     (Some(IrWaveform::Pulse { initial, pulsed, delay, rise_time, fall_time, pulse_width, period }), Some(v)) => {
                         if !ac.is_empty() {
                             self.gap(obj, "pulse/PWL sources take no ac=", &raw)
