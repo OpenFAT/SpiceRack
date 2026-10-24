@@ -216,13 +216,16 @@ fn strip(name: &str, letter: char) -> String {
 const SOURCE_KEYS: &[&str] = &["dc", "mag", "phase", "type", "val0", "val1", "delay", "rise", "fall", "width", "period", "sinedc", "ampl", "freq", "theta", "modindex", "modfreq", "tau1", "td2", "tau2", "wave"];
 
 fn waveform(p: &[(String, String)]) -> Result<Option<IrWaveform>, ()> {
-    let f = |k: &str| get(p, k).map_or(Some(0.0), num).ok_or(());
+    let f = |k: &str| Ok::<_, ()>(get(p, k).map_or(IrNum::Num(0.0), |v| num(v).map_or_else(|| IrNum::Expr(v.to_string()), IrNum::Num)));
+    // ponytail: td2 counts from `delay`, so an expression delay would need
+    // `(delay)+(td2)` arithmetic that does not round-trip; it stays raw.
+    let n = |k: &str| get(p, k).map_or(Some(0.0), num).ok_or(());
     Ok(Some(match get(p, "type").and_then(string).as_deref() {
         None | Some("dc") => return Ok(None),
         Some("pulse") => IrWaveform::Pulse { initial: f("val0")?, pulsed: f("val1")?, delay: f("delay")?, rise_time: f("rise")?, fall_time: f("fall")?, pulse_width: f("width")?, period: f("period")? },
-        Some("sine") => IrWaveform::Sin { offset: f("sinedc")?, amplitude: f("ampl")?, frequency: f("freq")?, delay: f("delay")?, damping: f("theta")?, phase: 0.0 },
+        Some("sine") => IrWaveform::Sin { offset: f("sinedc")?, amplitude: f("ampl")?, frequency: f("freq")?, delay: f("delay")?, damping: f("theta")?, phase: 0.0.into() },
         // VACASK's td2 counts from `delay`; SPICE's is absolute.
-        Some("exp") => IrWaveform::Exp { initial: f("val0")?, pulsed: f("val1")?, rise_delay: f("delay")?, rise_tau: f("tau1")?, fall_delay: f("delay")? + f("td2")?, fall_tau: f("tau2")? },
+        Some("exp") => IrWaveform::Exp { initial: f("val0")?, pulsed: f("val1")?, rise_delay: n("delay")?.into(), rise_tau: f("tau1")?, fall_delay: (n("delay")? + n("td2")?).into(), fall_tau: f("tau2")? },
         Some("fm") => IrWaveform::Sffm { offset: f("sinedc")?, amplitude: f("ampl")?, carrier_freq: f("freq")?, modulation_index: f("modindex")?, signal_freq: f("modfreq")? },
         Some("am") => IrWaveform::Am { offset: f("sinedc")?, amplitude: f("ampl")?, carrier_freq: f("freq")?, modulating_freq: f("modfreq")?, delay: f("delay")? },
         Some(_) => return Err(()),

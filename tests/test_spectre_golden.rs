@@ -345,14 +345,14 @@ fn spectre_vsource_waveforms_match_documented_parameters() {
 
     assert_eq!(
         v(Some(IrWaveform::Pulse {
-            initial: 0.0, pulsed: 5.0, delay: 0.0,
-            rise_time: 10e-9, fall_time: 10e-9, pulse_width: 40e-9, period: 100e-9,
+            initial: 0.0.into(), pulsed: 5.0.into(), delay: 0.0.into(),
+            rise_time: 10e-9.into(), fall_time: 10e-9.into(), pulse_width: 40e-9.into(), period: 100e-9.into(),
         }), None, None),
         "v1 (1 0) vsource dc=0 type=pulse val0=0 val1=5 delay=0 rise=10n fall=10n width=40n period=100n",
     );
 
     assert_eq!(
-        v(Some(IrWaveform::Pwl { values: vec![(1e-9, 0.0), (1.5e-9, 0.5)] }), None, None),
+        v(Some(IrWaveform::Pwl { values: vec![((1e-9).into(), (0.0).into()), ((1.5e-9).into(), (0.5).into())] }), None, None),
         "v1 (1 0) vsource dc=0 type=pwl wave=[1n 0 1.5n 500m]",
     );
 
@@ -360,16 +360,16 @@ fn spectre_vsource_waveforms_match_documented_parameters() {
     // emitted `sinedelay=` / `sinedamp=`, which vsource does not have.
     assert_eq!(
         v(Some(IrWaveform::Sin {
-            offset: 1.0, amplitude: 0.5, frequency: 1e6,
-            delay: 1e-9, damping: 2.0, phase: 45.0,
+            offset: 1.0.into(), amplitude: 0.5.into(), frequency: 1e6.into(),
+            delay: 1e-9.into(), damping: 2.0.into(), phase: 45.0.into(),
         }), None, None),
         "v1 (1 0) vsource dc=0 type=sine sinedc=1 ampl=500m freq=1M delay=1n damp=2 sinephase=45",
     );
 
     assert_eq!(
         v(Some(IrWaveform::Exp {
-            initial: 0.0, pulsed: 1.0,
-            rise_delay: 1e-9, rise_tau: 2e-9, fall_delay: 3e-9, fall_tau: 4e-9,
+            initial: 0.0.into(), pulsed: 1.0.into(),
+            rise_delay: 1e-9.into(), rise_tau: 2e-9.into(), fall_delay: 3e-9.into(), fall_tau: 4e-9.into(),
         }), None, None),
         "v1 (1 0) vsource dc=0 type=exp val0=0 val1=1 td1=1n tau1=2n td2=3n tau2=4n",
     );
@@ -409,8 +409,8 @@ fn spectre_refuses_constructs_without_a_documented_spelling() {
             value: IrValue::Numeric { value: 0.0 },
             ac_magnitude: None, ac_phase: None,
             waveform: Some(IrWaveform::Am {
-                amplitude: 1.0, offset: 0.5, modulating_freq: 1e3,
-                carrier_freq: 1e6, delay: 0.0,
+                amplitude: 1.0.into(), offset: 0.5.into(), modulating_freq: 1e3.into(),
+                carrier_freq: 1e6.into(), delay: 0.0.into(),
             }),
         },
     ];

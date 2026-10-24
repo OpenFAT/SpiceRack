@@ -55,10 +55,11 @@ fn component_exprs(c: &Component) -> Vec<&str> {
             if let IrValue::Expression { expr } = value { v.push(expr); }
             v
         }
-        VoltageSource { value, .. } | CurrentSource { value, .. } => match value {
-            IrValue::Expression { expr } => vec![expr],
-            _ => vec![],
-        },
+        VoltageSource { value, waveform, .. } | CurrentSource { value, waveform, .. } => {
+            let mut v: Vec<&str> = waveform.iter().flat_map(|w| w.exprs_ref()).collect();
+            if let IrValue::Expression { expr } = value { v.push(expr); }
+            v
+        }
         BehavioralVoltage { expression, .. } | BehavioralCurrent { expression, .. } => vec![expression],
         Diode { params, .. } | Bjt { params, .. } | Mosfet { params, .. } | Jfet { params, .. } | Mesfet { params, .. } =>
             params.iter().map(|(_, val)| val.as_str()).collect(),

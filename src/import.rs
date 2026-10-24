@@ -316,10 +316,32 @@ fn split_params(toks: &[String]) -> (&[String], Option<Vec<(String, String)>>) {
     (&toks[..at], Some(out))
 }
 
-/// `name(a b, c)` -> numbers, or `None` if any is not a plain number.
-fn args(tok: &str) -> Option<Vec<f64>> {
+/// `name(a b, c)` -> numbers and expressions (`{vdd}`, `'vdd*2'`, a bare
+/// parameter name), or `None` if a field is neither. Braces and quotes keep
+/// their blanks.
+fn args(tok: &str) -> Option<Vec<IrNum>> {
     let inner = tok.split_once('(')?.1.strip_suffix(')')?;
-    inner.split(|c: char| c.is_whitespace() || c == ',').filter(|s| !s.is_empty()).map(num).collect()
+    let (mut out, mut cur, mut depth, mut quote) = (Vec::new(), String::new(), 0i32, false);
+    for c in inner.chars().chain([' ']) {
+        match c {
+            '\'' | '"' => quote = !quote,
+            '{' | '(' if !quote => depth += 1,
+            '}' | ')' if !quote => depth -= 1,
+            _ => {}
+        }
+        if (c.is_whitespace() || c == ',') && depth == 0 && !quote {
+            if !cur.is_empty() {
+                out.push(match value(&std::mem::take(&mut cur)) {
+                    IrValue::Numeric { value } => IrNum::Num(value),
+                    IrValue::Expression { expr } => IrNum::Expr(expr),
+                    IrValue::Raw { .. } => return None,
+                });
+            }
+        } else {
+            cur.push(c);
+        }
+    }
+    Some(out)
 }
 
 /// Words an element card may carry after its model as flags.
@@ -331,11 +353,11 @@ const WAVEFORMS: &[&str] = &["pulse", "sin", "sine", "pwl", "exp", "sffm", "am"]
 fn waveform(tok: &str) -> Option<IrWaveform> {
     let kind = tok.split_once('(')?.0.trim().to_ascii_lowercase(); // `pwl (0 0 ...)`: one group, blank before `(`
     let a = args(tok)?;
-    let g = |i: usize, d: f64| a.get(i).copied().unwrap_or(d);
+    let g = |i: usize, d: f64| a.get(i).cloned().unwrap_or(IrNum::Num(d));
     Some(match kind.as_str() {
         "sin" | "sine" => IrWaveform::Sin { offset: g(0, 0.0), amplitude: g(1, 0.0), frequency: g(2, 0.0), delay: g(3, 0.0), damping: g(4, 0.0), phase: g(5, 0.0) },
         "pulse" => IrWaveform::Pulse { initial: g(0, 0.0), pulsed: g(1, 0.0), delay: g(2, 0.0), rise_time: g(3, 0.0), fall_time: g(4, 0.0), pulse_width: g(5, 0.0), period: g(6, 0.0) },
-        "pwl" if a.len() % 2 == 0 => IrWaveform::Pwl { values: a.chunks(2).map(|p| (p[0], p[1])).collect() },
+        "pwl" if a.len() % 2 == 0 => IrWaveform::Pwl { values: a.chunks(2).map(|p| (p[0].clone(), p[1].clone())).collect() },
         "exp" => IrWaveform::Exp { initial: g(0, 0.0), pulsed: g(1, 0.0), rise_delay: g(2, 0.0), rise_tau: g(3, 0.0), fall_delay: g(4, 0.0), fall_tau: g(5, 0.0) },
         "sffm" => IrWaveform::Sffm { offset: g(0, 0.0), amplitude: g(1, 0.0), carrier_freq: g(2, 0.0), modulation_index: g(3, 0.0), signal_freq: g(4, 0.0) },
         "am" => IrWaveform::Am { amplitude: g(0, 0.0), offset: g(1, 0.0), modulating_freq: g(2, 0.0), carrier_freq: g(3, 0.0), delay: g(4, 0.0) },
@@ -458,13 +480,7 @@ fn element(t: &[String], card: &str, models: &HashSet<String>) -> Option<Compone
             // No DC value: SPICE takes the waveform's t=0 value for the
             // operating point, so an explicit 0 would move it.
             if !dc_given && let Some(w) = &wf {
-                let at0 = match w {
-                    IrWaveform::Sin { offset, .. } | IrWaveform::Sffm { offset, .. } => *offset,
-                    IrWaveform::Pulse { initial, .. } | IrWaveform::Exp { initial, .. } => *initial,
-                    IrWaveform::Pwl { values } => values.first().map_or(0.0, |p| p.1),
-                    IrWaveform::Am { .. } => 0.0,
-                };
-                v = IrValue::Numeric { value: at0 };
+                v = w.at_zero();
             }
             if letter == 'v' {
                 Component::VoltageSource { name, np, nm, value: v, ac_magnitude, ac_phase, waveform: wf }
@@ -1188,6 +1204,14 @@ Rp p 0 1k
         assert!(p.top.raw_spice.is_empty(), "{:?}", p.top.raw_spice);
         assert!(matches!(&p.top.components[0], Component::Poly { letter: 'E', controls, coeffs, .. } if controls.len() == 4 && coeffs.len() == 6));
         assert!(netlist(&p, Dialect::Ngspice).unwrap().contains("E1 o 0 POLY(2) a 0 b 0 1 2 3 4 5 6"));
+        // A waveform over parameters is a structured source in every dialect.
+        let pw = parse("t\n.param vdd=1.8 tr=1n\nV1 a 0 PULSE(0 {vdd} 0 {tr} {tr*2} 5n 10n)\nR1 a 0 1k\n", "t", Dialect::Ngspice).unwrap().0;
+        assert!(pw.top.raw_spice.is_empty(), "{:?}", pw.top.raw_spice);
+        assert!(matches!(&pw.top.components[0], Component::VoltageSource { value: IrValue::Numeric { value: 0.0 }, waveform: Some(IrWaveform::Pulse { pulsed: IrNum::Expr(p), fall_time: IrNum::Expr(f), .. }), .. } if p == "vdd" && f == "tr*2"));
+        assert!(netlist(&pw, Dialect::Ngspice).unwrap().contains("PULSE(0 {vdd} 0 {tr} {tr*2} "));
+        assert!(netlist(&pw, Dialect::Hspice).unwrap().contains("PULSE(0 'vdd' 0 'tr' 'tr*2'"));
+        assert!(netlist(&pw, Dialect::Spectre).unwrap().contains("val1=vdd delay=0 rise=tr fall=tr*2"));
+        assert!(netlist(&pw, Dialect::Vacask).unwrap().contains("val1=vdd delay=0 rise=tr fall=tr*2"));
         // A B expression keeps its own braces and spacing.
         let bx = parse("t\nB1 0 0 I={Cjo}/(1+max(V(b),-.5*{Vj})/{Vj})**{m}\n", "t", Dialect::Ltspice).unwrap().0;
         assert!(matches!(&bx.top.components[0], Component::BehavioralCurrent { expression, .. } if expression == "{Cjo}/(1+max(V(b),-.5*{Vj})/{Vj})**{m}"), "{:?}", bx.top.components);

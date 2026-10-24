@@ -251,8 +251,8 @@ fn tran_follows_the_rc_step_response() {
         name: "1".into(), np: "vin".into(), nm: "0".into(),
         value: IrValue::Numeric { value: 0.0 }, ac_magnitude: None, ac_phase: None,
         waveform: Some(IrWaveform::Pulse {
-            initial: 0.0, pulsed: 1.0, delay: 0.0, rise_time: 1e-9,
-            fall_time: 1e-9, pulse_width: 1.0, period: 0.0,
+            initial: 0.0.into(), pulsed: 1.0.into(), delay: 0.0.into(), rise_time: 1e-9.into(),
+            fall_time: 1e-9.into(), pulse_width: 1.0.into(), period: 0.0.into(),
         }),
     }];
     let ir = CircuitIR { raw_dialect: None, globals: vec![], functions: vec![], top, testbench: Some(tb), subcircuit_defs: vec![], model_libraries: vec![] };
@@ -597,7 +597,7 @@ fn refusals_are_errors_not_broken_decks() {
     top.components = vec![Component::VoltageSource {
         name: "1".into(), np: "a".into(), nm: "0".into(),
         value: IrValue::Numeric { value: 0.0 }, ac_magnitude: None, ac_phase: None,
-        waveform: Some(IrWaveform::Pwl { values: vec![(0.0, 0.0), (1e-3, 1.0)] }),
+        waveform: Some(IrWaveform::Pwl { values: vec![((0.0).into(), (0.0).into()), ((1e-3).into(), (1.0).into())] }),
     }];
     let ir = CircuitIR { raw_dialect: None, globals: vec![], functions: vec![], top, testbench: None, subcircuit_defs: vec![], model_libraries: vec![] };
     assert!(refuses(&ir), "PWL must refuse");
@@ -617,7 +617,7 @@ fn refusals_are_errors_not_broken_decks() {
         name: "1".into(), np: "a".into(), nm: "0".into(),
         value: IrValue::Numeric { value: 0.0 }, ac_magnitude: None, ac_phase: None,
         waveform: Some(IrWaveform::Sin {
-            offset: 0.0, amplitude: 1.0, frequency: 1e3, delay: 0.0, damping: 0.0, phase: 90.0,
+            offset: 0.0.into(), amplitude: 1.0.into(), frequency: 1e3.into(), delay: 0.0.into(), damping: 0.0.into(), phase: 90.0.into(),
         }),
     };
     assert!(refuses(&with(sin)), "a nonzero SIN phase must refuse");
@@ -645,7 +645,7 @@ fn a_sine_source_runs_with_delay_and_damping() {
         name: "1".into(), np: "vin".into(), nm: "0".into(),
         value: IrValue::Numeric { value: 0.0 }, ac_magnitude: None, ac_phase: None,
         waveform: Some(IrWaveform::Sin {
-            offset: 0.5, amplitude: 2.0, frequency: 1e3, delay: 0.0, damping: 0.0, phase: 0.0,
+            offset: 0.5.into(), amplitude: 2.0.into(), frequency: 1e3.into(), delay: 0.0.into(), damping: 0.0.into(), phase: 0.0.into(),
         }),
     }];
     let ir = CircuitIR { raw_dialect: None, globals: vec![], functions: vec![], top, testbench: Some(tb), subcircuit_defs: vec![], model_libraries: vec![] };
@@ -669,8 +669,8 @@ fn a_pulse_train_runs() {
         name: "1".into(), np: "vin".into(), nm: "0".into(),
         value: IrValue::Numeric { value: 0.0 }, ac_magnitude: None, ac_phase: None,
         waveform: Some(IrWaveform::Pulse {
-            initial: 0.0, pulsed: 1.0, delay: 1e-4, rise_time: 1e-6,
-            fall_time: 1e-6, pulse_width: 1e-4, period: 2e-4,
+            initial: 0.0.into(), pulsed: 1.0.into(), delay: 1e-4.into(), rise_time: 1e-6.into(),
+            fall_time: 1e-6.into(), pulse_width: 1e-4.into(), period: 2e-4.into(),
         }),
     }];
     let ir = CircuitIR { raw_dialect: None, globals: vec![], functions: vec![], top, testbench: Some(tb), subcircuit_defs: vec![], model_libraries: vec![] };

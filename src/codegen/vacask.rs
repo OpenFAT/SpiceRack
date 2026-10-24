@@ -254,6 +254,7 @@ fn ac_spec(mag: &Option<f64>, phase: &Option<f64>) -> String {
 }
 
 fn wave(name: &str, wf: &IrWaveform) -> Result<String, CodeGenError> {
+    let n = |x: &IrNum| val(&x.into());
     Ok(match wf {
         IrWaveform::Sin { offset, amplitude, frequency, delay, damping, phase } => {
             // VACASK accepts `sinephase` and does not apply it: the waveform
@@ -261,15 +262,15 @@ fn wave(name: &str, wf: &IrWaveform) -> Result<String, CodeGenError> {
             // `theta` beside it ARE honoured, which is what makes dropping
             // this one plausible and wrong — a 90-degree SIN would run and
             // sit 1.414 V away from what the deck asked for.
-            if *phase != 0.0 {
+            if *phase != 0.0 || phase.num().is_none() {
                 return Err(unsupported_comp(format!(
                     "{}: SIN phase ({} deg) is accepted but ignored by VACASK",
-                    name, phase
+                    name, n(phase)
                 )));
             }
             format!(
                 "type=\"sine\" sinedc={} ampl={} freq={} delay={} theta={}",
-                num(*offset), num(*amplitude), num(*frequency), num(*delay), num(*damping),
+                n(offset), n(amplitude), n(frequency), n(delay), n(damping),
             )
         }
         IrWaveform::Pulse { initial, pulsed, delay, rise_time, fall_time, pulse_width, period } => {
@@ -277,12 +278,16 @@ fn wave(name: &str, wf: &IrWaveform) -> Result<String, CodeGenError> {
             // rise+fall+width, while SPICE's own PER=PW default violates
             // exactly that. A zero period means "single pulse" to VACASK,
             // which is what SPICE means by PER >= TSTOP anyway.
-            let sum = rise_time + fall_time + pulse_width;
-            let period = if *period > 0.0 && *period <= sum { 0.0 } else { *period };
+            let period = match (period.num(), rise_time.num(), fall_time.num(), pulse_width.num()) {
+                (Some(p), Some(r), Some(f), Some(w)) if p > 0.0 && p <= r + f + w => IrNum::Num(0.0),
+                // ponytail: an expression period passes as written; VACASK
+                // itself rejects one that turns out too short.
+                _ => period.clone(),
+            };
             format!(
                 "type=\"pulse\" val0={} val1={} delay={} rise={} fall={} width={} period={}",
-                num(*initial), num(*pulsed), num(*delay),
-                num(*rise_time), num(*fall_time), num(*pulse_width), num(period),
+                n(initial), n(pulsed), n(delay),
+                n(rise_time), n(fall_time), n(pulse_width), n(&period),
             )
         }
         IrWaveform::Exp { initial, pulsed, rise_delay, rise_tau, fall_delay, fall_tau } => {
@@ -290,16 +295,22 @@ fn wave(name: &str, wf: &IrWaveform) -> Result<String, CodeGenError> {
             // VACASK measures its `td2` from `delay`. Passed straight
             // through the fall starts TD1 late, which reads as an
             // integration disagreement rather than a different waveform.
-            if fall_delay < rise_delay {
+            let (Some(fd), Some(rd)) = (fall_delay.num(), rise_delay.num()) else {
+                return Err(unsupported_comp(format!(
+                    "{}: EXP delays must be numbers (VACASK counts td2 from delay)",
+                    name
+                )));
+            };
+            if fd < rd {
                 return Err(unsupported_comp(format!(
                     "{}: EXP fall delay ({}) precedes rise delay ({})",
-                    name, fall_delay, rise_delay
+                    name, fd, rd
                 )));
             }
             format!(
                 "type=\"exp\" val0={} val1={} delay={} tau1={} td2={} tau2={}",
-                num(*initial), num(*pulsed), num(*rise_delay),
-                num(*rise_tau), num(fall_delay - rise_delay), num(*fall_tau),
+                n(initial), n(pulsed), n(rise_delay),
+                n(rise_tau), num(fd - rd), n(fall_tau),
             )
         }
         IrWaveform::Sffm { offset, amplitude, carrier_freq, modulation_index, signal_freq } => {
@@ -308,15 +319,15 @@ fn wave(name: &str, wf: &IrWaveform) -> Result<String, CodeGenError> {
             // FM source, which is what makes the wrong spelling dangerous.
             format!(
                 "type=\"fm\" sinedc={} ampl={} freq={} modindex={} modfreq={}",
-                num(*offset), num(*amplitude), num(*carrier_freq),
-                num(*modulation_index), num(*signal_freq),
+                n(offset), n(amplitude), n(carrier_freq),
+                n(modulation_index), n(signal_freq),
             )
         }
         IrWaveform::Am { amplitude, offset, modulating_freq, carrier_freq, delay } => {
             format!(
                 "type=\"am\" sinedc={} ampl={} freq={} modfreq={} delay={}",
-                num(*offset), num(*amplitude), num(*carrier_freq),
-                num(*modulating_freq), num(*delay),
+                n(offset), n(amplitude), n(carrier_freq),
+                n(modulating_freq), n(delay),
             )
         }
         // `type="pwl" wave=[t0, v0, ...]` is the documented spelling and
@@ -640,7 +651,12 @@ fn lower_values(c: &mut Component, low: &impl Fn(&mut String)) {
             }
             params.iter_mut().for_each(|(_, v)| low(v));
         }
-        VoltageSource { value: IrValue::Expression { expr }, .. } | CurrentSource { value: IrValue::Expression { expr }, .. } => low(expr),
+        VoltageSource { value, waveform, .. } | CurrentSource { value, waveform, .. } => {
+            if let IrValue::Expression { expr } = value {
+                low(expr);
+            }
+            waveform.iter_mut().flat_map(|w| w.nums_mut()).for_each(|n| if let IrNum::Expr(e) = n { low(e) });
+        }
         Diode { params, .. } | Bjt { params, .. } | Mosfet { params, .. } | Jfet { params, .. } | Mesfet { params, .. } => params.iter_mut().for_each(|(_, v)| low(v)),
         _ => {}
     }
@@ -1167,7 +1183,7 @@ mod tests {
         let c = Component::VoltageSource {
             name: "1".into(), np: "a".into(), nm: "0".into(),
             value: IrValue::Numeric { value: 0.0 }, ac_magnitude: None, ac_phase: None,
-            waveform: Some(IrWaveform::Pwl { values: vec![(0.0, 0.0), (1e-3, 1.0)] }),
+            waveform: Some(IrWaveform::Pwl { values: vec![((0.0).into(), (0.0).into()), ((1e-3).into(), (1.0).into())] }),
         };
         let err = emit_component(&c).unwrap_err();
         assert!(err.to_string().to_lowercase().contains("pwl"), "{}", err);

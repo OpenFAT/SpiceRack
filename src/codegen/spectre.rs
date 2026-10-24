@@ -165,6 +165,7 @@ fn sweep_points(variation: &str, points: u32) -> Result<String, CodeGenError> {
 /// selected with `type=`, whose documented values are exactly
 /// `dc, pulse, pwl, sine, exp`.
 fn emit_waveform_params(wf: &IrWaveform) -> Result<String, CodeGenError> {
+    let sn = |x: &IrNum| emit_value(&x.into());
     let s = match wf {
         // `[CMP]` p.684: sinedc, ampl, freq, sinephase, damp — and the
         // delay is the *general* waveform parameter `delay` (p.683 #4),
@@ -172,16 +173,16 @@ fn emit_waveform_params(wf: &IrWaveform) -> Result<String, CodeGenError> {
         IrWaveform::Sin { offset, amplitude, frequency, delay, damping, phase } => {
             let mut s = format!(
                 "type=sine sinedc={} ampl={} freq={}",
-                spectre_num(*offset), spectre_num(*amplitude), spectre_num(*frequency),
+                sn(offset), sn(amplitude), sn(frequency),
             );
             if *delay != 0.0 {
-                s.push_str(&format!(" delay={}", spectre_num(*delay)));
+                s.push_str(&format!(" delay={}", sn(delay)));
             }
             if *damping != 0.0 {
-                s.push_str(&format!(" damp={}", spectre_num(*damping)));
+                s.push_str(&format!(" damp={}", sn(damping)));
             }
             if *phase != 0.0 {
-                s.push_str(&format!(" sinephase={}", spectre_num(*phase)));
+                s.push_str(&format!(" sinephase={}", sn(phase)));
             }
             s
         }
@@ -191,9 +192,9 @@ fn emit_waveform_params(wf: &IrWaveform) -> Result<String, CodeGenError> {
         IrWaveform::Pulse { initial, pulsed, delay, rise_time, fall_time, pulse_width, period } => {
             format!(
                 "type=pulse val0={} val1={} delay={} rise={} fall={} width={} period={}",
-                spectre_num(*initial), spectre_num(*pulsed), spectre_num(*delay),
-                spectre_num(*rise_time), spectre_num(*fall_time),
-                spectre_num(*pulse_width), spectre_num(*period),
+                sn(initial), sn(pulsed), sn(delay),
+                sn(rise_time), sn(fall_time),
+                sn(pulse_width), sn(period),
             )
         }
         // `[CMP]` p.683: `vpwl1 (1 0) vsource type=pwl
@@ -204,7 +205,7 @@ fn emit_waveform_params(wf: &IrWaveform) -> Result<String, CodeGenError> {
                 if i > 0 {
                     s.push(' ');
                 }
-                s.push_str(&format!("{} {}", spectre_num(*t), spectre_num(*v)));
+                s.push_str(&format!("{} {}", sn(t), sn(v)));
             }
             s.push(']');
             s
@@ -214,9 +215,9 @@ fn emit_waveform_params(wf: &IrWaveform) -> Result<String, CodeGenError> {
         IrWaveform::Exp { initial, pulsed, rise_delay, rise_tau, fall_delay, fall_tau } => {
             format!(
                 "type=exp val0={} val1={} td1={} tau1={} td2={} tau2={}",
-                spectre_num(*initial), spectre_num(*pulsed),
-                spectre_num(*rise_delay), spectre_num(*rise_tau),
-                spectre_num(*fall_delay), spectre_num(*fall_tau),
+                sn(initial), sn(pulsed),
+                sn(rise_delay), sn(rise_tau),
+                sn(fall_delay), sn(fall_tau),
             )
         }
         // SPICE SFFM is a sine carrier with sinusoidal frequency modulation.
@@ -229,9 +230,9 @@ fn emit_waveform_params(wf: &IrWaveform) -> Result<String, CodeGenError> {
         IrWaveform::Sffm { offset, amplitude, carrier_freq, modulation_index, signal_freq } => {
             format!(
                 "type=sine sinedc={} ampl={} freq={} fmmodindex={} fmmodfreq={}",
-                spectre_num(*offset), spectre_num(*amplitude),
-                spectre_num(*carrier_freq), spectre_num(*modulation_index),
-                spectre_num(*signal_freq),
+                sn(offset), sn(amplitude),
+                sn(carrier_freq), sn(modulation_index),
+                sn(signal_freq),
             )
         }
         // Spectre has ammodindex/ammodfreq/ammodphase (`[CMP]` p.685) but
@@ -1299,12 +1300,12 @@ mod tests {
             ac_magnitude: None,
             ac_phase: None,
             waveform: Some(IrWaveform::Sin {
-                offset: 1.65,
-                amplitude: 1.65,
-                frequency: 1e6,
-                delay: 0.0,
-                damping: 0.0,
-                phase: 0.0,
+                offset: 1.65.into(),
+                amplitude: 1.65.into(),
+                frequency: 1e6.into(),
+                delay: 0.0.into(),
+                damping: 0.0.into(),
+                phase: 0.0.into(),
             }),
         };
 
@@ -1316,13 +1317,13 @@ mod tests {
             ac_magnitude: None,
             ac_phase: None,
             waveform: Some(IrWaveform::Pulse {
-                initial: 0.0,
-                pulsed: 3.3,
-                delay: 0.0,
-                rise_time: 1e-9,
-                fall_time: 1e-9,
-                pulse_width: 5e-7,
-                period: 1e-6,
+                initial: 0.0.into(),
+                pulsed: 3.3.into(),
+                delay: 0.0.into(),
+                rise_time: 1e-9.into(),
+                fall_time: 1e-9.into(),
+                pulse_width: 5e-7.into(),
+                period: 1e-6.into(),
             }),
         };
 

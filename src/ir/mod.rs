@@ -200,16 +200,101 @@ pub enum IrValue {
     Raw { text: String },
 }
 
+/// One waveform parameter: a number, or an expression over `.param`s
+/// (`PULSE(0 {vdd} ...)`). JSON keeps a number a number.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum IrNum {
+    Num(f64),
+    Expr(String),
+}
+
+impl IrNum {
+    pub fn num(&self) -> Option<f64> {
+        match self {
+            IrNum::Num(v) => Some(*v),
+            IrNum::Expr(_) => None,
+        }
+    }
+}
+
+impl From<f64> for IrNum {
+    fn from(v: f64) -> Self {
+        IrNum::Num(v)
+    }
+}
+
+impl From<&IrNum> for IrValue {
+    fn from(n: &IrNum) -> Self {
+        match n {
+            IrNum::Num(value) => IrValue::Numeric { value: *value },
+            IrNum::Expr(expr) => IrValue::Expression { expr: expr.clone() },
+        }
+    }
+}
+
+/// `x == 0.0` reads as before; an expression equals no number.
+impl PartialEq<f64> for IrNum {
+    fn eq(&self, other: &f64) -> bool {
+        self.num() == Some(*other)
+    }
+}
+
 /// Waveform types
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum IrWaveform {
-    Sin { offset: f64, amplitude: f64, frequency: f64, delay: f64, damping: f64, phase: f64 },
-    Pulse { initial: f64, pulsed: f64, delay: f64, rise_time: f64, fall_time: f64, pulse_width: f64, period: f64 },
-    Pwl { values: Vec<(f64, f64)> },
-    Exp { initial: f64, pulsed: f64, rise_delay: f64, rise_tau: f64, fall_delay: f64, fall_tau: f64 },
-    Sffm { offset: f64, amplitude: f64, carrier_freq: f64, modulation_index: f64, signal_freq: f64 },
-    Am { amplitude: f64, offset: f64, modulating_freq: f64, carrier_freq: f64, delay: f64 },
+    Sin { offset: IrNum, amplitude: IrNum, frequency: IrNum, delay: IrNum, damping: IrNum, phase: IrNum },
+    Pulse { initial: IrNum, pulsed: IrNum, delay: IrNum, rise_time: IrNum, fall_time: IrNum, pulse_width: IrNum, period: IrNum },
+    Pwl { values: Vec<(IrNum, IrNum)> },
+    Exp { initial: IrNum, pulsed: IrNum, rise_delay: IrNum, rise_tau: IrNum, fall_delay: IrNum, fall_tau: IrNum },
+    Sffm { offset: IrNum, amplitude: IrNum, carrier_freq: IrNum, modulation_index: IrNum, signal_freq: IrNum },
+    Am { amplitude: IrNum, offset: IrNum, modulating_freq: IrNum, carrier_freq: IrNum, delay: IrNum },
+}
+
+impl IrWaveform {
+    /// Every parameter, for passes over the expressions (`^` checks,
+    /// renaming).
+    pub fn nums_mut(&mut self) -> Vec<&mut IrNum> {
+        use IrWaveform::*;
+        match self {
+            Sin { offset, amplitude, frequency, delay, damping, phase } => vec![offset, amplitude, frequency, delay, damping, phase],
+            Pulse { initial, pulsed, delay, rise_time, fall_time, pulse_width, period } => vec![initial, pulsed, delay, rise_time, fall_time, pulse_width, period],
+            Pwl { values } => values.iter_mut().flat_map(|(t, v)| [t, v]).collect(),
+            Exp { initial, pulsed, rise_delay, rise_tau, fall_delay, fall_tau } => vec![initial, pulsed, rise_delay, rise_tau, fall_delay, fall_tau],
+            Sffm { offset, amplitude, carrier_freq, modulation_index, signal_freq } => vec![offset, amplitude, carrier_freq, modulation_index, signal_freq],
+            Am { amplitude, offset, modulating_freq, carrier_freq, delay } => vec![amplitude, offset, modulating_freq, carrier_freq, delay],
+        }
+    }
+
+    /// The expression parameters.
+    pub fn exprs_ref(&self) -> Vec<&str> {
+        use IrWaveform::*;
+        let all: Vec<&IrNum> = match self {
+            Sin { offset, amplitude, frequency, delay, damping, phase } => vec![offset, amplitude, frequency, delay, damping, phase],
+            Pulse { initial, pulsed, delay, rise_time, fall_time, pulse_width, period } => vec![initial, pulsed, delay, rise_time, fall_time, pulse_width, period],
+            Pwl { values } => values.iter().flat_map(|(t, v)| [t, v]).collect(),
+            Exp { initial, pulsed, rise_delay, rise_tau, fall_delay, fall_tau } => vec![initial, pulsed, rise_delay, rise_tau, fall_delay, fall_tau],
+            Sffm { offset, amplitude, carrier_freq, modulation_index, signal_freq } => vec![offset, amplitude, carrier_freq, modulation_index, signal_freq],
+            Am { amplitude, offset, modulating_freq, carrier_freq, delay } => vec![amplitude, offset, modulating_freq, carrier_freq, delay],
+        };
+        all.into_iter().filter_map(|n| match n {
+            IrNum::Expr(e) => Some(e.as_str()),
+            IrNum::Num(_) => None,
+        }).collect()
+    }
+
+    /// The value at t=0, which SPICE takes as the DC value of a card that
+    /// gives none (AM starts at 0).
+    pub fn at_zero(&self) -> IrValue {
+        use IrWaveform::*;
+        match self {
+            Sin { offset, .. } | Sffm { offset, .. } => offset.into(),
+            Pulse { initial, .. } | Exp { initial, .. } => initial.into(),
+            Pwl { values } => values.first().map_or(IrValue::Numeric { value: 0.0 }, |p| (&p.1).into()),
+            Am { .. } => IrValue::Numeric { value: 0.0 },
+        }
+    }
 }
 
 // ── Testbench ──
@@ -565,12 +650,12 @@ mod tests {
                     ac_magnitude: None,
                     ac_phase: None,
                     waveform: Some(IrWaveform::Sin {
-                        offset: 0.0,
-                        amplitude: 1.0,
-                        frequency: 1e6,
-                        delay: 0.0,
-                        damping: 0.0,
-                        phase: 0.0,
+                        offset: 0.0.into(),
+                        amplitude: 1.0.into(),
+                        frequency: 1e6.into(),
+                        delay: 0.0.into(),
+                        damping: 0.0.into(),
+                        phase: 0.0.into(),
                     }),
                 },
             ],
@@ -932,12 +1017,12 @@ mod tests {
                         ac_magnitude: None,
                         ac_phase: None,
                         waveform: Some(IrWaveform::Sin {
-                            offset: 1.65,
-                            amplitude: 0.1,
-                            frequency: 1e3,
-                            delay: 0.0,
-                            damping: 0.0,
-                            phase: 0.0,
+                            offset: 1.65.into(),
+                            amplitude: 0.1.into(),
+                            frequency: 1e3.into(),
+                            delay: 0.0.into(),
+                            damping: 0.0.into(),
+                            phase: 0.0.into(),
                         }),
                     },
                     Component::Xspice {
@@ -1334,27 +1419,27 @@ mod tests {
 
     #[test]
     fn test_waveform_json_tags() {
-        let w = IrWaveform::Sin { offset: 0.0, amplitude: 1.0, frequency: 1e3, delay: 0.0, damping: 0.0, phase: 0.0 };
+        let w = IrWaveform::Sin { offset: 0.0.into(), amplitude: 1.0.into(), frequency: 1e3.into(), delay: 0.0.into(), damping: 0.0.into(), phase: 0.0.into() };
         let json = serde_json::to_string(&w).unwrap();
         assert!(json.contains("\"type\":\"Sin\""));
 
-        let w = IrWaveform::Pulse { initial: 0.0, pulsed: 3.3, delay: 0.0, rise_time: 1e-9, fall_time: 1e-9, pulse_width: 5e-9, period: 10e-9 };
+        let w = IrWaveform::Pulse { initial: 0.0.into(), pulsed: 3.3.into(), delay: 0.0.into(), rise_time: 1e-9.into(), fall_time: 1e-9.into(), pulse_width: 5e-9.into(), period: 10e-9.into() };
         let json = serde_json::to_string(&w).unwrap();
         assert!(json.contains("\"type\":\"Pulse\""));
 
-        let w = IrWaveform::Pwl { values: vec![(0.0, 0.0), (1e-6, 1.0), (2e-6, 0.0)] };
+        let w = IrWaveform::Pwl { values: vec![((0.0).into(), (0.0).into()), ((1e-6).into(), (1.0).into()), ((2e-6).into(), (0.0).into())] };
         let json = serde_json::to_string(&w).unwrap();
         assert!(json.contains("\"type\":\"Pwl\""));
 
-        let w = IrWaveform::Exp { initial: 0.0, pulsed: 1.0, rise_delay: 0.0, rise_tau: 1e-6, fall_delay: 5e-6, fall_tau: 1e-6 };
+        let w = IrWaveform::Exp { initial: 0.0.into(), pulsed: 1.0.into(), rise_delay: 0.0.into(), rise_tau: 1e-6.into(), fall_delay: 5e-6.into(), fall_tau: 1e-6.into() };
         let json = serde_json::to_string(&w).unwrap();
         assert!(json.contains("\"type\":\"Exp\""));
 
-        let w = IrWaveform::Sffm { offset: 0.0, amplitude: 1.0, carrier_freq: 1e6, modulation_index: 5.0, signal_freq: 1e3 };
+        let w = IrWaveform::Sffm { offset: 0.0.into(), amplitude: 1.0.into(), carrier_freq: 1e6.into(), modulation_index: 5.0.into(), signal_freq: 1e3.into() };
         let json = serde_json::to_string(&w).unwrap();
         assert!(json.contains("\"type\":\"Sffm\""));
 
-        let w = IrWaveform::Am { amplitude: 1.0, offset: 0.0, modulating_freq: 1e3, carrier_freq: 1e6, delay: 0.0 };
+        let w = IrWaveform::Am { amplitude: 1.0.into(), offset: 0.0.into(), modulating_freq: 1e3.into(), carrier_freq: 1e6.into(), delay: 0.0.into() };
         let json = serde_json::to_string(&w).unwrap();
         assert!(json.contains("\"type\":\"Am\""));
     }
@@ -1441,7 +1526,7 @@ mod tests {
             Component::Inductor { name: "1".into(), n1: "a".into(), n2: "b".into(), value: IrValue::Raw { text: "10u".into() }, model: None, params: vec![] },
             Component::MutualInductor { name: "1".into(), inductor1: "L1".into(), inductor2: "L2".into(), coupling: 0.95 },
             Component::VoltageSource { name: "1".into(), np: "a".into(), nm: "b".into(), value: IrValue::Numeric { value: 5.0 }, ac_magnitude: None, ac_phase: None, waveform: None },
-            Component::CurrentSource { name: "1".into(), np: "a".into(), nm: "b".into(), value: IrValue::Numeric { value: 1e-3 }, ac_magnitude: None, ac_phase: None, waveform: Some(IrWaveform::Pulse { initial: 0.0, pulsed: 1e-3, delay: 0.0, rise_time: 1e-9, fall_time: 1e-9, pulse_width: 5e-6, period: 10e-6 }) },
+            Component::CurrentSource { name: "1".into(), np: "a".into(), nm: "b".into(), value: IrValue::Numeric { value: 1e-3 }, ac_magnitude: None, ac_phase: None, waveform: Some(IrWaveform::Pulse { initial: 0.0.into(), pulsed: 1e-3.into(), delay: 0.0.into(), rise_time: 1e-9.into(), fall_time: 1e-9.into(), pulse_width: 5e-6.into(), period: 10e-6.into() }) },
             Component::BehavioralVoltage { name: "1".into(), np: "a".into(), nm: "b".into(), expression: "V(x)*2+1".into() },
             Component::BehavioralCurrent { name: "1".into(), np: "a".into(), nm: "b".into(), expression: "I(V1)*10".into() },
             Component::Vcvs { name: "1".into(), np: "a".into(), nm: "b".into(), ncp: "c".into(), ncm: "d".into(), gain: 100.0 },

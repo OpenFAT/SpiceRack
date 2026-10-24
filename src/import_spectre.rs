@@ -55,6 +55,10 @@ fn spice_text(v: &str) -> String {
     num(v).map_or_else(|| v.to_string(), crate::codegen::format_spice_number)
 }
 
+fn irnum(v: &str) -> IrNum {
+    num(v).map_or_else(|| IrNum::Expr(v.to_string()), IrNum::Num)
+}
+
 fn value(v: &str) -> IrValue {
     match num(v) {
         Some(value) => IrValue::Numeric { value },
@@ -183,7 +187,7 @@ fn strip(name: &str, letter: char) -> String {
 /// `emit_waveform_params`, inverted). `None`: no waveform; `Err`: one the IR
 /// cannot hold.
 fn waveform(p: &[(String, String)]) -> Result<Option<IrWaveform>, ()> {
-    let f = |k: &str| get(p, k).map_or(Some(0.0), num).ok_or(());
+    let f = |k: &str| Ok::<_, ()>(get(p, k).map_or(IrNum::Num(0.0), irnum));
     Ok(Some(match get(p, "type") {
         None | Some("dc") => return Ok(None),
         Some("pulse") => IrWaveform::Pulse { initial: f("val0")?, pulsed: f("val1")?, delay: f("delay")?, rise_time: f("rise")?, fall_time: f("fall")?, pulse_width: f("width")?, period: f("period")? },
@@ -192,11 +196,11 @@ fn waveform(p: &[(String, String)]) -> Result<Option<IrWaveform>, ()> {
         Some("exp") => IrWaveform::Exp { initial: f("val0")?, pulsed: f("val1")?, rise_delay: f("td1")?, rise_tau: f("tau1")?, fall_delay: f("td2")?, fall_tau: f("tau2")? },
         Some("pwl") => {
             let w = get(p, "wave").and_then(|w| w.strip_prefix('[')?.strip_suffix(']')).ok_or(())?;
-            let xs: Vec<f64> = w.split_whitespace().map(num).collect::<Option<_>>().ok_or(())?;
+            let xs: Vec<IrNum> = fields(w).iter().map(|x| irnum(x)).collect();
             if xs.len() % 2 != 0 {
                 return Err(());
             }
-            IrWaveform::Pwl { values: xs.chunks(2).map(|c| (c[0], c[1])).collect() }
+            IrWaveform::Pwl { values: xs.chunks(2).map(|c| (c[0].clone(), c[1].clone())).collect() }
         }
         Some(_) => return Err(()),
     }))

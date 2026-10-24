@@ -51,26 +51,30 @@ fn rclvalue(d: Dialect, v: &IrValue, model: &Option<String>) -> String {
     }
 }
 
-fn waveform(wf: &IrWaveform) -> String {
+fn waveform(d: Dialect, wf: &IrWaveform) -> String {
+    let w = |x: &IrNum| match x {
+        IrNum::Num(v) => format!("{v}"),
+        x => value(d, &x.into()),
+    };
     match wf {
         IrWaveform::Sin { offset, amplitude, frequency, delay, damping, phase } => {
-            format!("SIN({} {} {} {} {} {})", offset, amplitude, frequency, delay, damping, phase)
+            format!("SIN({} {} {} {} {} {})", w(offset), w(amplitude), w(frequency), w(delay), w(damping), w(phase))
         }
         IrWaveform::Pulse { initial, pulsed, delay, rise_time, fall_time, pulse_width, period } => {
-            format!("PULSE({} {} {} {} {} {} {})", initial, pulsed, delay, rise_time, fall_time, pulse_width, period)
+            format!("PULSE({} {} {} {} {} {} {})", w(initial), w(pulsed), w(delay), w(rise_time), w(fall_time), w(pulse_width), w(period))
         }
         IrWaveform::Pwl { values } => {
-            let pts: Vec<String> = values.iter().map(|(t, v)| format!("{} {}", t, v)).collect();
+            let pts: Vec<String> = values.iter().map(|(t, v)| format!("{} {}", w(t), w(v))).collect();
             format!("PWL({})", pts.join(" "))
         }
         IrWaveform::Exp { initial, pulsed, rise_delay, rise_tau, fall_delay, fall_tau } => {
-            format!("EXP({} {} {} {} {} {})", initial, pulsed, rise_delay, rise_tau, fall_delay, fall_tau)
+            format!("EXP({} {} {} {} {} {})", w(initial), w(pulsed), w(rise_delay), w(rise_tau), w(fall_delay), w(fall_tau))
         }
         IrWaveform::Sffm { offset, amplitude, carrier_freq, modulation_index, signal_freq } => {
-            format!("SFFM({} {} {} {} {})", offset, amplitude, carrier_freq, modulation_index, signal_freq)
+            format!("SFFM({} {} {} {} {})", w(offset), w(amplitude), w(carrier_freq), w(modulation_index), w(signal_freq))
         }
         IrWaveform::Am { amplitude, offset, modulating_freq, carrier_freq, delay } => {
-            format!("AM({} {} {} {} {})", amplitude, offset, modulating_freq, carrier_freq, delay)
+            format!("AM({} {} {} {} {})", w(amplitude), w(offset), w(modulating_freq), w(carrier_freq), w(delay))
         }
     }
 }
@@ -505,7 +509,7 @@ pub(crate) fn component(d: Dialect, comp: &Component) -> Result<String, CodeGenE
                 }
             }
             if let Some(wf) = wf {
-                s.push_str(&format!(" {}", waveform(wf)));
+                s.push_str(&format!(" {}", waveform(d, wf)));
             }
             s
         }
@@ -982,12 +986,12 @@ mod tests {
                         ac_magnitude: None,
                         ac_phase: None,
                         waveform: Some(IrWaveform::Sin {
-                            offset: 1.65,
-                            amplitude: 1.65,
-                            frequency: 1e6,
-                            delay: 0.0,
-                            damping: 0.0,
-                            phase: 0.0,
+                            offset: 1.65.into(),
+                            amplitude: 1.65.into(),
+                            frequency: 1e6.into(),
+                            delay: 0.0.into(),
+                            damping: 0.0.into(),
+                            phase: 0.0.into(),
                         }),
                     },
                     Component::VoltageSource {
@@ -998,13 +1002,13 @@ mod tests {
                         ac_magnitude: None,
                         ac_phase: None,
                         waveform: Some(IrWaveform::Pulse {
-                            initial: 0.0,
-                            pulsed: 3.3,
-                            delay: 0.0,
-                            rise_time: 1e-9,
-                            fall_time: 1e-9,
-                            pulse_width: 5e-7,
-                            period: 1e-6,
+                            initial: 0.0.into(),
+                            pulsed: 3.3.into(),
+                            delay: 0.0.into(),
+                            rise_time: 1e-9.into(),
+                            fall_time: 1e-9.into(),
+                            pulse_width: 5e-7.into(),
+                            period: 1e-6.into(),
                         }),
                     },
                     Component::VoltageSource {
@@ -1015,7 +1019,7 @@ mod tests {
                         ac_magnitude: None,
                         ac_phase: None,
                         waveform: Some(IrWaveform::Pwl {
-                            values: vec![(0.0, 0.0), (1e-6, 3.3), (2e-6, 0.0)],
+                            values: vec![((0.0).into(), (0.0).into()), ((1e-6).into(), (3.3).into()), ((2e-6).into(), (0.0).into())],
                         }),
                     },
                 ],

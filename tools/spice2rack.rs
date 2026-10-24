@@ -103,31 +103,35 @@ impl Py {
                         Some(v) => self.line(format!("{obj}.{letter}({head}, value={v}{ac})")),
                         None => self.gap(obj, "raw element value", &raw),
                     },
-                    (Some(_), None) => self.gap(obj, "waveform sources take no expression DC value", &raw),
-                    (Some(wf), Some(v)) => {
-                        let (stem, args, t0) = match wf {
+                    (Some(wf), dc) => {
+                        let w = |x: &IrNum| py_value(&x.into()).unwrap_or_default();
+                        let (stem, args) = match wf {
                             IrWaveform::Pulse { initial, pulsed, delay, rise_time, fall_time, pulse_width, period } => ("Pulse", format!(
                                 "initial_value={}, pulsed_value={}, delay={}, pulse_width={}, period={}, rise_time={}, fall_time={}",
-                                py_num(*initial), py_num(*pulsed), py_num(*delay), py_num(*pulse_width), py_num(*period), py_num(*rise_time), py_num(*fall_time)), *initial),
+                                w(initial), w(pulsed), w(delay), w(pulse_width), w(period), w(rise_time), w(fall_time))),
                             IrWaveform::Pwl { values } => {
-                                let pts: Vec<String> = values.iter().map(|(t, y)| format!("({}, {})", py_num(*t), py_num(*y))).collect();
-                                ("PieceWiseLinear", format!("values=[{}]", pts.join(", ")), values.first().map_or(0.0, |p| p.1))
+                                let pts: Vec<String> = values.iter().map(|(t, y)| format!("({}, {})", w(t), w(y))).collect();
+                                ("PieceWiseLinear", format!("values=[{}]", pts.join(", ")))
                             }
                             IrWaveform::Sin { offset, amplitude, frequency, delay, damping, phase } => ("Sinusoidal", format!(
                                 "offset={}, amplitude={}, frequency={}, delay={}, damping_factor={}, phase={}",
-                                py_num(*offset), py_num(*amplitude), py_num(*frequency), py_num(*delay), py_num(*damping), py_num(*phase)), *offset),
+                                w(offset), w(amplitude), w(frequency), w(delay), w(damping), w(phase))),
                             IrWaveform::Exp { initial, pulsed, rise_delay, rise_tau, fall_delay, fall_tau } => ("Exponential", format!(
                                 "initial_value={}, pulsed_value={}, rise_delay_time={}, rise_time_constant={}, fall_delay_time={}, fall_time_constant={}",
-                                py_num(*initial), py_num(*pulsed), py_num(*rise_delay), py_num(*rise_tau), py_num(*fall_delay), py_num(*fall_tau)), *initial),
+                                w(initial), w(pulsed), w(rise_delay), w(rise_tau), w(fall_delay), w(fall_tau))),
                             IrWaveform::Sffm { offset, amplitude, carrier_freq, modulation_index, signal_freq } => ("SingleFrequencyFM", format!(
                                 "offset={}, amplitude={}, carrier_frequency={}, modulation_index={}, signal_frequency={}",
-                                py_num(*offset), py_num(*amplitude), py_num(*carrier_freq), py_num(*modulation_index), py_num(*signal_freq)), *offset),
+                                w(offset), w(amplitude), w(carrier_freq), w(modulation_index), w(signal_freq))),
                             IrWaveform::Am { amplitude, offset, modulating_freq, carrier_freq, delay } => ("AmplitudeModulated", format!(
                                 "offset={}, amplitude={}, modulating_frequency={}, carrier_frequency={}, signal_delay={}",
-                                py_num(*offset), py_num(*amplitude), py_num(*modulating_freq), py_num(*carrier_freq), py_num(*delay)), 0.0),
+                                w(offset), w(amplitude), w(modulating_freq), w(carrier_freq), w(delay))),
                         };
                         // `dc=` only when it is not what the waveform starts at.
-                        let dc = if v == t0 { String::new() } else { format!(", dc={}", py_num(v)) };
+                        let dc = match dc {
+                            _ if *value == wf.at_zero() => String::new(),
+                            Some(v) => format!(", dc={}", py_num(v)),
+                            None => return self.gap(obj, "waveform sources take no expression DC value", &raw),
+                        };
                         self.line(format!("{obj}.{stem}{kind}Source({head}, {args}{dc}{ac})"))
                     }
                 }
