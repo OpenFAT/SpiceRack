@@ -4,7 +4,7 @@
 # scoped-resolution issue is a fundamental ngspice
 # limitation present in all versions, not a 44-specific regression.
 final: prev: {
-  libngspice = if prev.stdenv.isDarwin
-    then prev.libngspice.override { stdenv = prev.llvmPackages_18.stdenv; }
-    else prev.libngspice;
+  ngspice = if prev.stdenv.isDarwin
+    then prev.ngspice.override { stdenv = prev.llvmPackages_18.stdenv; }
+    else prev.ngspice;
 }

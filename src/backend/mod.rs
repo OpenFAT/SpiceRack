@@ -68,8 +68,6 @@ pub fn netlist(ir: &CircuitIR, d: Dialect) -> Result<String, CodeGenError> {
 pub enum BackendKind {
     /// `ngspice -b` subprocess.
     Ngspice,
-    /// libngspice loaded with dlopen; the same decks as `Ngspice`, in process.
-    NgspiceShared,
     Ltspice,
     Vacask,
     Spectre,
@@ -147,13 +145,12 @@ fn route(analysis: &str) -> (&'static [Dialect], &'static str) {
 }
 
 impl BackendKind {
-    /// Parse a user-facing backend name. `vacask-shared` is an alias of
-    /// `vacask` (there is no public libvacask C API to load).
+    /// Parse a user-facing backend name. `ngspice-shared` and
+    /// `vacask-shared` are kept as aliases of the executables.
     #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
         Some(match s {
-            "ngspice" | "ngspice-subprocess" => Self::Ngspice,
-            "ngspice-shared" => Self::NgspiceShared,
+            "ngspice" | "ngspice-subprocess" | "ngspice-shared" => Self::Ngspice,
             "ltspice" => Self::Ltspice,
             "vacask" | "vacask-shared" => Self::Vacask,
             "spectre" => Self::Spectre,
@@ -165,7 +162,6 @@ impl BackendKind {
     pub fn name(self) -> &'static str {
         match self {
             Self::Ngspice => "ngspice",
-            Self::NgspiceShared => "ngspice-shared",
             Self::Ltspice => "ltspice",
             Self::Vacask => "vacask",
             Self::Spectre => "spectre",
@@ -175,7 +171,7 @@ impl BackendKind {
 
     pub fn dialect(self) -> Dialect {
         match self {
-            Self::Ngspice | Self::NgspiceShared => Dialect::Ngspice,
+            Self::Ngspice => Dialect::Ngspice,
             Self::Ltspice => Dialect::Ltspice,
             Self::Vacask => Dialect::Vacask,
             Self::Spectre => Dialect::Spectre,
@@ -197,7 +193,6 @@ impl BackendKind {
     pub fn run(self, netlist: &str) -> Result<RawData, BackendError> {
         match self {
             Self::Ngspice => ngspice::run(netlist),
-            Self::NgspiceShared => ngspice::Shared::new()?.run(netlist),
             Self::Ltspice => ltspice::run(netlist),
             Self::Vacask => vacask::run(netlist),
             Self::Spectre => spectre::run(netlist),
@@ -211,7 +206,6 @@ pub fn available() -> &'static [BackendKind] {
     static CACHE: OnceLock<Vec<BackendKind>> = OnceLock::new();
     CACHE.get_or_init(|| {
         let found = [
-            (BackendKind::NgspiceShared, ngspice::Shared::is_available()),
             (BackendKind::Ngspice, is_on_path("ngspice")),
             (BackendKind::Ltspice, ltspice::find().is_some()),
             (BackendKind::Vacask, is_on_path("vacask")),
@@ -383,7 +377,7 @@ mod tests {
 
     #[test]
     fn names_round_trip() {
-        for k in [BackendKind::Ngspice, BackendKind::NgspiceShared, BackendKind::Ltspice,
+        for k in [BackendKind::Ngspice, BackendKind::Ltspice,
                   BackendKind::Vacask, BackendKind::Spectre, BackendKind::Espice] {
             assert_eq!(BackendKind::from_str(k.name()), Some(k));
         }

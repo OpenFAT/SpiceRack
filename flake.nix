@@ -53,10 +53,6 @@
             pkgs.pkg-config
           ];
 
-          buildInputs = [
-            pkgs.libngspice
-          ];
-
           propagatedBuildInputs = [
             pkgs.python312Packages.numpy
           ];
@@ -70,7 +66,6 @@
             pkgs.cargo
             pkgs.maturin
             pkgs.ngspice
-            pkgs.libngspice
             pythonEnv
             pkgs.pkg-config
             openvaf
