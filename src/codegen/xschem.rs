@@ -40,6 +40,12 @@ pub struct Lines {
     pub text: String,
     /// End offset of each line in `text`, ascending.
     pub ends: Vec<u32>,
+    /// The producer vouches that the lines are in element-name order (it read every
+    /// name already, e.g. for a name map), so [`write`] compares only the run's first
+    /// and last names with its neighbours instead of scanning every line. A wrong
+    /// `true` writes the run unsorted (checked by a debug assert); `false` is always
+    /// correct.
+    pub sorted: bool,
 }
 
 impl Lines {
@@ -62,6 +68,19 @@ impl Lines {
 
     pub fn is_empty(&self) -> bool {
         self.ends.is_empty()
+    }
+
+    /// Whether every line is non-empty and ends in a newline, so the run is written as
+    /// one copy of `text`.
+    fn whole(&self) -> bool {
+        let b = self.text.as_bytes();
+        let mut start = 0;
+        self.ends.iter().all(|&e| {
+            let e = e as usize;
+            let ok = e > start + 1 && b.get(e - 1) == Some(&b'\n');
+            start = e;
+            ok
+        })
     }
 
     /// Line `i`.
@@ -204,6 +223,71 @@ pub fn push_element_name(out: &mut String, name: &str, d: Dialect) {
         out.push('X');
     }
     out.push_str(name);
+}
+
+/// Appends a subcircuit instance as [`write`] spells an [`Instance`], without one:
+/// `X<name> <nets> <subckt>` (SPICE), `<name> (<nets>) <subckt>` (Spectre),
+/// `<subckt> <name> (.<port>(<net>), …);` (Verilog, pairing `ports`, the definition's
+/// port names, with `nets`; the other dialects ignore `ports`); parameters as ` k=v`
+/// (none for Verilog). A net `?` (an unconnected pin) is written as is. No newline.
+///
+/// For a caller that renders its rows into [`Lines`]: no `String` per connection.
+pub fn push_instance<'a>(
+    out: &mut String,
+    name: &str,
+    subcircuit: &str,
+    nets: impl IntoIterator<Item = &'a str>,
+    ports: impl IntoIterator<Item = &'a str>,
+    parameters: impl IntoIterator<Item = (&'a str, &'a str)>,
+    d: Dialect,
+) {
+    match d {
+        Dialect::Spectre => {
+            push_element_name(out, name, d);
+            out.push_str(" (");
+            for (k, n) in nets.into_iter().enumerate() {
+                if k > 0 {
+                    out.push(' ');
+                }
+                push_net(out, n, d);
+            }
+            out.push_str(") ");
+            push_ident(out, subcircuit, d);
+        }
+        Dialect::Verilog => {
+            push_ident(out, subcircuit, d);
+            out.push(' ');
+            push_element_name(out, name, d);
+            out.push_str(" (");
+            for (k, (p, n)) in ports.into_iter().zip(nets).enumerate() {
+                if k > 0 {
+                    out.push_str(", ");
+                }
+                out.push('.');
+                push_ident(out, p, d);
+                out.push('(');
+                push_net(out, n, d);
+                out.push(')');
+            }
+            out.push_str(");");
+            return;
+        }
+        _ => {
+            push_element_name(out, name, d);
+            for n in nets {
+                out.push(' ');
+                push_net(out, n, d);
+            }
+            out.push(' ');
+            push_ident(out, subcircuit, d);
+        }
+    }
+    for (k, v) in parameters {
+        out.push(' ');
+        out.push_str(k);
+        out.push('=');
+        out.push_str(v);
+    }
 }
 
 /// The deck, `\n` line ends, ending in a newline.
@@ -436,28 +520,50 @@ impl Writer<'_, '_> {
         let n =
             runs.iter().map(Lines::len).sum::<usize>() + sc.components.len() + sc.instances.len();
         let seg = out.len();
-        let mut spans: Vec<(usize, usize)> = Vec::with_capacity(n);
+        let mut spans: Vec<Span> = Vec::with_capacity(n);
         let mut seen = Seen {
             sorted: true,
             prev: (0, 0),
         };
         // Records the element written into `out[start..]` (nothing written: dropped).
-        let end =
-            |out: &mut String, start: usize, spans: &mut Vec<(usize, usize)>, seen: &mut Seen| {
-                if out.len() == start + indent.len() {
-                    out.truncate(start); // nothing to write
-                    return;
-                }
-                if !out.ends_with('\n') {
-                    out.push('\n');
-                }
-                seen.note(out, start, out.len(), spans, d);
-            };
-        for run in runs {
+        let end = |out: &mut String, start: usize, spans: &mut Vec<Span>, seen: &mut Seen| {
+            if out.len() == start + indent.len() {
+                out.truncate(start); // nothing to write
+                return;
+            }
+            if !out.ends_with('\n') {
+                out.push('\n');
+            }
+            seen.note(out, start, out.len(), spans, d);
+        };
+        for (r, run) in runs.iter().enumerate() {
             // A run whose every line is non-empty and ends in a newline is copied whole;
-            // its lines are then only scanned for their names.
-            let whole = indent.is_empty()
-                && (0..run.len()).all(|i| run.get(i).len() > 1 && run.get(i).ends_with('\n'));
+            // its lines are then only scanned for their names, or, when the producer
+            // vouches for their order, only its first and last.
+            let whole = indent.is_empty() && run.whole();
+            if whole && run.sorted && !run.is_empty() {
+                debug_assert!(
+                    (1..run.len())
+                        .all(|i| element_name(run.get(i - 1), d) <= element_name(run.get(i), d)),
+                    "a run marked sorted is in element-name order"
+                );
+                assert_eq!(run.ends[run.len() - 1] as usize, run.text.len());
+                let base = out.len();
+                out.push_str(&run.text);
+                let last = if run.len() > 1 {
+                    run.ends[run.len() - 2] as usize
+                } else {
+                    0
+                };
+                seen.name(out, base, base + run.ends[0] as usize, spans.is_empty(), d);
+                seen.name(out, base + last, out.len(), false, d);
+                spans.push(Span {
+                    start: base,
+                    end: out.len(),
+                    run: r as u32,
+                });
+                continue;
+            }
             if whole {
                 let base = out.len();
                 out.push_str(&run.text);
@@ -490,7 +596,7 @@ impl Writer<'_, '_> {
             end(out, start, &mut spans, &mut seen);
         }
         if !seen.sorted {
-            sort_spans(out, seg, &spans, d);
+            sort_spans(out, seg, &spans, runs, d);
         }
         for l in &sc.raw_spice {
             out.push_str(l);
@@ -600,63 +706,25 @@ impl Writer<'_, '_> {
         }
     }
 
-    /// A subcircuit instance: `X<name> <nets> <subckt>` (SPICE), `<name> (<nets>)
-    /// <subckt>` (Spectre), `<module> <name> (.<port>(<net>), …);` (Verilog, ports by
-    /// the definition's port names); parameters as ` k=v`.
+    /// A subcircuit instance ([`push_instance`]); Verilog pairs the definition's ports.
     fn instance(&self, out: &mut String, i: &Instance) {
-        let d = self.d;
-        match d {
-            Dialect::Spectre => {
-                push_element_name(out, &i.name, d);
-                out.push_str(" (");
-                for (k, n) in i.port_mapping.iter().enumerate() {
-                    if k > 0 {
-                        out.push(' ');
-                    }
-                    push_net(out, n, d);
-                }
-                out.push_str(") ");
-                push_ident(out, &i.subcircuit, d);
-            }
-            Dialect::Verilog => {
-                push_ident(out, &i.subcircuit, d);
-                out.push(' ');
-                push_element_name(out, &i.name, d);
-                out.push_str(" (");
-                let names = self
-                    .ports
-                    .get(i.subcircuit.as_str())
-                    .copied()
-                    .unwrap_or(&[]);
-                for (k, (p, n)) in names.iter().zip(&i.port_mapping).enumerate() {
-                    if k > 0 {
-                        out.push_str(", ");
-                    }
-                    out.push('.');
-                    push_ident(out, &p.name, d);
-                    out.push('(');
-                    push_net(out, n, d);
-                    out.push(')');
-                }
-                out.push_str(");");
-                return;
-            }
-            _ => {
-                push_element_name(out, &i.name, d);
-                for n in &i.port_mapping {
-                    out.push(' ');
-                    push_net(out, n, d);
-                }
-                out.push(' ');
-                push_ident(out, &i.subcircuit, d);
-            }
-        }
-        for (k, v) in &i.parameters {
-            out.push(' ');
-            out.push_str(k);
-            out.push('=');
-            out.push_str(v);
-        }
+        let ports = match self.d {
+            Dialect::Verilog => self
+                .ports
+                .get(i.subcircuit.as_str())
+                .copied()
+                .unwrap_or(&[]),
+            _ => &[],
+        };
+        push_instance(
+            out,
+            &i.name,
+            &i.subcircuit,
+            i.port_mapping.iter().map(String::as_str),
+            ports.iter().map(|p| p.name.as_str()),
+            i.parameters.iter().map(|(k, v)| (k.as_str(), v.as_str())),
+            self.d,
+        );
     }
 
     /// One load per Verilog-A source (`<stem>.va`) of the top: ngspice the OSDI the
@@ -704,44 +772,65 @@ struct Seen {
 
 impl Seen {
     /// Records the element `out[start..end]` (its newline included) in `spans`.
-    fn note(
-        &mut self,
-        out: &str,
-        start: usize,
-        end: usize,
-        spans: &mut Vec<(usize, usize)>,
-        d: Dialect,
-    ) {
+    fn note(&mut self, out: &str, start: usize, end: usize, spans: &mut Vec<Span>, d: Dialect) {
+        self.name(out, start, end, spans.is_empty(), d);
+        spans.push(Span {
+            start,
+            end,
+            run: u32::MAX,
+        });
+    }
+
+    /// Takes the name of the element `out[start..end]` as the latest; `first` for the
+    /// block's first element.
+    fn name(&mut self, out: &str, start: usize, end: usize, first: bool, d: Dialect) {
         let name = element_name(&out[start..end], d);
         // `name` borrows `out`, so its address gives its offset.
         let a = name.as_ptr() as usize - out.as_ptr() as usize;
         let name = (a, a + name.len());
-        self.sorted &= spans.is_empty() || out[self.prev.0..self.prev.1] <= out[name.0..name.1];
+        self.sorted &= first || out[self.prev.0..self.prev.1] <= out[name.0..name.1];
         self.prev = name;
-        spans.push((start, end));
     }
 }
 
+/// A written element (`run == u32::MAX`), or a whole sorted run of [`Lines`] (`run`
+/// its index in the block's runs), as offsets into the output.
+struct Span {
+    start: usize,
+    end: usize,
+    run: u32,
+}
+
 /// Reorders the elements written since `seg` by element name (stable). `spans` are
-/// `(start, end)` offsets into `out`, contiguous from `seg` to the end.
-fn sort_spans(out: &mut String, seg: usize, spans: &[(usize, usize)], d: Dialect) {
-    assert!(spans.first().is_some_and(|l| l.0 == seg));
-    assert!(spans.last().is_some_and(|l| l.1 == out.len()));
+/// contiguous from `seg` to the end; a run's span stands for each of its lines.
+fn sort_spans(out: &mut String, seg: usize, spans: &[Span], runs: &[Lines], d: Dialect) {
+    assert!(spans.first().is_some_and(|s| s.start == seg));
+    assert!(spans.last().is_some_and(|s| s.end == out.len()));
     // ponytail: the out-of-order case copies the block's text once; fine while
     // templates that reorder names are rare.
     let text = out[seg..].to_owned();
-    let mut order: Vec<(&str, u32)> = (0..spans.len())
-        .map(|i| {
-            (
-                element_name(&text[spans[i].0 - seg..spans[i].1 - seg], d),
-                i as u32,
-            )
-        })
+    let mut lines: Vec<(usize, usize)> = Vec::with_capacity(spans.len());
+    for s in spans {
+        let (a, b) = (s.start - seg, s.end - seg);
+        match runs.get(s.run as usize) {
+            None => lines.push((a, b)),
+            Some(run) => {
+                assert_eq!(b - a, run.text.len());
+                let mut start = a;
+                for &e in &run.ends {
+                    lines.push((start, a + e as usize));
+                    start = a + e as usize;
+                }
+            }
+        }
+    }
+    let mut order: Vec<(&str, u32)> = (0..lines.len())
+        .map(|i| (element_name(&text[lines[i].0..lines[i].1], d), i as u32))
         .collect();
     order.sort_unstable();
     out.truncate(seg);
     for i in order.into_iter().map(|o| o.1 as usize) {
-        out.push_str(&text[spans[i].0 - seg..spans[i].1 - seg]);
+        out.push_str(&text[lines[i].0..lines[i].1]);
     }
     assert_eq!(out.len(), seg + text.len());
 }
@@ -943,6 +1032,66 @@ mod tests {
         d.lines[0].push(second);
         let n = write(&d, Dialect::Ngspice).unwrap();
         assert!(n.contains("B1 x 0 v=1\nC1 out 0 1e-12\nV1"), "{n}");
+    }
+
+    /// A run marked sorted writes as an unmarked one: in place when its neighbours keep
+    /// the order, line by line among them when they do not.
+    #[test]
+    fn sorted_runs_write_as_unmarked_ones() {
+        let ir = ir();
+        for (lines, marked) in [
+            (["R1 a 0 1", "R2 a 0 1", "Y1 b"], [true, false]),
+            (["A1 a 0 1", "B2 a 0 1", "C1 b"], [true, true]),
+        ] {
+            let run = |sorted: bool, ls: &[&str]| {
+                let mut l = Lines::default();
+                ls.iter().for_each(|s| l.push(&format!("{s}\n")));
+                l.sorted = sorted;
+                l
+            };
+            let deck = |m: [bool; 2]| Deck {
+                lines: vec![vec![run(m[0], &lines[..2]), run(m[1], &lines[2..])]],
+                ..Deck::new(&ir)
+            };
+            for d in [Dialect::Ngspice, Dialect::Spectre] {
+                assert_eq!(
+                    write(&deck(marked), d).unwrap(),
+                    write(&deck([false, false]), d).unwrap(),
+                    "{d:?}"
+                );
+            }
+        }
+        // The top's `V1` and `X1` sort between the marked run's lines.
+        let n = write(&Deck::new(&ir), Dialect::Ngspice).unwrap();
+        assert!(n.contains("V1 vdd! 0 1.8\nX1 in out[3] inv\n"), "{n}");
+        let mut l = Lines::default();
+        l.push("A1 a\n");
+        l.push("W1 a\n");
+        l.sorted = true;
+        let d = Deck {
+            lines: vec![vec![l]],
+            ..Deck::new(&ir)
+        };
+        let n = write(&d, Dialect::Ngspice).unwrap();
+        assert!(
+            n.contains("A1 a\nV1 vdd! 0 1.8\nW1 a\nX1 in out[3] inv\n"),
+            "{n}"
+        );
+    }
+
+    /// `push_instance` spells an instance as the deck writes an [`Instance`].
+    #[test]
+    fn push_instance_spells_as_the_deck() {
+        let ports = ["a", "y"];
+        for (d, want) in [
+            (Dialect::Ngspice, "X1 in ? inv w=2"),
+            (Dialect::Spectre, r"1 (in ?) inv w=2"),
+            (Dialect::Verilog, r"inv \1  (.a(in), .y(?));"),
+        ] {
+            let mut out = String::new();
+            push_instance(&mut out, "1", "inv", ["in", "?"], ports, [("w", "2")], d);
+            assert_eq!(out, want, "{d:?}");
+        }
     }
 
     /// Determinism: one IR gives one deck, a clone included (every map on the emit
