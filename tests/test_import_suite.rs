@@ -7,7 +7,7 @@
 //!   SPICE_BENCH=DIR cargo test --no-default-features --release --test test_import_suite -- --nocapture
 //!
 //! Skipped without `$SPICE_BENCH` or ngspice. A deck ngspice cannot finish in
-//! `$SPICE_BENCH_TIMEOUT` seconds (default 120) as written is skipped: the
+//! `$SPICE_BENCH_TIMEOUT` CPU seconds (default 120) as written is skipped: the
 //! suite READMEs list the ones ngspice-45 cannot run. Every dialect is also
 //! emitted, and the decks each backend refuses are counted, not failed.
 
@@ -69,16 +69,23 @@ fn ngspice(dir: &Path, deck: &str, secs: u64) -> Result<Option<Run>, String> {
     std::fs::write(file.path(), format!("{title}\n.option seed=1\n{body}")).map_err(|e| e.to_string())?;
     let tmp = tempfile::TempDir::new().map_err(|e| e.to_string())?;
     let raw = tmp.path().join("out.raw");
+    // The budget is CPU seconds, not wall: under a loaded machine a wall
+    // clock times out decks that are not slow. One OpenMP thread, since a
+    // CPU limit counts every thread and the workers already fill the cores.
+    // The wall `timeout` only catches a hang.
     let run = |with_raw: bool| {
         let mut c = Command::new("timeout");
-        c.arg(secs.to_string()).args(["ngspice", "-b"]);
+        c.arg((10 * secs).to_string()).arg("prlimit").arg(format!("--cpu={secs}")).args(["ngspice", "-b"]).env("OMP_NUM_THREADS", "1");
         if with_raw {
             c.arg("-r").arg(&raw);
         }
         c.arg(file.path()).current_dir(dir).output().map_err(|e| e.to_string())
     };
+    // `timeout` exits 124 itself, or 128 + the signal that killed ngspice:
+    // SIGXCPU (24) at the CPU limit, SIGKILL (9) past it.
+    let timed_out = |o: &std::process::Output| matches!(o.status.code(), Some(124 | 137 | 152));
     let out = run(true)?;
-    if out.status.code() == Some(124) {
+    if timed_out(&out) {
         return Ok(None);
     }
     let bytes = std::fs::read(&raw).map_err(|_| {
@@ -89,7 +96,7 @@ fn ngspice(dir: &Path, deck: &str, secs: u64) -> Result<Option<Run>, String> {
     let mut measures = Vec::new();
     if analyses(deck).contains_key(".meas") {
         let out = run(false)?;
-        if out.status.code() == Some(124) {
+        if timed_out(&out) {
             return Ok(None);
         }
         let text = String::from_utf8_lossy(&out.stdout);
