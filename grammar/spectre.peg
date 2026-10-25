@@ -1,152 +1,218 @@
-# Spectre: logical lines -> statements. Sources: dev/research/spectre-syntax.md
-# (§ numbers; UG = Spectre User Guide 5.1.41, R19 = Spectre Reference 19.1).
-# Input: the lines stage's logical lines, case kept, each ended by `\n`; the
-# title is not part of it. A `simulator lang=spice` region's lines are
-# captured whole (SpiceCard) and read by the HSPICE card grammar, as Spectre's
-# SPICE reader is closest to it (§3.2).
-#
-# Captures the lowering reads (tests/frontend/lower_spectre.zig):
-#   statements  Simulator SpiceRegion SpiceCard Include AhdlInclude Library
-#               Section Global Parameters ParamDecl Model Group Subckt Ends
-#               Function FArg Save Ic Nodeset Signal If Else Statistics
-#               Analysis Control Instance
-#   fields      Name Node Master Kind Param Key Vector Expr (and its levels)
+# Spectre: physical lines -> logical lines -> the AST (src/import/mod.rs
+# `Tag`). Sources: dev/research/spectre-syntax.md (§ numbers; UG = Spectre
+# User Guide 5.1.41, R19 = Spectre Reference 19.1), ESPice
+# tests/frontend/grammar/spectre_lines.peg and spectre.peg. Spectre keeps
+# case (§2.1): the cards stage reads the text as written.
 
-SDeck      <- line*
-# The lines stage trims each line and keeps one blank between tokens.
-line       <- SpiceRegion / stmt? nl
+# ── Lines ──
+# Captures: Title; Line, a statement, made of Piece (joined with a blank);
+# Line_spice, a statement in a `simulator lang=spice` region, made of
+# Piece_spice and Glue_spice under HSPICE's line rules.
 
-# §3.1: `simulator lang=spice` until `simulator lang=spectre` (UG p.53).
-SpiceRegion <- 'simulator' s 'lang' s? '=' s? 'spice' (s Param)* nl (!to_spectre SpiceCard nl)*
-SpiceCard  <- (!nl .)+
-to_spectre <- 'simulator'i s 'lang'i s? '=' s? 'spectre'i
+file       <- Title (l_eol l_body)? !.
+# §1.2: line 1 of the top-level netlist is the title (UG p.29, p.50).
+Title      <- (!l_eol .)*
+l_body     <- (l_spice_region / Line / l_skip)*
 
-stmt       <- Simulator / Include / AhdlInclude / Library / Section / Global / Parameters
-            / Model / Subckt / Function / Save / Ic / Nodeset / If / Statistics / named
+# §3.1: `simulator lang=spice` holds until `simulator lang=spectre`, which a
+# SPICE region writes without a dot (UG p.53).
+l_spice_region <- &l_to_spice Line (!l_to_spectre (Line_spice / l_hskip))* l_spice_back?
+l_spice_back <- &l_to_spectre Line_spice
+l_to_spice <- l_blank* 'simulator' l_blank+ 'lang' l_blank* '=' l_blank* 'spice' !l_wchar
+l_to_spectre <- l_blank* 'simulator'i l_blank+ 'lang'i l_blank* '=' l_blank* 'spectre'i !l_wchar
+
+# §1.3: `*` in the first column comments the line (UG p.59); so does a
+# line holding only a `//` comment. Blank lines are skipped.
+l_skip     <- '*' (!l_eol .)* l_eolx
+            / l_blank* '//' (!l_eol .)* l_eolx
+            / l_blank* l_eol
+            / l_blank+ !.
+
+Line       <- ![*] l_blank* !'+' !'//' !l_eolx Piece l_comment? l_more* l_eolx
+# §1.4: a backslash ending the line joins the next one (UG p.59), and so
+# does `+` starting the next line.
+l_more     <- l_bs_break Piece l_comment?
+            / l_eol l_skip_cont* l_blank* '+' Piece l_comment?
+l_bs_break <- '\\' l_blank* l_eolx
+l_skip_cont <- '*' (!l_eol .)* l_eol / l_blank* '//' (!l_eol .)* l_eol / l_blank* l_eol
+
+Piece      <- l_chunk*
+l_chunk    <- l_string / l_escape / !'//' !l_bs_end !l_eol .
+# §2.2: a backslash before any other byte is part of a name (`\2N2222`).
+l_escape   <- !l_bs_end '\\' ![\r\n] .
+l_bs_end   <- '\\' l_blank* l_eolx
+# §1.3: `//` to the end of the line, outside strings.
+l_comment  <- '//' (!l_eol .)*
+# §2.5: double-quoted strings, a backslash escaping a quote.
+l_string   <- '"' (!l_bs_end ('\\' !l_eol . / !'"' !l_eol .))* ('"' / &(l_bs_end / l_eolx))
+
+# §3.2: a SPICE region reads as HSPICE does (hspice.peg L2-L6).
+Line_spice <- l_blank* ![+*$] Piece_spice l_hmore* l_hcomment? l_eolx
+l_hmore    <- l_blank* '\\\\' l_blank* l_eolx l_blank* Glue_spice
+            / l_blank+ '\\' l_blank* l_eolx Piece_spice
+            / l_hcomment? l_eol l_hskip* l_blank* '+' Piece_spice?
+l_hskip    <- l_blank* [*$] (!l_eol .)* l_eolx / l_blank* l_eol / l_blank+ !.
+Piece_spice <- l_hchunk+
+Glue_spice <- l_hchunk*
+l_hchunk   <- l_hquoted / l_hsep / l_hnum / l_hword
+l_hsep     <- l_blank+ !('\\' l_blank* l_eolx) !('\\\\' l_blank* l_eolx) / [,=()]
+l_hnum     <- [+\-]? ([0-9]+ ('.' [0-9]*)? / '.' [0-9]+) ([eEdD] [+\-]? [0-9]+)? [a-zA-Z]* &'$'
+l_hword    <- !'$' !('\\\\' l_blank* l_eolx) l_hwchar (!('\\\\' l_blank* l_eolx) l_hwchar)*
+l_hwchar   <- ![ \t,=()'"\r\n] .
+l_hcomment <- '$' (!l_eol .)*
+l_hquoted  <- "'" (!"'" !l_eol .)* "'" / '"' (!'"' !l_eol .)* '"'
+
+l_wchar    <- [a-zA-Z0-9_!]
+l_blank    <- [ \t]
+l_eol      <- '\r'? '\n'
+l_eolx     <- l_eol / !.
+
+# ── Statements ──
+deck       <- card* !.
+card       <- (SpiceRegion / Subckt / Block / stmt) (nl / !.) / Unparsed nl
+Unparsed   <- rest
+
+# §3.1: a `simulator lang=spice` region, up to `simulator lang=spectre`:
+# its `.meas` cards are the testbench's (codegen::spectre puts them there),
+# the rest is SPICE text the IR has no Spectre form for.
+SpiceRegion <- 'simulator' s 'lang' s? '=' s? 'spice' (s Pair)* (nl !to_spectre (Meas / Raw_spice))*
+Meas       <- '.meas' 'ure'? !wchar rest
+Raw_spice  <- rest
+to_spectre <- 'simulator' s 'lang' s? '=' s? 'spectre'
+
+stmt       <- simulator &nl / Include &nl / Load &nl / Global &nl / Params &nl / Model &nl
+            / Func &nl / Save &nl / Ic &nl / Nodeset &nl / named &nl
 
 # §3.1: back to Spectre, `insensitive=yes` optional (UG p.50).
-Simulator  <- 'simulator' s 'lang' s? '=' s? 'spectre' (s Param)*
+simulator  <- 'simulator' s 'lang' s? '=' s? 'spectre' rest
 
 # §3.3, §3.5: `include "file" [section=name]`, `ahdl_include "file"`.
-Include    <- 'include' s String (s 'section' s? '=' s? Name)?
-AhdlInclude <- 'ahdl_include' s String
+Include    <- 'include' s Path (s 'section' s? '=' s? Section)?
+Path       <- Str
+Section    <- Name
+Load       <- 'ahdl_include' s Path
 
-# §3.4: `library name` ... `endlibrary [name]`, `section name` ... `endsection
-# [name]` (a library file's own statements).
-Library    <- 'library' s Name nl line* 'endlibrary' (s Name)?
-Section    <- 'section' s Name nl line* 'endsection' (s Name)?
+# Blocks no IR field holds, kept whole: `library` / `section` (§3.4), a
+# model group (UG p.108), `if` (R19 p.491), `statistics` (§4.13), and an
+# analysis or control statement with children.
+Block      <- 'library' s Name nl lines 'endlibrary' (s Name)?
+            / 'section' s Name nl lines 'endsection' (s Name)?
+            / 'model' s Name s Name (s param)* s? '{' nl lines '}'
+            / 'if' s? '(' s? expr s? ')' (s / nl &'{') branch (s 'else' s (Block / branch))?
+            / 'statistics' s? '{' nl lines '}'
+            / Name s? (nodelist s?)? Name !wchar (s param)* s? '{' nl lines '}'
+branch     <- '{' nl lines '}' / (!nl .)+
+lines      <- (!(s? '}') !blockend (Block / nested / (!nl .)*) nl)*
+# A line opening its own braces inside a block (`process {`).
+nested     <- (!nl !'{' .)+ '{' s? nl lines s? '}' rest
+blockend   <- ('endsection' / 'endlibrary') !wchar
 
-# §4.8: `global 0 vdd!`: the first name is ground (R5 p.871).
-Global     <- 'global' (s Node)+
+# §4.8: `global 0 vdd!`: the first name is ground (R5 p.871), not a node.
+Global     <- 'global' (s ('0' !wchar / Node))*
 
-# §4.6: `parameters a=1 b=a*2`; a subcircuit's may omit a default (R19 p.506).
-Parameters <- 'parameters' (s ParamDecl)+
-ParamDecl  <- Key (s? '=' s? value)?
+# §4.6: `parameters a=1 b=a*2`; a subcircuit's may omit a default (R19
+# p.506), which the IR does not hold.
+Params     <- 'parameters' (s (Assign / Flag))+
+Assign     <- Key s? '=' s? Val
+Flag       <- Key
 
-# §4.4: `model name master [params]`, or a model group of `label: params`
-# rows in braces (UG p.108).
-Model      <- 'model' s Name s Master (s param)* (s? '{' nl (Group nl)* '}')?
-Group      <- (Name / [0-9]+) s? ':' (s? param)+
+# §4.4: `model name master [params]`.
+Model      <- 'model' s Name s Word (s param)*
 
 # §4.5: `[inline] subckt name [(]ports[)]` ... `ends [name]` (UG p.94).
-Subckt     <- ('inline' s)? 'subckt' s Name ports? nl line* Ends
-ports      <- s? '(' s? (Node (s Node)*)? s? ')' / (s Node)+
-Ends       <- 'ends' (s Name)?
+Subckt     <- ('inline' s)? 'subckt' s Name ports? nl (!ends card)* (Ends / !.)
+ports      <- s? '(' s? (Port (s Port)*)? s? ')' / (s Port)+
+Port       <- node
+ends       <- 'ends' !wchar
+Ends       <- ends (s Name)?
 
-# §4.7: `real f(real a, real b) { return expr }` (UG p.92).
-# The body is on the line, or on the lines after the `{` (UG p.92's layout).
-Function   <- 'real' s Name s? '(' s? (FArg (s? ',' s? FArg)*)? s? ')' s? '{' (s body s '}' / nl body nl '}')
-body       <- 'return' s Expr (s? ';')?
-FArg       <- 'real' s Name
+# §4.7: `real f(real a, real b) { return expr }` (UG p.92), on one line or
+# with the body on the lines after the `{`.
+Func       <- 'real' s Name s? '(' s? (fargs)? s? ')' s? '{' (s fbody s '}' / nl fbody nl '}')
+fargs      <- 'real' s Arg (s? ',' s? 'real' s Arg)*
+Arg        <- Name
+fbody      <- 'return' s Body (s? ';')?
+Body       <- expr
 
 # §4.11: `save X[:t] ...`, `ic sig=v ...`, `nodeset sig=v ...` (R11 p.366).
-Save       <- 'save' (s (param / Signal))*
-Ic         <- 'ic' (s Signal s? '=' s? value)+
-Nodeset    <- 'nodeset' (s Signal s? '=' s? value)+
-Signal     <- Node (':' (Name / [0-9]+))? / ':' Name
-
-# §4.12: `if (cond) stmt [else stmt]`, braces for several (R19 p.491).
-# ponytail: `else` only on the line its branch ends (`} else {`, `if (c) x
-# else y`), as every UG example writes it; `}` then `else` on the next line
-# needs a pending `.endif` in the reader. Add it when a deck needs it.
-If         <- 'if' s? '(' s? Expr s? ')' (s / nl &'{') branch (s Else)?
-Else       <- 'else' s (If / branch)
-branch     <- '{' nl line* '}' / stmt
-
-# §4.13: `statistics { process { vary ... } mismatch { ... } ... }`; read
-# and set aside (Monte Carlo variations are a later step).
-Statistics <- 'statistics' s? '{' nl stat* '}'
-stat       <- (('process' / 'mismatch') s? '{' nl stat* '}' / ('vary' / 'correlate' / 'truncate') (s param / s Name)+)? nl
+Save       <- 'save' (s Out)*
+Out        <- signal
+Ic         <- 'ic' (s NodeVal)+
+Nodeset    <- 'nodeset' (s NodeVal)+
+NodeVal    <- Node s? '=' s? Val
+signal     <- node (':' (Name / [0-9]+))? / ':' Name
 
 # §4.1: a statement led by a name: an analysis or a control statement when
 # its type keyword follows the name (and an analysis's optional node list),
 # an instance otherwise.
-named      <- !(blockword !wchar) (Analysis / Control / Instance)
-# Words that close a block, never a statement's name.
+named      <- !(blockword !wchar) (Ana / Ctl / Inst)
 blockword  <- 'endsection' / 'endlibrary' / 'ends' / 'else'
 
-# §4.9: `name [(nodes)] type params [{ children }]` (UG p.66).
-Analysis   <- Name s? (nodelist s?)? Kind !wchar (s param)* (s? '{' nl line* '}')?
-Kind       <- 'acmatch' / 'ac' / 'dcmatch' / 'dc' / 'envlp' / 'hbac' / 'hbnoise' / 'hbsp' / 'hbstb'
-            / 'hbxf' / 'hb' / 'montecarlo' / 'noise' / 'pac' / 'pnoise' / 'psp' / 'pss' / 'pstb'
-            / 'pxf' / 'pz' / 'qpac' / 'qpnoise' / 'qpsp' / 'qpss' / 'qpxf' / 'sp' / 'stb' / 'sweep'
-            / 'tdr' / 'tran' / 'xf' / 'fourier' / 'pdisto' / 'sens'
+# §4.9: `name [(nodes)] type params` (UG p.66).
+Ana        <- Name s? (nodelist s?)? Word_kind !wchar (s param)*
+Word_kind  <- 'montecarlo' / 'acmatch' / 'dcmatch' / 'hbnoise' / 'qpnoise' / 'fourier' / 'pdisto'
+            / 'pnoise' / 'hbstb' / 'envlp' / 'hbsp' / 'hbac' / 'hbxf' / 'noise' / 'qpac' / 'qpsp'
+            / 'qpss' / 'qpxf' / 'sweep' / 'pac' / 'psp' / 'pss' / 'pstb' / 'pxf' / 'sens' / 'tran'
+            / 'tdr' / 'stb' / 'ac' / 'dc' / 'hb' / 'pz' / 'sp' / 'xf'
 
-# §4.10: `name type params [{ children }]`.
-Control    <- Name s Kind2 !wchar (s param)* (s? '{' nl line* '}')?
-Kind2      <- 'altergroup' / 'alter' / 'assert' / 'checklimit' / 'check' / 'info' / 'options'
-            / 'paramset' / 'paramtest' / 'set' / 'shell'
+# §4.10: `name type params`.
+Ctl        <- Name s Word_ctl !wchar (s param)*
+Word_ctl   <- 'altergroup' / 'checklimit' / 'paramtest' / 'paramset' / 'options' / 'assert'
+            / 'alter' / 'check' / 'shell' / 'info' / 'set'
 
 # §4.2: `name [(]nodes[)] master params`; without parentheses the master is
 # the last bare word before the first `name=` (gnucap, NetlistParse.rs).
-Instance   <- Name s? nodelist s? Master (s param)*
-            / Name (s Node &(s word))* s Master (s param)*
-# A bare word, not a parameter's key: a node, or the master after the last.
-word       <- Node !(s? '=')
+Inst       <- Name s? nodelist s? Mname (s param)*
+            / Name (s Node &(s word))* s Mname (s param)*
+Mname      <- Name
+word       <- node !(s? '=')
 nodelist   <- '(' s? (Node (s Node)*)? s? ')'
 
-param      <- '(' s? Param s? ')' / Param
-Param      <- Key s? '=' s? value
-value      <- Vector / Expr
+param      <- '(' s? Pair s? ')' / Pair
+Pair       <- Key s? '=' s? Val
+Val        <- vector / expr
 # §5: vectors, blank-separated (R19: "not mandatory", UG p.208 shows commas).
-# An element is a constant, a parameter, a unary `+`/`-` of one, a string,
-# or parenthesized (R19 p.477): `[0 p2*p2 1]` is not a vector.
-Vector     <- '[' s? (velem (s? ',' s? velem / s velem)*)? s? ']'
-velem      <- Unary2 / Paren / String / Num / Ref
-Unary2     <- AddOp (Num / Ref)
+vector     <- '[' s? (velem (s? ',' s? velem / s velem)*)? s? ']'
+velem      <- s_unary2 / s_paren / Str / Num / s_ref
+s_unary2   <- [+\-] (Num / s_ref)
 
-# §6.1: decreasing precedence: unary, `**` (right), `* /`, `+ -`, relational,
-# equality, `&&`, `||`, `?:` (UG p.87). ESPice also reads `!` and `%`; it
-# does not read the bitwise and shift operators (`& | ~^ << >>`).
-Expr       <- Ternary
-Ternary    <- Or (s? '?' s? Ternary s? ':' s? Ternary)?
-Or         <- And (s? OrOp s? And)*
-And        <- Eq (s? AndOp s? Eq)*
-Eq         <- Rel (s? EqOp s? Rel)*
-Rel        <- Add (s? RelOp s? Add)*
-Add        <- Mul (s? AddOp s? Mul)*
-Mul        <- Pow (s? MulOp s? Pow)*
-Pow        <- Unary (s? PowOp s? Pow)?
-Unary      <- SignOp s? Unary / primary
-primary    <- Paren / String / Call / Num / Ref
-Paren      <- '(' s? Expr s? ')'
-Call       <- Ref s? '(' s? (Expr (s? ',' s? Expr)*)? s? ')'
-Ref        <- Name ('.' Name)*
-OrOp       <- '||'
-AndOp      <- '&&'
-EqOp       <- '==' / '!='
-RelOp      <- '<=' / '>=' / '<' !'<' / '>' !'>'
-AddOp      <- [+\-]
-MulOp      <- '*' !'*' / '/' / '%'
-PowOp      <- '**'
-SignOp     <- [+\-!] !'='
+# §6.1: decreasing precedence: unary, `**` (right), `* /`, `+ -`,
+# relational, equality, `&&`, `||`, `?:` (UG p.87).
+expr       <- Expr
+Expr       <- s_ternary
+s_ternary  <- s_or (s? '?' s? s_ternary s? ':' s? s_ternary)?
+s_or       <- s_and (s? '||' s? s_and)*
+s_and      <- s_eq (s? '&&' s? s_eq)*
+s_eq       <- s_rel (s? ('==' / '!=') s? s_rel)*
+s_rel      <- s_add (s? ('<=' / '>=' / '<' !'<' / '>' !'>') s? s_add)*
+s_add      <- s_mul (s? [+\-] s? s_mul)*
+s_mul      <- s_pow (s? ('*' !'*' / '/' / '%') s? s_pow)*
+s_pow      <- s_unary (s? '**' s? s_pow)?
+s_unary    <- [+\-!] !'=' s? s_unary / s_primary
+s_primary  <- s_paren / Str / s_call / Num / s_ref
+s_paren    <- '(' s? s_ternary s? ')'
+s_call     <- s_ref s? '(' s? (s_ternary (s? ',' s? s_ternary)*)? s? ')'
+s_ref      <- Name ('.' Name)*
 
 # §2.4: a number with an exponent or an SI scale factor, then letters as a
 # unit (`1pf`, `50_Ohms`); case-sensitive (`M` mega, `m` milli).
-Num        <- Mantissa Exponent? (Scale [a-zA-Z_]*)? !wchar
-Mantissa   <- [0-9]+ ('.' [0-9]*)? / '.' [0-9]+
-Exponent   <- [eE] [+\-]? [0-9]+
-Scale      <- [PTGMKk_%cmunpfa]
+Num        <- Mag (scale [a-zA-Z_]*)? !wchar
+Mag        <- mantissa ([eE] [+\-]? [0-9]+)?
+mantissa   <- [0-9]+ ('.' [0-9]*)? / '.' [0-9]+
+scale      <- Peta / Tera / Giga / Meg / Kilo / Unit / Centi / Milli / Micro / Nano / Pico / Femto / Atto
+Peta       <- 'P'
+Tera       <- 'T'
+Giga       <- 'G'
+Meg        <- 'M'
+Kilo       <- [Kk]
+Unit       <- '_'
+Centi      <- [%c]
+Milli      <- 'm'
+Micro      <- 'u'
+Nano       <- 'n'
+Pico       <- 'p'
+Femto      <- 'f'
+Atto       <- 'a'
 
 # §2.2: names start with a letter or `_`, then letters, digits, `_`, `!`; a
 # backslash escapes any byte (`\2N2222`); a node may be an integer (`007`),
@@ -155,9 +221,11 @@ Name       <- (namestart / escaped) (wchar / escaped)*
 namestart  <- [a-zA-Z_$]
 escaped    <- '\\' [\x21-\x7e]
 wchar      <- [a-zA-Z0-9_!$]
-Node       <- (Name / [0-9]+) ('.' (Name / [0-9]+))*
-Master     <- Name
+node       <- (Name / [0-9]+) ('.' (Name / [0-9]+))*
+Node       <- node
 Key        <- Name
-String     <- '"' ('\\' . / !'"' !nl .)* '"'
+Word       <- Name
+Str     <- '"' ('\\' . / !'"' !nl .)* '"'
 s          <- [ \t]+
+rest       <- (!nl .)*
 nl         <- '\n'

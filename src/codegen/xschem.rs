@@ -125,17 +125,7 @@ impl<'a> Deck<'a> {
 
 /// The dialect word (`ngspice`, …).
 pub fn word(d: Dialect) -> &'static str {
-    match d {
-        Dialect::Ngspice => "ngspice",
-        Dialect::Ltspice => "ltspice",
-        Dialect::Spectre => "spectre",
-        Dialect::Vacask => "vacask",
-        Dialect::Espice => "espice",
-        Dialect::Hspice => "hspice",
-        Dialect::Xyce => "xyce",
-        Dialect::Cdl => "cdl",
-        Dialect::Verilog => "verilog",
-    }
+    d.name()
 }
 
 /// SPICE syntax: verbatim names, `*` comments, `.subckt` blocks.
@@ -597,8 +587,8 @@ impl Writer<'_, '_> {
                 backend: "verilog".into(),
                 component: format!("{c:?}"),
             }),
-            Dialect::Hspice | Dialect::Ltspice => spice3::component(d, c),
-            _ => spice3::component(Dialect::Ngspice, c),
+            Dialect::Hspice | Dialect::Ltspice => spice3::component(d, false, c),
+            _ => spice3::component(Dialect::Ngspice, false, c),
         };
         match line {
             Ok(l) => out.push_str(&l),
@@ -772,7 +762,7 @@ mod tests {
     }
 
     fn ir() -> CircuitIR {
-        CircuitIR { raw_dialect: None, globals: vec![], functions: vec![],
+        CircuitIR {
             top: Subcircuit {
                 name: "tb".into(),
                 parameters: vec![ParamDef {
@@ -783,21 +773,15 @@ mod tests {
                 instances: vec![Instance {
                     name: "1".into(),
                     subcircuit: "inv".into(),
-                    port_mapping: vec!["in".into(), "out[3]".into()],
-                    parameters: vec![],
-                }],
+                    port_mapping: vec!["in".into(), "out[3]".into()], ..Default::default() }],
                 osdi_loads: vec!["dev.va".into()],
                 models: vec![ModelDef {
                     name: "m1".into(),
-                    kind: "dev".into(),
-                    parameters: vec![],
-                }],
-                ..Subcircuit::default()
-            },
-            testbench: Some(Testbench { prints: vec![],
+                    kind: "dev".into(), ..Default::default() }],
+                ..Subcircuit::default() },
+            testbench: Some(Testbench {
                 extra_lines: vec![".op".into()],
-                ..Testbench::default()
-            }),
+                ..Testbench::default() }),
             subcircuit_defs: vec![Subcircuit {
                 name: "inv".into(),
                 ports: vec![
@@ -809,8 +793,7 @@ mod tests {
                 ..Subcircuit::default()
             }],
             ..CircuitIR::default()
-        }
-    }
+        } }
 
     fn deck(ir: &CircuitIR) -> Deck<'_> {
         let mut top = Lines::default();

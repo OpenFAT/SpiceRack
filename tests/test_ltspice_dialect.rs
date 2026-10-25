@@ -27,22 +27,20 @@ impl Cg {
     /// The deck minus its `* t` title and `.end`.
     fn body(&self, component: Option<&Component>, tb: Testbench) -> Result<String, CodeGenError> {
         let top = Subcircuit {
-            name: "t".into(), ports: vec![], parameters: vec![],
-            components: component.into_iter().cloned().collect(), instances: vec![], models: vec![],
-            raw_spice: vec![], includes: vec![], libs: vec![], osdi_loads: vec![], verilog_blocks: vec![],
-        };
-        let ir = CircuitIR { raw_dialect: None, globals: vec![], functions: vec![], top, testbench: Some(tb), subcircuit_defs: vec![], model_libraries: vec![] };
+            name: "t".into(),
+            components: component.into_iter().cloned().collect(), ..Default::default() };
+        let ir = CircuitIR { top, testbench: Some(tb), ..Default::default() };
         let n = self.emit_netlist(&ir)?;
         Ok(n.strip_prefix("* t\n").unwrap().strip_suffix("\n.end").unwrap().to_string())
     }
 
     fn emit_step_param(&self, sp: &StepParam) -> Result<String, CodeGenError> {
-        self.body(None, Testbench { prints: vec![], step_params: vec![sp.clone()], ..tb() })
+        self.body(None, Testbench { step_params: vec![sp.clone()], ..tb() })
     }
 
     /// The last line: ngspice puts `.save all` ahead of a noise card.
     fn emit_analysis(&self, a: &Analysis) -> Result<String, CodeGenError> {
-        let b = self.body(None, Testbench { prints: vec![], analyses: vec![a.clone()], ..tb() })?;
+        let b = self.body(None, Testbench { analyses: vec![a.clone()], ..tb() })?;
         Ok(b.lines().last().unwrap().to_string())
     }
 
@@ -51,16 +49,13 @@ impl Cg {
     }
 
     fn emit_options(&self, o: &SimOptions) -> Result<String, CodeGenError> {
-        self.body(None, Testbench { prints: vec![], options: o.clone(), ..tb() })
+        self.body(None, Testbench { options: o.clone(), ..tb() })
     }
 }
 
 fn tb() -> Testbench {
-    Testbench { prints: vec![],
-        dut: "t".into(), stimulus: vec![], analyses: vec![], options: SimOptions::default(),
-        saves: vec![], measures: vec![], temperature: None, nominal_temperature: None,
-        initial_conditions: vec![], node_sets: vec![], step_params: vec![], extra_lines: vec![],
-    }
+    Testbench {
+        dut: "t".into(), ..Default::default() }
 }
 
 // ── .step ──
@@ -163,29 +158,18 @@ fn pz_disto_and_sens_are_rejected_for_ltspice() {
 // ── .save ──
 
 fn noise_tb(saves: Vec<String>) -> CircuitIR {
-    CircuitIR { raw_dialect: None, globals: vec![], functions: vec![],
+    CircuitIR {
         top: Subcircuit {
             name: "nz".into(),
-            ports: vec![],
-            parameters: vec![],
             components: vec![Component::Resistor {
                 name: "1".into(),
                 n1: "in".into(),
                 n2: "out".into(),
                 value: IrValue::Numeric { value: 10e3 },
                 model: None, params: vec![],
-            }],
-            instances: vec![],
-            models: vec![],
-            raw_spice: vec![],
-            includes: vec![],
-            libs: vec![],
-            osdi_loads: vec![],
-            verilog_blocks: vec![],
-        },
-        testbench: Some(Testbench { prints: vec![],
+            }], ..Default::default() },
+        testbench: Some(Testbench {
             dut: "nz".into(),
-            stimulus: vec![],
             analyses: vec![Analysis::Noise {
                 output: "out".into(),
                 reference: "0".into(),
@@ -196,19 +180,7 @@ fn noise_tb(saves: Vec<String>) -> CircuitIR {
                 stop: 1e6,
                 points_per_summary: None,
             }],
-            options: SimOptions::default(),
-            saves,
-            measures: vec![],
-            temperature: None,
-            nominal_temperature: None,
-            initial_conditions: vec![],
-            node_sets: vec![],
-            step_params: vec![],
-            extra_lines: vec![],
-        }),
-        subcircuit_defs: vec![],
-        model_libraries: vec![],
-    }
+            saves, ..Default::default() }), ..Default::default() }
 }
 
 /// A node-name save list cannot name the noise output vectors, so it must not

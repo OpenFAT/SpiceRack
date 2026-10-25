@@ -24,13 +24,12 @@ pub enum BackendError {
 
     #[error("Analysis '{analysis}' not supported by {backend}.\n\n\
         This analysis requires {required}. Either:\n  \
-        1. Install {required}: {install_cmd}\n  \
+        1. Install {required}\n  \
         2. Alternative: {alternative}")]
     UnsupportedAnalysis {
         analysis: String,
         backend: String,
         required: String,
-        install_cmd: String,
         alternative: String,
     },
 
@@ -57,45 +56,19 @@ pub enum BackendKind {
     Espice,
 }
 
-/// What a simulator can do, checked against `ir::FeatureFlags`.
-#[derive(Debug, Clone, Copy)]
-pub struct BackendCapabilities {
-    pub xspice: bool,
-    pub osdi: bool,
-    pub measures: bool,
-    pub step_params: bool,
-    pub control_blocks: bool,
-    pub laplace_sources: bool,
-    pub verilog_cosim: bool,
-}
+use crate::ir::feature::*;
 
-impl BackendCapabilities {
-    pub fn supports_features(&self, f: &FeatureFlags) -> bool {
-        (!f.has_xspice || self.xspice)
-            && (!f.has_osdi || self.osdi)
-            && (!f.has_measures || self.measures)
-            && (!f.has_step_params || self.step_params)
-            && (!f.has_control_blocks || self.control_blocks)
-            && (!f.has_laplace_sources || self.laplace_sources)
-            && (!f.has_verilog_cosim || self.verilog_cosim)
-    }
-}
-
-const fn caps(xspice: bool, osdi: bool, measures: bool, step_params: bool, control_blocks: bool, laplace_sources: bool, verilog_cosim: bool) -> BackendCapabilities {
-    BackendCapabilities { xspice, osdi, measures, step_params, control_blocks, laplace_sources, verilog_cosim }
-}
-
-//                                           xspice osdi  meas  step  ctrl  laplace cosim
-const NGSPICE_CAPS: BackendCapabilities = caps(true,  true, true, false, true,  true,  true);
-const LTSPICE_CAPS: BackendCapabilities = caps(false, false, true, true, false, true,  false);
+// What each simulator can do, as `ir::feature` bits.
+const NGSPICE_CAPS: u8 = XSPICE | OSDI | MEASURES | CONTROL_BLOCKS | LAPLACE | VERILOG_COSIM;
+const LTSPICE_CAPS: u8 = MEASURES | STEP_PARAMS | LAPLACE;
 // VACASK: `load "x.osdi"`; no measurement statement ("Command not found");
 // `var` + `sweep` does parameter sweeps; its `control` is not ngspice's.
-const VACASK_CAPS: BackendCapabilities = caps(false, true, false, true, false, false, false);
+const VACASK_CAPS: u8 = OSDI | STEP_PARAMS;
 // Spectre: `.measure` per Spectre Reference 19.1 p.17; xrun co-simulation.
-const SPECTRE_CAPS: BackendCapabilities = caps(false, true, true, true, false, false, true);
+const SPECTRE_CAPS: u8 = OSDI | MEASURES | STEP_PARAMS | VERILOG_COSIM;
 // ESPice: Verilog-A via VerA `.hdl` (counts as osdi); `.step` lands every
 // point as a separate plot in one raw file, which parse_raw does not split.
-const ESPICE_CAPS: BackendCapabilities = caps(false, true, true, false, false, false, false);
+const ESPICE_CAPS: u8 = OSDI | MEASURES;
 
 /// Analysis kinds (`ir::Analysis::kind_str`) → dialects that run them, in
 /// preference order, and the workaround to suggest without one. A kind not
@@ -109,13 +82,11 @@ const ROUTES: &[(&[&str], &[Dialect], &str)] = {
         (&["sens"], &[Ngspice, Spectre, Espice], "N/A"),
         (&["sens_ac"], &[Ngspice, Spectre], "N/A"),
         (&["hb"], &[Vacask, Spectre], "long .tran() + discard startup + FFT"),
-        (&["sp", "s_param"], &[Vacask, Spectre, Ngspice], "N/A"),
-        (&["stb", "stability"], &[Vacask, Spectre], ".ac() + Middlebrook method"),
+        (&["sp"], &[Vacask, Spectre, Ngspice], "N/A"),
+        (&["stb"], &[Vacask, Spectre], ".ac() + Middlebrook method"),
         (&["pss"], &[Spectre, Ngspice], "long .tran() + discard startup"),
         (&["trannoise"], &[Vacask], ".tran() with trnoise sources"),
-        (&["sampling", "pce", "embedded_sampling"], &[Spectre], ".control Monte Carlo loops (ngspice)"),
-        (&["sens_tran", "sens_adjoint"], &[Spectre], "N/A"),
-        (&["pac", "pnoise", "pxf", "pstb", "psp", "pdisto", "hbac", "hbnoise", "hbsp"], &[Spectre], "N/A"),
+        (&["pac", "pnoise", "pxf", "pstb"], &[Spectre], "N/A"),
     ]
 };
 const ANYWHERE: &[Dialect] = &[Dialect::Ngspice, Dialect::Ltspice, Dialect::Vacask, Dialect::Spectre, Dialect::Espice];
@@ -162,7 +133,8 @@ impl BackendKind {
         }
     }
 
-    pub fn capabilities(self) -> BackendCapabilities {
+    /// What this simulator can do, as `ir::feature` bits.
+    pub fn capabilities(self) -> u8 {
         match self {
             Self::Ngspice => NGSPICE_CAPS,
             Self::Ltspice => LTSPICE_CAPS,
@@ -219,7 +191,7 @@ pub fn select(analysis: &str, override_backend: Option<&str>, features: &Feature
         return Err(BackendError::NoBackend);
     }
     for d in dialects {
-        if let Some(&k) = available.iter().find(|k| k.dialect() == *d && k.capabilities().supports_features(features)) {
+        if let Some(&k) = available.iter().find(|k| k.dialect() == *d && features.needs & !k.capabilities() == 0) {
             return Ok(k);
         }
     }
@@ -233,11 +205,10 @@ pub fn select(analysis: &str, override_backend: Option<&str>, features: &Feature
 }
 
 fn unsupported(analysis: &str, backend: &str, required: Dialect, alternative: &str) -> BackendError {
-    let required = format!("{required:?}").to_lowercase();
+    let required = required.name().to_string();
     BackendError::UnsupportedAnalysis {
         analysis: analysis.to_string(),
         backend: backend.to_string(),
-        install_cmd: format!("See docs/backends/{required}.md"),
         required,
         alternative: alternative.to_string(),
     }
@@ -296,11 +267,12 @@ fn read_results(path: &Path, stdout: String) -> Result<RawData, BackendError> {
     let bytes = std::fs::read(path).map_err(|e| {
         BackendError::SimulationError(format!("no result file '{}': {e}\nstdout: {}", path.display(), tail(&stdout)))
     })?;
-    let mut raw = if crate::psf::is_psf(&bytes) {
-        crate::psf::parse_psf(&bytes).map_err(|e| BackendError::SimulationError(format!("PSF parse error: {e}")))?
-    } else {
-        rawfile::parse_raw(&bytes)?
-    };
+    // Spectre's PSF keeps its magic in the trailer. It is not read: the
+    // Spectre backend asks for `-format nutbin`.
+    if bytes.len() >= 12 && &bytes[bytes.len() - 12..bytes.len() - 4] == b"Clarissa" {
+        return Err(BackendError::SimulationError("PSF output is not read; run Spectre with -format nutbin".into()));
+    }
+    let mut raw = rawfile::parse_raw(&bytes)?;
     raw.stdout = stdout;
     Ok(raw)
 }
@@ -319,22 +291,17 @@ mod tests {
 
     #[test]
     fn capability_table_filters_by_feature() {
-        let f = |g: fn(&mut FeatureFlags)| { let mut f = FeatureFlags::default(); g(&mut f); f };
-        let xspice = f(|f| f.has_xspice = true);
-        assert!(BackendKind::Ngspice.capabilities().supports_features(&xspice));
-        assert!(!BackendKind::Vacask.capabilities().supports_features(&xspice));
-        assert!(!BackendKind::Spectre.capabilities().supports_features(&xspice));
-
-        let osdi = f(|f| f.has_osdi = true);
-        assert!(!BackendKind::Ltspice.capabilities().supports_features(&osdi));
-        assert!(BackendKind::Espice.capabilities().supports_features(&osdi));
-
-        let step_meas = f(|f| { f.has_step_params = true; f.has_measures = true; });
-        assert!(!BackendKind::Ngspice.capabilities().supports_features(&step_meas));
-        assert!(!BackendKind::Vacask.capabilities().supports_features(&step_meas));
-        assert!(BackendKind::Spectre.capabilities().supports_features(&step_meas));
-        assert!(BackendKind::Ltspice.capabilities().supports_features(&step_meas));
-        assert!(BackendKind::Ngspice.capabilities().supports_features(&FeatureFlags::default()));
+        let runs = |k: BackendKind, needs: u8| needs & !k.capabilities() == 0;
+        assert!(runs(BackendKind::Ngspice, XSPICE));
+        assert!(!runs(BackendKind::Vacask, XSPICE));
+        assert!(!runs(BackendKind::Spectre, XSPICE));
+        assert!(!runs(BackendKind::Ltspice, OSDI));
+        assert!(runs(BackendKind::Espice, OSDI));
+        assert!(!runs(BackendKind::Ngspice, STEP_PARAMS | MEASURES));
+        assert!(!runs(BackendKind::Vacask, STEP_PARAMS | MEASURES));
+        assert!(runs(BackendKind::Spectre, STEP_PARAMS | MEASURES));
+        assert!(runs(BackendKind::Ltspice, STEP_PARAMS | MEASURES));
+        assert!(runs(BackendKind::Ngspice, 0));
     }
 
     #[test]

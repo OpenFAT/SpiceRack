@@ -43,7 +43,8 @@ fn decks(dir: &Path, out: &mut Vec<PathBuf>) {
         // `src*` holds fetched sources and their assets, not runnable decks.
         if p.is_dir() && !p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("src")) {
             decks(&p, out);
-        } else if p.extension() == Some("sp".as_ref()) {
+        // `.tmp*`: this harness's own working decks, left by a killed run.
+        } else if p.extension() == Some("sp".as_ref()) && !p.file_name().is_some_and(|n| n.to_string_lossy().starts_with('.')) {
             out.push(p);
         }
     }
@@ -265,7 +266,20 @@ fn corpus_fixpoint(var: &str, d: Dialect, ext: &str, keep: fn(&str) -> bool) {
         .iter()
         .filter_map(|p| {
             let src = spicerack::import::decode(&std::fs::read(p).ok()?);
-            let why = match parse(&src, "t", d) {
+            let parsed = parse(&src, "t", d);
+            // `$GOLDEN_DIR`: each deck's IR and report as JSON, for diffing two
+            // importers byte for byte (`diff -r before after`).
+            if let Ok(dir) = std::env::var("GOLDEN_DIR") {
+                let rel = p.strip_prefix(&root).unwrap_or(p);
+                let out = Path::new(&dir).join(format!("{d:?}")).join(rel).with_extension("json");
+                std::fs::create_dir_all(out.parent().unwrap()).unwrap();
+                let body = match &parsed {
+                    Ok((ir, r)) => format!("{}\n{:?}\n", serde_json::to_string_pretty(ir).unwrap(), r),
+                    Err(e) => format!("error: {e}\n"),
+                };
+                std::fs::write(out, body).unwrap();
+            }
+            let why = match parsed {
                 Ok((ir, _)) => fixpoint(&ir, d).err()?,
                 Err(e) => e,
             };
@@ -274,6 +288,12 @@ fn corpus_fixpoint(var: &str, d: Dialect, ext: &str, keep: fn(&str) -> bool) {
         .collect();
     eprintln!("{} {d:?} decks, {} not fixpoints", all.len(), bad.len());
     assert!(bad.is_empty(), "{}", bad.join("\n"));
+}
+
+/// ngspice decks (`$NGSPICE_CORPUS`, e.g. spice-bench's `*.sp`).
+#[test]
+fn ngspice_corpus_fixpoint() {
+    corpus_fixpoint("NGSPICE_CORPUS", Dialect::Ngspice, "sp", |p| !p.contains("/src") && !p.contains("/.tmp"));
 }
 
 /// ESPice's HSPICE corpus (`$HSPICE_CORPUS`, its `tests/conformance/tests/netlist`).
@@ -353,11 +373,16 @@ fn check(deck: &Path, secs: u64, refused: &std::sync::Mutex<std::collections::BT
     match ngspice(dir, &converted, secs) {
         Ok(Some(r)) => match compare(&original, &r) {
             Ok(()) => Outcome::Pass,
-            // Fails only if the unconverted, reordered deck stays within the
-            // tolerance the converted one broke.
-            Err(why) => match ngspice(dir, &reordered(&src), secs) {
-                Ok(Some(c)) if compare(&original, &c).is_err() => Outcome::Skip(format!("order-sensitive: reordering the original alone breaks it ({why})")),
-                _ => Outcome::Fail(why),
+            // Fails only if the original agrees with itself (TRNOISE draws
+            // a fresh stream per run, seed or no seed) and the unconverted,
+            // reordered deck stays within the tolerance the converted one
+            // broke.
+            Err(why) => match ngspice(dir, &src, secs) {
+                Ok(Some(again)) if compare(&original, &again).is_err() => Outcome::Skip(format!("original is not repeatable: two runs disagree ({why})")),
+                _ => match ngspice(dir, &reordered(&src), secs) {
+                    Ok(Some(c)) if compare(&original, &c).is_err() => Outcome::Skip(format!("order-sensitive: reordering the original alone breaks it ({why})")),
+                    _ => Outcome::Fail(why),
+                },
             },
         },
         Ok(None) => Outcome::Fail("converted timed out, original did not".into()),

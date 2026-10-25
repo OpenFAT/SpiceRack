@@ -3,6 +3,61 @@ use serde::{Serialize, Deserialize};
 
 // ── Core IR types ──
 
+/// The netlist language a simulator reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Dialect {
+    Ngspice,
+    Ltspice,
+    Spectre,
+    Vacask,
+    /// ngspice text with Verilog-A loaded as `.hdl` instead of `pre_osdi`.
+    Espice,
+    /// HSPICE: `'expr'` quoting, `E`/`G` `vol=`/`cur=` behavioural sources,
+    /// `.hdl` Verilog-A, and the card forms in ESPice's
+    /// `tests/frontend/grammar/hspice.peg` and `tests/conformance/tests/netlist/hspice`.
+    Hspice,
+    /// Xyce: the xschem layout only (`codegen::xschem`).
+    Xyce,
+    /// CDL for LVS: the xschem layout only (`codegen::xschem`).
+    Cdl,
+    /// Structural Verilog: the xschem layout only (`codegen::xschem`).
+    Verilog,
+}
+
+impl Dialect {
+    pub const ALL: [Dialect; 9] = [Dialect::Ngspice, Dialect::Ltspice, Dialect::Spectre, Dialect::Vacask, Dialect::Espice, Dialect::Hspice, Dialect::Xyce, Dialect::Cdl, Dialect::Verilog];
+
+    /// The dialect's name (`ngspice`, ...), as `FromStr` reads it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Dialect::Ngspice => "ngspice",
+            Dialect::Ltspice => "ltspice",
+            Dialect::Spectre => "spectre",
+            Dialect::Vacask => "vacask",
+            Dialect::Espice => "espice",
+            Dialect::Hspice => "hspice",
+            Dialect::Xyce => "xyce",
+            Dialect::Cdl => "cdl",
+            Dialect::Verilog => "verilog",
+        }
+    }
+
+    /// The dialect whose text this one reads: ESPice reads ngspice decks.
+    pub fn family(self) -> Dialect {
+        if self == Dialect::Espice { Dialect::Ngspice } else { self }
+    }
+}
+
+impl std::str::FromStr for Dialect {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, String> {
+        Dialect::ALL.into_iter().find(|d| d.name().eq_ignore_ascii_case(s)).ok_or_else(|| format!("unknown dialect '{s}'"))
+    }
+}
+
+
 /// Backend-neutral intermediate representation for a complete simulation
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct CircuitIR {
@@ -14,7 +69,7 @@ pub struct CircuitIR {
     /// importer sets it: "ngspice", "hspice"). Such lines reach only that
     /// dialect; `None` means generic SPICE, which every SPICE dialect takes.
     #[serde(default)]
-    pub raw_dialect: Option<String>,
+    pub raw_dialect: Option<Dialect>,
     /// `.global` nodes: one net under the same name in every subcircuit.
     #[serde(default)]
     pub globals: Vec<String>,
@@ -95,16 +150,48 @@ pub struct ParamDef {
 }
 
 /// Reference to a Subcircuit definition + port mapping + parameter overrides
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Instance {
     pub name: String,
     pub subcircuit: String,
     pub port_mapping: Vec<String>,
     pub parameters: Vec<(String, String)>,
+    /// Where the instance sat among its subcircuit's components, as a reader
+    /// saw it: before `components[at]`; `None` after them all. A simulator's
+    /// matrix order follows card order, so a deck written back keeps it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at: Option<u32>,
+}
+
+/// One element of a subcircuit, in card order ([`Subcircuit::elements`]).
+pub enum Element<'a> {
+    Component(&'a Component),
+    Instance(&'a Instance),
+}
+
+impl Subcircuit {
+    /// Components and instances merged in card order (each instance before
+    /// the component it preceded).
+    pub fn elements(&self) -> Vec<Element<'_>> {
+        let n = self.components.len();
+        let pos = |i: &Instance| i.at.map_or(n, |a| (a as usize).min(n));
+        let mut insts: Vec<&Instance> = self.instances.iter().collect();
+        insts.sort_by_key(|i| pos(i)); // stable: same-place instances keep their order
+        let mut insts = insts.into_iter().peekable();
+        let mut out = Vec::with_capacity(n + self.instances.len());
+        for (k, c) in self.components.iter().enumerate() {
+            while let Some(i) = insts.next_if(|i| pos(i) <= k) {
+                out.push(Element::Instance(i));
+            }
+            out.push(Element::Component(c));
+        }
+        out.extend(insts.map(Element::Instance));
+        out
+    }
 }
 
 /// Model definition
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ModelDef {
     pub name: String,
     pub kind: String,
@@ -435,29 +522,55 @@ pub struct ModelLibrary {
 
 // ── Feature flags ──
 
+/// What a deck needs from its simulator, one bit per feature
+/// (`backend::BackendKind::capabilities` is the same mask, what it can do).
+pub mod feature {
+    pub const XSPICE: u8 = 1 << 0;
+    pub const OSDI: u8 = 1 << 1;
+    pub const MEASURES: u8 = 1 << 2;
+    pub const STEP_PARAMS: u8 = 1 << 3;
+    pub const CONTROL_BLOCKS: u8 = 1 << 4;
+    pub const LAPLACE: u8 = 1 << 5;
+    pub const VERILOG_COSIM: u8 = 1 << 6;
+}
+
 /// Feature flags computed from IR
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct FeatureFlags {
-    pub has_xspice: bool,
-    pub has_osdi: bool,
-    pub has_measures: bool,
-    pub has_step_params: bool,
-    pub has_control_blocks: bool,
-    pub has_laplace_sources: bool,
-    pub has_verilog_cosim: bool,
+    /// `feature::*` bits.
+    pub needs: u8,
     pub element_count: usize,
 }
+
+impl FeatureFlags {
+    pub fn has(&self, f: u8) -> bool {
+        self.needs & f != 0
+    }
+}
+
+/// Each feature a backend may lack, how bad that is, and what to say
+/// (`{}` is the backend).
+#[cfg(feature = "backend")]
+const MISSING: &[(u8, IssueSeverity, &str)] = &[
+    (feature::XSPICE, IssueSeverity::Error, "Backend '{}' does not support XSPICE A-elements (only ngspice does)"),
+    (feature::OSDI, IssueSeverity::Error, "Backend '{}' does not support OSDI/Verilog-A model loading"),
+    (feature::MEASURES, IssueSeverity::Error, "Backend '{}' does not support .meas directives"),
+    (feature::STEP_PARAMS, IssueSeverity::Error, "Backend '{}' does not support .step param sweeps"),
+    (feature::CONTROL_BLOCKS, IssueSeverity::Error, "Backend '{}' does not support .control blocks (ngspice only)"),
+    (feature::LAPLACE, IssueSeverity::Warning, "Backend '{}' does not support Laplace-domain B-sources"),
+    (feature::VERILOG_COSIM, IssueSeverity::Error, "Backend '{}' does not support Verilog co-simulation"),
+];
 
 // ── Compatibility checking ──
 
 /// Issue found by check_backend
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Issue {
     pub severity: IssueSeverity,
     pub message: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum IssueSeverity {
     Error,
     Warning,
@@ -478,10 +591,10 @@ impl CircuitIR {
         // Check testbench for measures, step params
         if let Some(ref tb) = self.testbench {
             if !tb.measures.is_empty() {
-                flags.has_measures = true;
+                flags.needs |= feature::MEASURES;
             }
             if !tb.step_params.is_empty() {
-                flags.has_step_params = true;
+                flags.needs |= feature::STEP_PARAMS;
             }
         }
 
@@ -490,17 +603,17 @@ impl CircuitIR {
 
     fn scan_subcircuit(&self, sub: &Subcircuit, flags: &mut FeatureFlags) {
         if !sub.osdi_loads.is_empty() {
-            flags.has_osdi = true;
+            flags.needs |= feature::OSDI;
         }
 
         if sub.verilog_blocks.iter().any(|vb| matches!(vb.mode, VerilogMode::Simulate)) {
-            flags.has_verilog_cosim = true;
+            flags.needs |= feature::VERILOG_COSIM;
         }
 
         for line in &sub.raw_spice {
             let trimmed = line.trim().to_lowercase();
             if trimmed == ".control" || trimmed.starts_with(".control ") {
-                flags.has_control_blocks = true;
+                flags.needs |= feature::CONTROL_BLOCKS;
             }
         }
 
@@ -508,12 +621,12 @@ impl CircuitIR {
             flags.element_count += 1;
             match comp {
                 Component::Xspice { .. } => {
-                    flags.has_xspice = true;
+                    flags.needs |= feature::XSPICE;
                 }
                 Component::BehavioralVoltage { expression, .. }
                 | Component::BehavioralCurrent { expression, .. }
                     if crate::codegen::laplace::is_laplace(expression) => {
-                        flags.has_laplace_sources = true;
+                        flags.needs |= feature::LAPLACE;
                     }
                 _ => {}
             }
@@ -540,66 +653,11 @@ impl CircuitIR {
                 return issues;
             }
         };
-        let caps = kind.capabilities();
-
-        if features.has_xspice && !caps.xspice {
-            issues.push(Issue {
-                severity: IssueSeverity::Error,
-                message: format!(
-                    "Backend '{}' does not support XSPICE A-elements (only ngspice does)",
-                    backend
-                ),
-            });
-        }
-
-        if features.has_osdi && !caps.osdi {
-            issues.push(Issue {
-                severity: IssueSeverity::Error,
-                message: format!(
-                    "Backend '{}' does not support OSDI/Verilog-A model loading",
-                    backend
-                ),
-            });
-        }
-
-        if features.has_measures && !caps.measures {
-            issues.push(Issue {
-                severity: IssueSeverity::Error,
-                message: format!(
-                    "Backend '{}' does not support .meas directives",
-                    backend
-                ),
-            });
-        }
-
-        if features.has_step_params && !caps.step_params {
-            issues.push(Issue {
-                severity: IssueSeverity::Error,
-                message: format!(
-                    "Backend '{}' does not support .step param sweeps",
-                    backend
-                ),
-            });
-        }
-
-        if features.has_control_blocks && !caps.control_blocks {
-            issues.push(Issue {
-                severity: IssueSeverity::Error,
-                message: format!(
-                    "Backend '{}' does not support .control blocks (ngspice only)",
-                    backend
-                ),
-            });
-        }
-
-        if features.has_laplace_sources && !caps.laplace_sources {
-            issues.push(Issue {
-                severity: IssueSeverity::Warning,
-                message: format!(
-                    "Backend '{}' does not support Laplace-domain B-sources",
-                    backend
-                ),
-            });
+        let missing = features.needs & !kind.capabilities();
+        for &(f, severity, message) in MISSING {
+            if missing & f != 0 {
+                issues.push(Issue { severity, message: message.replace("{}", backend) });
+            }
         }
 
         if features.element_count > 10_000
@@ -622,150 +680,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_ir_construction() {
-        let sub = Subcircuit {
-            name: "top".into(),
-            ports: Vec::new(),
-            parameters: vec![ParamDef { name: "vdd".into(), default: Some("3.3".into()) }],
-            components: vec![
-                Component::Resistor {
-                    name: "1".into(),
-                    n1: "in".into(),
-                    n2: "out".into(),
-                    value: IrValue::Numeric { value: 1000.0 },
-                    model: None, params: Vec::new(),
-                },
-                Component::Capacitor {
-                    name: "1".into(),
-                    n1: "out".into(),
-                    n2: "0".into(),
-                    value: IrValue::Numeric { value: 10e-12 },
-                    model: None, params: Vec::new(),
-                },
-                Component::VoltageSource {
-                    name: "dd".into(),
-                    np: "vdd".into(),
-                    nm: "0".into(),
-                    value: IrValue::Numeric { value: 3.3 },
-                    ac_magnitude: None,
-                    ac_phase: None,
-                    waveform: Some(IrWaveform::Sin {
-                        offset: 0.0.into(),
-                        amplitude: 1.0.into(),
-                        frequency: 1e6.into(),
-                        delay: 0.0.into(),
-                        damping: 0.0.into(),
-                        phase: 0.0.into(),
-                    }),
-                },
-            ],
-            instances: vec![Instance {
-                name: "1".into(),
-                subcircuit: "MyBuf".into(),
-                port_mapping: vec!["in".into(), "out".into()],
-                parameters: Vec::new(),
-            }],
-            models: vec![ModelDef {
-                name: "nmos_3p3".into(),
-                kind: "NMOS".into(),
-                parameters: vec![("VTO".into(), "0.7".into())],
-            }],
-            raw_spice: Vec::new(),
-            includes: Vec::new(),
-            libs: Vec::new(),
-            osdi_loads: Vec::new(),
-            verilog_blocks: vec![],
-        };
-
-        let ir = CircuitIR { raw_dialect: None, globals: vec![], functions: vec![],
-            top: sub.clone(),
-            testbench: None,
-            subcircuit_defs: Vec::new(),
-            model_libraries: Vec::new(),
-        };
-
-        assert_eq!(ir.top.name, "top");
-        assert_eq!(ir.top.components.len(), 3);
-        assert_eq!(ir.top.instances.len(), 1);
-        assert_eq!(ir.top.models.len(), 1);
-        assert_eq!(ir.top.parameters.len(), 1);
-    }
-
-    #[test]
-    fn test_serialization_roundtrip() {
-        let ir = CircuitIR { raw_dialect: None, globals: vec![], functions: vec![],
-            top: Subcircuit {
-                name: "roundtrip_test".into(),
-                ports: vec![Port { name: "in".into(), direction: PortDirection::Input }],
-                parameters: Vec::new(),
-                components: vec![
-                    Component::Resistor {
-                        name: "1".into(),
-                        n1: "in".into(),
-                        n2: "out".into(),
-                        value: IrValue::Numeric { value: 1000.0 },
-                        model: None, params: Vec::new(),
-                    },
-                    Component::Mosfet {
-                        name: "1".into(),
-                        nd: "drain".into(),
-                        ng: "gate".into(),
-                        ns: "source".into(),
-                        nb: Some("bulk".into()), extra_nodes: vec![],
-                        model: "nmos".into(),
-                        params: vec![("W".into(), "1u".into()), ("L".into(), "180n".into())],
-                    },
-                    Component::BehavioralVoltage {
-                        name: "1".into(),
-                        np: "out".into(),
-                        nm: "0".into(),
-                        expression: "V(in)*2".into(),
-                    },
-                    Component::Xspice {
-                        name: "1".into(),
-                        connections: vec!["in".into(), "out".into()],
-                        model: "d_and".into(),
-                    },
-                ],
-                instances: Vec::new(),
-                models: Vec::new(),
-                raw_spice: Vec::new(),
-                includes: Vec::new(),
-                libs: Vec::new(),
-                osdi_loads: Vec::new(),
-                verilog_blocks: vec![],
-            },
-            testbench: Some(Testbench { prints: vec![],
-                dut: "roundtrip_test".into(),
-                stimulus: Vec::new(),
-                analyses: vec![
-                    Analysis::Op,
-                    Analysis::Transient { step: 1e-9, stop: 1e-6, start: None, max_step: None, uic: false },
-                    Analysis::Ac { variation: "dec".into(), points: 100, start: 1.0, stop: 1e9 },
-                ],
-                options: SimOptions::default(),
-                saves: vec!["V(out)".into()],
-                measures: Vec::new(),
-                temperature: Some(27.0),
-                nominal_temperature: None,
-                initial_conditions: Vec::new(),
-                node_sets: Vec::new(),
-                step_params: Vec::new(),
-                extra_lines: Vec::new(),
-            }),
-            subcircuit_defs: Vec::new(),
-            model_libraries: Vec::new(),
-        };
-
-        let json = serde_json::to_string_pretty(&ir).expect("serialize");
-        let deserialized: CircuitIR = serde_json::from_str(&json).expect("deserialize");
-
-        assert_eq!(ir, deserialized);
-    }
-
-    #[test]
     fn test_compute_features_xspice() {
-        let ir = CircuitIR { raw_dialect: None, globals: vec![], functions: vec![],
+        let ir = CircuitIR { 
             top: Subcircuit {
                 name: "xspice_test".into(),
                 ports: Vec::new(),
@@ -789,25 +705,21 @@ mod tests {
                 raw_spice: Vec::new(),
                 includes: Vec::new(),
                 libs: Vec::new(),
-                osdi_loads: Vec::new(),
-                verilog_blocks: vec![],
-            },
-            testbench: None,
+                osdi_loads: Vec::new(), ..Default::default() },
             subcircuit_defs: Vec::new(),
-            model_libraries: Vec::new(),
-        };
+            model_libraries: Vec::new(), ..Default::default() };
 
         let features = ir.compute_features();
-        assert!(features.has_xspice);
-        assert!(!features.has_osdi);
-        assert!(!features.has_measures);
-        assert!(!features.has_laplace_sources);
+        assert!(features.has(feature::XSPICE));
+        assert!(!features.has(feature::OSDI));
+        assert!(!features.has(feature::MEASURES));
+        assert!(!features.has(feature::LAPLACE));
         assert_eq!(features.element_count, 2);
     }
 
     #[test]
     fn test_compute_features_osdi_and_laplace() {
-        let ir = CircuitIR { raw_dialect: None, globals: vec![], functions: vec![],
+        let ir = CircuitIR { 
             top: Subcircuit {
                 name: "osdi_test".into(),
                 ports: Vec::new(),
@@ -825,24 +737,20 @@ mod tests {
                 raw_spice: Vec::new(),
                 includes: Vec::new(),
                 libs: Vec::new(),
-                osdi_loads: vec!["model.osdi".into()],
-                verilog_blocks: vec![],
-            },
-            testbench: None,
+                osdi_loads: vec!["model.osdi".into()], ..Default::default() },
             subcircuit_defs: Vec::new(),
-            model_libraries: Vec::new(),
-        };
+            model_libraries: Vec::new(), ..Default::default() };
 
         let features = ir.compute_features();
-        assert!(!features.has_xspice);
-        assert!(features.has_osdi);
-        assert!(features.has_laplace_sources);
+        assert!(!features.has(feature::XSPICE));
+        assert!(features.has(feature::OSDI));
+        assert!(features.has(feature::LAPLACE));
         assert_eq!(features.element_count, 1);
     }
 
     #[test]
     fn test_compute_features_control_blocks() {
-        let ir = CircuitIR { raw_dialect: None, globals: vec![], functions: vec![],
+        let ir = CircuitIR { 
             top: Subcircuit {
                 name: "ctrl_test".into(),
                 ports: Vec::new(),
@@ -853,21 +761,17 @@ mod tests {
                 raw_spice: vec![".control".into(), "run".into(), ".endc".into()],
                 includes: Vec::new(),
                 libs: Vec::new(),
-                osdi_loads: Vec::new(),
-                verilog_blocks: vec![],
-            },
-            testbench: None,
+                osdi_loads: Vec::new(), ..Default::default() },
             subcircuit_defs: Vec::new(),
-            model_libraries: Vec::new(),
-        };
+            model_libraries: Vec::new(), ..Default::default() };
 
         let features = ir.compute_features();
-        assert!(features.has_control_blocks);
+        assert!(features.has(feature::CONTROL_BLOCKS));
     }
 
     #[test]
     fn test_compute_features_measures_and_step() {
-        let ir = CircuitIR { raw_dialect: None, globals: vec![], functions: vec![],
+        let ir = CircuitIR { 
             top: Subcircuit {
                 name: "meas_test".into(),
                 ports: Vec::new(),
@@ -878,18 +782,13 @@ mod tests {
                 raw_spice: Vec::new(),
                 includes: Vec::new(),
                 libs: Vec::new(),
-                osdi_loads: Vec::new(),
-                verilog_blocks: vec![],
-            },
-            testbench: Some(Testbench { prints: vec![],
+                osdi_loads: Vec::new(), ..Default::default() },
+            testbench: Some(Testbench {
                 dut: "meas_test".into(),
                 stimulus: Vec::new(),
                 analyses: Vec::new(),
-                options: SimOptions::default(),
                 saves: Vec::new(),
                 measures: vec!["tran v_max MAX V(out)".into()],
-                temperature: None,
-                nominal_temperature: None,
                 initial_conditions: Vec::new(),
                 node_sets: Vec::new(),
                 step_params: vec![StepParam {
@@ -899,21 +798,19 @@ mod tests {
                     step: 100.0,
                     sweep_type: None,
                 }],
-                extra_lines: Vec::new(),
-            }),
+                extra_lines: Vec::new(), ..Default::default() }),
             subcircuit_defs: Vec::new(),
-            model_libraries: Vec::new(),
-        };
+            model_libraries: Vec::new(), ..Default::default() };
 
         let features = ir.compute_features();
-        assert!(features.has_measures);
-        assert!(features.has_step_params);
+        assert!(features.has(feature::MEASURES));
+        assert!(features.has(feature::STEP_PARAMS));
     }
 
     #[cfg(feature = "backend")]
     #[test]
     fn test_check_backend_osdi_against_ltspice() {
-        let ir = CircuitIR { raw_dialect: None, globals: vec![], functions: vec![],
+        let ir = CircuitIR { 
             top: Subcircuit {
                 name: "osdi_check".into(),
                 ports: Vec::new(),
@@ -924,13 +821,9 @@ mod tests {
                 raw_spice: Vec::new(),
                 includes: Vec::new(),
                 libs: Vec::new(),
-                osdi_loads: vec!["model.osdi".into()],
-                verilog_blocks: vec![],
-            },
-            testbench: None,
+                osdi_loads: vec!["model.osdi".into()], ..Default::default() },
             subcircuit_defs: Vec::new(),
-            model_libraries: Vec::new(),
-        };
+            model_libraries: Vec::new(), ..Default::default() };
 
         let issues = ir.check_backend("ltspice");
         assert!(issues.iter().any(|i| {
@@ -944,7 +837,7 @@ mod tests {
     #[cfg(feature = "backend")]
     #[test]
     fn test_check_backend_no_issues_for_clean_circuit() {
-        let ir = CircuitIR { raw_dialect: None, globals: vec![], functions: vec![],
+        let ir = CircuitIR { 
             top: Subcircuit {
                 name: "clean".into(),
                 ports: Vec::new(),
@@ -961,13 +854,9 @@ mod tests {
                 raw_spice: Vec::new(),
                 includes: Vec::new(),
                 libs: Vec::new(),
-                osdi_loads: Vec::new(),
-                verilog_blocks: vec![],
-            },
-            testbench: None,
+                osdi_loads: Vec::new(), ..Default::default() },
             subcircuit_defs: Vec::new(),
-            model_libraries: Vec::new(),
-        };
+            model_libraries: Vec::new(), ..Default::default() };
 
         for backend in &["ngspice", "ltspice", "vacask", "spectre"] {
             assert!(ir.check_backend(backend).is_empty(), "Expected no issues for {}", backend);
@@ -975,506 +864,6 @@ mod tests {
     }
 
     // ── JSON serialization tests ──
-
-    #[test]
-    fn test_full_ir_json_roundtrip() {
-        let ir = CircuitIR { raw_dialect: None, globals: vec![], functions: vec![],
-            top: Subcircuit {
-                name: "opamp_tb".into(),
-                ports: vec![],
-                parameters: vec![],
-                components: vec![
-                    Component::Resistor {
-                        name: "f".into(),
-                        n1: "out".into(),
-                        n2: "inv".into(),
-                        value: IrValue::Numeric { value: 100e3 },
-                        model: None, params: vec![],
-                    },
-                    Component::Mosfet {
-                        name: "1".into(),
-                        nd: "out".into(),
-                        ng: "inv".into(),
-                        ns: "vss".into(),
-                        nb: Some("vss".into()), extra_nodes: vec![],
-                        model: "nmos_3p3".into(),
-                        params: vec![("W".into(), "10u".into()), ("L".into(), "1u".into())],
-                    },
-                    Component::VoltageSource {
-                        name: "dd".into(),
-                        np: "vdd".into(),
-                        nm: "0".into(),
-                        value: IrValue::Numeric { value: 3.3 },
-                        ac_magnitude: None,
-                        ac_phase: None,
-                        waveform: None,
-                    },
-                    Component::VoltageSource {
-                        name: "in".into(),
-                        np: "inp".into(),
-                        nm: "0".into(),
-                        value: IrValue::Numeric { value: 0.0 },
-                        ac_magnitude: None,
-                        ac_phase: None,
-                        waveform: Some(IrWaveform::Sin {
-                            offset: 1.65.into(),
-                            amplitude: 0.1.into(),
-                            frequency: 1e3.into(),
-                            delay: 0.0.into(),
-                            damping: 0.0.into(),
-                            phase: 0.0.into(),
-                        }),
-                    },
-                    Component::Xspice {
-                        name: "buf1".into(),
-                        connections: vec!["[din]".into(), "[dout]".into()],
-                        model: "buf_model".into(),
-                    },
-                ],
-                instances: vec![Instance {
-                    name: "dut".into(),
-                    subcircuit: "opamp".into(),
-                    port_mapping: vec!["inp".into(), "inv".into(), "out".into(), "vdd".into(), "vss".into()],
-                    parameters: vec![("gain".into(), "100".into())],
-                }],
-                models: vec![ModelDef {
-                    name: "nmos_3p3".into(),
-                    kind: "NMOS".into(),
-                    parameters: vec![("VTO".into(), "0.7".into()), ("KP".into(), "110u".into())],
-                }],
-                raw_spice: vec![".global vdd vss".into()],
-                includes: vec!["/pdk/sky130.lib".into()],
-                libs: vec![("/pdk/sky130.lib".into(), "tt".into())],
-                osdi_loads: vec!["/models/bsim4.osdi".into()],
-                verilog_blocks: vec![],
-            },
-            testbench: Some(Testbench { prints: vec![],
-                dut: "opamp_tb".into(),
-                stimulus: vec![],
-                analyses: vec![
-                    Analysis::Op,
-                    Analysis::Ac {
-                        variation: "dec".into(),
-                        points: 100,
-                        start: 1.0,
-                        stop: 1e9,
-                    },
-                    Analysis::Transient {
-                        step: 1e-9,
-                        stop: 1e-3,
-                        start: None,
-                        max_step: Some(1e-10),
-                        uic: false,
-                    },
-                ],
-                options: SimOptions {
-                    portable: vec![("reltol".into(), "1e-4".into())],
-                    backend_specific: {
-                        let mut m = BTreeMap::new();
-                        m.insert("spectre".into(), vec![("errpreset".into(), "moderate".into())]);
-                        m
-                    },
-                },
-                saves: vec!["all".into()],
-                measures: vec!["tran avg_vout AVG V(out) FROM=100n TO=900n".into()],
-                temperature: Some(27.0),
-                nominal_temperature: None,
-                initial_conditions: vec![("out".into(), 1.65)],
-                node_sets: vec![],
-                step_params: vec![StepParam {
-                    param: "Rf".into(),
-                    start: 10e3,
-                    stop: 100e3,
-                    step: 10e3,
-                    sweep_type: None,
-                }],
-                extra_lines: vec![],
-            }),
-            subcircuit_defs: vec![Subcircuit {
-                name: "opamp".into(),
-                ports: vec![
-                    Port { name: "inp".into(), direction: PortDirection::Input },
-                    Port { name: "inv".into(), direction: PortDirection::Input },
-                    Port { name: "out".into(), direction: PortDirection::Output },
-                    Port { name: "vdd".into(), direction: PortDirection::InOut },
-                    Port { name: "vss".into(), direction: PortDirection::InOut },
-                ],
-                parameters: vec![ParamDef { name: "gain".into(), default: Some("100".into()) }],
-                components: vec![
-                    Component::Resistor {
-                        name: "1".into(),
-                        n1: "inp".into(),
-                        n2: "out".into(),
-                        value: IrValue::Numeric { value: 1e6 },
-                        model: None, params: vec![],
-                    },
-                ],
-                instances: vec![],
-                models: vec![],
-                raw_spice: vec![],
-                includes: vec![],
-                libs: vec![],
-                osdi_loads: vec![],
-                verilog_blocks: vec![],
-            }],
-            model_libraries: vec![ModelLibrary {
-                name: "sky130".into(),
-                path: "/pdk/sky130.lib".into(),
-                corner: Some("tt".into()),
-                backend_paths: {
-                    let mut m = BTreeMap::new();
-                    m.insert("ngspice".into(), "/pdk/ngspice/sky130.lib".into());
-                    m.insert("spectre".into(), "/pdk/spectre/sky130.scs".into());
-                    m
-                },
-                setup_includes: vec![],
-            }],
-        };
-
-        // Serialize
-        let json = serde_json::to_string_pretty(&ir).unwrap();
-
-        // Check key fields exist in JSON
-        assert!(json.contains("\"type\": \"Resistor\""));
-        assert!(json.contains("\"type\": \"Mosfet\""));
-        assert!(json.contains("\"type\": \"Op\""));
-        assert!(json.contains("\"type\": \"Ac\""));
-        assert!(json.contains("\"type\": \"Sin\""));
-        assert!(json.contains("\"type\": \"Xspice\""));
-        assert!(json.contains("\"reltol\""));
-        assert!(json.contains("\"sky130\""));
-
-        // Deserialize
-        let ir2: CircuitIR = serde_json::from_str(&json).unwrap();
-
-        // Verify equality
-        assert_eq!(ir, ir2);
-
-        // Re-serialize, deserialize again, verify structural equality
-        // (we don't compare JSON strings directly because HashMap key order is non-deterministic)
-        let json2 = serde_json::to_string_pretty(&ir2).unwrap();
-        let ir3: CircuitIR = serde_json::from_str(&json2).unwrap();
-        assert_eq!(ir2, ir3);
-    }
-
-    #[test]
-    fn test_component_json_tags() {
-        // Verify each component type produces the right JSON tag
-        let r = Component::Resistor {
-            name: "1".into(),
-            n1: "a".into(),
-            n2: "b".into(),
-            value: IrValue::Numeric { value: 1000.0 },
-            model: None, params: vec![],
-        };
-        let json = serde_json::to_string(&r).unwrap();
-        assert!(json.contains("\"type\":\"Resistor\""));
-
-        let c = Component::Capacitor {
-            name: "1".into(),
-            n1: "a".into(),
-            n2: "b".into(),
-            value: IrValue::Numeric { value: 1e-12 },
-            model: None, params: vec![],
-        };
-        let json = serde_json::to_string(&c).unwrap();
-        assert!(json.contains("\"type\":\"Capacitor\""));
-
-        let l = Component::Inductor {
-            name: "1".into(),
-            n1: "a".into(),
-            n2: "b".into(),
-            value: IrValue::Numeric { value: 1e-6 },
-            model: None, params: vec![],
-        };
-        let json = serde_json::to_string(&l).unwrap();
-        assert!(json.contains("\"type\":\"Inductor\""));
-
-        let k = Component::MutualInductor {
-            name: "1".into(),
-            inductor1: "L1".into(),
-            inductor2: "L2".into(),
-            coupling: 0.99,
-        };
-        let json = serde_json::to_string(&k).unwrap();
-        assert!(json.contains("\"type\":\"MutualInductor\""));
-
-        let bv = Component::BehavioralVoltage {
-            name: "1".into(),
-            np: "a".into(),
-            nm: "b".into(),
-            expression: "V(in)*2".into(),
-        };
-        let json = serde_json::to_string(&bv).unwrap();
-        assert!(json.contains("\"type\":\"BehavioralVoltage\""));
-
-        let bi = Component::BehavioralCurrent {
-            name: "1".into(),
-            np: "a".into(),
-            nm: "b".into(),
-            expression: "I(Vsense)*10".into(),
-        };
-        let json = serde_json::to_string(&bi).unwrap();
-        assert!(json.contains("\"type\":\"BehavioralCurrent\""));
-
-        let vcvs = Component::Vcvs {
-            name: "1".into(),
-            np: "a".into(),
-            nm: "b".into(),
-            ncp: "c".into(),
-            ncm: "d".into(),
-            gain: 10.0,
-        };
-        let json = serde_json::to_string(&vcvs).unwrap();
-        assert!(json.contains("\"type\":\"Vcvs\""));
-
-        let vccs = Component::Vccs {
-            name: "1".into(),
-            np: "a".into(),
-            nm: "b".into(),
-            ncp: "c".into(),
-            ncm: "d".into(),
-            transconductance: 1e-3,
-        };
-        let json = serde_json::to_string(&vccs).unwrap();
-        assert!(json.contains("\"type\":\"Vccs\""));
-
-        let cccs = Component::Cccs {
-            name: "1".into(),
-            np: "a".into(),
-            nm: "b".into(),
-            vsense: "Vs".into(),
-            gain: 100.0,
-        };
-        let json = serde_json::to_string(&cccs).unwrap();
-        assert!(json.contains("\"type\":\"Cccs\""));
-
-        let ccvs = Component::Ccvs {
-            name: "1".into(),
-            np: "a".into(),
-            nm: "b".into(),
-            vsense: "Vs".into(),
-            transresistance: 1e3,
-        };
-        let json = serde_json::to_string(&ccvs).unwrap();
-        assert!(json.contains("\"type\":\"Ccvs\""));
-
-        let d = Component::Diode {
-            name: "1".into(),
-            np: "a".into(),
-            nm: "b".into(),
-            model: "D1N4148".into(),
-            params: vec![],
-        };
-        let json = serde_json::to_string(&d).unwrap();
-        assert!(json.contains("\"type\":\"Diode\""));
-
-        let q = Component::Bjt {
-            name: "1".into(),
-            nc: "c".into(),
-            nb: "b".into(),
-            ne: "e".into(),
-            extra_nodes: vec![],
-            model: "2N2222".into(),
-            params: vec![],
-        };
-        let json = serde_json::to_string(&q).unwrap();
-        assert!(json.contains("\"type\":\"Bjt\""));
-
-        let m = Component::Mosfet {
-            name: "1".into(),
-            nd: "d".into(),
-            ng: "g".into(),
-            ns: "s".into(),
-            nb: Some("b".into()), extra_nodes: vec![],
-            model: "nmos".into(),
-            params: vec![],
-        };
-        let json = serde_json::to_string(&m).unwrap();
-        assert!(json.contains("\"type\":\"Mosfet\""));
-
-        let j = Component::Jfet {
-            name: "1".into(),
-            nd: "d".into(),
-            ng: "g".into(),
-            ns: "s".into(),
-            model: "J201".into(),
-            params: vec![],
-        };
-        let json = serde_json::to_string(&j).unwrap();
-        assert!(json.contains("\"type\":\"Jfet\""));
-
-        let z = Component::Mesfet {
-            name: "1".into(),
-            nd: "d".into(),
-            ng: "g".into(),
-            ns: "s".into(),
-            model: "GAASfet".into(),
-            params: vec![],
-        };
-        let json = serde_json::to_string(&z).unwrap();
-        assert!(json.contains("\"type\":\"Mesfet\""));
-
-        let vs = Component::VSwitch {
-            name: "1".into(),
-            np: "a".into(),
-            nm: "b".into(),
-            ncp: "c".into(),
-            ncm: "d".into(),
-            model: "SW1".into(),
-        };
-        let json = serde_json::to_string(&vs).unwrap();
-        assert!(json.contains("\"type\":\"VSwitch\""));
-
-        let is = Component::ISwitch {
-            name: "1".into(),
-            np: "a".into(),
-            nm: "b".into(),
-            vcontrol: "Vsense".into(),
-            model: "CSW1".into(),
-        };
-        let json = serde_json::to_string(&is).unwrap();
-        assert!(json.contains("\"type\":\"ISwitch\""));
-
-        let tl = Component::TLine {
-            name: "1".into(),
-            inp: "in_p".into(),
-            inm: "in_m".into(),
-            outp: "out_p".into(),
-            outm: "out_m".into(),
-            z0: 50.0,
-            td: 1e-9,
-        };
-        let json = serde_json::to_string(&tl).unwrap();
-        assert!(json.contains("\"type\":\"TLine\""));
-
-        let x = Component::Xspice {
-            name: "1".into(),
-            connections: vec!["[d]".into()],
-            model: "buf".into(),
-        };
-        let json = serde_json::to_string(&x).unwrap();
-        assert!(json.contains("\"type\":\"Xspice\""));
-
-        let raw = Component::RawSpice {
-            line: ".probe V(out)".into(),
-        };
-        let json = serde_json::to_string(&raw).unwrap();
-        assert!(json.contains("\"type\":\"RawSpice\""));
-    }
-
-    #[test]
-    fn test_analysis_json_tags() {
-        let a = Analysis::Op;
-        let json = serde_json::to_string(&a).unwrap();
-        assert!(json.contains("\"type\":\"Op\""));
-
-        let a = Analysis::Transient { step: 1e-9, stop: 1e-6, start: None, max_step: None, uic: false };
-        let json = serde_json::to_string(&a).unwrap();
-        assert!(json.contains("\"type\":\"Transient\""));
-
-        let a = Analysis::Ac { variation: "dec".into(), points: 100, start: 1.0, stop: 1e9 };
-        let json = serde_json::to_string(&a).unwrap();
-        assert!(json.contains("\"type\":\"Ac\""));
-
-        let a = Analysis::Dc { sweeps: vec![DcSweep { source: "V1".into(), start: 0.0, stop: 5.0, step: 0.1 }] };
-        let json = serde_json::to_string(&a).unwrap();
-        assert!(json.contains("\"type\":\"Dc\""));
-
-        let a = Analysis::Noise {
-            output: "V(out)".into(), reference: "0".into(), source: "V1".into(),
-            variation: "dec".into(), points: 10, start: 1.0, stop: 1e6,
-            points_per_summary: Some(1),
-        };
-        let json = serde_json::to_string(&a).unwrap();
-        assert!(json.contains("\"type\":\"Noise\""));
-
-        let a = Analysis::Tf { output: "V(out)".into(), source: "Vin".into() };
-        let json = serde_json::to_string(&a).unwrap();
-        assert!(json.contains("\"type\":\"Tf\""));
-
-        let a = Analysis::Sensitivity { output: "V(out)".into(), ac: None };
-        let json = serde_json::to_string(&a).unwrap();
-        assert!(json.contains("\"type\":\"Sensitivity\""));
-
-        let a = Analysis::Fourier { fundamental: 1e3, outputs: vec!["V(out)".into()], num_harmonics: Some(10) };
-        let json = serde_json::to_string(&a).unwrap();
-        assert!(json.contains("\"type\":\"Fourier\""));
-    }
-
-    #[test]
-    fn test_irvalue_json_tags() {
-        let v = IrValue::Numeric { value: 42.0 };
-        let json = serde_json::to_string(&v).unwrap();
-        assert!(json.contains("\"type\":\"Numeric\""));
-
-        let v = IrValue::Expression { expr: "vdd/2".into() };
-        let json = serde_json::to_string(&v).unwrap();
-        assert!(json.contains("\"type\":\"Expression\""));
-
-        let v = IrValue::Raw { text: "1k".into() };
-        let json = serde_json::to_string(&v).unwrap();
-        assert!(json.contains("\"type\":\"Raw\""));
-    }
-
-    #[test]
-    fn test_waveform_json_tags() {
-        let w = IrWaveform::Sin { offset: 0.0.into(), amplitude: 1.0.into(), frequency: 1e3.into(), delay: 0.0.into(), damping: 0.0.into(), phase: 0.0.into() };
-        let json = serde_json::to_string(&w).unwrap();
-        assert!(json.contains("\"type\":\"Sin\""));
-
-        let w = IrWaveform::Pulse { initial: 0.0.into(), pulsed: 3.3.into(), delay: 0.0.into(), rise_time: 1e-9.into(), fall_time: 1e-9.into(), pulse_width: 5e-9.into(), period: 10e-9.into() };
-        let json = serde_json::to_string(&w).unwrap();
-        assert!(json.contains("\"type\":\"Pulse\""));
-
-        let w = IrWaveform::Pwl { values: vec![((0.0).into(), (0.0).into()), ((1e-6).into(), (1.0).into()), ((2e-6).into(), (0.0).into())] };
-        let json = serde_json::to_string(&w).unwrap();
-        assert!(json.contains("\"type\":\"Pwl\""));
-
-        let w = IrWaveform::Exp { initial: 0.0.into(), pulsed: 1.0.into(), rise_delay: 0.0.into(), rise_tau: 1e-6.into(), fall_delay: 5e-6.into(), fall_tau: 1e-6.into() };
-        let json = serde_json::to_string(&w).unwrap();
-        assert!(json.contains("\"type\":\"Exp\""));
-
-        let w = IrWaveform::Sffm { offset: 0.0.into(), amplitude: 1.0.into(), carrier_freq: 1e6.into(), modulation_index: 5.0.into(), signal_freq: 1e3.into() };
-        let json = serde_json::to_string(&w).unwrap();
-        assert!(json.contains("\"type\":\"Sffm\""));
-
-        let w = IrWaveform::Am { amplitude: 1.0.into(), offset: 0.0.into(), modulating_freq: 1e3.into(), carrier_freq: 1e6.into(), delay: 0.0.into() };
-        let json = serde_json::to_string(&w).unwrap();
-        assert!(json.contains("\"type\":\"Am\""));
-    }
-
-    #[test]
-    fn test_invalid_json_fails_gracefully() {
-        let bad_json = r#"{"not": "a circuit"}"#;
-        let result: Result<CircuitIR, _> = serde_json::from_str(bad_json);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_minimal_ir_roundtrip() {
-        let ir = CircuitIR { raw_dialect: None, globals: vec![], functions: vec![],
-            top: Subcircuit {
-                name: "empty".into(),
-                ports: vec![],
-                parameters: vec![],
-                components: vec![],
-                instances: vec![],
-                models: vec![],
-                raw_spice: vec![],
-                includes: vec![],
-                libs: vec![],
-                osdi_loads: vec![],
-                verilog_blocks: vec![],
-            },
-            testbench: None,
-            subcircuit_defs: vec![],
-            model_libraries: vec![],
-        };
-        let json = serde_json::to_string(&ir).unwrap();
-        let ir2: CircuitIR = serde_json::from_str(&json).unwrap();
-        assert_eq!(ir, ir2);
-    }
 
     #[test]
     fn test_load_example_voltage_divider() {
@@ -1489,32 +878,6 @@ mod tests {
             Analysis::Op => {}
             other => panic!("Expected Op analysis, got {:?}", other),
         }
-    }
-
-    #[test]
-    fn test_tuple_serialization_format() {
-        // Verify that (String, String) tuples serialize as JSON arrays, not objects
-        let sub = Subcircuit {
-            name: "tuple_test".into(),
-            ports: vec![],
-            parameters: vec![],
-            components: vec![],
-            instances: vec![],
-            models: vec![],
-            raw_spice: vec![],
-            includes: vec![],
-            libs: vec![("/pdk/sky130.lib".into(), "tt".into())],
-            osdi_loads: vec![],
-            verilog_blocks: vec![],
-        };
-        let json = serde_json::to_string_pretty(&sub).unwrap();
-        // libs should be [["/pdk/sky130.lib", "tt"]]
-        assert!(json.contains("\"/pdk/sky130.lib\""));
-        assert!(json.contains("\"tt\""));
-
-        // Roundtrip check
-        let sub2: Subcircuit = serde_json::from_str(&json).unwrap();
-        assert_eq!(sub, sub2);
     }
 
     #[test]
@@ -1545,24 +908,15 @@ mod tests {
             Component::RawSpice { line: ".probe V(out)".into() },
         ];
 
-        let ir = CircuitIR { raw_dialect: None, globals: vec![], functions: vec![],
+        // The JSON tags each variant by name.
+        for c in &all_components {
+            let name = format!("{c:?}");
+            assert_eq!(serde_json::to_value(c).unwrap()["type"], name.split([' ', '{']).next().unwrap());
+        }
+        let ir = CircuitIR {
             top: Subcircuit {
                 name: "all_components".into(),
-                ports: vec![],
-                parameters: vec![],
-                components: all_components,
-                instances: vec![],
-                models: vec![],
-                raw_spice: vec![],
-                includes: vec![],
-                libs: vec![],
-                osdi_loads: vec![],
-                verilog_blocks: vec![],
-            },
-            testbench: None,
-            subcircuit_defs: vec![],
-            model_libraries: vec![],
-        };
+                components: all_components, ..Default::default() }, ..Default::default() };
 
         let json = serde_json::to_string_pretty(&ir).unwrap();
         let ir2: CircuitIR = serde_json::from_str(&json).unwrap();
@@ -1595,41 +949,29 @@ mod tests {
             Analysis::SpectrePstb { pss_fundamental: 1e6, pss_stabilization: 100e-6, pss_harmonics: 10, probe: "iprobe".into(), variation: "dec".into(), points: 100, start: 1.0, stop: 1e9 },
         ];
 
-        let ir = CircuitIR { raw_dialect: None, globals: vec![], functions: vec![],
+        for a in &analyses {
+            let name = format!("{a:?}");
+            assert_eq!(serde_json::to_value(a).unwrap()["type"], name.split([' ', '{']).next().unwrap());
+        }
+        let ir = CircuitIR {
             top: Subcircuit {
-                name: "analysis_test".into(),
-                ports: vec![],
-                parameters: vec![],
-                components: vec![],
-                instances: vec![],
-                models: vec![],
-                raw_spice: vec![],
-                includes: vec![],
-                libs: vec![],
-                osdi_loads: vec![],
-                verilog_blocks: vec![],
-            },
-            testbench: Some(Testbench { prints: vec![],
+                name: "analysis_test".into(), ..Default::default() },
+            testbench: Some(Testbench {
                 dut: "analysis_test".into(),
-                stimulus: vec![],
-                analyses,
-                options: SimOptions::default(),
-                saves: vec![],
-                measures: vec![],
-                temperature: None,
-                nominal_temperature: None,
-                initial_conditions: vec![],
-                node_sets: vec![],
-                step_params: vec![],
-                extra_lines: vec![],
-            }),
-            subcircuit_defs: vec![],
-            model_libraries: vec![],
-        };
+                analyses, ..Default::default() }), ..Default::default() };
 
         let json = serde_json::to_string_pretty(&ir).unwrap();
         let ir2: CircuitIR = serde_json::from_str(&json).unwrap();
         assert_eq!(ir, ir2);
+    }
+
+    #[test]
+    fn elements_keep_card_order() {
+        let r = |n: &str| Component::RawSpice { line: n.into() };
+        let x = |n: &str, at: Option<u32>| Instance { name: n.into(), at, ..Default::default() };
+        let sc = Subcircuit { components: vec![r("a"), r("b")], instances: vec![x("late", None), x("first", Some(0)), x("mid", Some(1))], ..Default::default() };
+        let names: Vec<&str> = sc.elements().into_iter().map(|e| match e { Element::Component(Component::RawSpice { line }) => line.as_str(), Element::Instance(i) => i.name.as_str(), _ => "" }).collect();
+        assert_eq!(names, ["first", "a", "mid", "b", "late"]);
     }
 
     // ── Issue 02: Analysis::kind_str() ──

@@ -44,39 +44,16 @@ fn try_component(c: &Component) -> Result<String, CodeGenError> {
 
 fn empty_top(name: &str) -> Subcircuit {
     Subcircuit {
-        name: name.into(),
-        ports: vec![],
-        parameters: vec![],
-        components: vec![],
-        instances: vec![],
-        models: vec![],
-        raw_spice: vec![],
-        includes: vec![],
-        libs: vec![],
-        osdi_loads: vec![],
-        verilog_blocks: vec![],
-    }
+        name: name.into(), ..Default::default() }
 }
 
 fn empty_tb() -> Testbench {
-    Testbench { prints: vec![],
-        dut: "top".into(),
-        stimulus: vec![],
-        analyses: vec![],
-        options: SimOptions::default(),
-        saves: vec![],
-        measures: vec![],
-        temperature: None,
-        nominal_temperature: None,
-        initial_conditions: vec![],
-        node_sets: vec![],
-        step_params: vec![],
-        extra_lines: vec![],
-    }
+    Testbench {
+        dut: "top".into(), ..Default::default() }
 }
 
 fn ir_with(top: Subcircuit, tb: Option<Testbench>) -> CircuitIR {
-    CircuitIR { raw_dialect: None, globals: vec![], functions: vec![], top, testbench: tb, subcircuit_defs: vec![], model_libraries: vec![] }
+    CircuitIR { top, testbench: tb, ..Default::default() }
 }
 
 fn analysis(a: Analysis) -> String {
@@ -129,16 +106,7 @@ fn spectre_subckt_and_instance_match_documented_forms() {
             Port { name: "i1".into(), direction: PortDirection::Input },
             Port { name: "o1".into(), direction: PortDirection::Output },
         ],
-        parameters: vec![ParamDef { name: "zin".into(), default: Some("50".into()) }],
-        components: vec![],
-        instances: vec![],
-        models: vec![],
-        raw_spice: vec![],
-        includes: vec![],
-        libs: vec![],
-        osdi_loads: vec![],
-        verilog_blocks: vec![],
-    };
+        parameters: vec![ParamDef { name: "zin".into(), default: Some("50".into()) }], ..Default::default() };
     let mut ir = ir_with(empty_top("defs"), None);
     ir.subcircuit_defs.push(sc);
     let emitted = spectre(&ir).unwrap();
@@ -149,8 +117,7 @@ fn spectre_subckt_and_instance_match_documented_forms() {
         name: "Coax1".into(),
         subcircuit: "coax".into(),
         port_mapping: vec!["pin".into(), "nin".into()],
-        parameters: vec![("zin".into(), "75".into())],
-    });
+        parameters: vec![("zin".into(), "75".into())], ..Default::default() });
     let netlist = spectre(&ir_with(top, None)).unwrap();
     assert!(netlist.contains("xcoax1 (pin nin) coax zin=75"), "{netlist}");
 }

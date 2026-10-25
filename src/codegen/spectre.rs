@@ -401,12 +401,11 @@ fn emit_subcircuit_body(sc: &Subcircuit) -> Result<String, CodeGenError> {
         lines.push(emit_model(m)?);
     }
 
-    for comp in &sc.components {
-        lines.push(emit_component(comp)?);
-    }
-
-    for inst in &sc.instances {
-        lines.push(emit_instance(inst));
+    for e in sc.elements() {
+        lines.push(match e {
+            Element::Component(c) => emit_component(c)?,
+            Element::Instance(i) => emit_instance(i),
+        });
     }
     // Spectre text kept verbatim on import (`refuse_raw_spice` has checked
     // that it is Spectre's).
@@ -462,7 +461,7 @@ fn escaped(ir: &CircuitIR) -> CircuitIR {
     // every instance/device name and reference to one is folded to
     // lowercase to stay consistent with `inst_ref`/emission below; a
     // Spectre-origin IR already carries the exact case Spectre used.
-    let keep_case = ir.raw_dialect.as_deref() == Some("spectre");
+    let keep_case = ir.raw_dialect == Some(Dialect::Spectre);
     let fold = |s: &mut String| if !keep_case { *s = s.to_lowercase() };
     let fold_comp = |c: &mut Component| {
         if let Some(n) = c.names_mut().into_iter().next() {
@@ -509,7 +508,7 @@ fn escaped(ir: &CircuitIR) -> CircuitIR {
 
 pub(super) fn netlist(ir: &CircuitIR) -> Result<String, CodeGenError> {
     super::refuse_raw_spice(ir, "spectre")?;
-    KEEP_CASE.with(|c| c.set(ir.raw_dialect.as_deref() == Some("spectre")));
+    KEEP_CASE.with(|c| c.set(ir.raw_dialect == Some(Dialect::Spectre)));
     let ir = &escaped(ir);
     let mut lines = Vec::new();
 
@@ -580,12 +579,11 @@ pub(super) fn netlist(ir: &CircuitIR) -> Result<String, CodeGenError> {
 
     lines.push(String::new());
 
-    for comp in &ir.top.components {
-        lines.push(emit_component(comp)?);
-    }
-
-    for inst in &ir.top.instances {
-        lines.push(emit_instance(inst));
+    for e in ir.top.elements() {
+        lines.push(match e {
+            Element::Component(c) => emit_component(c)?,
+            Element::Instance(i) => emit_instance(i),
+        });
     }
     lines.extend(ir.top.raw_spice.iter().cloned());
 
@@ -1186,11 +1184,9 @@ mod tests {
     use std::collections::BTreeMap;
 
     fn sample_resistor_divider() -> CircuitIR {
-        CircuitIR { raw_dialect: None, globals: vec![], functions: vec![],
+        CircuitIR {
             top: Subcircuit {
                 name: "Voltage Divider".into(),
-                ports: vec![],
-                parameters: vec![],
                 components: vec![
                     Component::VoltageSource {
                         name: "in".into(),
@@ -1215,32 +1211,10 @@ mod tests {
                         value: IrValue::Numeric { value: 10000.0 },
                         model: None, params: vec![],
                     },
-                ],
-                instances: vec![],
-                models: vec![],
-                raw_spice: vec![],
-                includes: vec![],
-                libs: vec![],
-                osdi_loads: vec![],
-                verilog_blocks: vec![],
-            },
-            testbench: Some(Testbench { prints: vec![],
+                ], ..Default::default() },
+            testbench: Some(Testbench {
                 dut: "Voltage Divider".into(),
-                stimulus: vec![],
-                analyses: vec![Analysis::Op],
-                options: SimOptions::default(),
-                saves: vec![],
-                measures: vec![],
-                temperature: None,
-                nominal_temperature: None,
-                initial_conditions: vec![],
-                node_sets: vec![],
-                step_params: vec![],
-                extra_lines: vec![],
-            }),
-            subcircuit_defs: vec![],
-            model_libraries: vec![],
-        }
+                analyses: vec![Analysis::Op], ..Default::default() }), ..Default::default() }
     }
 
     #[test]
@@ -1258,11 +1232,9 @@ mod tests {
 
     #[test]
     fn test_spectre_mosfet() {
-        let ir = CircuitIR { raw_dialect: None, globals: vec![], functions: vec![],
+        let ir = CircuitIR {
             top: Subcircuit {
                 name: "CMOS Inverter".into(),
-                ports: vec![],
-                parameters: vec![],
                 components: vec![
                     Component::Mosfet {
                         name: "1".into(),
@@ -1273,19 +1245,7 @@ mod tests {
                         model: "pmos_3p3".into(),
                         params: vec![("w".into(), "2u".into()), ("l".into(), "180n".into())],
                     },
-                ],
-                instances: vec![],
-                models: vec![],
-                raw_spice: vec![],
-                includes: vec![],
-                libs: vec![],
-                osdi_loads: vec![],
-                verilog_blocks: vec![],
-            },
-            testbench: None,
-            subcircuit_defs: vec![],
-            model_libraries: vec![],
-        };
+                ], ..Default::default() }, ..Default::default() };
         let netlist = netlist(&ir).unwrap();
         assert!(netlist.contains("m1 (out in vdd vdd) pmos_3p3 w=2u l=180n"), "missing m1: {}", netlist);
     }
@@ -1445,15 +1405,7 @@ mod tests {
                     model: "pmos".into(),
                     params: vec![("w".into(), "wp".into())],
                 },
-            ],
-            instances: vec![],
-            models: vec![],
-            raw_spice: vec![],
-            includes: vec![],
-            libs: vec![],
-            osdi_loads: vec![],
-            verilog_blocks: vec![],
-        };
+            ], ..Default::default() };
         let s = emit_subcircuit(&sc).unwrap();
         assert!(s.contains("subckt mybuf (in out)"), "subckt header: {}", s);
         assert!(s.contains("parameters wp=1u"), "params: {}", s);
@@ -1463,24 +1415,10 @@ mod tests {
 
     #[test]
     fn test_spectre_osdi() {
-        let ir = CircuitIR { raw_dialect: None, globals: vec![], functions: vec![],
+        let ir = CircuitIR {
             top: Subcircuit {
                 name: "VA Test".into(),
-                ports: vec![],
-                parameters: vec![],
-                components: vec![],
-                instances: vec![],
-                models: vec![],
-                raw_spice: vec![],
-                includes: vec![],
-                libs: vec![],
-                osdi_loads: vec!["/path/to/model.va".into()],
-                verilog_blocks: vec![],
-            },
-            testbench: None,
-            subcircuit_defs: vec![],
-            model_libraries: vec![],
-        };
+                osdi_loads: vec!["/path/to/model.va".into()], ..Default::default() }, ..Default::default() };
         let netlist = netlist(&ir).unwrap();
         assert!(netlist.contains("ahdl_include \"/path/to/model.va\""), "osdi: {}", netlist);
     }
@@ -1504,23 +1442,16 @@ mod tests {
         backend_paths.insert("ngspice".into(), "/pdk/ngspice/sky130.lib".into());
         backend_paths.insert("spectre".into(), "/pdk/spectre/sky130.scs".into());
 
-        let ir = CircuitIR { raw_dialect: None, globals: vec![], functions: vec![],
+        let ir = CircuitIR {
             top: Subcircuit {
-                name: "pdk_spectre".into(),
-                ports: vec![], parameters: vec![], components: vec![],
-                instances: vec![], models: vec![], raw_spice: vec![],
-                includes: vec![], libs: vec![], osdi_loads: vec![],
-                verilog_blocks: vec![],
-            },
-            testbench: None, subcircuit_defs: vec![],
+                name: "pdk_spectre".into(), ..Default::default() },
             model_libraries: vec![ModelLibrary {
                 name: "sky130".into(),
                 path: "/pdk/default/sky130.lib".into(),
                 corner: Some("tt".into()),
                 backend_paths,
                 setup_includes: vec![],
-            }],
-        };
+            }], ..Default::default() };
         let netlist = netlist(&ir).unwrap();
         assert!(netlist.contains("include \"/pdk/spectre/sky130.scs\" section=tt"),
             "spectre path: {}", netlist);

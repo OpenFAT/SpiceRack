@@ -18,32 +18,13 @@ pub enum CodeGenError {
     Other(String),
 }
 
-/// The netlist language a simulator reads.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Dialect {
-    Ngspice,
-    Ltspice,
-    Spectre,
-    Vacask,
-    /// ngspice text with Verilog-A loaded as `.hdl` instead of `pre_osdi`.
-    Espice,
-    /// HSPICE: `'expr'` quoting, `E`/`G` `vol=`/`cur=` behavioural sources,
-    /// `.hdl` Verilog-A, and the card forms in ESPice's
-    /// `tests/frontend/grammar/hspice.peg` and `tests/conformance/tests/netlist/hspice`.
-    Hspice,
-    /// Xyce: the xschem layout only ([`xschem`]).
-    Xyce,
-    /// CDL for LVS: the xschem layout only ([`xschem`]).
-    Cdl,
-    /// Structural Verilog: the xschem layout only ([`xschem`]).
-    Verilog,
-}
+pub use crate::ir::Dialect;
 
 /// `^` means power in ngspice, HSPICE, ESPice and Spectre (as SpiceRack
 /// writes it), but XOR in LTspice, Xyce and VACASK. `true` here means
 /// "power".
-fn caret_means_power(dialect: &str) -> bool {
-    !matches!(dialect, "ltspice" | "xyce" | "vacask")
+fn caret_means_power(d: Dialect) -> bool {
+    !matches!(d, Dialect::Ltspice | Dialect::Xyce | Dialect::Vacask)
 }
 
 /// Every expression in `c` that can carry a `^`: its value and its params.
@@ -71,9 +52,8 @@ fn component_exprs(c: &Component) -> Vec<&str> {
 /// the same character; carrying one into the other dialect would silently
 /// change what the deck computes. Refuse instead of guessing.
 fn check_caret_meaning(ir: &CircuitIR, d: Dialect) -> Result<(), CodeGenError> {
-    let from = ir.raw_dialect.as_deref().unwrap_or("ngspice");
-    let to = format!("{d:?}").to_ascii_lowercase();
-    if caret_means_power(from) == caret_means_power(&to) {
+    let from = ir.raw_dialect.unwrap_or(Dialect::Ngspice);
+    if caret_means_power(from) == caret_means_power(d) {
         return Ok(());
     }
     let mut exprs: Vec<&str> = ir.functions.iter().map(|f| f.body.as_str()).collect();
@@ -88,9 +68,11 @@ fn check_caret_meaning(ir: &CircuitIR, d: Dialect) -> Result<(), CodeGenError> {
     }
     if let Some(bad) = exprs.into_iter().find(|e| e.contains('^')) {
         return Err(CodeGenError::Other(format!(
-            "expression '{bad}' uses '^', which means {} in {from} but {} in {to}; refusing to reinterpret it",
+            "expression '{bad}' uses '^', which means {} in {} but {} in {}; refusing to reinterpret it",
             if caret_means_power(from) { "power" } else { "XOR" },
-            if caret_means_power(&to) { "power" } else { "XOR" },
+            from.name(),
+            if caret_means_power(d) { "power" } else { "XOR" },
+            d.name(),
         )));
     }
     Ok(())
@@ -114,7 +96,7 @@ pub fn netlist(ir: &CircuitIR, d: Dialect) -> Result<String, CodeGenError> {
 /// HSPICE, ESPice): what `netlist` writes for it.
 pub fn card(comp: &Component, d: Dialect) -> Result<String, CodeGenError> {
     match d {
-        Dialect::Ngspice | Dialect::Ltspice | Dialect::Espice | Dialect::Hspice => spice3::component(d, comp),
+        Dialect::Ngspice | Dialect::Ltspice | Dialect::Espice | Dialect::Hspice => spice3::component(d, false, comp),
         _ => Err(CodeGenError::Other(format!("card: {d:?} has no single-card writer"))),
     }
 }
@@ -133,7 +115,7 @@ pub(crate) fn model_refuse(backend: &str, name: &str, model: &Option<String>) ->
 /// Raw lines imported from `backend`'s own language are its text and pass.
 fn refuse_raw_spice(ir: &CircuitIR, backend: &str) -> Result<(), CodeGenError> {
     refuse_flags(ir, backend)?;
-    if ir.raw_dialect.as_deref() == Some(backend) {
+    if ir.raw_dialect.map(Dialect::name) == Some(backend) {
         return Ok(());
     }
     let sub = std::iter::once(&ir.top).chain(&ir.subcircuit_defs).find(|s| !s.raw_spice.is_empty());

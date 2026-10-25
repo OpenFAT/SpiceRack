@@ -1,71 +1,110 @@
-# LTspice: the dialect rules spice_cards.peg leaves open. Same rule set as
-# ngspice.peg minus numtok; differs in Number/Scale, Expr, the operator
-# ladder (Unary, AndOp, OrOp, CmpOp, MulOp, PowOp, NotOp) and value.
-# Sources: ADI ltspice-reference ai_ref/ (SSR = SPICE-SYNTAX-REFERENCE.md,
-# CER = CIRCUIT-ELEMENTS-REFERENCE.md, SCR = SIMULATION-COMMANDS-REFERENCE.md);
+# LTspice, layered over spice.peg: the lines stage, numbers, quoting, the
+# expression language and LTspice's own cards. Sources: ADI
+# ltspice-reference ai_ref/ (SSR = SPICE-SYNTAX-REFERENCE.md, CER =
+# CIRCUIT-ELEMENTS-REFERENCE.md, SCR = SIMULATION-COMMANDS-REFERENCE.md);
 # LTspice XVII help B-device.htm, DotParam.htm.
+
+# ── Lines ──
+# Captures: Title; Line made of Piece (joined with a blank).
+file       <- Title (l_eol l_body)? !.
+# SSR "Netlist Structure": line 1 is a comment (the title).
+Title      <- (!l_eol .)*
+l_body     <- (l_end / Line / l_skip)*
+# SSR, SCR ".END": `.end` ends the netlist; everything after it is ignored.
+l_end      <- l_blank* '.end'i ![a-zA-Z0-9_] .*
+# SSR "Comments": `*` first non-blank starts a comment line; `;` anywhere
+# ends the line. Blank lines go. A `+` with nothing to continue is dropped.
+# `$`, `#`, `//` are not comments (undocumented); `@` and `&` start FRA
+# devices (SSR "Line Types").
+l_skip     <- l_blank* [*;] (!l_eol .)* l_eolx
+            / l_blank* l_eol
+            / l_blank+ !.
+            / l_blank* '+' (!l_eol .)* l_eolx
+Line       <- l_blank* ![+*;] !l_end !l_eolx Piece l_comment? l_more* l_eolx
+# SSR: `+` first continues the previous line; comment and blank lines
+# between are skipped (unverified, as ngspice and HSPICE do).
+l_more     <- l_eol l_skip_cont* l_blank* '+' Piece l_comment?
+l_skip_cont <- l_blank* [*;] (!l_eol .)* l_eol / l_blank* l_eol
+Piece      <- l_chunk*
+l_chunk    <- l_quoted / ![;\r\n] .
+# A `;` inside double quotes (a path) is no comment (unverified).
+l_quoted   <- '"' [^"\r\n]* '"'?
+l_comment  <- ';' (!l_eol .)*
+l_blank    <- [ \t\r]
+l_eol      <- '\r'? '\n'
+l_eolx     <- l_eol / !.
+
+# ── Cards ──
+# SSR "Line Types": `@` is the FRA device, `&` its probe (CER); LTspice's
+# own dot cards, kept as text.
+dialect    <- Raw_lt / Params_lt
+Raw_lt     <- [@&] Name (s? field)+
+            / '.' ('endmachine' / 'savestate' / 'loadstate' / 'softstart' / 'backanno' / 'savebias'
+            / 'loadbias' / 'machine' / 'fourier' / 'output' / 'ferret' / 'state' / 'wave' / 'rule'
+            / 'endl' / 'fra') !namechar rest
+Params_lt  <- '.params' (s (FuncDef / Assign))+ s?
+# SCR .TRAN: `.tran Tstop` (the step is LTspice's own), or the SPICE form.
+Tran       <- '.tran' s Num (s Num (s Num (s Num)?)?)? (s Uic)? s?
+# SCR .LIB: `.lib file` reads the whole library, not a section.
+Lib        <- '.lib' !namechar s Path (s Section)? rest
+libblock   <- never
+# SCR .STEP: `.step [lin|dec|oct] param name start stop step`.
+dotcard    <- Step &nl / Include &nl / Lib &nl / Model &nl / Params &nl / Func &nl / Options &nl
+            / Temp &nl / Ic &nl / Nodeset &nl / Global &nl / Save &nl / Print &nl / Meas &nl
+            / Op &nl / Dc &nl / Ac &nl / Tran &nl / Noise &nl / Tf &nl / Sens &nl / Pz &nl
+            / Four &nl / Raw
+Step       <- '.step' (s StepKind)? s 'param' s Name s Num s Num s Num s?
+StepKind   <- ('lin' / 'dec' / 'oct') !namechar
 
 # SSR "Engineering Multipliers": T G Meg K mil m u n p f; `u` or `µ`
 # (XVII help); no `a`. Trailing letters are ignored (`10V`); `6K34` is
-# 6.34K, so digits may follow the scale (the tail takes them).
-Number     <- [+\-]? Mantissa Exponent? Scale? ([a-z0-9_.] / 'µ')*
-Mantissa   <- [0-9]+ ('.' [0-9]*)? / '.' [0-9]+
-Exponent   <- [e] [+\-]? [0-9]+
-Scale      <- 'meg' / 'mil' / 'µ' / [tgkmunpf]
+# 6.34K: digits after the scale are its fraction.
+Num        <- Mag scale Frac !wordchar / Mag scale? ([a-z0-9_.] / 'µ')*
+Mag        <- [+\-]? mantissa ([e] [+\-]? [0-9]+)?
+Frac       <- [0-9]+
+mantissa   <- [0-9]+ ('.' [0-9]*)? / '.' [0-9]+
+scale      <- Meg / Mil / Micro_mu / Tera / Giga / Kilo / Milli / Micro / Nano / Pico / Femto
+Meg        <- 'meg'
+Mil        <- 'mil'
+Micro_mu   <- 'µ'
+Tera       <- 't'
+Giga       <- 'g'
+Kilo       <- 'k'
+Milli      <- 'm'
+Micro      <- 'u'
+Nano       <- 'n'
+Pico       <- 'p'
+Femto      <- 'f'
 
 # DotParam.htm: `{expr}` invokes evaluation. Quotes are not expressions
 # (undocumented); `"..."` is a string (SCR .PARAM).
-Expr       <- '{' x Ternary x '}'
+expr       <- '{' x Expr x '}'
+Expr       <- x_ternary
 # B-device.htm `V=<expression>`: unbraced after `key=`.
-pairexpr   <- &([a-zA-Z_.0-9(+\-!~]) Ternary !wordchar
+pairexpr   <- &([a-zA-Z_.0-9(+\-!~]) x_ternary !wordchar
 
 # CER "Supported Operators (ascending precedence)": `& | ^` (one level,
-# Boolean, true is > .5), comparisons, `+ -`, `* / %`, `**`, `! ~`.
-# `?:` is undocumented (kept: spice_cards.peg's `cond` names Ternary).
-Ternary    <- Or (x '?' x Ternary x ':' x Ternary)?
-Or         <- And (x OrOp x And)*
-And        <- Cmp (x AndOp x Cmp)*
-Cmp        <- Add (x CmpOp x Add)*
-Add        <- Mul (x AddOp x Mul)*
-Mul        <- Pow (x MulOp x Pow)*
-Pow        <- Unary (x PowOp x Unary)*
+# Boolean), comparisons, `+ -`, `* / %`, `**`, `! ~`. `?:` is undocumented.
+x_ternary  <- x_or (x '?' x x_ternary x ':' x x_ternary)?
+x_or       <- x_cmp (x [&|^] x x_cmp)*
+x_cmp      <- x_add (x ('==' / '!=' / '<=' / '>=' / '<' / '>') x x_add)*
+x_add      <- x_mul (x [+\-] x x_mul)*
+x_mul      <- x_pow (x ('*' !'*' / [/%]) x x_pow)*
+x_pow      <- x_unary (x '**' x x_unary)*
 # B-device.htm: `-2**1.5` is 0, the real part of (-2)**1.5: the sign binds
-# tighter than `**`, unlike ngspice (`-2^2` = -4).
-Unary      <- (SignOp / NotOp) x Unary / atom
+# tighter than `**`, unlike ngspice.
+x_unary    <- ([+\-] / [!~] !'=') x x_unary / x_atom
 # SCR .PARAM: `select(n, "1N4148", "1N4007")` takes strings.
-atom       <- Paren / Probe / Call / Num / Str / Ref
-Paren      <- '(' x Ternary x ')'
-Probe      <- [vi] x '(' x Pname (x ',' x Pname)? x ')'
-Pname      <- (![ \t,()\n] .)+
-Call       <- Ref x '(' x (Ternary (x ',' x Ternary)*)? x ')'
-Num        <- Mantissa ([e] [+\-]? [0-9]+)? ([a-z0-9] / 'µ')*
-Ref        <- [a-zA-Z_$] [a-zA-Z0-9_.$]*
+x_atom     <- '(' x x_ternary x ')' / x_probe / x_call / x_num / Str / x_ref
+x_probe    <- [vi] x '(' x x_pname (x ',' x x_pname)? x ')'
+x_pname    <- (![ \t,()\n] .)+
+x_call     <- x_ref x '(' x (x_ternary (x ',' x x_ternary)*)? x ')'
+x_num      <- mantissa ([e] [+\-]? [0-9]+)? ([a-z0-9] / 'µ')*
+x_ref      <- [a-zA-Z_$] [a-zA-Z0-9_.$]*
 x          <- [ \t]*
-
-OrOp       <- [&|^]
-# `&` shares the `|` level: this level never matches (`x` always does).
-AndOp      <- !x
-CmpOp      <- '==' / '!=' / '<=' / '>=' / '<' / '>'
-AddOp      <- [+\-]
-MulOp      <- '*' !'*' / [/%]
-PowOp      <- '**'
-SignOp     <- [+\-]
-NotOp      <- [!~] !'='
 
 namechar   <- ![ \t\n,=()'"{}] .
 wordchar   <- ![ \t\n,=()'"{}\[\]] .
-
-field      <- Pair / Group / Expr / Str / Word / [,()=]
-gfield     <- Group / Expr / Str / Word / [,=]
-value      <- Expr / Str / pairexpr / Word
-
-# LTspice dot cards spice_cards.peg's Kind/OtherKind refuse, kept as text.
-# Entry: the importer starts here when the rule exists.
-LtCard     <- (LtOther / FraDevice) nl !. / OneCard
-# SSR "Line Types": `@` is the FRA device, `&` its probe (CER).
-FraDevice  <- [@&] Name fields
-LtOther    <- '.params' s (Assign / FuncDef) (s (Assign / FuncDef))*
-            / '.' LtKind !namechar rest
-LtKind     <- 'backanno' / 'savebias' / 'loadbias' / 'savestate' / 'loadstate' / 'wave'
-            / 'machine' / 'endmachine' / 'state' / 'rule' / 'output' / 'fra' / 'ferret'
-            / 'softstart' / 'fourier' / 'endl'
+field      <- Pair / group / expr / Str / Word / [,()=]
+gfield     <- group / expr / Str / Word / [,=]
+value      <- expr / Str / Word !(x [&|^<>=!+\-*/%?(]) / pairexpr / Word

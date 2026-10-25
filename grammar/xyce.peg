@@ -1,70 +1,115 @@
-# Xyce: the dialect rules spice_cards.peg leaves open. Sources: Xyce
-# Reference Guide 7.9 (RG) and Xyce 7.10 runs (scratch decks).
+# Xyce, layered over spice.peg: the lines stage, numbers, quoting, the
+# expression language and Xyce's own cards. Sources: Xyce Reference Guide
+# 7.9 (RG) and Xyce 7.10 runs (scratch decks).
+
+# ── Lines (RG §2.1.39 p.163, checked on Xyce 7.10) ──
+# Captures: Title; Line made of Piece.
+file       <- Title (l_eol l_body)? !.
+# Line 1 is the title, whatever it holds.
+Title      <- (!l_eol .)*
+l_body     <- (l_end / Line / l_skip)*
+# §2.1.6: `.END` ends the netlist; nothing after it is read.
+l_end      <- '.end'i ![^ \t\r\n] .*
+# §2.1.39.1: `*` starts a comment line; so does a line whose first byte is
+# a blank, unless its first non-blank is `+`. Blank lines drop.
+l_skip     <- l_blank* l_eol / l_blank+ !. / l_comment_ln / l_blank* '+' (!l_eol .)* l_eolx
+l_comment_ln <- ('*' / l_blank+ !'+') (!l_eol .)* l_eolx
+Line       <- !l_blank !'*' !'+' !l_end Piece l_cmt? l_more* l_eolx
+# §2.1.39.3: `+` continues, past comment and blank lines.
+l_more     <- l_eol (l_blank* l_eol / l_comment_ln)* l_blank* '+' Piece l_cmt?
+# §2.1.39.2: `;` starts an in-line comment anywhere, quotes and braces
+# included. `$`, `//`, `#` and `\` are not special.
+Piece      <- (!';' !l_eol .)*
+l_cmt      <- ';' (!l_eol .)*
+l_blank    <- [ \t]
+l_eol      <- '\r'? '\n'
+l_eolx     <- l_eol / !.
+
+# ── Cards ──
+# Xyce's own dot cards, kept as text (RG; dev/research/dialect-readers.md
+# 3.3); `.temp` is ignored by Xyce (RG Table 6-1), `.save` writes the
+# operating point (RG p.152) and `.sens` is `objfunc=... param=...`: none
+# is the IR's, so they stay raw too.
+dialect    <- Raw_xy
+Raw_xy     <- '.' ('embeddedsampling' / 'global_param' / 'temperature' / 'preprocess' / 'objective'
+            / 'sampling' / 'initcond' / 'result' / 'mpde' / 'dcop' / 'temp' / 'save' / 'sens'
+            / 'pce' / 'mor' / 'rol') !namechar rest
+# RG p.49: `.incl` is `.include`; the rest of the card is the path.
+Include    <- '.incl' !namechar s Path_xy / ('.include' / '.inc') !namechar s Path rest
+Path_xy    <- '"' (!'"' !nl .)* '"' &(s? nl) / (!nl .)+
+# RG p.96: `.options <pkg> k=v ...` (or `k v`); a bare number after a value
+# continues it (`minvalue=-1.0 -1.0`); with no package, `k=v` as written.
+Options    <- ('.options' / '.option' / '.opts' / '.opt') !namechar (s Pkg (s? xopt)* / (s? oitem)*) s?
+Pkg        <- !pairstart word
+xopt       <- Pair_x / Flag_x / [,]
+Pair_x     <- Key (s? '=' s? / s &[+\-.0-9]) MVal_x
+# `minvalue=-1.0 -1.0`, `conparam=a,b`: a list, comma- or blank-separated.
+MVal_x     <- (expr / Str / Word / blob) ((s? ','+ s? / s &[+\-.0-9]) More !(s? '='))*
+Flag_x     <- Word / '{' (!'}' !nl .)* '}'
+# `.step [lin|dec|oct] name start stop step` (no `param` word).
+dotcard    <- Step &nl / Include &nl / Lib &nl / Model &nl / Params &nl / Func &nl / Options &nl
+            / Temp &nl / Ic &nl / Nodeset &nl / Global &nl / Save &nl / Print &nl / Meas &nl
+            / Op &nl / Dc &nl / Ac &nl / Tran &nl / Noise &nl / Tf &nl / Sens &nl / Pz &nl
+            / Four &nl / Raw
+Step       <- '.step' (s StepKind)? s Name s Num s Num s Num s?
+StepKind   <- ('lin' / 'dec' / 'oct') !namechar
 
 # Scale factors T G MEG X K MIL M U N P F (X = 1e6, run); no atto: `1a` is
-# 1 with a unit (RG §3.1 p.837, Table 6-2 p.852). Trailing letters are a unit.
-Number     <- [+\-]? Mantissa Exponent? Scale? [a-z0-9_]*
-Mantissa   <- [0-9]+ ('.' [0-9]*)? / '.' [0-9]+
-Exponent   <- [e] [+\-]? [0-9]+
-Scale      <- 'meg' / 'mil' / [tgxkmunpf]
+# 1 with a unit (RG §3.1 p.837, Table 6-2 p.852).
+Num        <- Mag scale? [a-z0-9_]*
+Mag        <- [+\-]? mantissa ([e] [+\-]? [0-9]+)?
+mantissa   <- [0-9]+ ('.' [0-9]*)? / '.' [0-9]+
+scale      <- Meg / Mil / Meg_x / Tera / Giga / Kilo / Milli / Micro / Nano / Pico / Femto
+Meg        <- 'meg'
+Meg_x      <- 'x'
+Mil        <- 'mil'
+Tera       <- 't'
+Giga       <- 'g'
+Kilo       <- 'k'
+Milli      <- 'm'
+Micro      <- 'u'
+Nano       <- 'n'
+Pico       <- 'p'
+Femto      <- 'f'
 
 # RG §2.2 p.164: `{expr}`, or `'expr'` for compatibility.
-Expr       <- '{' x Ternary x '}' / "'" x Ternary x "'"
-# RG §2.2 p.164: .param/.global_param take an unbraced expression too.
-pairexpr   <- &([a-zA-Z_.0-9(+\-~$]) Ternary !wordchar
+expr       <- '{' x Expr x '}' / "'" x Expr x "'"
+Expr       <- x_ternary
+pairexpr   <- &([a-zA-Z_.0-9(+\-~$]) x_ternary !wordchar
 
 # Table 2-32 (RG p.164) lists the operators but no precedence; the levels
 # below are measured on Xyce 7.10, loosest first:
 #   ?: (right) | & || && (one level, left) | ^ XOR | ~ (takes a relation)
 #   relational (one level, left) | + - | % | * / | unary + - | ** (right)
-Ternary    <- Or (x '?' x Ternary x ':' x Ternary)?
-Or         <- Xor (x OrOp x Xor)*
-Xor        <- Cmp (x XorOp x Cmp)*
-Cmp        <- Add (x CmpOp x Add)*
-Add        <- Mod (x AddOp x Mod)*
-Mod        <- Mul (x ModOp x Mul)*
-Mul        <- Unary (x MulOp x Unary)*
-Unary      <- SignOp x Unary / NotOp x Not / Pow
-Not        <- NotOp x Not / Cmp
-Pow        <- atom (x PowOp x Unary)?
-atom       <- Paren / Probe / Call / Num / Ref / Str
-Paren      <- '(' x Ternary x ')'
-# RG §2.1.31 pp.130-133: V I VR VI VM VP VDB IR.. lead currents IC ID ..,
-# N() P() W().
-Probe      <- ([vi] [rimpdbcgse]* / [npw]) x '(' x Pname (x ',' x Pname)? x ')'
-Pname      <- (![ \t,()\n] .)+
-Call       <- Ref x '(' x (Ternary (x ',' x Ternary)*)? x ')'
-Num        <- Mantissa ([e] [+\-]? [0-9]+)? [a-z]*
-# RG p.165: `:` is a name byte (`R1:R`, `X1:A`), so `a?b:c` needs a blank
-# before `:`, as in Xyce.
-Ref        <- [a-zA-Z_$] [a-zA-Z0-9_.$:]*
+x_ternary  <- x_or (x '?' x x_ternary x ':' x x_ternary)?
+x_or       <- x_xor (x ('||' / '|' / '&&' / '&') x x_xor)*
+x_xor      <- x_cmp (x '^' x x_cmp)*
+x_cmp      <- x_add (x ('==' / '!=' / '<>' / '<=' / '>=' / '<' / '>') x x_add)*
+x_add      <- x_mod (x [+\-] x x_mod)*
+x_mod      <- x_mul (x '%' x x_mul)*
+x_mul      <- x_unary (x ('*' !'*' / '/') x x_unary)*
+x_unary    <- [+\-] x x_unary / '~' x x_not / x_pow
+x_not      <- '~' x x_not / x_cmp
+x_pow      <- x_atom (x '**' x x_unary)?
+x_atom     <- '(' x x_ternary x ')' / x_probe / x_call / x_num / x_ref / Str
+# RG §2.1.31 pp.130-133: V I VR VI VM VP VDB IR.. lead currents, N() P() W().
+x_probe    <- ([vi] [rimpdbcgse]* / [npw]) x '(' x x_pname (x ',' x x_pname)? x ')'
+x_pname    <- (![ \t,()\n] .)+
+x_call     <- x_ref x '(' x (x_ternary (x ',' x x_ternary)*)? x ')'
+x_num      <- mantissa ([e] [+\-]? [0-9]+)? [a-z]*
+# RG p.165: `:` is a name byte (`R1:R`, `X1:A`).
+x_ref      <- [a-zA-Z_$] [a-zA-Z0-9_.$:]*
 x          <- [ \t]*
-
-OrOp       <- '||' / '|' / '&&' / '&'
-XorOp      <- '^'
-CmpOp      <- '==' / '!=' / '<>' / '<=' / '>=' / '<' / '>'
-AddOp      <- [+\-]
-MulOp      <- '*' !'*' / '/'
-ModOp      <- '%'
-PowOp      <- '**'
-SignOp     <- [+\-]
-# `!` is refused by Xyce ("Unrecognized character: !"); `~` is NOT.
-NotOp      <- '~'
 
 namechar   <- ![ \t\n,=()'"{}] .
 # RG §2.3.2 p.184: brackets are name bytes (`V5 1[ 0 1`).
 wordchar   <- ![ \t\n,=()'"{}] .
-field      <- Pair / Group / Expr / Str / Word / [,()=]
-gfield     <- Group / Expr / Str / Word / [,=]
+field      <- Pair / group / expr / Str / Word / [,()=]
+gfield     <- group / expr / Str / Word / [,=]
 # A brace a Ternary cannot read: a composite parameter (`region={name=r1,
-# ...}`, RG §2.4) or `{POLY(2) ...}` (§2.2.5) or `{{...}}`, kept whole.
-value      <- Expr / Str / pairexpr / Word / blob
-blob       <- '{' (blob / !'}' .)* '}'
-
-# SpiceRack's entry for Xyce decks: the Xyce cards spice_cards.peg's
-# Kind/OtherKind refuse (Xyce RG; dev/research/dialect-readers.md 3.3), kept
-# as text, then every other card through OneCard.
-XyCard     <- XyOther nl !. / OneCard
-XyOther    <- '.' XyKind !namechar rest
-XyKind     <- 'global_param' / 'embeddedsampling' / 'sampling' / 'result' / 'mpde' / 'pce'
-            / 'preprocess' / 'initcond' / 'mor' / 'rol' / 'dcop' / 'objective'
+# ...}`, RG §2.4) or `{POLY(2) ...}` (§2.2.5), kept whole.
+value      <- expr / Str / Word !(x [|&^<>=!~+\-*/%?(]) / pairexpr / Word / blob
+blob       <- '{' Expr_blob '}'
+# A model's value may be a composite brace too.
+MVal       <- (expr / Str / Word / blob) (s mnum)*
+Expr_blob  <- (bnest / !'}' .)*

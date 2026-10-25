@@ -23,7 +23,7 @@ pub fn parse_measures(text: &str, backend_name: &str) -> Vec<MeasureResult> {
     match backend_name {
         // ESPice prints `.meas` results in ngspice's format (its output/measure.zig
         // ports com_measure2.c).
-        "ngspice-subprocess" | "ngspice" | "ngspice-shared" | "espice" => parse_ngspice(text),
+        "ngspice" | "espice" => parse_ngspice(text),
         "ltspice" => parse_ltspice(text),
         _ => {
             // Try all parsers, return whichever finds results

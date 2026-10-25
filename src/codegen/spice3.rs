@@ -1,18 +1,27 @@
 //! SPICE3-family netlists: ngspice, LTspice, HSPICE, and ESPice (ngspice
 //! text with Verilog-A loaded as `.hdl`).
 
-use super::{format_spice_number as num, laplace, param_defs, params, CodeGenError, Dialect};
+use super::{laplace, param_defs, params, CodeGenError, Dialect};
+
+/// A number as `d` reads it back: ngspice (and ESPice, reading its decks)
+/// computes a mantissa times `pow(10, e)`, so its spelling is picked to land
+/// on exactly the same double ([`crate::unit::ngspice_spelling`]).
+fn num(d: Dialect, x: bool, v: f64) -> String {
+    if x && ngspice(d) { crate::unit::ngspice_spelling(v) } else { super::format_spice_number(v) }
+}
+
+/// `v` as plain decimal, unless ngspice would read that back as another
+/// double (then [`num`]'s exact spelling).
+fn dec(d: Dialect, x: bool, v: f64) -> String {
+    let s = format!("{v}");
+    if !(x && ngspice(d)) || crate::unit::ngspice_value(&s) == Some(v) { s } else { crate::unit::ngspice_spelling(v) }
+}
 use crate::ir::*;
 
 /// ESPice reads ngspice decks, so everywhere but the model loads it is ngspice
 /// — including the `backend_paths`/`backend_specific` key it looks up.
 fn key(d: Dialect) -> &'static str {
-    match d {
-        Dialect::Ltspice => "ltspice",
-        Dialect::Hspice => "hspice",
-        Dialect::Xyce => "xyce",
-        _ => "ngspice",
-    }
+    d.family().name()
 }
 
 /// ngspice proper, or ESPice reading an ngspice deck.
@@ -26,9 +35,9 @@ fn itl1(k: &str) -> &str {
     if k == "max_iterations" { "ITL1" } else { k }
 }
 
-fn value(d: Dialect, v: &IrValue) -> String {
+fn value(d: Dialect, x: bool, v: &IrValue) -> String {
     match v {
-        IrValue::Numeric { value } => num(*value),
+        IrValue::Numeric { value } => num(d, x, *value),
         // HSPICE reads braces as name bytes; only quotes make an expression.
         IrValue::Expression { expr } if d == Dialect::Hspice => format!("'{}'", expr),
         IrValue::Expression { expr } => format!("{{{}}}", expr),
@@ -40,10 +49,10 @@ fn value(d: Dialect, v: &IrValue) -> String {
 /// ` [value] model`. The import side leaves `value` an empty `Raw` when the
 /// bare word was a model name, so an empty text is skipped rather than
 /// written as a blank field.
-fn rclvalue(d: Dialect, v: &IrValue, model: &Option<String>) -> String {
+fn rclvalue(d: Dialect, x: bool, v: &IrValue, model: &Option<String>) -> String {
     let val = match v {
         IrValue::Raw { text } if text.is_empty() => String::new(),
-        v => format!(" {}", value(d, v)),
+        v => format!(" {}", value(d, x, v)),
     };
     match model {
         Some(m) => format!("{val} {m}"),
@@ -51,10 +60,10 @@ fn rclvalue(d: Dialect, v: &IrValue, model: &Option<String>) -> String {
     }
 }
 
-fn waveform(d: Dialect, wf: &IrWaveform) -> String {
-    let w = |x: &IrNum| match x {
-        IrNum::Num(v) => format!("{v}"),
-        x => value(d, &x.into()),
+fn waveform(d: Dialect, x: bool, wf: &IrWaveform) -> String {
+    let w = |n: &IrNum| match n {
+        IrNum::Num(v) => dec(d, x, *v),
+        n => value(d, x, &n.into()),
     };
     match wf {
         IrWaveform::Sin { offset, amplitude, frequency, delay, damping, phase } => {
@@ -93,7 +102,7 @@ fn waveform(d: Dialect, wf: &IrWaveform) -> String {
 ///   be run here. The expression is still parsed first, so what goes out is
 ///   a transfer function we understand rather than an opaque string.
 fn laplace_source(
-    d: Dialect,
+    d: Dialect, x: bool,
     name: &str,
     np: &str,
     nm: &str,
@@ -108,7 +117,7 @@ fn laplace_source(
     // also the only safe option on ngspice: `den_coeff=[1]` segfaults
     // ngspice 44.2 outright.
     if let laplace::Laplace::Gain { gain, .. } = parsed {
-        return Ok(format!("{letter}B{name} {np} {nm} {ip} {im} {}", num(gain)));
+        return Ok(format!("{letter}B{name} {np} {nm} {ip} {im} {}", num(d, x, gain)));
     }
     let laplace::Laplace::Xfer { num, den, .. } = parsed else { unreachable!() };
 
@@ -165,11 +174,13 @@ fn instance(inst: &Instance) -> String {
 }
 
 /// Components, instances, raw text — the part of a block after its models.
-fn body(d: Dialect, sc: &Subcircuit, lines: &mut Vec<String>) -> Result<(), CodeGenError> {
-    for comp in &sc.components {
-        lines.push(component(d, comp)?);
+fn body(d: Dialect, x: bool, sc: &Subcircuit, lines: &mut Vec<String>) -> Result<(), CodeGenError> {
+    for e in sc.elements() {
+        lines.push(match e {
+            Element::Component(c) => component(d, x, c)?,
+            Element::Instance(i) => instance(i),
+        });
     }
-    lines.extend(sc.instances.iter().map(instance));
     lines.extend(sc.raw_spice.iter().cloned());
     Ok(())
 }
@@ -193,7 +204,7 @@ fn file_cards(d: Dialect, sc: &Subcircuit, lines: &mut Vec<String>) -> Result<()
     Ok(())
 }
 
-fn subcircuit(d: Dialect, sc: &Subcircuit) -> Result<String, CodeGenError> {
+fn subcircuit(d: Dialect, x: bool, sc: &Subcircuit) -> Result<String, CodeGenError> {
     let mut header = format!(".subckt {}", sc.name);
     for port in &sc.ports {
         header.push_str(&format!(" {}", port.name));
@@ -206,7 +217,7 @@ fn subcircuit(d: Dialect, sc: &Subcircuit) -> Result<String, CodeGenError> {
     let mut lines = vec![header];
     file_cards(d, sc, &mut lines)?;
     lines.extend(sc.models.iter().map(|m| model(d, m)));
-    body(d, sc, &mut lines)?;
+    body(d, x, sc, &mut lines)?;
     lines.push(format!(".ends {}", sc.name));
     Ok(lines.join("\n"))
 }
@@ -318,10 +329,10 @@ fn xyce_options(tb: &Testbench) -> Result<Vec<String>, CodeGenError> {
         items.push((pkg.into(), kv(key, v)));
     }
     if let Some(t) = tb.temperature {
-        items.push(("device".into(), kv("temp", &num(t))));
+        items.push(("device".into(), kv("temp", &num(Dialect::Xyce, false, t))));
     }
     if let Some(t) = tb.nominal_temperature {
-        items.push(("device".into(), kv("tnom", &num(t))));
+        items.push(("device".into(), kv("tnom", &num(Dialect::Xyce, false, t))));
     }
     // `pkg.key`, a bare package `pkg.` (`.options post`), or a key with no
     // package (`.option scale=`, package ""), each kept as the deck wrote it.
@@ -350,14 +361,17 @@ fn xyce_options(tb: &Testbench) -> Result<Vec<String>, CodeGenError> {
 /// ESPice read the same text): ngspice's TRNOISE or `.probe` copied into an
 /// HSPICE deck would be a silently different deck.
 fn check_raw_dialect(d: Dialect, ir: &CircuitIR) -> Result<(), CodeGenError> {
-    let Some(from) = ir.raw_dialect.as_deref() else { return Ok(()) };
-    let family = |name: &str| if name == "espice" { "ngspice".to_string() } else { name.to_string() };
-    let to = format!("{d:?}").to_ascii_lowercase();
-    let raw = std::iter::once(&ir.top).chain(&ir.subcircuit_defs).find_map(|s| s.raw_spice.first());
+    let Some(from) = ir.raw_dialect else { return Ok(()) };
+    let raw = std::iter::once(&ir.top).chain(&ir.subcircuit_defs).find_map(|s| {
+        s.raw_spice.first().or_else(|| s.components.iter().find_map(|c| match c {
+            Component::RawSpice { line } => Some(line),
+            _ => None,
+        }))
+    });
     match raw {
-        Some(line) if family(from) != family(&to) => Err(CodeGenError::UnsupportedComponent {
-            backend: to,
-            component: format!("{from} line '{}' (kept verbatim on import; it is {from} text)", line.trim()),
+        Some(line) if from.family() != d.family() => Err(CodeGenError::UnsupportedComponent {
+            backend: d.name().into(),
+            component: format!("{} line '{}' (kept verbatim on import; it is {} text)", from.name(), line.trim(), from.name()),
         }),
         _ => Ok(()),
     }
@@ -365,6 +379,10 @@ fn check_raw_dialect(d: Dialect, ir: &CircuitIR) -> Result<(), CodeGenError> {
 
 pub(super) fn netlist(d: Dialect, ir: &CircuitIR) -> Result<String, CodeGenError> {
     check_raw_dialect(d, ir)?;
+    // Numbers read from an ngspice deck carry ngspice's arithmetic: written
+    // back for ngspice, each is spelled to land on the same double. Others
+    // (Python's `3.3`) keep their decimal spelling.
+    let x = ir.raw_dialect.map(Dialect::family) == Some(Dialect::Ngspice);
     // Title must be first line (SPICE treats line 1 as title/comment)
     let mut lines = vec![format!("* {}", ir.top.name)];
     loads(d, ir, &mut lines)?;
@@ -401,14 +419,14 @@ pub(super) fn netlist(d: Dialect, ir: &CircuitIR) -> Result<String, CodeGenError
 
     for sc in &ir.subcircuit_defs {
         lines.push(String::new());
-        lines.push(subcircuit(d, sc)?);
+        lines.push(subcircuit(d, x, sc)?);
     }
 
-    body(d, &ir.top, &mut lines)?;
+    body(d, x, &ir.top, &mut lines)?;
 
     if let Some(ref tb) = ir.testbench {
         for comp in &tb.stimulus {
-            lines.push(component(d, comp)?);
+            lines.push(component(d, x, comp)?);
         }
 
         if d == Dialect::Xyce {
@@ -419,14 +437,14 @@ pub(super) fn netlist(d: Dialect, ir: &CircuitIR) -> Result<String, CodeGenError
                 lines.push(format!(".options {}", opts.join(" ")));
             }
             if let Some(temp) = tb.temperature {
-                lines.push(format!(".temp {}", temp));
+                lines.push(format!(".temp {}", dec(d, x, temp)));
             }
             if let Some(tnom) = tb.nominal_temperature {
-                lines.push(format!(".options tnom={}", tnom));
+                lines.push(format!(".options tnom={}", dec(d, x, tnom)));
             }
         }
-        lines.extend(tb.initial_conditions.iter().map(|(n, v)| format!(".ic V({})={}", n, v)));
-        lines.extend(tb.node_sets.iter().map(|(n, v)| format!(".nodeset V({})={}", n, v)));
+        lines.extend(tb.initial_conditions.iter().map(|(n, v)| format!(".ic V({})={}", n, dec(d, x, *v))));
+        lines.extend(tb.node_sets.iter().map(|(n, v)| format!(".nodeset V({})={}", n, dec(d, x, *v))));
 
         // A noise run produces `onoise_spectrum`/`inoise_spectrum`, not node
         // voltages, so a node-name save list can never name them. ngspice then
@@ -467,7 +485,7 @@ pub(super) fn netlist(d: Dialect, ir: &CircuitIR) -> Result<String, CodeGenError
         }
         lines.extend(tb.extra_lines.iter().cloned());
         for a in &tb.analyses {
-            lines.push(analysis(d, a)?);
+            lines.push(analysis(d, x, a)?);
         }
     }
 
@@ -475,47 +493,38 @@ pub(super) fn netlist(d: Dialect, ir: &CircuitIR) -> Result<String, CodeGenError
     Ok(lines.join("\n"))
 }
 
-pub(crate) fn component(d: Dialect, comp: &Component) -> Result<String, CodeGenError> {
+pub(crate) fn component(d: Dialect, x: bool, comp: &Component) -> Result<String, CodeGenError> {
     Ok(match comp {
-        Component::Resistor { name, n1, n2, value: v, model, params: p } => {
+        Component::Resistor { name, n1, n2, value: v, model, params: p }
+        | Component::Capacitor { name, n1, n2, value: v, model, params: p }
+        | Component::Inductor { name, n1, n2, value: v, model, params: p } => {
+            let letter = match comp { Component::Resistor { .. } => 'R', Component::Capacitor { .. } => 'C', _ => 'L' };
             if model.is_some() && d == Dialect::Ltspice {
-                return Err(CodeGenError::UnsupportedComponent { backend: "ltspice".into(), component: format!("R{name}: model reference") });
+                return Err(CodeGenError::UnsupportedComponent { backend: "ltspice".into(), component: format!("{letter}{name}: model reference") });
             }
-            format!("R{} {} {}{}{}", name, n1, n2, rclvalue(d, v, model), params(p))
-        }
-        Component::Capacitor { name, n1, n2, value: v, model, params: p } => {
-            if model.is_some() && d == Dialect::Ltspice {
-                return Err(CodeGenError::UnsupportedComponent { backend: "ltspice".into(), component: format!("C{name}: model reference") });
-            }
-            format!("C{} {} {}{}{}", name, n1, n2, rclvalue(d, v, model), params(p))
-        }
-        Component::Inductor { name, n1, n2, value: v, model, params: p } => {
-            if model.is_some() && d == Dialect::Ltspice {
-                return Err(CodeGenError::UnsupportedComponent { backend: "ltspice".into(), component: format!("L{name}: model reference") });
-            }
-            format!("L{} {} {}{}{}", name, n1, n2, rclvalue(d, v, model), params(p))
+            format!("{letter}{} {} {}{}{}", name, n1, n2, rclvalue(d, x, v, model), params(p))
         }
         Component::MutualInductor { name, inductor1, inductor2, coupling } => {
-            format!("K{} L{} L{} {}", name, inductor1, inductor2, coupling)
+            format!("K{} L{} L{} {}", name, inductor1, inductor2, dec(d, x, *coupling))
         }
         Component::VoltageSource { name, np, nm, value: v, ac_magnitude, ac_phase, waveform: wf }
         | Component::CurrentSource { name, np, nm, value: v, ac_magnitude, ac_phase, waveform: wf } => {
             let letter = if matches!(comp, Component::VoltageSource { .. }) { 'V' } else { 'I' };
-            let mut s = format!("{}{} {} {} {}", letter, name, np, nm, value(d, v));
+            let mut s = format!("{}{} {} {} {}", letter, name, np, nm, value(d, x, v));
             if let Some(mag) = ac_magnitude {
-                s.push_str(&format!(" AC {}", mag));
+                s.push_str(&format!(" AC {}", dec(d, x, *mag)));
                 if let Some(phase) = ac_phase {
-                    s.push_str(&format!(" {}", phase));
+                    s.push_str(&format!(" {}", dec(d, x, *phase)));
                 }
             }
             if let Some(wf) = wf {
-                s.push_str(&format!(" {}", waveform(d, wf)));
+                s.push_str(&format!(" {}", waveform(d, x, wf)));
             }
             s
         }
         Component::BehavioralVoltage { name, np, nm, expression } => {
             if laplace::is_laplace(expression) {
-                return laplace_source(d, name, np, nm, expression, false);
+                return laplace_source(d, x, name, np, nm, expression, false);
             }
             if d == Dialect::Hspice {
                 return Ok(format!("E{} {} {} vol='{}'", name, np, nm, expression));
@@ -528,7 +537,7 @@ pub(crate) fn component(d: Dialect, comp: &Component) -> Result<String, CodeGenE
         }
         Component::BehavioralCurrent { name, np, nm, expression } => {
             if laplace::is_laplace(expression) {
-                return laplace_source(d, name, np, nm, expression, true);
+                return laplace_source(d, x, name, np, nm, expression, true);
             }
             if d == Dialect::Hspice {
                 return Ok(format!("G{} {} {} cur='{}'", name, np, nm, expression));
@@ -538,18 +547,18 @@ pub(crate) fn component(d: Dialect, comp: &Component) -> Result<String, CodeGenE
             }
             format!("B{} {} {} I={}", name, np, nm, expression)
         }
-        Component::Vcvs { name, np, nm, ncp, ncm, gain } => format!("E{} {} {} {} {} {}", name, np, nm, ncp, ncm, gain),
+        Component::Vcvs { name, np, nm, ncp, ncm, gain } => format!("E{} {} {} {} {} {}", name, np, nm, ncp, ncm, dec(d, x, *gain)),
         Component::Vccs { name, np, nm, ncp, ncm, transconductance } => {
-            format!("G{} {} {} {} {} {}", name, np, nm, ncp, ncm, transconductance)
+            format!("G{} {} {} {} {} {}", name, np, nm, ncp, ncm, dec(d, x, *transconductance))
         }
-        Component::Cccs { name, np, nm, vsense, gain } => format!("F{} {} {} {} {}", name, np, nm, vsense, gain),
+        Component::Cccs { name, np, nm, vsense, gain } => format!("F{} {} {} {} {}", name, np, nm, vsense, dec(d, x, *gain)),
         Component::Poly { name, letter, np, nm, controls, coeffs } => {
             let dims = if matches!(letter, 'E' | 'G') { controls.len() / 2 } else { controls.len() };
-            let k: Vec<String> = coeffs.iter().map(|c| super::format_spice_number(*c)).collect();
+            let k: Vec<String> = coeffs.iter().map(|c| num(d, x, *c)).collect();
             format!("{letter}{name} {np} {nm} POLY({dims}) {} {}", controls.join(" "), k.join(" "))
         }
         Component::Ccvs { name, np, nm, vsense, transresistance } => {
-            format!("H{} {} {} {} {}", name, np, nm, vsense, transresistance)
+            format!("H{} {} {} {} {}", name, np, nm, vsense, dec(d, x, *transresistance))
         }
         Component::Diode { name, np, nm, model, params: p } => format!("D{} {} {} {}{}", name, np, nm, model, params(p)),
         Component::Bjt { name, nc, nb, ne, extra_nodes, model, params: p } => {
@@ -564,7 +573,7 @@ pub(crate) fn component(d: Dialect, comp: &Component) -> Result<String, CodeGenE
         Component::VSwitch { name, np, nm, ncp, ncm, model } => format!("S{} {} {} {} {} {}", name, np, nm, ncp, ncm, model),
         Component::ISwitch { name, np, nm, vcontrol, model } => format!("W{} {} {} {} {}", name, np, nm, vcontrol, model),
         Component::TLine { name, inp, inm, outp, outm, z0, td } => {
-            format!("T{} {} {} {} {} Z0={} TD={}", name, inp, inm, outp, outm, z0, td)
+            format!("T{} {} {} {} {} Z0={} TD={}", name, inp, inm, outp, outm, dec(d, x, *z0), dec(d, x, *td))
         }
         Component::Xspice { name, .. } if matches!(d, Dialect::Hspice | Dialect::Xyce) => {
             return Err(CodeGenError::UnsupportedComponent {
@@ -586,30 +595,30 @@ pub(crate) fn component(d: Dialect, comp: &Component) -> Result<String, CodeGenE
     })
 }
 
-fn analysis(d: Dialect, a: &Analysis) -> Result<String, CodeGenError> {
+fn analysis(d: Dialect, x: bool, a: &Analysis) -> Result<String, CodeGenError> {
     let (lt, ng, hs) = (d == Dialect::Ltspice, ngspice(d), d == Dialect::Hspice);
     Ok(match a {
         Analysis::Op => ".op".into(),
         Analysis::Dc { sweeps } => {
             let mut s = String::from(".dc");
             for sw in sweeps {
-                s.push_str(&format!(" {} {} {} {}", sw.source, num(sw.start), num(sw.stop), num(sw.step)));
+                s.push_str(&format!(" {} {} {} {}", sw.source, num(d, x, sw.start), num(d, x, sw.stop), num(d, x, sw.step)));
             }
             s
         }
         Analysis::Ac { variation, points, start, stop } => {
-            format!(".ac {} {} {} {}", variation, points, num(*start), num(*stop))
+            format!(".ac {} {} {} {}", variation, points, num(d, x, *start), num(d, x, *stop))
         }
         // HSPICE reads extra positional fields as further step/stop
         // segments, so the start is `START=` and the step cap `delmax`.
         Analysis::Transient { step, stop, start, max_step, uic } if hs => {
             let mut s = String::new();
             if let Some(ms) = max_step {
-                s.push_str(&format!(".option delmax={}\n", num(*ms)));
+                s.push_str(&format!(".option delmax={}\n", num(d, x, *ms)));
             }
-            s.push_str(&format!(".tran {} {}", num(*step), num(*stop)));
+            s.push_str(&format!(".tran {} {}", num(d, x, *step), num(d, x, *stop)));
             if let Some(st) = start {
-                s.push_str(&format!(" START={}", num(*st)));
+                s.push_str(&format!(" START={}", num(d, x, *st)));
             }
             if *uic {
                 s.push_str(" UIC");
@@ -617,16 +626,16 @@ fn analysis(d: Dialect, a: &Analysis) -> Result<String, CodeGenError> {
             s
         }
         Analysis::Transient { step, stop, start, max_step, uic } => {
-            let mut s = format!(".tran {} {}", num(*step), num(*stop));
+            let mut s = format!(".tran {} {}", num(d, x, *step), num(d, x, *stop));
             if let Some(st) = start {
-                s.push_str(&format!(" {}", num(*st)));
+                s.push_str(&format!(" {}", num(d, x, *st)));
             }
             if let Some(ms) = max_step {
                 if start.is_none() {
                     // Need a placeholder for start when max_step is given
                     s.push_str(" 0");
                 }
-                s.push_str(&format!(" {}", num(*ms)));
+                s.push_str(&format!(" {}", num(d, x, *ms)));
             }
             if *uic {
                 s.push_str(" UIC");
@@ -643,10 +652,10 @@ fn analysis(d: Dialect, a: &Analysis) -> Result<String, CodeGenError> {
             if hs {
                 return Ok(format!(
                     ".ac {} {} {} {}\n.noise {} {} {}",
-                    variation, points, num(*start), num(*stop), out_spec, source, points_per_summary.unwrap_or(0),
+                    variation, points, num(d, x, *start), num(d, x, *stop), out_spec, source, points_per_summary.unwrap_or(0),
                 ));
             }
-            let mut s = format!(".noise {} {} {} {} {} {}", out_spec, source, variation, points, num(*start), num(*stop));
+            let mut s = format!(".noise {} {} {} {} {} {}", out_spec, source, variation, points, num(d, x, *start), num(d, x, *stop));
             // `pts_per_summary` is an ngspice/SPICE3 extension; LTspice's
             // `.noise` card stops at the stop frequency.
             if let (Some(pps), true) = (points_per_summary, ng || d == Dialect::Xyce) {
@@ -665,7 +674,7 @@ fn analysis(d: Dialect, a: &Analysis) -> Result<String, CodeGenError> {
             // "can't parse '10': ignored" and then fail the analysis with
             // "lengths don't match" because it treats the count as an output
             // vector. LTspice's card *does* take `[Nharmonics]`.
-            let mut s = format!(".four {}", num(*fundamental));
+            let mut s = format!(".four {}", num(d, x, *fundamental));
             if let (Some(nh), true) = (num_harmonics, lt) {
                 s.push_str(&format!(" {}", nh));
             }
@@ -679,7 +688,7 @@ fn analysis(d: Dialect, a: &Analysis) -> Result<String, CodeGenError> {
         Analysis::Sensitivity { output, ac } if ng || (hs && ac.is_none()) => {
             let mut s = format!(".sens {}", output);
             if let Some(p) = ac {
-                s.push_str(&format!(" AC {} {} {} {}", p.variation, p.points, num(p.start), num(p.stop)));
+                s.push_str(&format!(" AC {} {} {} {}", p.variation, p.points, num(d, x, p.start), num(d, x, p.stop)));
             }
             s
         }
@@ -687,7 +696,7 @@ fn analysis(d: Dialect, a: &Analysis) -> Result<String, CodeGenError> {
             format!(".pz {} {} {} {} {} {}", node1, node2, node3, node4, tf_type, pz_type)
         }
         Analysis::Distortion { variation, points, start, stop, f2overf1 } if ng => {
-            let mut s = format!(".disto {} {} {} {}", variation, points, num(*start), num(*stop));
+            let mut s = format!(".disto {} {} {} {}", variation, points, num(d, x, *start), num(d, x, *stop));
             if let Some(ratio) = f2overf1 {
                 s.push_str(&format!(" {}", ratio));
             }
@@ -719,11 +728,9 @@ mod tests {
     use std::collections::BTreeMap;
 
     fn sample_resistor_divider() -> CircuitIR {
-        CircuitIR { raw_dialect: None, globals: vec![], functions: vec![],
+        CircuitIR {
             top: Subcircuit {
                 name: "Voltage Divider".into(),
-                ports: vec![],
-                parameters: vec![],
                 components: vec![
                     Component::VoltageSource {
                         name: "in".into(),
@@ -750,32 +757,10 @@ mod tests {
                         model: None,
                         params: vec![],
                     },
-                ],
-                instances: vec![],
-                models: vec![],
-                raw_spice: vec![],
-                includes: vec![],
-                libs: vec![],
-                osdi_loads: vec![],
-                verilog_blocks: vec![],
-            },
-            testbench: Some(Testbench { prints: vec![],
+                ], ..Default::default() },
+            testbench: Some(Testbench {
                 dut: "Voltage Divider".into(),
-                stimulus: vec![],
-                analyses: vec![Analysis::Op],
-                options: SimOptions::default(),
-                saves: vec![],
-                measures: vec![],
-                temperature: None,
-                nominal_temperature: None,
-                initial_conditions: vec![],
-                node_sets: vec![],
-                step_params: vec![],
-                extra_lines: vec![],
-            }),
-            subcircuit_defs: vec![],
-            model_libraries: vec![],
-        }
+                analyses: vec![Analysis::Op], ..Default::default() }), ..Default::default() }
     }
 
     #[test]
@@ -806,11 +791,9 @@ mod tests {
 
     #[test]
     fn test_mosfet_circuit() {
-        let ir = CircuitIR { raw_dialect: None, globals: vec![], functions: vec![],
+        let ir = CircuitIR {
             top: Subcircuit {
                 name: "CMOS Inverter".into(),
-                ports: vec![],
-                parameters: vec![],
                 components: vec![
                     Component::Mosfet {
                         name: "1".into(),
@@ -840,39 +823,19 @@ mod tests {
                         waveform: None,
                     },
                 ],
-                instances: vec![],
                 models: vec![
                     ModelDef {
                         name: "nmos_3p3".into(),
                         kind: "NMOS".into(),
                         parameters: vec![("VTO".into(), "0.7".into()), ("KP".into(), "110e-6".into())],
                     },
-                ],
-                raw_spice: vec![],
-                includes: vec![],
-                libs: vec![],
-                osdi_loads: vec![],
-                verilog_blocks: vec![],
-            },
-            testbench: Some(Testbench { prints: vec![],
+                ], ..Default::default() },
+            testbench: Some(Testbench {
                 dut: "CMOS Inverter".into(),
-                stimulus: vec![],
                 analyses: vec![
                     Analysis::Dc { sweeps: vec![DcSweep { source: "Vdd".into(), start: 0.0, stop: 3.3, step: 0.01 }] },
                 ],
-                options: SimOptions::default(),
-                saves: vec![],
-                measures: vec![],
-                temperature: Some(27.0),
-                nominal_temperature: None,
-                initial_conditions: vec![],
-                node_sets: vec![],
-                step_params: vec![],
-                extra_lines: vec![],
-            }),
-            subcircuit_defs: vec![],
-            model_libraries: vec![],
-        };
+                temperature: Some(27.0), ..Default::default() }), ..Default::default() };
 
         let cg = Dialect::Ngspice;
         let netlist = netlist(cg, &ir).unwrap();
@@ -885,11 +848,9 @@ mod tests {
 
     #[test]
     fn test_subcircuit_instances() {
-        let ir = CircuitIR { raw_dialect: None, globals: vec![], functions: vec![],
+        let ir = CircuitIR {
             top: Subcircuit {
                 name: "Top".into(),
-                ports: vec![],
-                parameters: vec![],
                 components: vec![
                     Component::VoltageSource {
                         name: "dd".into(),
@@ -906,17 +867,8 @@ mod tests {
                         name: "1".into(),
                         subcircuit: "inverter".into(),
                         port_mapping: vec!["in".into(), "out".into(), "vdd".into(), "0".into()],
-                        parameters: vec![("wp".into(), "2u".into())],
-                    },
-                ],
-                models: vec![],
-                raw_spice: vec![],
-                includes: vec![],
-                libs: vec![],
-                osdi_loads: vec![],
-                verilog_blocks: vec![],
-            },
-            testbench: None,
+                        parameters: vec![("wp".into(), "2u".into())], ..Default::default() },
+                ], ..Default::default() },
             subcircuit_defs: vec![
                 Subcircuit {
                     name: "inverter".into(),
@@ -949,18 +901,8 @@ mod tests {
                             model: "nmos".into(),
                             params: vec![("W".into(), "{wn}".into()), ("L".into(), "180n".into())],
                         },
-                    ],
-                    instances: vec![],
-                    models: vec![],
-                    raw_spice: vec![],
-                    includes: vec![],
-                    libs: vec![],
-                    osdi_loads: vec![],
-                    verilog_blocks: vec![],
-                },
-            ],
-            model_libraries: vec![],
-        };
+                    ], ..Default::default() },
+            ], ..Default::default() };
 
         let cg = Dialect::Ngspice;
         let netlist = netlist(cg, &ir).unwrap();
@@ -972,11 +914,9 @@ mod tests {
 
     #[test]
     fn test_waveforms_sin_pulse_pwl() {
-        let ir = CircuitIR { raw_dialect: None, globals: vec![], functions: vec![],
+        let ir = CircuitIR {
             top: Subcircuit {
                 name: "Waveforms".into(),
-                ports: vec![],
-                parameters: vec![],
                 components: vec![
                     Component::VoltageSource {
                         name: "sin".into(),
@@ -1022,19 +962,7 @@ mod tests {
                             values: vec![((0.0).into(), (0.0).into()), ((1e-6).into(), (3.3).into()), ((2e-6).into(), (0.0).into())],
                         }),
                     },
-                ],
-                instances: vec![],
-                models: vec![],
-                raw_spice: vec![],
-                includes: vec![],
-                libs: vec![],
-                osdi_loads: vec![],
-                verilog_blocks: vec![],
-            },
-            testbench: None,
-            subcircuit_defs: vec![],
-            model_libraries: vec![],
-        };
+                ], ..Default::default() }, ..Default::default() };
 
         let cg = Dialect::Ngspice;
         let netlist = netlist(cg, &ir).unwrap();
@@ -1048,28 +976,28 @@ mod tests {
         let cg = Dialect::Ngspice;
 
         // Op
-        assert_eq!(analysis(cg, &Analysis::Op).unwrap(), ".op");
+        assert_eq!(analysis(cg, false, &Analysis::Op).unwrap(), ".op");
 
         // DC
         let dc = Analysis::Dc {
             sweeps: vec![DcSweep { source: "V1".into(), start: 0.0, stop: 5.0, step: 0.1 }],
         };
-        let dc_str = analysis(cg, &dc).unwrap();
+        let dc_str = analysis(cg, false, &dc).unwrap();
         assert!(dc_str.starts_with(".dc V1"), "dc: {}", dc_str);
 
         // AC
         let ac = Analysis::Ac { variation: "dec".into(), points: 100, start: 1.0, stop: 1e9 };
-        let ac_str = analysis(cg, &ac).unwrap();
+        let ac_str = analysis(cg, false, &ac).unwrap();
         assert!(ac_str.starts_with(".ac dec 100"), "ac: {}", ac_str);
 
         // Transient
         let tran = Analysis::Transient { step: 1e-9, stop: 1e-6, start: None, max_step: None, uic: false };
-        let tran_str = analysis(cg, &tran).unwrap();
+        let tran_str = analysis(cg, false, &tran).unwrap();
         assert!(tran_str.starts_with(".tran 1n"), "tran: {}", tran_str);
 
         // Transient with UIC
         let tran_uic = Analysis::Transient { step: 1e-9, stop: 1e-6, start: None, max_step: None, uic: true };
-        let tran_uic_str = analysis(cg, &tran_uic).unwrap();
+        let tran_uic_str = analysis(cg, false, &tran_uic).unwrap();
         assert!(tran_uic_str.contains("UIC"), "tran_uic: {}", tran_uic_str);
 
         // Noise
@@ -1083,29 +1011,29 @@ mod tests {
             stop: 1e6,
             points_per_summary: None,
         };
-        let noise_str = analysis(cg, &noise).unwrap();
+        let noise_str = analysis(cg, false, &noise).unwrap();
         assert!(noise_str.starts_with(".noise V(out) V1 dec"), "noise: {}", noise_str);
 
         // TF
         let tf = Analysis::Tf { output: "V(out)".into(), source: "Vin".into() };
-        assert_eq!(analysis(cg, &tf).unwrap(), ".tf V(out) Vin");
+        assert_eq!(analysis(cg, false, &tf).unwrap(), ".tf V(out) Vin");
 
         // Sensitivity
         let sens = Analysis::Sensitivity { output: "V(out)".into(), ac: None };
-        assert_eq!(analysis(cg, &sens).unwrap(), ".sens V(out)");
+        assert_eq!(analysis(cg, false, &sens).unwrap(), ".sens V(out)");
 
         // PoleZero
         let pz = Analysis::PoleZero {
             node1: "1".into(), node2: "0".into(), node3: "3".into(), node4: "0".into(),
             tf_type: "vol".into(), pz_type: "pz".into(),
         };
-        assert_eq!(analysis(cg, &pz).unwrap(), ".pz 1 0 3 0 vol pz");
+        assert_eq!(analysis(cg, false, &pz).unwrap(), ".pz 1 0 3 0 vol pz");
 
         // Distortion
         let disto = Analysis::Distortion {
             variation: "dec".into(), points: 10, start: 1e3, stop: 1e6, f2overf1: None,
         };
-        let disto_str = analysis(cg, &disto).unwrap();
+        let disto_str = analysis(cg, false, &disto).unwrap();
         assert!(disto_str.starts_with(".disto dec 10"), "disto: {}", disto_str);
 
         // Fourier
@@ -1116,12 +1044,12 @@ mod tests {
         };
         // ngspice's `.four` card has no harmonic-count field: a count there is
         // read as an output vector and kills the analysis.
-        let four_str = analysis(cg, &four).unwrap();
+        let four_str = analysis(cg, false, &four).unwrap();
         assert_eq!(four_str, ".four 1k V(out)", "four: {}", four_str);
 
         // LTspice's card does take `[Nharmonics]`.
         let cg_lt = Dialect::Ltspice;
-        assert_eq!(analysis(cg_lt, &four).unwrap(), ".four 1k 10 V(out)");
+        assert_eq!(analysis(cg_lt, false, &four).unwrap(), ".four 1k 10 V(out)");
     }
 
     #[test]
@@ -1165,24 +1093,10 @@ mod tests {
 
     #[test]
     fn test_osdi_ngspice_only() {
-        let ir = CircuitIR { raw_dialect: None, globals: vec![], functions: vec![],
+        let ir = CircuitIR {
             top: Subcircuit {
                 name: "OSDI Test".into(),
-                ports: vec![],
-                parameters: vec![],
-                components: vec![],
-                instances: vec![],
-                models: vec![],
-                raw_spice: vec![],
-                includes: vec![],
-                libs: vec![],
-                osdi_loads: vec!["/path/to/model.osdi".into()],
-                verilog_blocks: vec![],
-            },
-            testbench: None,
-            subcircuit_defs: vec![],
-            model_libraries: vec![],
-        };
+                osdi_loads: vec!["/path/to/model.osdi".into()], ..Default::default() }, ..Default::default() };
 
         // ngspice wraps OSDI loads in .control block
         let cg_ng = Dialect::Ngspice;
@@ -1206,22 +1120,20 @@ mod tests {
         };
 
         let cg_ng = Dialect::Ngspice;
-        let ng_str = component(cg_ng, &comp).unwrap();
+        let ng_str = component(cg_ng, false, &comp).unwrap();
         assert!(ng_str.starts_with("A1 "), "ng xspice: {}", ng_str);
         assert!(ng_str.contains("d_and"), "ng xspice model: {}", ng_str);
 
         let cg_lt = Dialect::Ltspice;
-        let lt_str = component(cg_lt, &comp).unwrap();
+        let lt_str = component(cg_lt, false, &comp).unwrap();
         assert!(lt_str.starts_with("* XSPICE"), "lt xspice should be comment: {}", lt_str);
     }
 
     #[test]
     fn test_step_params_ltspice_ok_ngspice_errors() {
-        let ir = CircuitIR { raw_dialect: None, globals: vec![], functions: vec![],
+        let ir = CircuitIR {
             top: Subcircuit {
                 name: "Step Test".into(),
-                ports: vec![],
-                parameters: vec![],
                 components: vec![
                     Component::Resistor {
                         name: "1".into(),
@@ -1231,38 +1143,17 @@ mod tests {
                         model: None,
                         params: vec![],
                     },
-                ],
-                instances: vec![],
-                models: vec![],
-                raw_spice: vec![],
-                includes: vec![],
-                libs: vec![],
-                osdi_loads: vec![],
-                verilog_blocks: vec![],
-            },
-            testbench: Some(Testbench { prints: vec![],
+                ], ..Default::default() },
+            testbench: Some(Testbench {
                 dut: "Step Test".into(),
-                stimulus: vec![],
                 analyses: vec![Analysis::Op],
-                options: SimOptions::default(),
-                saves: vec![],
-                measures: vec![],
-                temperature: None,
-                nominal_temperature: None,
-                initial_conditions: vec![],
-                node_sets: vec![],
                 step_params: vec![StepParam {
                     param: "rval".into(),
                     start: 1000.0,
                     stop: 10000.0,
                     step: 1000.0,
                     sweep_type: None,
-                }],
-                extra_lines: vec![],
-            }),
-            subcircuit_defs: vec![],
-            model_libraries: vec![],
-        };
+                }], ..Default::default() }), ..Default::default() };
 
         // LTspice emits a native .step
         let cg = Dialect::Ltspice;
@@ -1312,31 +1203,19 @@ mod tests {
         backend_paths.insert("ngspice".into(), "/pdk/ngspice/sky130.lib".into());
         backend_paths.insert("spectre".into(), "/pdk/spectre/sky130.scs".into());
 
-        let ir = CircuitIR { raw_dialect: None, globals: vec![], functions: vec![],
+        let ir = CircuitIR {
             top: Subcircuit {
-                name: "pdk_test".into(),
-                ports: vec![], parameters: vec![], components: vec![],
-                instances: vec![], models: vec![], raw_spice: vec![],
-                includes: vec![], libs: vec![], osdi_loads: vec![],
-                verilog_blocks: vec![],
-            },
-            testbench: Some(Testbench { prints: vec![],
-                dut: "pdk_test".into(), stimulus: vec![],
-                analyses: vec![Analysis::Op],
-                options: SimOptions::default(), saves: vec![],
-                measures: vec![], temperature: None, nominal_temperature: None,
-                initial_conditions: vec![], node_sets: vec![],
-                step_params: vec![], extra_lines: vec![],
-            }),
-            subcircuit_defs: vec![],
+                name: "pdk_test".into(), ..Default::default() },
+            testbench: Some(Testbench {
+                dut: "pdk_test".into(),
+                analyses: vec![Analysis::Op], ..Default::default() }),
             model_libraries: vec![ModelLibrary {
                 name: "sky130".into(),
                 path: "/pdk/default/sky130.lib".into(),
                 corner: Some("tt".into()),
                 backend_paths,
                 setup_includes: vec![],
-            }],
-        };
+            }], ..Default::default() };
 
         // Ngspice selects its path
         let ng = Dialect::Ngspice;
@@ -1354,23 +1233,16 @@ mod tests {
 
     #[test]
     fn test_model_library_corner_switch() {
-        let ir_tt = CircuitIR { raw_dialect: None, globals: vec![], functions: vec![],
+        let ir_tt = CircuitIR {
             top: Subcircuit {
-                name: "corner".into(),
-                ports: vec![], parameters: vec![], components: vec![],
-                instances: vec![], models: vec![], raw_spice: vec![],
-                includes: vec![], libs: vec![], osdi_loads: vec![],
-                verilog_blocks: vec![],
-            },
-            testbench: None, subcircuit_defs: vec![],
+                name: "corner".into(), ..Default::default() },
             model_libraries: vec![ModelLibrary {
                 name: "sky130".into(),
                 path: "/pdk/sky130.lib".into(),
                 corner: Some("tt".into()),
                 backend_paths: BTreeMap::new(),
                 setup_includes: vec![],
-            }],
-        };
+            }], ..Default::default() };
 
         let mut ir_ss = ir_tt.clone();
         ir_ss.model_libraries[0].corner = Some("ss".into());
@@ -1387,23 +1259,16 @@ mod tests {
 
     #[test]
     fn test_model_library_no_corner_uses_include() {
-        let ir = CircuitIR { raw_dialect: None, globals: vec![], functions: vec![],
+        let ir = CircuitIR {
             top: Subcircuit {
-                name: "nocorner".into(),
-                ports: vec![], parameters: vec![], components: vec![],
-                instances: vec![], models: vec![], raw_spice: vec![],
-                includes: vec![], libs: vec![], osdi_loads: vec![],
-                verilog_blocks: vec![],
-            },
-            testbench: None, subcircuit_defs: vec![],
+                name: "nocorner".into(), ..Default::default() },
             model_libraries: vec![ModelLibrary {
                 name: "custom".into(),
                 path: "/models/custom.lib".into(),
                 corner: None,
                 backend_paths: BTreeMap::new(),
                 setup_includes: vec![],
-            }],
-        };
+            }], ..Default::default() };
 
         let cg = Dialect::Ngspice;
         let netlist = netlist(cg, &ir).unwrap();
@@ -1415,25 +1280,13 @@ mod tests {
 
     #[test]
     fn test_ngspice_uses_save() {
-        let ir = CircuitIR { raw_dialect: None, globals: vec![], functions: vec![],
+        let ir = CircuitIR {
             top: Subcircuit {
-                name: "ng_save".into(),
-                ports: vec![], parameters: vec![],
-                components: vec![], instances: vec![], models: vec![],
-                raw_spice: vec![], includes: vec![], libs: vec![],
-                osdi_loads: vec![], verilog_blocks: vec![],
-            },
-            testbench: Some(Testbench { prints: vec![],
-                dut: "ng_save".into(), stimulus: vec![],
+                name: "ng_save".into(), ..Default::default() },
+            testbench: Some(Testbench {
+                dut: "ng_save".into(),
                 analyses: vec![Analysis::Op],
-                options: SimOptions::default(),
-                saves: vec!["V(a)".into()],
-                measures: vec![], temperature: None, nominal_temperature: None,
-                initial_conditions: vec![], node_sets: vec![],
-                step_params: vec![], extra_lines: vec![],
-            }),
-            subcircuit_defs: vec![], model_libraries: vec![],
-        };
+                saves: vec!["V(a)".into()], ..Default::default() }), ..Default::default() };
 
         let ng = Dialect::Ngspice;
         let netlist = netlist(ng, &ir).unwrap();
@@ -1448,16 +1301,16 @@ mod tests {
             node3: "3".into(), node4: "0".into(),
             tf_type: "vol".into(), pz_type: "pz".into(),
         };
-        assert!(analysis(cg_xy, &pz).is_err(), "pz should error on ltspice");
+        assert!(analysis(cg_xy, false, &pz).is_err(), "pz should error on ltspice");
 
         let disto = Analysis::Distortion {
             variation: "dec".into(), points: 10,
             start: 1e3, stop: 1e6, f2overf1: None,
         };
-        assert!(analysis(cg_xy, &disto).is_err(), "disto should error on ltspice");
+        assert!(analysis(cg_xy, false, &disto).is_err(), "disto should error on ltspice");
 
         let sens = Analysis::Sensitivity { output: "V(out)".into(), ac: None };
-        assert!(analysis(cg_xy, &sens).is_err(), "sens should error on ltspice");
+        assert!(analysis(cg_xy, false, &sens).is_err(), "sens should error on ltspice");
     }
 
     #[test]
@@ -1468,7 +1321,7 @@ mod tests {
             node3: "3".into(), node4: "0".into(),
             tf_type: "vol".into(), pz_type: "pz".into(),
         };
-        assert!(analysis(cg_ng, &pz).is_ok(), "pz should work on ngspice");
+        assert!(analysis(cg_ng, false, &pz).is_ok(), "pz should work on ngspice");
     }
 
     #[test]
@@ -1482,7 +1335,7 @@ mod tests {
             ac_magnitude: Some(1.0), ac_phase: None,
             waveform: None,
         };
-        let s = component(cg, &v_ac).unwrap();
+        let s = component(cg, false, &v_ac).unwrap();
         assert_eq!(s, "Vin inp 0 0 AC 1", "ac mag only: {}", s);
 
         // AC magnitude + phase
@@ -1492,7 +1345,7 @@ mod tests {
             ac_magnitude: Some(1.0), ac_phase: Some(45.0),
             waveform: None,
         };
-        let s = component(cg, &v_ac_phase).unwrap();
+        let s = component(cg, false, &v_ac_phase).unwrap();
         assert_eq!(s, "Vin inp 0 0 AC 1 45", "ac mag+phase: {}", s);
 
         // No AC — regression check
@@ -1502,7 +1355,7 @@ mod tests {
             ac_magnitude: None, ac_phase: None,
             waveform: None,
         };
-        let s = component(cg, &v_dc).unwrap();
+        let s = component(cg, false, &v_dc).unwrap();
         assert_eq!(s, "Vdd vdd 0 3.3", "dc only: {}", s);
         assert!(!s.contains("AC"), "no AC in dc-only source");
     }
@@ -1516,28 +1369,20 @@ mod tests {
             ac_magnitude: Some(1e-3), ac_phase: Some(90.0),
             waveform: None,
         };
-        let s = component(cg, &i_ac).unwrap();
+        let s = component(cg, false, &i_ac).unwrap();
         assert!(s.contains("AC 0.001 90"), "current AC: {}", s);
     }
 
     #[test]
     fn test_pdk_netlist_lib_before_subckt_and_components() {
-        let ir = CircuitIR { raw_dialect: None, globals: vec![], functions: vec![],
+        let ir = CircuitIR {
             top: Subcircuit {
                 name: "cs_amp_tb".into(),
-                ports: vec![], parameters: vec![],
-                components: vec![],
                 instances: vec![Instance {
                     name: "dut".into(),
                     subcircuit: "cs_amp".into(),
-                    port_mapping: vec!["vdd".into(), "vin".into(), "vout".into()],
-                    parameters: vec![],
-                }],
-                models: vec![], raw_spice: vec![],
-                includes: vec![], libs: vec![], osdi_loads: vec![],
-                verilog_blocks: vec![],
-            },
-            testbench: Some(Testbench { prints: vec![],
+                    port_mapping: vec!["vdd".into(), "vin".into(), "vout".into()], ..Default::default() }], ..Default::default() },
+            testbench: Some(Testbench {
                 dut: "cs_amp_tb".into(), stimulus: vec![
                     Component::VoltageSource {
                         name: "dd".into(), np: "vdd".into(), nm: "0".into(),
@@ -1546,12 +1391,7 @@ mod tests {
                         waveform: None,
                     },
                 ],
-                analyses: vec![Analysis::Op],
-                options: SimOptions::default(), saves: vec![],
-                measures: vec![], temperature: None, nominal_temperature: None,
-                initial_conditions: vec![], node_sets: vec![],
-                step_params: vec![], extra_lines: vec![],
-            }),
+                analyses: vec![Analysis::Op], ..Default::default() }),
             subcircuit_defs: vec![Subcircuit {
                 name: "cs_amp".into(),
                 ports: vec![
@@ -1559,7 +1399,6 @@ mod tests {
                     Port { name: "vin".into(), direction: PortDirection::Input },
                     Port { name: "vout".into(), direction: PortDirection::Output },
                 ],
-                parameters: vec![], models: vec![],
                 components: vec![
                     Component::Resistor {
                         name: "drain".into(), n1: "vdd".into(), n2: "vout".into(),
@@ -1571,19 +1410,14 @@ mod tests {
                         model: "sky130_fd_pr__nfet_01v8".into(),
                         params: vec![],
                     },
-                ],
-                instances: vec![], raw_spice: vec![],
-                includes: vec![], libs: vec![], osdi_loads: vec![],
-                verilog_blocks: vec![],
-            }],
+                ], ..Default::default() }],
             model_libraries: vec![ModelLibrary {
                 name: "sky130".into(),
                 path: "/pdk/sky130.lib.spice".into(),
                 corner: Some("tt".into()),
                 backend_paths: BTreeMap::new(),
                 setup_includes: vec![],
-            }],
-        };
+            }], ..Default::default() };
 
         let cg = Dialect::Ngspice;
         let netlist = netlist(cg, &ir).unwrap();
@@ -1610,31 +1444,19 @@ mod tests {
 
     #[test]
     fn test_setup_includes_emitted_before_lib() {
-        let ir = CircuitIR { raw_dialect: None, globals: vec![], functions: vec![],
+        let ir = CircuitIR {
             top: Subcircuit {
-                name: "gf180_test".into(),
-                ports: vec![], parameters: vec![], components: vec![],
-                instances: vec![], models: vec![], raw_spice: vec![],
-                includes: vec![], libs: vec![], osdi_loads: vec![],
-                verilog_blocks: vec![],
-            },
-            testbench: Some(Testbench { prints: vec![],
-                dut: "gf180_test".into(), stimulus: vec![],
-                analyses: vec![Analysis::Op],
-                options: SimOptions::default(), saves: vec![],
-                measures: vec![], temperature: None, nominal_temperature: None,
-                initial_conditions: vec![], node_sets: vec![],
-                step_params: vec![], extra_lines: vec![],
-            }),
-            subcircuit_defs: vec![],
+                name: "gf180_test".into(), ..Default::default() },
+            testbench: Some(Testbench {
+                dut: "gf180_test".into(),
+                analyses: vec![Analysis::Op], ..Default::default() }),
             model_libraries: vec![ModelLibrary {
                 name: "gf180".into(),
                 path: "/pdk/gf180/sm141064.ngspice".into(),
                 corner: Some("typical".into()),
                 backend_paths: BTreeMap::new(),
                 setup_includes: vec!["/pdk/gf180/design.ngspice".into()],
-            }],
-        };
+            }], ..Default::default() };
 
         let cg = Dialect::Ngspice;
         let netlist = netlist(cg, &ir).unwrap();
@@ -1678,16 +1500,16 @@ mod tests {
             points_per_period: 128, harmonics: 10,
         };
         let sp = Analysis::SPar { variation: "dec".into(), points: 10, start: 1e6, stop: 1e10 };
-        assert_eq!(analysis(Dialect::Ngspice, &pss).unwrap(), ".pss 1000000000 0.0000001 v(out) 128 10");
-        assert_eq!(analysis(Dialect::Ngspice, &sp).unwrap(), ".sp dec 10 1000000 10000000000");
+        assert_eq!(analysis(Dialect::Ngspice, false, &pss).unwrap(), ".pss 1000000000 0.0000001 v(out) 128 10");
+        assert_eq!(analysis(Dialect::Ngspice, false, &sp).unwrap(), ".sp dec 10 1000000 10000000000");
         for a in [&pss, &sp] {
-            assert!(analysis(Dialect::Ltspice, a).is_err(), "{a:?}");
+            assert!(analysis(Dialect::Ltspice, false, a).is_err(), "{a:?}");
         }
         for a in [
             Analysis::HarmonicBalance { frequencies: vec![1e6], harmonics: vec![7] },
             Analysis::TransientNoise { step: 1e-9, stop: 1e-6 },
         ] {
-            assert!(matches!(analysis(Dialect::Ngspice, &a), Err(CodeGenError::UnsupportedAnalysis { .. })));
+            assert!(matches!(analysis(Dialect::Ngspice, false, &a), Err(CodeGenError::UnsupportedAnalysis { .. })));
         }
     }
 }

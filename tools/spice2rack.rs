@@ -386,15 +386,10 @@ fn main() {
         v
     });
     let out = PathBuf::from(value("-o").unwrap_or_else(|| ".".into()));
-    let dialect = match value("--dialect").as_deref() {
-        None | Some("ngspice") => Dialect::Ngspice,
-        Some("hspice") => Dialect::Hspice,
-        Some("ltspice") => Dialect::Ltspice,
-        Some("xyce") => Dialect::Xyce,
-        Some("spectre") => Dialect::Spectre,
-        Some("vacask") => Dialect::Vacask,
-        Some(other) => {
-            eprintln!("--dialect {other}: reads ngspice, hspice, ltspice, xyce, spectre or vacask");
+    let dialect = match value("--dialect").map_or(Ok(Dialect::Ngspice), |v| v.parse()) {
+        Ok(d @ (Dialect::Ngspice | Dialect::Hspice | Dialect::Ltspice | Dialect::Xyce | Dialect::Spectre | Dialect::Vacask)) => d,
+        _ => {
+            eprintln!("--dialect: reads ngspice, hspice, ltspice, xyce, spectre or vacask");
             std::process::exit(2);
         }
     };

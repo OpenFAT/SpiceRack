@@ -13,35 +13,13 @@ use spicerack::ir::*;
 
 fn sub(name: &str) -> Subcircuit {
     Subcircuit {
-        name: name.into(),
-        ports: vec![],
-        parameters: vec![],
-        components: vec![],
-        instances: vec![],
-        models: vec![],
-        raw_spice: vec![],
-        includes: vec![],
-        libs: vec![],
-        osdi_loads: vec![],
-        verilog_blocks: vec![],
-    }
+        name: name.into(), ..Default::default() }
 }
 
 fn tb(analyses: Vec<Analysis>) -> Testbench {
-    Testbench { prints: vec![],
+    Testbench {
         dut: "dialects".into(),
-        stimulus: vec![],
-        analyses,
-        options: SimOptions::default(),
-        saves: vec![],
-        measures: vec![],
-        temperature: None,
-        nominal_temperature: None,
-        initial_conditions: vec![],
-        node_sets: vec![],
-        step_params: vec![],
-        extra_lines: vec![],
-    }
+        analyses, ..Default::default() }
 }
 
 /// v(mid) = 0.5 (a parameter expression over a parametrised subcircuit),
@@ -94,9 +72,8 @@ fn circuit(analyses: Vec<Analysis>) -> CircuitIR {
         name: "1".into(),
         subcircuit: "load".into(),
         port_mapping: vec!["mid".into()],
-        parameters: vec![("r".into(), "2k".into())],
-    }];
-    CircuitIR { raw_dialect: None, globals: vec![], functions: vec![], top, testbench: Some(tb(analyses)), subcircuit_defs: vec![load], model_libraries: vec![] }
+        parameters: vec![("r".into(), "2k".into())], ..Default::default() }];
+    CircuitIR { top, testbench: Some(tb(analyses)), subcircuit_defs: vec![load], ..Default::default() }
 }
 
 #[test]
@@ -167,7 +144,7 @@ fn raw_spice_is_refused_not_dropped() {
         }
         assert!(netlist(&ir, Dialect::Ngspice).unwrap().contains(&line));
         // Imported ngspice text reaches ngspice and ESPice only.
-        ir.raw_dialect = Some("ngspice".into());
+        ir.raw_dialect = Some(Dialect::Ngspice);
         assert!(netlist(&ir, Dialect::Espice).is_ok());
         for d in [Dialect::Hspice, Dialect::Ltspice] {
             let e = netlist(&ir, d).unwrap_err().to_string();
@@ -287,7 +264,7 @@ fn caret_meaning_refused_across_dialects() {
         value: IrValue::Expression { expr: "a^b".into() },
         model: None, params: vec![],
     }];
-    let ir = CircuitIR { raw_dialect: Some("ltspice".into()), top, ..Default::default() };
+    let ir = CircuitIR { raw_dialect: Some(Dialect::Ltspice), top, ..Default::default() };
 
     let err = netlist(&ir, Dialect::Ngspice).unwrap_err();
     assert!(err.to_string().contains("a^b"), "{err}");

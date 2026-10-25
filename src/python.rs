@@ -288,7 +288,7 @@ impl PyCircuit {
         } else {
             return Err(PyKeyError::new_err(format!("Element '{name}' not found")));
         };
-        let deck = emit_ir_netlist(CircuitIR { raw_dialect: None, globals: vec![], functions: vec![], top: one, ..Default::default() }, "ngspice")?;
+        let deck = emit_ir_netlist(CircuitIR { top: one, ..Default::default() }, "ngspice")?;
         // Drop the title line and `.end`.
         let lines: Vec<&str> = deck.lines().collect();
         Ok(lines[1..lines.len() - 1].join("\n"))
@@ -340,11 +340,11 @@ impl PyCircuit {
 
 impl PyCircuit {
     fn ir(slf: &PyRef<'_, Self>) -> CircuitIR {
-        CircuitIR { raw_dialect: None, globals: vec![], functions: vec![],
+        CircuitIR {
             top: slf.as_super().inner.clone(),
             testbench: Some(slf.tb.clone()),
             subcircuit_defs: slf.defs.clone(),
-            model_libraries: vec![],
+            ..Default::default()
         }
     }
 }
@@ -843,7 +843,6 @@ analysis_class!(PySParamAnalysis, "SParamAnalysis", frequency);
 analysis_class!(PyHarmonicBalanceAnalysis, "HarmonicBalanceAnalysis", frequency);
 analysis_class!(PyStabilityAnalysis, "StabilityAnalysis", frequency);
 analysis_class!(PyTransientNoiseAnalysis, "TransientNoiseAnalysis", time);
-analysis_class!(PySamplingAnalysis, "SamplingAnalysis");
 
 // ── Module-level functions ──
 
@@ -888,11 +887,7 @@ fn lint<'py>(py: Python<'py>, netlist: &str, backend: Option<&str>) -> PyResult<
 /// ```
 #[pyfunction]
 fn compile_veriloga(source_or_path: &str) -> PyResult<String> {
-    compile_veriloga_impl(source_or_path).map_err(pyo3::exceptions::PyRuntimeError::new_err)
-}
-
-fn compile_veriloga_impl(source_or_path: &str) -> Result<String, String> {
-    crate::veriloga::compile_osdi(&crate::veriloga::resolve(source_or_path)?)
+    crate::veriloga::resolve(source_or_path).and_then(|p| crate::veriloga::compile_osdi(&p)).map_err(pyo3::exceptions::PyRuntimeError::new_err)
 }
 
 /// The IR block for a `verilog(...)` call; connection values are a net name
@@ -1325,7 +1320,7 @@ impl PySubcircuit {
     fn X(&mut self, name: &str, subcircuit_name: &str, nodes: Vec<String>, params: Option<Bound<'_, PyDict>>) -> PyResult<()> {
         let port_mapping = nodes.iter().map(|n| self.net(n)).collect();
         self.inner.instances.push(ir::Instance {
-            name: name.into(), subcircuit: subcircuit_name.into(), port_mapping, parameters: kw_params(params)?,
+            name: name.into(), subcircuit: subcircuit_name.into(), port_mapping, parameters: kw_params(params)?, at: None,
         });
         Ok(())
     }
@@ -1442,8 +1437,8 @@ struct PyTestbench {}
 impl PyTestbench {
     #[new]
     fn new(dut: &PySubcircuit) -> (Self, PySimulator) {
-        let tb = ir::Testbench { prints: vec![], dut: dut.inner.name.clone(), ..Default::default() };
-        let ir = CircuitIR { raw_dialect: None, globals: vec![], functions: vec![], top: dut.inner.clone(), testbench: Some(tb), ..Default::default() };
+        let tb = ir::Testbench { dut: dut.inner.name.clone(), ..Default::default() };
+        let ir = CircuitIR { top: dut.inner.clone(), testbench: Some(tb), ..Default::default() };
         (Self {}, PySimulator { ir, backend: None, save_currents: false })
     }
 
@@ -1842,7 +1837,6 @@ pub fn spicerack(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyTransientNoiseAnalysis>()?;
     // Spectre raw data type
     m.add_class::<PyRawData>()?;
-    m.add_class::<PySamplingAnalysis>()?;
 
     // IR types
     m.add_class::<PySubcircuit>()?;
@@ -1884,7 +1878,7 @@ fn lower_verilog(sub: &mut ir::Subcircuit) -> Result<(), String> {
             crate::veriloga::Lowered::Gates { spice_models, cells } => {
                 sub.includes.push(spice_models);
                 sub.instances.extend(cells.into_iter().map(|c| ir::Instance {
-                    name: c.name, subcircuit: c.cell, port_mapping: c.nodes, parameters: vec![],
+                    name: c.name, subcircuit: c.cell, port_mapping: c.nodes, parameters: vec![], at: None,
                 }));
             }
         }

@@ -1,60 +1,140 @@
-# HSPICE: the dialect rules spice_cards.peg leaves open: numbers, quoting
-# and the expression language. Sources: dev/research/hspice-syntax.md
-# (rule ids T3, T2, X1, X2).
+# HSPICE, layered over spice.peg: the lines stage, numbers, quoting and the
+# expression language. Sources: dev/research/hspice-syntax.md (rule ids),
+# ESPice tests/frontend/grammar/hspice_lines.peg, hspice.peg, hspice_ops.peg.
+
+# ── Lines: physical lines -> the title and logical statements ──
+# Captures: Title; Line, made of Piece (joined to the previous part with a
+# blank) and Glue (joined with nothing, after `\\`). Case is folded after
+# this stage (L7).
+
+file       <- Title (l_eol l_body)? !.
+
+# L1: line 1 of the top-level file is the title, whatever it holds.
+Title      <- (!l_eol .)*
+
+l_body     <- (l_endrun / Line / l_skip)*
+
+# L9: `.END` ends the run. The rest of its line is a comment; what follows
+# is a further simulation run, not read.
+l_endrun   <- l_blank* '.end'i ![a-zA-Z0-9_] .*
+
+# L2: a comment line (`*` or `$` as the first non-blank character) or a
+# blank line. Neither ends a pending statement (L5).
+l_skip     <- l_blank* [*$] (!l_eol .)* l_eolx
+            / l_blank* l_eol
+            / l_blank+ !.
+
+# A statement: its first physical line, then its continuations, then an
+# optional `$` comment.
+Line       <- l_blank* ![+*$] Piece l_more* l_comment? l_eolx
+l_more     <- l_glue_break Glue
+            / l_keep_break Piece
+            / l_plus_break Piece?
+
+# L6: a trailing `\\` joins the next line with nothing between; a trailing
+# `\` after a blank joins it keeping the blank. Neither line needs a `+`.
+l_glue_break <- l_blank* '\\\\' l_blank* l_eolx l_blank*
+l_keep_break <- l_blank+ '\\' l_blank* l_eolx
+
+# L5: `+` as the first non-blank character continues the statement, past
+# any comment and blank lines in between.
+l_plus_break <- l_comment? l_eol l_skip* l_blank* '+'
+
+Piece      <- l_chunk+
+Glue       <- l_chunk*
+
+# T1: blanks, comma, `=` and parentheses separate tokens; L6: a blank run
+# right before a trailing `\` or `\\` belongs to the break, not to the text.
+l_chunk    <- l_quoted / l_sep / l_numtok / l_word
+l_sep      <- l_blank+ !('\\' l_blank* l_eolx) !('\\\\' l_blank* l_eolx) / [,=()]
+
+# L3: `$` starts a comment after a separator or right after a number
+# (`1k$c` is 1k, `1w$c` is 1 with the unit `w`); inside a name it is a name
+# character (`a$b`).
+l_numtok   <- [+\-]? ([0-9]+ ('.' [0-9]*)? / '.' [0-9]+) ([eEdD] [+\-]? [0-9]+)? [a-zA-Z]* &'$'
+l_word     <- !'$' !l_glue_end l_wchar (!l_glue_end l_wchar)*
+l_wchar    <- ![ \t,=()'"\r\n] .
+l_glue_end <- '\\\\' l_blank* l_eolx
+l_comment  <- '$' (!l_eol .)*
+
+# T2: `'...'` and `"..."` quote; `$` is not a comment inside, and L6
+# continues a quoted string too.
+l_quoted   <- "'" (l_qbreak / !"'" !l_eol .)* "'"
+            / '"' (l_qbreak / !'"' !l_eol .)* '"'
+l_qbreak   <- '\\\\' l_blank* l_eol l_blank*
+            / l_blank '\\' l_blank* l_eol
+
+l_blank    <- [ \t]
+l_eol      <- '\r'? '\n'
+l_eolx     <- l_eol / !.
+
+# ── Cards ──
+# `.tran step stop [START=t]`: further positional fields are more step/stop
+# segments, which the IR cannot hold (they stay raw).
+Tran       <- '.tran' s Num s Num (s Pair)? (s Uic)? s?
+# `.probe v(a) ...` selects outputs, as `.save` does elsewhere; an analysis
+# word (`.probe tran v(a)`) only scopes it.
+dotcard    <- Probe &nl / Include &nl / Lib &nl / Model &nl / Params &nl / Func &nl / Options &nl
+            / Temp &nl / Ic &nl / Nodeset &nl / Global &nl / Save &nl / Print &nl / Meas &nl
+            / Op &nl / Dc &nl / Ac &nl / Tran &nl / Noise &nl / Tf &nl / Sens &nl / Pz &nl
+            / Four &nl / Raw
+Probe      <- '.probe' !namechar (s (('noise' / 'tran' / 'op' / 'dc' / 'ac') !namechar / Out))* s?
+Out        <- (![ \t\n] .)+
 
 # T3: a number with an exponent (`E` or `D`) or a scale factor: T G MEG X K
 # MIL M U N P F A (`X` and `MEG` are both 1e6); trailing letters are a unit
-# comment (`10pf`, `1.5volts`). HSPICE forbids an exponent and a scale
-# together (`1e-6u`, UG08 p. 49), and so does ESPice (#203): the lowering
-# refuses a card holding one (lower.zig; a field that is no Number is an
-# Ident), and hspice_ops.peg's Num takes none in an expression.
-Number     <- [+\-]? Mantissa Exponent? Scale? [a-z0-9_.]*
-Mantissa   <- [0-9]+ ('.' [0-9]*)? / '.' [0-9]+
-Exponent   <- [ed] [+\-]? [0-9]+
-Scale      <- 'meg' / 'mil' / [tgxkmunpfa]
+# comment (`10pf`, `1.5volts`).
+Num        <- Mag scale? [a-z0-9_.]*
+Mag        <- [+\-]? mantissa ([ed] [+\-]? [0-9]+)?
+mantissa   <- [0-9]+ ('.' [0-9]*)? / '.' [0-9]+
+scale      <- Meg / Meg_x / Mil / Tera / Giga / Kilo / Milli / Micro / Nano / Pico / Femto / Atto
+Meg        <- 'meg'
+Meg_x      <- 'x'
+Mil        <- 'mil'
+Tera       <- 't'
+Giga       <- 'g'
+Kilo       <- 'k'
+Milli      <- 'm'
+Micro      <- 'u'
+Nano       <- 'n'
+Pico       <- 'p'
+Femto      <- 'f'
+Atto       <- 'a'
 
-# T2, X1: `'expr'` and `"expr"` are expressions; Expr is the composition's
-# (hspice_ops.peg, spectre_ops.peg).
-
-# X1: after `key=`, an unquoted expression; pairexpr is the composition's
-# (hspice_ops.peg, spectre_ops.peg).
+# T2, X1: `'expr'` and `"expr"` are expressions. Braces are not: HSPICE
+# reads them as name bytes (#203).
+expr       <- "'" x Expr x "'" / '"' x Expr x '"'
+Expr       <- x_ternary
+# X1, CR10 p.238: an unquoted expression after `key=` begins with a letter
+# and holds no blank.
+pairexpr   <- &[a-zA-Z] x_ternary !wordchar
 
 # X2: HSPICE documents the operators (`+ - * / ** ^ < <= > >= == != && ||
-# ?:`) but no precedence. ESPice compiles every dialect's expressions with
-# one compiler (src/frontend/expr.zig), whose levels are numparam's
-# (dev/research/ngspice-syntax.md §2.2): this is that table.
-Ternary    <- Or (x '?' x Ternary x ':' x Ternary)?
-Or         <- And (x OrOp x And)*
-And        <- Cmp (x AndOp x Cmp)*
-Cmp        <- Add (x CmpOp x Add)*
-Add        <- Mul (x AddOp x Mul)*
-Mul        <- Pow (x MulOp x Pow)*
-Pow        <- Unary (x PowOp x Unary)*
-# Unary is the composition's (hspice_ops.peg, spectre_ops.peg).
-atom       <- Paren / Probe / Call / Num / Ref
-Paren      <- '(' x Ternary x ')'
-Probe      <- [vi] x '(' x Pname (x ',' x Pname)? x ')'
-Pname      <- (![ \t,()\n] .)+
-Call       <- Ref x '(' x (Ternary (x ',' x Ternary)*)? x ')'
-# Num is the composition's (hspice_ops.peg, spectre_ops.peg).
-# No `!` in a name: `a!=b` is an inequality (ngspice manual §2.8.5's `!=`),
-# and no corpus deck or case names a parameter with one.
-Ref        <- [a-zA-Z_$] [a-zA-Z0-9_.$]*
+# ?:`) but no precedence; these are numparam's levels, as ESPice compiles
+# them. No `%`, `\` or unary `!` (UG08 pp.279-283, Table 19).
+x_ternary  <- x_or (x '?' x x_ternary x ':' x x_ternary)?
+x_or       <- x_and (x '||' x x_and)*
+x_and      <- x_cmp (x '&&' x x_cmp)*
+x_cmp      <- x_add (x ('==' / '!=' / '<=' / '>=' / '<' / '>') x x_add)*
+x_add      <- x_mul (x [+\-] x x_mul)*
+x_mul      <- x_pow (x ('*' !'*' / '/') x x_pow)*
+x_pow      <- x_unary (x ('^' / '**') x x_unary)*
+x_unary    <- [+\-] x x_pow / x_atom
+x_atom     <- '(' x x_ternary x ')' / x_probe / x_call / x_num / x_ref
+x_probe    <- [vi] x '(' x x_pname (x ',' x x_pname)? x ')'
+x_pname    <- (![ \t,()\n] .)+
+x_call     <- x_ref x '(' x (x_ternary (x ',' x x_ternary)*)? x ')'
+# T3: no exponent and scale together (`1e-6u`).
+x_num      <- mantissa ([e] [+\-]? [0-9]+ !scale)? !([e] [+\-]? [0-9]) [a-z]*
+x_ref      <- [a-zA-Z_$] [a-zA-Z0-9_.$]*
 x          <- [ \t]*
 
-OrOp       <- '||'
-AndOp      <- '&&'
-CmpOp      <- '==' / '!=' / '<=' / '>=' / '<' / '>'
-AddOp      <- [+\-]
-# MulOp is the composition's: hspice_ops.peg for an HSPICE deck,
-# spectre_ops.peg for a Spectre statement translated to a SPICE card.
-PowOp      <- '^' / '**'
-SignOp     <- [+\-]
+namechar   <- ![ \t\n,=()'"] .
+wordchar   <- ![ \t\n,=()'"\[\]] .
 
-# A field, a field inside a group, a pair's value, and HSPICE's `[a, b]`
-# vector (`hblin=[1, -1]` on a P port) (spice_cards.peg). A quote only
-# delimits an expression or a path (T2): strings are `str('...')`, not read.
-field      <- Pair / Group / Expr / Word / [,()=]
-gfield     <- Group / Expr / Word / [,=]
-value      <- Expr / Vec / pairexpr / Word
-Vec        <- '[' s? (gfield (s? gfield)*)? s? ']'
+# A quote only delimits an expression or a path (T2). `[a, b]` is a vector
+# (`hblin=[1, -1]` on a P port).
+field      <- Pair / group / expr / Word / [,()=]
+gfield     <- group / expr / Word / [,=]
+value      <- expr / vec / Word !(x [|&<>=!+\-*/^?(]) / pairexpr / Word
+vec        <- '[' s? (gfield (s? gfield)*)? s? ']'

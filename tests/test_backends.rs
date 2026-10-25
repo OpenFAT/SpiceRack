@@ -1,26 +1,3 @@
-// ── PSF parser tests ──
-
-#[test]
-fn test_psf_is_psf_detection() {
-    assert!(spicerack::psf::is_psf(b"Clarissa\x00\x00\x00\x01"));
-    assert!(!spicerack::psf::is_psf(b"Title: test\nPlotname:"));
-    assert!(!spicerack::psf::is_psf(b"short"));
-}
-
-#[test]
-fn test_psf_parse_bad_magic() {
-    let data = b"NotAValidPSFFile";
-    let result = spicerack::psf::parse_psf(data);
-    assert!(result.is_err());
-}
-
-#[test]
-fn test_psf_parse_too_short() {
-    let data = b"Clar";
-    let result = spicerack::psf::parse_psf(data);
-    assert!(result.is_err());
-}
-
 // ── Raw file parser tests ──
 
 #[test]

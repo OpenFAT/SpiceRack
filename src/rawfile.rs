@@ -60,7 +60,7 @@ fn bad<E: std::fmt::Display>(what: &str) -> impl FnOnce(E) -> RawFileError + '_ 
 
 /// One plot from the start of `data`, and the bytes it spans.
 fn parse_utf8(data: &[u8]) -> Result<(RawData, usize), RawFileError> {
-    let mut raw = RawData::empty();
+    let mut raw = RawData::default();
     let (mut num_vars, mut num_points) = (0usize, 0usize);
     let (mut in_variables, mut fast_access) = (false, false);
     let mut pos = 0;

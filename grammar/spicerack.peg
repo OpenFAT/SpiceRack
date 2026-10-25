@@ -1,6 +1,0 @@
-# SpiceRack's entry rules over spice_cards.peg + <dialect>.peg: one logical
-# line at a time (src/import.rs), so a card the grammar refuses stays a raw
-# line and the rest of the deck still reads. A `.subckt` header and its
-# `.ends` are separate cards here; the importer pairs them.
-OneCard    <- (SubcktHead / Ends / dotcard / Element) nl !.
-SubcktHead <- ('.subckt' / '.macro') s Name ports

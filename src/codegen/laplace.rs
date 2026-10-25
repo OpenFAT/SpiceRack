@@ -47,11 +47,6 @@
 
 /// Scale suffixes SPICE allows on a literal. `meg`/`mil` must be matched
 /// before `m` or a megohm becomes a milliohm.
-const SCALES: &[(&str, f64)] = &[
-    ("meg", 1e6), ("mil", 25.4e-6),
-    ("t", 1e12), ("g", 1e9), ("k", 1e3), ("m", 1e-3),
-    ("u", 1e-6), ("n", 1e-9), ("p", 1e-12), ("f", 1e-15), ("a", 1e-18),
-];
 
 /// What a `Laplace(...)` source turns into.
 #[derive(Debug, Clone, PartialEq)]
@@ -420,7 +415,7 @@ fn lex_number(b: &[char], start: usize) -> Result<(Tok, usize), String> {
         .map_err(|_| format!("cannot read number `{text}` in H(s)"))?;
     // Scale suffix, longest match first.
     let tail: String = b[i..].iter().collect::<String>().to_ascii_lowercase();
-    for (suffix, mult) in SCALES {
+    for (suffix, mult) in crate::unit::SPICE_SCALES {
         if tail.starts_with(suffix) {
             return Ok((Tok::Num(mantissa * mult), i + suffix.len()));
         }

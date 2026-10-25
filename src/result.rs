@@ -37,10 +37,6 @@ pub struct MeasureResult {
 }
 
 impl RawData {
-    pub fn empty() -> Self {
-        Self::default()
-    }
-
     /// Complex column `i`, or `None` when that variable is real-valued.
     pub fn complex(&self, i: usize) -> Option<&[Complex64]> {
         self.complex_data.get(i).filter(|c| !c.is_empty()).map(Vec::as_slice)
@@ -104,35 +100,3 @@ impl Results {
     }
 }
 
-/// Compute (ENOB, SFDR dB, SNR dB, THD dB) from FFT magnitude bins.
-///
-/// Bin 0 is DC, the largest other bin is the fundamental, and harmonics sit at
-/// integer multiples of the fundamental's index.
-pub fn compute_fft_metrics(magnitude: &[f64]) -> (f64, f64, f64, f64) {
-    if magnitude.len() < 4 {
-        return (0.0, 0.0, 0.0, 0.0);
-    }
-    let (fund, fund_mag) = magnitude.iter().copied().enumerate().skip(1)
-        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-        .expect("len >= 4");
-    if fund_mag <= 0.0 {
-        return (0.0, 0.0, 0.0, 0.0);
-    }
-
-    let (mut harmonic, mut noise, mut spur) = (0.0, 0.0, 0.0_f64);
-    for (i, &m) in magnitude.iter().enumerate().skip(1) {
-        if i == fund {
-            continue;
-        }
-        spur = spur.max(m);
-        if i % fund == 0 { harmonic += m * m } else { noise += m * m }
-    }
-
-    let fund_power = fund_mag * fund_mag;
-    let db = |ratio: f64| if ratio > 0.0 { 10.0 * ratio.log10() } else { f64::NEG_INFINITY };
-    let thd_db = db(harmonic / fund_power);
-    let snr_db = -db(noise / fund_power);
-    let sfdr_db = -db(spur * spur / fund_power);
-    let enob = (-db((noise + harmonic) / fund_power) - 1.76) / 6.02;
-    (enob, sfdr_db, snr_db, thd_db)
-}

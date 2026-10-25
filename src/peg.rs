@@ -11,7 +11,10 @@
 //! ```
 //!
 //! A rule named with an uppercase first letter is captured: its match is a
-//! [`Row`]. Lowercase rules are lexical and leave nothing.
+//! [`Row`] tagged with the AST tag of that name (the caller's `tag` table, so
+//! a capture no tag names fails the compile). Lowercase rules are lexical and
+//! leave nothing. Grammar texts layer: a rule in a later text replaces the
+//! earlier text's rule of that name (a dialect over `spice.peg`).
 
 /// Recursion past this depth fails the parse: input-controlled nesting is
 /// capped, not trusted.
@@ -39,6 +42,7 @@ pub struct Grammar {
     classes: Vec<[bool; 256]>,
     names: Vec<String>,
     bodies: Vec<u32>,
+    tags: Vec<Option<u8>>,
 }
 
 /// One captured match, in preorder; a row's children are the rows from
@@ -46,6 +50,7 @@ pub struct Grammar {
 #[derive(Clone, Copy, Debug)]
 pub struct Row {
     pub rule: u32,
+    pub tag: u8,
     pub start: u32,
     pub end: u32,
     pub next: u32,
@@ -57,22 +62,38 @@ pub struct Tree<'s> {
 }
 
 impl Grammar {
-    /// Compiles grammar text (several `.peg` files concatenate into one).
-    pub fn compile(text: &str) -> Result<Grammar, String> {
-        let mut c = Compiler { src: text.as_bytes(), pos: 0, g: Grammar { nodes: vec![], kids: vec![], bytes: vec![], classes: vec![], names: vec![], bodies: vec![] }, refs: vec![] };
-        while c.peek() != 0 {
-            let name = c.ident().ok_or_else(|| c.err("rule name"))?;
-            if !c.arrow() {
-                return Err(c.err("`<-`"));
+    /// Compiles grammar texts, each layered over the ones before it; `tag`
+    /// names a captured rule's AST tag.
+    pub fn compile(texts: &[&str], tag: impl Fn(&str) -> Option<u8>) -> Result<Grammar, String> {
+        let mut g = Grammar { nodes: vec![], kids: vec![], bytes: vec![], classes: vec![], names: vec![], bodies: vec![], tags: vec![] };
+        let mut refs = Vec::new();
+        for text in texts {
+            let mut c = Compiler { src: text.as_bytes(), pos: 0, g, refs, seen: vec![] };
+            while c.peek() != 0 {
+                let name = c.ident().ok_or_else(|| c.err("rule name"))?;
+                if !c.arrow() {
+                    return Err(c.err("`<-`"));
+                }
+                if c.seen.iter().any(|n| n == name) {
+                    return Err(format!("duplicate rule {name}"));
+                }
+                c.seen.push(name.to_string());
+                let body = c.choice()?;
+                match c.g.names.iter().position(|n| n == name) {
+                    Some(i) => c.g.bodies[i] = body,
+                    None => {
+                        let t = match name.starts_with(|ch: char| ch.is_ascii_uppercase()) {
+                            true => Some(tag(name).ok_or_else(|| format!("rule {name} is captured but no AST tag"))?),
+                            false => None,
+                        };
+                        c.g.names.push(name.to_string());
+                        c.g.bodies.push(body);
+                        c.g.tags.push(t);
+                    }
+                }
             }
-            if c.g.names.iter().any(|n| n == name) {
-                return Err(format!("duplicate rule {name}"));
-            }
-            c.g.names.push(name.to_string());
-            let body = c.choice()?;
-            c.g.bodies.push(body);
+            (g, refs) = (c.g, c.refs);
         }
-        let Compiler { mut g, refs, .. } = c;
         for n in &mut g.nodes {
             if let Node::Ref(i) = n {
                 let name = &refs[*i as usize];
@@ -91,10 +112,6 @@ impl Grammar {
         &self.names[rule as usize]
     }
 
-    fn captured(&self, r: u32) -> bool {
-        self.names[r as usize].starts_with(|c: char| c.is_ascii_uppercase())
-    }
-
     /// Parses all of `src` from rule `start`; `Err` is the furthest byte any
     /// terminal reached.
     pub fn parse<'s>(&self, start: u32, src: &'s str) -> Result<Tree<'s>, usize> {
@@ -107,6 +124,10 @@ impl Grammar {
 }
 
 impl<'s> Tree<'s> {
+    pub fn tag(&self, i: usize) -> u8 {
+        self.rows[i].tag
+    }
+
     pub fn text(&self, i: usize) -> &'s str {
         let r = self.rows[i];
         &self.src[r.start as usize..r.end as usize]
@@ -133,6 +154,7 @@ struct Compiler<'a> {
     pos: usize,
     g: Grammar,
     refs: Vec<String>,
+    seen: Vec<String>, // this text's rules
 }
 
 impl<'a> Compiler<'a> {
@@ -361,11 +383,9 @@ impl Parser<'_, '_> {
         }
         self.depth += 1;
         let body = self.g.bodies[r as usize];
-        let out = if !self.g.captured(r) {
-            self.at(body, pos)
-        } else {
+        let out = if let Some(tag) = self.g.tags[r as usize] {
             let at = self.rows.len();
-            self.rows.push(Row { rule: r, start: pos, end: pos, next: 0 });
+            self.rows.push(Row { rule: r, tag, start: pos, end: pos, next: 0 });
             let end = self.at(body, pos);
             match end {
                 Ok(Some(e)) => {
@@ -375,6 +395,8 @@ impl Parser<'_, '_> {
                 _ => self.rows.truncate(at),
             }
             end
+        } else {
+            self.at(body, pos)
         };
         self.depth -= 1;
         out
@@ -449,23 +471,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn captures_and_lookahead() {
-        let g = Grammar::compile("List <- Item (',' Item)* !.\nItem <- 'ab'i / [0-9]+ # comment\n").unwrap();
+    fn captures_lookahead_and_layers() {
+        let tag = |n: &str| ["List", "Item"].iter().position(|t| *t == n).map(|i| i as u8);
+        let g = Grammar::compile(&["List <- Item (',' Item)* !.\nItem <- 'ab'i / [0-9]+ # comment\n"], tag).unwrap();
         let t = g.parse(g.rule("List").unwrap(), "AB,12,ab").unwrap();
         let items: Vec<&str> = t.children(Some(0)).map(|i| t.text(i)).collect();
         assert_eq!(items, ["AB", "12", "ab"]);
+        assert!(t.children(Some(0)).all(|i| t.tag(i) == 1));
         assert!(g.parse(0, "ab,").is_err());
-        assert!(Grammar::compile("A <- B").err().unwrap().contains("undefined rule B"));
-    }
-
-    /// Every ESPice grammar compiles, alone or composed as ESPice composes them.
-    #[test]
-    fn espice_grammars_compile() {
-        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/grammar/");
-        let read = |f: &str| std::fs::read_to_string(format!("{dir}{f}")).unwrap();
-        for set in [&["ngspice_lines.peg"][..], &["hspice_lines.peg"], &["spectre_lines.peg"], &["spectre.peg"], &["spice_cards.peg", "ngspice.peg"], &["spice_cards.peg", "hspice_ops.peg", "hspice.peg"]] {
-            let text: String = set.iter().map(|f| read(f) + "\n").collect();
-            Grammar::compile(&text).unwrap_or_else(|e| panic!("{set:?}: {e}"));
-        }
+        assert!(Grammar::compile(&["List <- b"], tag).err().unwrap().contains("undefined rule b"));
+        assert!(Grammar::compile(&["Bad <- 'x'"], tag).err().unwrap().contains("no AST tag"));
+        assert!(Grammar::compile(&["a <- 'x'\na <- 'y'"], tag).err().unwrap().contains("duplicate"));
+        // A later text replaces a rule.
+        let g = Grammar::compile(&["List <- Item !.\nItem <- 'a'", "Item <- 'b'"], tag).unwrap();
+        assert!(g.parse(0, "b").is_ok() && g.parse(0, "a").is_err());
     }
 }

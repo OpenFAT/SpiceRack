@@ -34,7 +34,7 @@ fn as_current(lower: &str, backend: &str) -> Option<String> {
         return Some(format!("i({dev})"));
     }
     // Spectre/VACASK terminal currents are `<device>:<terminal>`; inside v() a `:` is hierarchy.
-    if matches!(backend, "spectre" | "vacask" | "vacask-shared") && !lower.starts_with("v(") {
+    if matches!(backend, "spectre" | "vacask") && !lower.starts_with("v(") {
         return lower.split_once(':').map(|(dev, _)| format!("i({dev})"));
     }
     None
@@ -177,14 +177,6 @@ mod tests {
         assert_eq!(normalize_var_name("v(out)", "ngspice"), "out");
         assert_eq!(normalize_var_name("V(NET1)", "ngspice"), "net1");
         assert_eq!(normalize_var_name("i(Vin)", "ngspice"), "i(vin)");
-    }
-
-    // ── ngspice-shared / ngspice-subprocess variants ──
-
-    #[test]
-    fn test_ngspice_variant_names() {
-        assert_eq!(normalize_var_name("v(out)", "ngspice-subprocess"), "out");
-        assert_eq!(normalize_var_name("v(out)", "ngspice-shared"), "out");
     }
 
     // ── Issue 06: Cross-backend result parity ──

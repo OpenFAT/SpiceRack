@@ -1,76 +1,149 @@
-# ngspice: the dialect rules spice_cards.peg leaves open: numbers, quoting
-# and the expression language. Sources: dev/research/ngspice-syntax.md.
+# ngspice, layered over spice.peg: the lines stage, numbers, quoting and the
+# expression language. Sources: dev/research/ngspice-syntax.md (§ numbers),
+# ESPice tests/frontend/grammar/ngspice_lines.peg and ngspice.peg.
+
+# ── Lines: physical lines -> the title and logical statements ──
+# Captures: Title; Line, one logical statement, made of Piece (joined to the
+# previous part with a blank: ngspice joins every continuation so). Case is
+# folded after this stage (§1.4).
+
+file       <- Title (l_eol l_body)? !.
+
+# §1.2: line 1 of the top-level file is the title, whatever it holds.
+Title      <- (!l_eol .)*
+
+l_body     <- (l_stop / Line / l_skip)*
+
+# §1.3: a line whose first non-blank character is `@` ends the file.
+l_stop     <- l_blank* '@' .*
+
+# §1.5: a comment line. A line holding only an end-of-line `//` comment
+# becomes one too (inp_stripcomments_line), so a `+` after it continues
+# nothing. `*`, `#`, `$` and `;` are silent; the punctuation
+# `= [ ] ? ( ) & % " ! : ,` and form feed are turned into comments with a
+# warning. §1.3: blank lines are dropped. §1.6: a `+` line with no statement
+# to continue is ignored ("Illegal continuation line").
+l_skip     <- l_blank* [*#$;=\[\]?()&%"!:,\x0c] (!l_eol .)* l_eolx
+            / l_end
+            / l_blank* l_eol
+            / l_blank+ !.
+            / l_blank* '+' (!l_eol .)* l_eolx
+            / l_blank* '//' (!l_glue_end !l_eol .)* l_eolx
+
+# §1.7: `.end` (alone or followed by a blank) becomes a comment, and
+# reading goes on: a card after it is still in the circuit.
+l_end      <- l_blank* '.end'i ![^ \t\r\n] (!l_eol .)* l_eolx
+
+# A statement: its first physical line, then its continuations.
+Line       <- l_blank* ![+*#$;@=\[\]?()&%"!:,\x0c] !l_end !l_eolx !('//' (!l_glue_end !l_eol .)* l_eolx) Piece l_comment? l_more* l_eolx
+
+# §1.6: `+` as the first non-blank character continues the statement, past
+# comment and blank lines; a trailing `\\` continues it too (the backslashes
+# become blanks), even after an end-of-line comment, which is stripped later.
+l_more     <- l_glue_break l_blank* Piece l_comment?
+            / l_eol l_skip_cont* l_blank* '+' Piece l_comment?
+l_glue_break <- '\\\\' l_blank* l_eolx
+l_skip_cont <- l_blank* [*#$] (!l_eol .)* l_eol / l_blank* l_eol
+
+Piece      <- l_chunk*
+l_chunk    <- l_quoted ('$' l_wchar*)? / l_sepr / l_word
+l_sepr     <- [ \t,]
+# A `$` inside a word is a name character (`a$b`), and so is one right
+# after a closing quote; one that would start a word follows a separator
+# and starts a comment instead.
+l_word     <- !'$' l_wchar+
+l_wchar    <- !l_sepr !';' !'//' !l_glue_end !l_eol !['"] .
+l_glue_end <- '\\\\' l_blank* l_eolx
+
+# §1.5: end-of-line comments, outside quotes: `$` after a blank, tab or
+# comma; `;` and `//` anywhere. Braces do not protect them.
+l_comment  <- ('$' / ';' / '//') (!l_glue_end !l_eol .)*
+
+# §1.5, §1.9: single and double quotes protect comment characters; a
+# backslash escapes the quote. An unclosed quote protects the rest of the
+# line, short of a trailing `\\`, which pass 2 has already taken.
+l_quoted   <- "'" (!l_glue_end ('\\' !l_eol !l_glue_end . / !"'" !l_eol .))* ("'" / &(l_glue_end / l_eolx))
+            / '"' (!l_glue_end ('\\' !l_eol !l_glue_end . / !'"' !l_eol .))* ('"' / &(l_glue_end / l_eolx))
+
+l_blank    <- [ \t\r]
+l_eol      <- '\r'? '\n'
+l_eolx     <- l_eol / !.
+
+# ── Cards ──
+# A `.control` block is ngspice's interpreter: its analyses run, as
+# `.tran` would (CtlCmd: the lowering reads it as the dot card); the rest is
+# scripting (§4.1). The keyword exactly: inp.c's prefix match
+# (`.controls`) is undocumented (§16.4).
+dialect    <- Control
+Control    <- '.control' !namechar rest (nl !endc (CtlCmd / rest))* (nl endc rest)?
+endc       <- '.endc' !namechar
+CtlCmd     <- &(('noise' / 'disto' / 'tran' / 'sens' / 'four' / 'meas' / 'op' / 'dc' / 'ac' / 'tf'
+            / 'pz') !namechar) rest
 
 # §1.10: INPevaluate's number. `d` is an exponent letter; the scale factor is
 # T G MEG K MIL M U N P F A, and the rest of the token is ignored (`10v`,
-# `1k5` = 1000, `3.3.0` = 3.3). INPgetTok ends a token at `*`, `/` and `^`
-# but not at `%` or `\` (inpgtok.c), so `10%3` is one token, read as 10
-# (#200).
-Number     <- [+\-]? Mantissa Exponent? Scale? [a-z0-9_.%\\]*
-Mantissa   <- [0-9]+ ('.' [0-9]*)? / '.' [0-9]+
-Exponent   <- [ed] [+\-]? [0-9]+
-Scale      <- 'meg' / 'mil' / [tgkmunpfa]
+# `1k5` = 1000). INPgetTok ends a token at `*`, `/` and `^` but not at `%`
+# or `\` (inpgtok.c), so `10%3` is one token, read as 10 (#200).
+Num        <- Mag scale? [a-z0-9_.%\\]*
+Mag        <- [+\-]? mantissa ([ed] [+\-]? [0-9]+)?
+mantissa   <- [0-9]+ ('.' [0-9]*)? / '.' [0-9]+
+scale      <- Meg / Mil / Tera / Giga / Kilo / Milli / Micro / Nano / Pico / Femto / Atto
+Meg        <- 'meg'
+Mil        <- 'mil'
+Tera       <- 't'
+Giga       <- 'g'
+Kilo       <- 'k'
+Milli      <- 'm'
+Micro      <- 'u'
+Nano       <- 'n'
+Pico       <- 'p'
+Femto      <- 'f'
+Atto       <- 'a'
 
 # §1.9, §2.1: `{expr}` is an expression, and so is `'expr'` (ngspice turns
-# the quotes into braces).
-Expr       <- '{' x Ternary x '}' / "'" x Ternary x "'"
+# the quotes into braces). Expr is the text between the delimiters.
+expr       <- '{' x Expr x '}' / "'" x Expr x "'"
+Expr       <- x_ternary
 
 # ESPice: an unbraced expression after `key=` (`w=2*l`, `r = a + b`);
 # ngspice braces only a bare word there (§2.1, auto-bracing).
-pairexpr   <- &([a-zA-Z_.0-9(+\-!$]) Ternary !wordchar
+pairexpr   <- &([a-zA-Z_.0-9(+\-!$]) x_ternary !wordchar
 # ngspice (#200): a value that starts as a number and runs on through `%` or
 # `\` with no blank (`r=10%3`) is one INPgetTok token, the number with the
-# rest ignored: 10. Unless an operator follows it (`r=10%3 *2`), which only
-# the ESPice expression reads.
-numtok     <- &(Mantissa [a-z0-9_.]* [%\\]) &(Number !wordchar) Word !(x [|&<>=!+\-*/%\\^?])
+# rest ignored: 10. Unless an operator follows it (`r=10%3 *2`).
+numtok     <- &(mantissa [a-z0-9_.]* [%\\]) &(Num !wordchar) Word !(x [|&<>=!+\-*/%\\^?])
 
 # §2.2, numparam precedence, loosest first. Unary `-`/`+` take a power chain
-# (`-2^2` = -4) and `!` takes one operand (`!2^0` = 1), as numparam and the
-# frontend's expr.zig agree; `^` and `**` are left-associative (`2^3^2` =
-# 64). ESPice: `-` after any operator, not only before a number (`a*-b`).
-Ternary    <- Or (x '?' x Ternary x ':' x Ternary)?
-Or         <- And (x OrOp x And)*
-And        <- Cmp (x AndOp x Cmp)*
-Cmp        <- Add (x CmpOp x Add)*              # one level for all of them (§2.2)
-Add        <- Mul (x AddOp x Mul)*
-Mul        <- Pow (x MulOp x Pow)*
-Pow        <- Unary (x PowOp x Unary)*
-Unary      <- SignOp x Pow / NotOp x Unary / atom
-atom       <- Paren / Probe / Call / Num / Ref
-Paren      <- '(' x Ternary x ')'
+# (`-2^2` = -4) and `!` takes one operand (`!2^0` = 1); `^` and `**` are
+# left-associative (`2^3^2` = 64).
+x_ternary  <- x_or (x '?' x x_ternary x ':' x x_ternary)?
+x_or       <- x_and (x '||' x x_and)*
+x_and      <- x_cmp (x '&&' x x_cmp)*
+# ngspice also reads a lone `=` as equality (§2.2); not here, since in a
+# card it cannot be told from `key=value`.
+x_cmp      <- x_add (x ('==' / '!=' / '<>' / '<=' / '>=' / '<' / '>') x x_add)*
+x_add      <- x_mul (x [+\-] x x_mul)*
+x_mul      <- x_pow (x ('*' !'*' / [/%\\]) x x_pow)*
+x_pow      <- x_unary (x ('^' / '**') x x_unary)*
+x_unary    <- [+\-] x x_pow / '!' !'=' x x_unary / x_atom
+x_atom     <- '(' x x_ternary x ')' / x_probe / x_call / x_num / x_ref
 # §2.6: `v(a)`, `v(a,b)`, `i(vname)`: node and device names, never numbers.
-Probe      <- [vi] x '(' x Pname (x ',' x Pname)? x ')'
-Pname      <- (![ \t,()\n] .)+
-Call       <- Ref x '(' x (Ternary (x ',' x Ternary)*)? x ')'
-Num        <- Mantissa ([e] [+\-]? [0-9]+)? [a-z]*
-# No `!` in a name: `a!=b` is an inequality (ngspice manual §2.8.5's `!=`),
-# and no corpus deck or case names a parameter with one.
-Ref        <- [a-zA-Z_$] [a-zA-Z0-9_.$]*
+x_probe    <- [vi] x '(' x x_pname (x ',' x x_pname)? x ')'
+x_pname    <- (![ \t,()\n] .)+
+x_call     <- x_ref x '(' x (x_ternary (x ',' x x_ternary)*)? x ')'
+x_num      <- mantissa ([e] [+\-]? [0-9]+)? [a-z]*
+# No `!` in a name: `a!=b` is an inequality (§2.8.5).
+x_ref      <- [a-zA-Z_$] [a-zA-Z0-9_.$]*
 x          <- [ \t]*
 
-OrOp       <- '||'
-AndOp      <- '&&'
-# ngspice also reads a lone `=` as equality (§2.2); ESPice does not, since
-# in a card it cannot be told from `key=value`.
-CmpOp      <- '==' / '!=' / '<>' / '<=' / '>=' / '<' / '>'
-AddOp      <- [+\-]
-MulOp      <- '*' !'*' / [/%\\]
-PowOp      <- '^' / '**'
-SignOp     <- [+\-]
-NotOp      <- '!' !'='
-
-# A name's and a word's bytes (spice_cards.peg): braces delimit an
-# expression, so they are neither.
+# A name's and a word's bytes: braces delimit an expression, so they are
+# neither.
 namechar   <- ![ \t\n,=()'"{}] .
 wordchar   <- ![ \t\n,=()'"{}\[\]] .
 
-# A field, a field inside a group, and a pair's value (spice_cards.peg).
-# `"..."` is a word to ngspice (§1.9); a group holds no `key=value` (§3.1:
-# a vector ends at its first non-number, and `r=`/`td=` follow it); a pair's
-# value is an expression unless braced, quoted or a lone number.
-field      <- Pair / Group / Expr / Str / Word / [,()=]
-gfield     <- Group / Expr / Str / Word / [,=]
-value      <- Expr / Str / numtok / pairexpr / Word
-# A device's value field that starts with an operator (`R1 a b 10 %3`)
-# parses as a word; ngspice fails the card ("unknown parameter"), so the
-# lowering refuses it, as the frontend does (lower.zig `element`, #200).
+# A field, a field inside a group, and a pair's value. `"..."` is a word to
+# ngspice (§1.9); a group holds no `key=value` (§3.1); a pair's value is an
+# expression unless braced, quoted or a lone number.
+field      <- Pair / group / expr / Str / Word / [,()=]
+gfield     <- group / expr / Str / Word / [,=]
+value      <- expr / Str / numtok / Word !(x [|&<>=!+\-*/%\\^?(]) / pairexpr / Word

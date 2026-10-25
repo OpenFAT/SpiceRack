@@ -1,0 +1,225 @@
+# SPICE family cards: logical lines -> the AST (src/import/mod.rs `Tag`).
+# ngspice, HSPICE, LTspice and Xyce share this file; each dialect's file is
+# layered over it (a rule there replaces the rule here) and adds its lines
+# stage, numbers, expressions and the cards it reads differently.
+#
+# Input: the lines stage's logical lines, lowercased, each ended by `\n`; the
+# title is not part of it. A card no rule reads is `Unparsed`; one the IR
+# has no field for is `Raw` (both stay verbatim lines).
+#
+# Sources: ESPice tests/frontend/grammar/spice_cards.peg (whose rules these
+# started as), dev/research/ngspice-syntax.md, hspice-syntax.md.
+
+deck       <- card* !.
+# A `.control` command read as its dot card (lower.rs).
+one        <- dotcard nl !.
+# Each alternative ends at the card's end (`&nl`), so one that reads only
+# part of a card gives way to the next (PEG commits to a choice that matched).
+card       <- (Subckt / dialect / Block / dotcard / element) (nl / !.) / Unparsed nl
+Unparsed   <- rest
+# The cards only one dialect reads (its file replaces this).
+dialect    <- never
+# A rule that matches nothing (a dialect switching a rule off).
+never      <- &. !.
+
+# §2.5: `.subckt name nodes [params:] defaults` ... `.ends [name]`; `.macro`
+# and `.eom` are the same. Definitions nest; a missing `.ends` closes at the
+# end of the deck.
+Subckt     <- ('.subckt' / '.macro') s Name ports nl (!ends card)* (Ends / !.)
+ports      <- (s? [()] / s? !pairstart Port)* (s 'params:')? (s Assign)*
+Port       <- !'params:' namechar+
+ends       <- ('.ends' / '.eom') !namechar
+Ends       <- ends rest
+
+# Blocks no IR field holds, kept whole: `.if` ... `.endif` (nesting), `.data`
+# ... `.enddata`, `.variation` ... `.end_variation`, a `.lib name` section
+# ... `.endl`. A missing closer runs to the end of the deck.
+Block      <- ifblock / datablock / varblock / libblock
+ifblock    <- '.if' !namechar rest (nl (ifblock / !endif rest))* (nl endif rest)?
+endif      <- '.endif' !namechar
+datablock  <- '.data' !namechar rest (nl !enddata rest)* (nl enddata rest)?
+enddata    <- '.enddata' !namechar
+varblock   <- '.variation' !namechar rest (nl !endvar rest)* (nl endvar rest)?
+endvar     <- '.end_variation' !namechar
+libblock   <- '.lib' s (!blank .)+ s? &nl (nl !endl rest)* (nl endl rest)?
+endl       <- '.endl' !namechar
+
+dotcard    <- Include &nl / Lib &nl / Model &nl / Params &nl / Func &nl / Options &nl
+            / Temp &nl / Ic &nl / Nodeset &nl / Global &nl / Save &nl / Print &nl / Meas &nl
+            / Op &nl / Dc &nl / Ac &nl / Tran &nl / Noise &nl / Tf &nl / Sens &nl / Pz &nl
+            / Four &nl / Raw
+
+# §4.1, D3: `.include path`, `.lib path section`.
+Include    <- ('.include' / '.inc') !namechar s Path rest
+Lib        <- '.lib' !namechar s Path s Section rest
+Path       <- '"' (!'"' !nl .)* '"' / "'" (!"'" !nl .)* "'" / (!blank !nl .)+
+Section    <- (!blank !nl .)+
+
+# §4.1, D2: `.model name type [(] params [)]`. A bare number after a value
+# continues it (a CPL or W model's matrices: `r=0.03 0 0 0.03`); a bare word
+# is a flag.
+Model      <- '.model' s Name s Word mbody
+# Parentheses and commas are separators (`(bf=20) cje=1p)` reads on).
+mbody      <- (s? (mitem / [()]))* s?
+mitem      <- MPair / Flag / [,]
+MPair      <- Key s? '=' s? MVal
+# A model's matrices are blank-separated numbers (`c=1e-10 -6e-11`: two
+# entries, not a subtraction), so a value here is one word or delimited
+# expression.
+MVal       <- (expr / Str / Word) (s mnum)*
+mnum       <- &([+\-.0-9]) More !(s? '=')
+More       <- word
+Flag       <- Word
+
+# §2.3: `.param a=1 b='a*2' f(x)='x*2'`.
+Params     <- ('.parameters' / '.parameter' / '.param') ((s / s? ',' s?) (FuncDef / Assign))+ s?
+Assign     <- Key s? '=' s? Val
+FuncDef    <- Key s? '(' s? (Arg (s? ',' s? Arg)*)? s? ')' s? '=' s? Body_p
+# A `.param` function's body: to the next blank or `,` unless delimited.
+Body_p     <- expr / (!s !',' !nl .)+
+# §2.4: `.func name(args) [=] body`.
+Func       <- '.func' s Key s? '(' s? (Arg (s? ',' s? Arg)*)? s? ')' s? ('=' s?)? Body
+Arg        <- Key
+# Up to a further `key=` (LTspice `Rpar=`), which no IR field holds.
+Body       <- expr &(s? nl) / '{' Expr_body '}' &(s? nl) / (!(s pairstart) !nl .)+
+# A braced body no expression rule reads (`{POLY(2) v(3) v(4) 0 .5 .5}`,
+# `{TABLE {...} (0,0) ...}`): the text inside the braces.
+Expr_body  <- (bnest / !'}' !nl .)*
+bnest      <- '{' (bnest / !'}' !nl .)* '}'
+
+# §4.3: `.options a=1 b`.
+Options    <- ('.options' / '.option' / '.opts' / '.opt') !namechar (s? oitem)* s?
+oitem      <- Pair / Flag / [,]
+# §4.2: `.temp t`.
+Temp       <- ('.temperature' / '.temp') !namechar (s? '=')? s? Val s?
+# §4.4: `.ic v(n)=x ...`; `.dcvolt` is `.ic`.
+Ic         <- ('.dcvolt' / '.ic') !namechar (s NodeVal)* s?
+Nodeset    <- '.nodeset' !namechar (s NodeVal)* s?
+NodeVal    <- 'v' s? '(' s? Node s? ')' s? '=' s? Val
+Global     <- '.global' !namechar (s Node)* s?
+
+# §4.5: `.save out...` (`all` alone: what no list means).
+Save       <- '.save' !namechar osep* s?
+osep       <- s? ',' s? Out / s Out
+# An output: a signal (`v(a)`, `@m1[vbs]`, `v(g)/10`), to a blank or `,`.
+Out        <- (group / braces / quoted / '=' s? / ![ \t\n,({'=] .)+
+quoted     <- "'" (!"'" !nl .)* "'"
+braces     <- '{' (braces / !'}' !nl .)* '}'
+# `.print [kind] out...`; `.plot` asks the same of a plotter.
+Print      <- ('.print' / '.plot') !namechar (s PrintKind)? osep* s?
+PrintKind  <- ('noise' / 'disto' / 'tran' / 'sens' / 'four' / 'op' / 'dc' / 'ac' / 'tf' / 'pz') !namechar
+Meas       <- ('.measure' / '.meas') !namechar rest
+
+# §4.6: the analyses the IR holds, field by field; any other form is `Raw`.
+Op         <- '.op' !namechar rest
+Dc         <- '.dc' (s Sweep)+ s?
+Sweep      <- Name s Num s Num s Num
+Ac         <- '.ac' s Word s Num s Num s Num s?
+Tran       <- '.tran' s Num s Num (s Num (s Num)?)? (s Uic)? s?
+Uic        <- 'uic' !namechar
+Noise      <- '.noise' s 'v' s? '(' s? Node (s? ',' s? Node)? s? ')' s Name s Word s Num s Num s Num (s Num)? s?
+Tf         <- '.tf' s Out s Name s?
+Sens       <- '.sens' s Out (s 'dc' !namechar / s 'ac' s Word s Num s Num s Num)? s?
+Pz         <- '.pz' s Node s Node s Node s Node s Word s Word s?
+Four       <- ('.fourier' / '.four') !namechar s Num osep+ s?
+
+# Every other dot card the grammar knows: its text is kept (a known card
+# whose fields the IR cannot hold lands here too). A dot card outside the
+# list is `Unparsed`, as ngspice refuses one ("unimplemented dot command",
+# §4).
+Raw        <- '.' rawkind !namechar rest / ends rest
+rawkind    <- 'acphasenoise' / 'osdi_include' / 'appendmodel' / 'temperature' / 'montecarlo'
+            / 'phasenoise' / 'tran_noise' / 'trannoise' / 'unprotect' / 'envelope' / 'ptdnoise'
+            / 'pre_osdi' / 'acmatch' / 'dcmatch' / 'hbnoise' / 'snnoise' / 'measure' / 'biaschk'
+            / 'stimuli' / 'connect' / 'protect' / 'options' / 'nodeset' / 'include' / 'verilog'
+            / 'dcsens' / 'pnoise' / 'jitter' / 'sample' / 'unprot' / 'option' / 'dcvolt'
+            / 'global' / 'dcinc' / 'disto' / 'envlp' / 'hbosc' / 'hblin' / 'matex' / 'noise'
+            / 'snosc' / 'check' / 'power' / 'store' / 'mosra' / 'print' / 'probe' / 'graph'
+            / 'width' / 'title' / 'model' / 'acxf' / 'dcxf' / 'four' / 'hbac' / 'hbxf' / 'lstb'
+            / 'qpss' / 'sens' / 'snac' / 'snxf' / 'tran' / 'meas' / 'dout' / 'stim' / 'plot'
+            / 'prot' / 'step' / 'endc' / 'opts' / 'temp' / 'save' / 'fft' / 'lin' / 'net' / 'pac'
+            / 'pss' / 'pxf' / 'stb' / 'pat' / 'opt' / 'hdl' / 'ac' / 'dc' / 'hb' / 'mc' / 'op'
+            / 'pz' / 'sn' / 'sp' / 'tf' / 'ic'
+
+# ── Elements (§3.1) ──
+# Each card the IR holds, field by field; any other well-formed element is
+# `Raw` (`element_any`). Which bare word is a `.model` name and which a
+# value is the lowering's (it knows the deck's models).
+element    <- (R / C / L / K / V / I / Poly / E / G / F / H / B / D / Q / M / J / Z / S / W / T / X) &nl / Raw_element
+Raw_element <- element_any
+
+# `R1 a b value [k=v...]`, or ngspice `R1 a b r=1k`.
+R          <- 'r' Name_e s Node s Node (s !pairstart Val)? inst
+C          <- 'c' Name_e s Node s Node (s !pairstart Val)? inst
+L          <- 'l' Name_e s Node s Node (s !pairstart Val)? inst
+K          <- 'k' Name_e s Node s Node s Num s?
+
+# `V1 a b [[dc] v] [ac [mag [phase]]] [wave]`: the parentheses of a
+# waveform are optional (ngspice ch.3).
+V          <- 'v' Name_e s Node s Node (s !spec !pairstart Val)? (s spec)* s?
+I          <- 'i' Name_e s Node s Node (s !spec !pairstart Val)? (s spec)* s?
+spec       <- Sdc / Sac / wave
+Sdc        <- 'dc' !namechar ((s? '=' s? / s) !spec Val)?
+Sac        <- 'ac' !namechar ((s? '=' s? / s) Num (s Num)?)?
+wave       <- Pulse / Sin / Pwl / Exp / Sffm / Am
+Pulse      <- 'pulse' wargs
+Sin        <- ('sine' / 'sin') wargs
+Pwl        <- 'pwl' wargs
+Exp        <- 'exp' wargs
+Sffm       <- 'sffm' wargs
+Am         <- 'am' wargs
+# A blank separates two arguments (`pwl(0 1 -1)` is three), so an argument
+# is a word or a delimited expression, never a bare one.
+wargs      <- s? '(' s? (Val_w (s? ',' s? / s))* Val_w? s? ')' / !namechar ((s? ',' s? / s) &[+\-.0-9] Val_w)*
+Val_w      <- expr / Word
+
+# `E o 0 POLY(n) controls... coeffs...` (and G, F, H).
+Poly       <- [efgh] Name_e s Node s Node s 'poly' s? '(' s? Num s? ')' (s Word)+ s?
+E          <- 'e' Name_e s Node s Node s (behave / Node s Node s Num) s?
+G          <- 'g' Name_e s Node s Node s (behave / Node s Node s Num) s?
+behave     <- ('value' / 'vol' / 'cur') s? '=' s? Val
+F          <- 'f' Name_e s Node s Node s Name s Num s?
+H          <- 'h' Name_e s Node s Node s Name s Num s?
+# `B1 n p V=expr`: the expression as written, to the end of the card.
+B          <- 'b' Name_e s Node s Node s Key s? '=' s? Body
+
+# `name nodes... model [flags] [k=v...]`: nodes while another word follows.
+D          <- 'd' Name_e nodes inst
+Q          <- 'q' Name_e nodes inst
+M          <- 'm' Name_e nodes inst
+J          <- 'j' Name_e nodes inst
+Z          <- 'z' Name_e nodes inst
+nodes      <- (s Node &(s !iflag !pairstart word))* s Mname
+Mname      <- namechar+
+inst       <- (s &iflag Flag)* (s (Pair_i / Flag) / s? ',')* s?
+iflag      <- ('thermal' / 'off' / 'on') !namechar
+# A bare number after a value continues it, SPICE's comma vector (`ic=0,-5`).
+Pair_i     <- Key s? '=' s? Val_i
+Val_i      <- value ((s? ',' s? / s) &[+\-.0-9] More !(s? '='))*
+S          <- 's' Name_e s Node s Node s Node s Node s Mname s?
+W          <- 'w' Name_e s Node s Node s Name s Mname s?
+T          <- 't' Name_e s Node s Node s Node s Node (s Pair)* s?
+X          <- 'x' Name_e (s Node &(s !pairstart !'params:' word))* s Mname (s 'params:')? (s Pair)* s?
+element_any <- &[a-z] Name (s? field)+
+
+# ── Fields (§1.8) ──
+# Blanks, `,`, `=`, `(` and `)` separate; `=` pairs a key with its value
+# and `(` after a word opens a group. `field`, `value` and `expr` are the
+# dialect's.
+Pair       <- Key s? '=' s? Val
+pairstart  <- Key s? '=' !'='
+Val        <- value
+group      <- word s? '(' s? (gfield (s? gfield)*)? s? ')'
+Name       <- namechar+
+# An element's name after its letter, which may be empty.
+Name_e     <- namechar*
+Node       <- namechar+
+Key        <- [a-z_] namechar*
+Word       <- word
+word       <- Num !wordchar / ident
+ident      <- (wordchar / '[' wordchar* ']')+
+Str        <- '"' (!'"' .)* '"'
+blank      <- [ \t]
+s          <- blank+
+rest       <- (!nl .)*
+nl         <- '\n'
