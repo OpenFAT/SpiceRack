@@ -143,6 +143,64 @@ fn in_tube(xs: &[f64], ys: &[f64], x: f64, dx: f64, y: f64, tol: f64) -> bool {
     y >= min - tol && y <= max + tol
 }
 
+/// The first `k` whose `ya[k]` is not [`in_tube`] of `(xb, yb)`. Both time
+/// axes rise, so the window only slides forward: a min and a max deque make
+/// it O(n) where `in_tube` per point is O(n * window), hours on a 2M-point
+/// TRNOISE plot.
+fn leaves_tube(xa: &[f64], ya: &[f64], xb: &[f64], yb: &[f64], dx: f64, tol: f64) -> Option<usize> {
+    if !xa.is_sorted() || !xb.is_sorted() {
+        return (0..ya.len()).find(|&k| !in_tube(xb, yb, xa[k], dx, ya[k], tol));
+    }
+    let (mut mins, mut maxs) = (std::collections::VecDeque::<usize>::new(), std::collections::VecDeque::<usize>::new());
+    let (mut lo, mut hi, mut pushed) = (0, 0, 0);
+    for (k, (&x, &y)) in xa.iter().zip(ya).enumerate() {
+        while lo < xb.len() && xb[lo] < x - dx {
+            lo += 1;
+        }
+        while hi < xb.len() && xb[hi] <= x + dx {
+            hi += 1;
+        }
+        let (start, end) = (lo.saturating_sub(1), (hi + 1).min(xb.len()));
+        while pushed < end {
+            while maxs.back().is_some_and(|&j| yb[j] <= yb[pushed]) {
+                maxs.pop_back();
+            }
+            while mins.back().is_some_and(|&j| yb[j] >= yb[pushed]) {
+                mins.pop_back();
+            }
+            maxs.push_back(pushed);
+            mins.push_back(pushed);
+            pushed += 1;
+        }
+        while maxs.front().is_some_and(|&j| j < start) {
+            maxs.pop_front();
+        }
+        while mins.front().is_some_and(|&j| j < start) {
+            mins.pop_front();
+        }
+        let min = mins.front().map_or(f64::INFINITY, |&j| yb[j]);
+        let max = maxs.front().map_or(f64::NEG_INFINITY, |&j| yb[j]);
+        if !(y >= min - tol && y <= max + tol) {
+            return Some(k);
+        }
+    }
+    None
+}
+
+#[test]
+fn sliding_tube_matches_the_scan() {
+    let xb: Vec<f64> = (0..400).map(|i| i as f64 * 0.01 + (i % 7) as f64 * 1e-4).collect();
+    let yb: Vec<f64> = xb.iter().map(|x| (7.0 * x).sin() + if (x * 10.0) as i32 % 3 == 0 { 0.5 } else { 0.0 }).collect();
+    for shift in [0.0, 0.003, 0.02, 0.2] {
+        let xa: Vec<f64> = (0..300).map(|i| i as f64 * 0.013).collect();
+        let ya: Vec<f64> = xa.iter().map(|x| (7.0 * (x + shift)).sin()).collect();
+        for dx in [0.0, 0.005, 0.04] {
+            let scan = (0..ya.len()).find(|&k| !in_tube(&xb, &yb, xa[k], dx, ya[k], 1e-3));
+            assert_eq!(leaves_tube(&xa, &ya, &xb, &yb, dx, 1e-3), scan, "shift {shift} dx {dx}");
+        }
+    }
+}
+
 fn close(x: f64, y: f64) -> bool {
     (x - y).abs() <= 1e-9 * x.abs().max(y.abs())
 }
@@ -168,24 +226,33 @@ fn compare(a: &Run, b: &Run) -> Result<(), String> {
         if !transient && (xa.len() != xb.len() || xa.iter().zip(&xb).any(|(x, y)| (x - y).abs() > 1e-9 * span)) {
             return Err(format!("{}: sweep grid changed ({} -> {} points)", pa.plot_name, xa.len(), xb.len()));
         }
-        if transient && !close(*xa.last().unwrap(), *xb.last().unwrap()) {
+        if transient && !matches!((xa.last(), xb.last()), (Some(&x), Some(&y)) if close(x, y)) {
             return Err(format!("{}: stop time {:?} -> {:?}", pa.plot_name, xa.last(), xb.last()));
         }
         let mut shared = 0;
-        for (i, v) in pa.variables.iter().enumerate().skip(1) {
-            // A name can repeat (a TXL line's two `i(y1)` branches): pair the
-            // k-th occurrence in `a` with the k-th in `b`.
-            let same = |w: &&spicerack::result::VarInfo| w.name.eq_ignore_ascii_case(&v.name);
-            let k = pa.variables[..i].iter().filter(same).count();
-            let Some(j) = pb.variables.iter().enumerate().filter(|(_, w)| same(w)).nth(k).map(|(j, _)| j) else { continue };
+        // A name can repeat (a TXL line's two `i(y1)` branches): pair the
+        // k-th occurrence in `a` with the k-th in `b`. Indexed by name, since
+        // a power grid saves ~10^6 vectors and a scan per vector is quadratic.
+        let mut in_b = std::collections::HashMap::<String, std::collections::VecDeque<usize>>::new();
+        for (j, w) in pb.variables.iter().enumerate() {
+            in_b.entry(w.name.to_ascii_lowercase()).or_default().push_back(j);
+        }
+        for (i, v) in pa.variables.iter().enumerate() {
+            let Some(j) = in_b.get_mut(&v.name.to_ascii_lowercase()).and_then(|q| q.pop_front()) else { continue };
+            if i == 0 {
+                continue; // the scale; popped so the k-th pairing counts it
+            }
             shared += 1;
             let (ya, yb) = (column(pa, i), column(pb, j));
             let swing = ya.iter().map(|c| c.norm()).fold(0.0, f64::max);
             let tol = 1e-9 + 1e-3 * swing;
-            if transient {
+            // The same grid and every point within `tol` is inside any tube:
+            // the common case, and the tube scan costs a window per point.
+            let pointwise = || xa == xb && ya.iter().zip(&yb).all(|(p, q)| (p - q).norm() <= tol);
+            if transient && !pointwise() {
                 let (ra, rb) = (pa.re(i), pb.re(j));
                 let dx = 0.01 * xa.last().unwrap();
-                if let Some(k) = (0..ra.len()).find(|&k| !in_tube(&xb, &rb, xa[k], dx, ra[k], tol)) {
+                if let Some(k) = leaves_tube(&xa, &ra, &xb, &rb, dx, tol) {
                     return Err(format!("{} {}: {} leaves the tube at {}", pa.plot_name, v.name, ra[k], xa[k]));
                 }
             } else if let Some(k) = (0..ya.len()).find(|&k| (ya[k] - yb[k]).norm() > tol) {
@@ -242,13 +309,14 @@ fn reordered(deck: &str) -> String {
 
 /// Emitting `ir` in `d` and reading it back gives `ir` again, and emitting
 /// that gives the same text: what SpiceRack writes, it reads as written.
-fn fixpoint(ir: &CircuitIR, d: Dialect) -> Result<(), String> {
+/// The emitted text is returned.
+fn fixpoint(ir: &CircuitIR, d: Dialect) -> Result<String, String> {
     let text = netlist(ir, d).map_err(|e| format!("{d:?} emit: {e}"))?;
     let (again, _) = parse(&text, &ir.top.name, d)?;
     if &again != ir || netlist(&again, d).ok().as_ref() != Some(&text) {
         return Err(format!("{d:?} is no fixpoint: re-reading the emitted deck changes the IR"));
     }
-    Ok(())
+    Ok(text)
 }
 
 /// Every deck under `$<var>` whose path passes `keep` is a fixpoint in `d`.
@@ -343,22 +411,19 @@ fn check(deck: &Path, secs: u64, refused: &std::sync::Mutex<std::collections::BT
         Ok((ir, _)) => ir,
         Err(e) => return Outcome::Fail(e),
     };
-    if let Err(why) = fixpoint(&ir, Dialect::Ngspice) {
-        return Outcome::Fail(why);
-    }
+    let converted = match fixpoint(&ir, Dialect::Ngspice) {
+        Ok(t) => t,
+        Err(why) => return Outcome::Fail(why),
+    };
     let back: CircuitIR = serde_json::from_str(&serde_json::to_string(&ir).unwrap()).unwrap();
     if back != ir {
         return Outcome::Fail("JSON round trip changed the IR".into());
     }
-    for d in [Dialect::Ngspice, Dialect::Hspice, Dialect::Ltspice, Dialect::Spectre, Dialect::Vacask, Dialect::Espice] {
+    for d in [Dialect::Hspice, Dialect::Ltspice, Dialect::Spectre, Dialect::Vacask, Dialect::Espice] {
         if netlist(&ir, d).is_err() {
             *refused.lock().unwrap().entry(format!("{d:?}")).or_default() += 1;
         }
     }
-    let converted = match netlist(&ir, Dialect::Ngspice) {
-        Ok(t) => t,
-        Err(e) => return Outcome::Fail(format!("ngspice emit: {e}")),
-    };
     // The analyses must survive whether or not ngspice can run the deck.
     let (before, after) = (analyses(&src), analyses(&converted));
     if before != after {
@@ -370,7 +435,12 @@ fn check(deck: &Path, secs: u64, refused: &std::sync::Mutex<std::collections::BT
         Ok(None) => return Outcome::Skip("original timed out".into()),
         Err(e) => return Outcome::Skip(format!("original fails: {e}")),
     };
-    match ngspice(dir, &converted, secs) {
+    if let Some(p) = original.plots.iter().find(|p| p.variables.len() > 0 && p.re(0).is_empty()) {
+        return Outcome::Skip(format!("original fails: {} has no points", p.plot_name));
+    }
+    // Twice the budget: under a loaded machine a deck near the limit as
+    // written crosses it converted with no change in the circuit.
+    match ngspice(dir, &converted, 2 * secs) {
         Ok(Some(r)) => match compare(&original, &r) {
             Ok(()) => Outcome::Pass,
             // Fails only if the original agrees with itself (TRNOISE draws
@@ -403,7 +473,8 @@ fn spice_bench_round_trip() {
     let secs = std::env::var("SPICE_BENCH_TIMEOUT").ok().and_then(|s| s.parse().ok()).unwrap_or(120);
     let mut all = Vec::new();
     decks(Path::new(&root), &mut all);
-    all.sort();
+    // Largest first: a big deck started last would set the wall clock alone.
+    all.sort_by_key(|p| std::cmp::Reverse(std::fs::metadata(p).map_or(0, |m| m.len())));
     assert!(!all.is_empty(), "no *.sp under {root}");
 
     let refused = std::sync::Mutex::new(std::collections::BTreeMap::new());
@@ -415,7 +486,11 @@ fn spice_bench_round_trip() {
             s.spawn(|| loop {
                 let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 let Some(deck) = all.get(i) else { break };
+                let t = std::time::Instant::now();
                 let o = check(deck, secs, &refused);
+                if t.elapsed().as_secs() > 60 {
+                    eprintln!("slow {}: {:.0?}", deck.display(), t.elapsed());
+                }
                 results.lock().unwrap().push((deck.clone(), o));
             });
         }

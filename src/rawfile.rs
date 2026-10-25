@@ -29,12 +29,14 @@ pub fn parse_raw_all(data: &[u8]) -> Result<Vec<RawData>, RawFileError> {
     if data.starts_with(&[0xFF, 0xFE]) {
         return parse_raw(data).map(|r| vec![r]);
     }
-    let mut plots = Vec::new();
-    let mut rest = data;
-    while !rest.trim_ascii().is_empty() {
-        let (raw, used) = parse_utf8(rest)?;
+    let (first, mut used) = parse_utf8(data)?;
+    let mut plots = vec![first];
+    // Every later plot starts with `Title:`. Anything else is trailing junk:
+    // ngspice with `.options interp` writes past the rows it declares.
+    while data[used..].trim_ascii_start().starts_with(b"Title:") {
+        let (raw, n) = parse_utf8(&data[used..])?;
         plots.push(raw);
-        rest = &rest[used..];
+        used += n;
     }
     Ok(plots)
 }
@@ -108,9 +110,8 @@ fn parse_utf8(data: &[u8]) -> Result<(RawData, usize), RawFileError> {
         }
     };
 
-    if num_vars == 0 || num_points == 0 {
-        return Err(RawFileError::Format("No variables or points declared".into()));
-    }
+    // An empty plot (0 points: a sweep that failed; 0 variables: a circuit
+    // with no nodes) is well-formed and reads as empty columns.
     if raw.variables.len() != num_vars {
         return Err(RawFileError::Format(format!(
             "Header declares {num_vars} variables but {} were listed",
@@ -266,6 +267,20 @@ mod tests {
 
         normal.truncate(normal.len() - 1);
         assert!(parse_raw(&normal).is_err(), "short binary block must error");
+    }
+
+    #[test]
+    fn empty_plots() {
+        let mut buf = header("real", &["v(a)", "v(b)"], 0, "Binary:\n");
+        buf.extend(header("real", &[], 1, "Binary:\n"));
+        buf.extend(header("real", &["v(a)"], 1, "Binary:\n"));
+        buf.extend_from_slice(&7.0f64.to_le_bytes());
+        buf.extend_from_slice(&[0x9c, 0xff, 0x01]); // `.options interp` junk
+        let plots = parse_raw_all(&buf).unwrap();
+        assert_eq!(plots.len(), 3);
+        assert_eq!(plots[0].real_data, vec![Vec::<f64>::new(); 2]);
+        assert!(plots[1].real_data.is_empty());
+        assert_eq!(plots[2].real_data, vec![vec![7.0]]);
     }
 
     #[test]

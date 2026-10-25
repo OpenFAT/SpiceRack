@@ -94,6 +94,21 @@ pub fn ngspice_value(t: &str) -> Option<f64> {
 /// value read from an ngspice deck is written back bit for bit. Zeros count
 /// as digits there: `0.050000` is 50000e-6, another double than `0.05`.
 pub fn ngspice_spelling(v: f64) -> String {
+    // ponytail: per-thread memo, cleared at 64k entries. A netlist repeats few
+    // distinct values (ibmpg3: 1.6M numbers, 466 distinct) and the search
+    // below costs ~15 µs each; an LRU if a deck ever has 64k+ distinct ones.
+    thread_local! {
+        static MEMO: std::cell::RefCell<std::collections::HashMap<u64, String>> = Default::default();
+    }
+    MEMO.with_borrow_mut(|memo| {
+        if memo.len() >= 1 << 16 {
+            memo.clear();
+        }
+        memo.entry(v.to_bits()).or_insert_with(|| spell(v)).clone()
+    })
+}
+
+fn spell(v: f64) -> String {
     for digits in 1..=17 {
         let sci = format!("{:.*e}", digits - 1, v);
         let Ok(x) = sci.parse::<f64>() else { break };
