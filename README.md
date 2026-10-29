@@ -1,8 +1,8 @@
 # SpiceRack
 
-[![Tests](https://github.com/OmarSiwy/SpiceRack/actions/workflows/test.yaml/badge.svg?branch=main)](https://github.com/OmarSiwy/SpiceRack/actions/workflows/test.yaml)
-[![Release](https://github.com/OmarSiwy/SpiceRack/actions/workflows/tags.yaml/badge.svg)](https://github.com/OmarSiwy/SpiceRack/actions/workflows/tags.yaml)
-[![Docs](https://github.com/OmarSiwy/SpiceRack/actions/workflows/docs.yaml/badge.svg?branch=main)](https://omarsiwy.github.io/SpiceRack/)
+[![Tests](https://github.com/OpenFAT/SpiceRack/actions/workflows/test.yaml/badge.svg?branch=main)](https://github.com/OpenFAT/SpiceRack/actions/workflows/test.yaml)
+[![Release](https://github.com/OpenFAT/SpiceRack/actions/workflows/tags.yaml/badge.svg)](https://github.com/OpenFAT/SpiceRack/actions/workflows/tags.yaml)
+[![Docs](https://github.com/OpenFAT/SpiceRack/actions/workflows/docs.yaml/badge.svg?branch=main)](https://openfat.github.io/SpiceRack/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 Build SPICE circuits in Python, generate netlists, run them on whichever simulator you have installed, and read the results back as plain lists of floats.
@@ -205,7 +205,7 @@ for backend in ["ngspice", "vacask"]:
 
 ### ESPice
 
-[ESPice](https://github.com/OmarSiwy/ESPice) (`espice` on `$PATH`) reads the ngspice dialect and compiles Verilog-A itself through VerA, so `@(cross)` and `transition()` models run. `veriloga("model.va")` only records the source; each backend's codegen decides what it becomes: OpenVAF → `pre_osdi` for ngspice, `load` for VACASK, `ahdl_include` for Spectre, and `.hdl "model.va"` for ESPice, with no OpenVAF run. ESPice loads no OSDI binaries, so `osdi("x.osdi")` on an ESPice bench is a codegen error, and a legacy `Circuit` deck that carries `pre_osdi` is refused. VA instances use a variable-node-count letter (`N`, `X`, `U`).
+[ESPice](https://github.com/OpenFAT/EGSpice) (`espice` on `$PATH`) reads the ngspice dialect and compiles Verilog-A itself through VerA, so `@(cross)` and `transition()` models run. `veriloga("model.va")` only records the source; each backend's codegen decides what it becomes: OpenVAF → `pre_osdi` for ngspice, `load` for VACASK, `ahdl_include` for Spectre, and `.hdl "model.va"` for ESPice, with no OpenVAF run. ESPice loads no OSDI binaries, so `osdi("x.osdi")` on an ESPice bench is a codegen error, and a legacy `Circuit` deck that carries `pre_osdi` is refused. VA instances use a variable-node-count letter (`N`, `X`, `U`).
 
 The first run of a model compiles it, which needs the Zig compiler ESPice was built with on `$PATH` (or `$ZIG`); builds are cached under `$ESPICE_CACHE` (else `~/.cache/espice`). A misspelled instance parameter or a wrong node count is an error, not a silent default. Measured against the binary: op, dc (incl. `.dc temp`), ac, tran, tf, sens and `.meas` run; `.tf` names its columns `input_resistance`/`output_resistance`. `.step` is not wired (ESPice writes one plot per point and the raw reader keeps one), and noise/pz/disto result layouts are not mapped yet. Corners, `run_corners` (including `seeds=`: with `.options seed=N` ESPice draws `agauss`/`gauss`/`unif` once from that seed, as ngspice draws them per run) and the characterization recipes run on it.
 

@@ -12,7 +12,7 @@ requires-python = ">=3.10"
 dependencies = ["numpy"]
 
 [project.urls]
-Repository = "https://github.com/OmarSiwy/SpiceRack"
+Repository = "https://github.com/OpenFAT/SpiceRack"
 
 [tool.maturin]
 manifest-path = "Cargo.toml"
