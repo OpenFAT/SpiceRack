@@ -13,6 +13,7 @@ from typing import Any, Callable
 import numpy as np
 
 from .analysis import ac_bandwidth_hz, ac_passband_db, ac_phase_margin_deg, crossings
+from ._digital import _codes
 
 
 @dataclass
@@ -30,6 +31,10 @@ class DesignBench:
     #: metrics in ``measurements`` are documented intent that nothing computes
     #: yet -- ``metrics()`` will say so rather than return a wrong number.
     extractor: Callable[[Any], dict[str, float]] | None = None
+    #: Runs the bench's own analyses and returns what ``extractor`` takes (one
+    #: result, or a dict of results for a bench that needs several solves).
+    #: ``None``: the caller runs ``testbench`` and passes the result to ``metrics``.
+    runner: Callable[[], Any] | None = None
 
     def netlist(self, backend: str = "ngspice") -> str:
         return self.testbench.netlist(backend)
@@ -56,6 +61,12 @@ class DesignBench:
         if missing:
             raise RuntimeError(f"bench '{self.name}' declared {missing} but did not compute them")
         return values
+
+    def measure(self) -> dict[str, float]:
+        """Run the bench's own analyses and extract its metrics: ``metrics(runner())``."""
+        if self.runner is None:
+            raise NotImplementedError(f"bench '{self.name}' has no runner; run its testbench and call metrics()")
+        return self.metrics(self.runner())
 
 
 def _sample(res: Any, node: str, at: Any) -> np.ndarray:
@@ -134,15 +145,27 @@ def amplifier_current_gain(
     source_name: str = "in",
     ac_magnitude: float = 1e-6,
     load_resistance: float | None = None,
+    input_bias_current: float = 0.0,
+    output_bias_voltage: float = 0.0,
 ) -> DesignBench:
+    """Small-signal current gain and bandwidth, ``i(out_sense) / i_in``.
+
+    A mirror or current-steering cell needs its bias: ``input_bias_current``
+    is the DC the input source pushes into ``input_node`` (positive into the
+    pin), ``output_bias_voltage`` the DC the sense source holds the output at.
+    With both 0 a mirror is unbiased and an NMOS output sits in triode, so
+    the gain reads ~0.
+    """
     tb = ps.Testbench(dut)
-    tb.I(name=source_name, positive=input_node, negative=reference_node, value=0.0, ac=ac_magnitude)
+    # SPICE drives an I source's current out of its + node: -bias pushes +bias into the pin.
+    tb.I(name=source_name, positive=input_node, negative=reference_node, value=-input_bias_current,
+         ac=ac_magnitude)
     # The sense source is the output's return path to the reference: a floating
     # sense node carries no current, so the branch would read 0 for every DUT.
     if load_resistance is None:
-        tb.V(name="out_sense", positive=output_node, negative=reference_node, value=0.0)
+        tb.V(name="out_sense", positive=output_node, negative=reference_node, value=output_bias_voltage)
     else:
-        tb.V(name="out_sense", positive=output_node, negative="out_sense_n", value=0.0)
+        tb.V(name="out_sense", positive=output_node, negative="out_sense_n", value=output_bias_voltage)
         tb.R(name="load", positive="out_sense_n", negative=reference_node, value=load_resistance)
     tb.save("I(Vout_sense)", f"V({output_node})")
     tb.add_operating_point()
@@ -348,9 +371,7 @@ def adc_ramp(
     tb.add_transient(step_time=conversion_period / 50, end_time=end_time)
 
     def extract(tran: Any) -> dict[str, float]:
-        t = (np.arange(conversions) + 0.9) * conversion_period
-        bits = np.array([_sample(tran, node, t) > logic_high / 2.0 for node in output_nodes])
-        codes = (bits.astype(int) << np.arange(len(output_nodes))[:, None]).sum(axis=0)
+        codes = _codes(tran, output_nodes, (np.arange(conversions) + 0.9) * conversion_period, logic_high)
         steps = np.diff(codes)
         # Missing codes are counted over full scale, the conventional definition,
         # so a partial ramp reports codes it never reached as missing; compare
@@ -615,11 +636,14 @@ def pll_lock(
 ) -> DesignBench:
     """Reference-driven transient; output frequency and control settling.
 
-    Phase noise and reference spurs are not reachable here: ngspice injects no
-    device noise into a transient, and the `.four` table it would need is not
-    parsed. Deterministic quantities -- frequency, control settling -- are.
+    The max step is 1/200 of the *output* period on every backend: a trapezoidal
+    transient shifts an oscillator by -(2*pi*h/T)**2/12, so the step sets the
+    frequency error. Reference spurs are deterministic and reachable
+    (``timing_2.pll_reference_spur``); phase noise is not, because ngspice injects no
+    device noise into a transient.
     """
     period = 1.0 / reference_frequency
+    step = period / (200 * max(divide_ratio, 1.0))
     tb = ps.Testbench(dut)
     tb.PulseVoltageSource(
         name="ref",
@@ -633,7 +657,8 @@ def pll_lock(
         fall_time=period / 100,
     )
     tb.save(f"V({reference_node})", f"V({output_node})", f"V({control_node})")
-    tb.add_transient(step_time=period / 200, end_time=period * cycles)
+    tran_args = dict(step_time=step, end_time=period * cycles, max_time=step)
+    tb.add_transient(**tran_args)
 
     def extract(tran: Any) -> dict[str, float]:
         time = np.asarray(tran.time, float)
@@ -641,8 +666,10 @@ def pll_lock(
         vctrl = np.asarray(tran[control_node], float)
         settle_from = 0.5 * time[-1]
         # Mean frequency over every rising edge in the second half: one period
-        # alone inherits the timestep quantisation of its two edges.
-        edges = [x for x in crossings(time, vco, (vco.max() + vco.min()) / 2.0, rising=True)
+        # alone inherits the timestep quantisation of its two edges. The mid-level
+        # comes from the settled half: startup overshoot moves the whole-record one.
+        settled = vco[time >= settle_from]
+        edges = [x for x in crossings(time, vco, (settled.max() + settled.min()) / 2.0, rising=True)
                  if x >= settle_from]
         if len(edges) < 2:
             raise ValueError(f"need at least 2 rising crossings after {settle_from:g}s, got {len(edges)}")
@@ -665,6 +692,7 @@ def pll_lock(
         result_fields=["tran.time", f"tran['{control_node}']", f"tran['{output_node}']"],
         validation=["control voltage settles", "output period matches reference ratio"],
         extractor=extract,
+        runner=lambda: tb.transient(**tran_args),
     )
 
 

@@ -1017,6 +1017,18 @@ impl PySubcircuit {
         "0".to_string()
     }
 
+    /// The subcircuit's name, as `X` instances refer to it.
+    #[getter]
+    fn name(&self) -> String {
+        self.inner.name.clone()
+    }
+
+    /// Port names in declaration order: the order an instance connects nets in.
+    #[getter]
+    fn ports(&self) -> Vec<String> {
+        self.inner.ports.iter().map(|p| p.name.clone()).collect()
+    }
+
     // ── Elements ──
 
     /// `value` is a number, a `UnitValue` or an expression string; `**kwargs`

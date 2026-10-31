@@ -392,9 +392,17 @@ shows the low-level bridge form above; it does not call
 <code>verilog()</code>.</p>
 
 <h2 id="testbenches">Design testbench recipes</h2>
-<p>The <code>testbenches</code> library (example 22) has recipes for
-amplifier gain, ADC ramp, DAC linearity, PLL lock, and bandgap reference,
-plus validation helpers:</p>
+<p>The <code>testbenches</code> library (example 22) has about 60 recipes, each
+checked against a closed-form oracle on ngspice: op-amp open loop, Tian loop gain,
+step response, CMRR, offset, swing, THD, noise, port impedance, S-parameters and IP3;
+PSRR, LDO line/load/step/start-up/loop margins; current mirrors and references,
+transconductors, switched-cap and charge pumps; ADC dynamic and static linearity,
+comparator threshold/delay/kickback, DAC transition/dynamic/output impedance,
+sample-and-hold; oscillator frequency, sweep and jitter, PLL lock time, loop margins,
+reference spur, PFD/CP, DLL, delay line and clock buffers.
+<code>bench.measure()</code> runs a bench's own analyses and returns its metrics; the
+catalog with every metric is <code>skills/spicerack/TESTBENCHES.md</code>.
+The validation helpers:</p>
 <pre><code>from spicerack.testbenches import (
     CornerCase, MetricSpec, MonteCarloPlan, ValidationRule,
     amplifier_voltage_gain, bandgap_reference,

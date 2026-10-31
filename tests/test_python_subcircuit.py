@@ -1021,3 +1021,10 @@ class TestSimulatorCheckBackend:
         sim = c.simulator()
         issues = sim.check_backend("ngspice")
         assert isinstance(issues, list)
+
+
+def test_name_and_ports_read_back_in_declaration_order():
+    import spicerack as ps
+    sc = ps.Subcircuit("opamp", ["inp", "inn", "out", "vdd", "vss"])
+    assert sc.name == "opamp"
+    assert sc.ports == ["inp", "inn", "out", "vdd", "vss"]
