@@ -8,7 +8,6 @@ extra DUT pins (supplies, cascode gates) to DC volts.
 
 from __future__ import annotations
 
-import json
 import math
 from typing import Any, Mapping
 
@@ -193,9 +192,8 @@ def transconductor_gm(
     the offset where G_m stays within ``linearity_tolerance`` of ``gm0_s``
     (nan when the sweep ends first).
     """
-    spec = json.loads(dut.to_json())
-    harness = ps.Subcircuit(f"{spec['name']}_gm_harness", [])
-    harness.instance(dut, "dut", *(p["name"] for p in spec["ports"]))
+    harness = ps.Subcircuit(f"{dut.name}_gm_harness", [])
+    harness.instance(dut, "dut", *dut.ports)
     for name, node, gain in (("idp", input_p, 0.5), ("idn", input_n, -0.5)):
         harness.E(name=name, positive=node, negative="gm_cm", control_positive="gm_vid",
                   control_negative=ground, voltage_gain=gain)

@@ -45,6 +45,7 @@ keyword-only unless noted.</p>
 <tr><td><code>Circuit(title: str)</code></td><td>Flat circuit. <code>str(circuit)</code> → netlist.</td></tr>
 <tr><td><code>Subcircuit(name: str, ports: list[str] = None, **params)</code></td><td>Reusable, nestable design block. Same element/directive methods as <code>Circuit</code>.</td></tr>
 <tr><td><code>.gnd</code></td><td>Ground node (<code>"0"</code>).</td></tr>
+<tr><td><code>.name</code>, <code>.ports</code></td><td><code>Subcircuit</code>: its name and port names in declaration order (the order an instance connects nets in).</td></tr>
 <tr><td><code>.node(name) -> str</code></td><td><code>Circuit</code> only. Node name passthrough.</td></tr>
 <tr><td><code>.element(name) -> str</code> / <code>circuit[name]</code></td><td><code>Circuit</code> only. Retrieve an element's netlist line.</td></tr>
 <tr><td><code>.set_source_value(name, value)</code></td><td><code>Circuit</code> only. Update a V/I source value after construction.</td></tr>

@@ -44,7 +44,7 @@ dut.X("MN1", "sky130_fd_pr__nfet_01v8", "d", "g", "s", "b", W=1, L=0.15, nf=2)
 # -> XMN1 d g s b sky130_fd_pr__nfet_01v8 W=1 L=0.15 nf=2
 ```
 
-`Subcircuit.instance(subckt, name, *nodes, **params)` is the same card from the object.
+`Subcircuit.instance(subckt, name, *nodes, **params)` is the same card from the object. `subckt.name` and `subckt.ports` (declaration order) read a DUT back, e.g. to wrap it: `harness.instance(dut, "dut", *dut.ports)`.
 
 Waveform sources, all **TB**:
 

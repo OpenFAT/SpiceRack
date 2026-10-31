@@ -9,7 +9,6 @@ cycle of phase error, ``kvco_hz_per_v`` in Hz/V; the 2*pi factors cancel.
 
 from __future__ import annotations
 
-import json
 import math
 import warnings
 from typing import Any
@@ -153,11 +152,10 @@ def pll_loop_margins(
     model holds only for crossover << f_ref: ``crossover_over_ref`` above 0.1 warns
     (Gardner 1980). Swept from f_ref/1e5 to f_ref.
     """
-    spec = json.loads(dut.to_json())
     vctl = "cp" if filter_out == filter_in else "vctl"
     ports = {filter_in: "cp", filter_out: vctl}
     loop = ps.Subcircuit("pll_phase_model", [])
-    loop.X("filt", spec["name"], *[ports.get(p["name"], p["name"]) for p in spec["ports"]])
+    loop.X("filt", dut.name, *[ports.get(p, p) for p in dut.ports])
     loop.G(name="cp", positive="0", negative="cp", control_positive="err", control_negative="0", transconductance=ip)
     loop.G(name="vco", positive="0", negative="ph", control_positive=vctl, control_negative="0",
            transconductance=kvco_hz_per_v)

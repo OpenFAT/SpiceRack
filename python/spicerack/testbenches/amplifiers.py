@@ -7,7 +7,6 @@ around the DUT (``_harness``); everything else is plain ``Testbench`` stimulus.
 
 from __future__ import annotations
 
-import json
 import math
 from typing import Any, Mapping, Sequence
 
@@ -31,7 +30,7 @@ SERVO_L, SERVO_C = 1e9, 1.0
 
 def _ports(dut: Any) -> list[str]:
     """The DUT's port names in definition order."""
-    return [p["name"] for p in json.loads(dut.to_json())["ports"]]
+    return dut.ports
 
 
 def _harness(ps: Any, dut: Any, name: str) -> Any:
