@@ -30,6 +30,10 @@ class DesignBench:
     #: metrics in ``measurements`` are documented intent that nothing computes
     #: yet -- ``metrics()`` will say so rather than return a wrong number.
     extractor: Callable[[Any], dict[str, float]] | None = None
+    #: Runs the bench's own analyses and returns what ``extractor`` takes (one
+    #: result, or a dict of results for a bench that needs several solves).
+    #: ``None``: the caller runs ``testbench`` and passes the result to ``metrics``.
+    runner: Callable[[], Any] | None = None
 
     def netlist(self, backend: str = "ngspice") -> str:
         return self.testbench.netlist(backend)
@@ -56,6 +60,12 @@ class DesignBench:
         if missing:
             raise RuntimeError(f"bench '{self.name}' declared {missing} but did not compute them")
         return values
+
+    def measure(self) -> dict[str, float]:
+        """Run the bench's own analyses and extract its metrics: ``metrics(runner())``."""
+        if self.runner is None:
+            raise NotImplementedError(f"bench '{self.name}' has no runner; run its testbench and call metrics()")
+        return self.metrics(self.runner())
 
 
 def _sample(res: Any, node: str, at: Any) -> np.ndarray:

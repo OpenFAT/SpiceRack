@@ -80,6 +80,11 @@ def sndr(raw: Any, vec: str, fs: float, fin: float, n: int, window: str | None =
     ngspice's ``.options interp``.
     """
     t, y = _xy(raw, vec)
+    return _sndr(t, y, fs, fin, n, window, t0, max_harmonic)
+
+
+def _sndr(t: np.ndarray, y: np.ndarray, fs: float, fin: float, n: int, window: str | None = None,
+          t0: float | None = None, max_harmonic: int = 6) -> dict[str, Any]:
     if n < 8 or not 0 < fin < fs / 2:
         raise ValueError(f"need n >= 8 and 0 < fin < fs/2 (n={n}, fin={fin}, fs={fs})")
     start = t[-1] - n / fs if t0 is None else t0
@@ -151,6 +156,10 @@ def settling(raw: Any, vec: str, final: float, tol: float, t0: float = 0.0) -> f
     ``tau * ln(1/tol)``. ``inf`` when the record ends outside the band.
     """
     t, y = _xy(raw, vec)
+    return _settling(t, y, final, tol, t0)
+
+
+def _settling(t: np.ndarray, y: np.ndarray, final: float, tol: float, t0: float = 0.0) -> float:
     band = tol * abs(final - float(np.interp(t0, t, y)))
     if band <= 0:
         raise ValueError(f"no step: v(t0) equals final ({final}); tol is relative to the step")
@@ -171,6 +180,10 @@ def slew(raw: Any, vec: str, lo: float = 0.1, hi: float = 0.9) -> dict[str, floa
     and first falling edge. ``nan`` for an edge the record does not hold.
     """
     t, y = _xy(raw, vec)
+    return _slew(t, y, lo, hi)
+
+
+def _slew(t: np.ndarray, y: np.ndarray, lo: float = 0.1, hi: float = 0.9) -> dict[str, float]:
     if not 0 <= lo < hi <= 1:
         raise ValueError(f"need 0 <= lo < hi <= 1 (lo={lo}, hi={hi})")
     v_lo = y.min() + lo * (y.max() - y.min())
@@ -198,8 +211,11 @@ def loop_margins(raw: Any, plot: str | None = None, vec: str = "loop_gain") -> d
     ``ln f``. ``nan`` for a crossing the sweep does not bracket.
     """
     p = _plot(raw, vec, plot)
-    lf = np.log(np.asarray(p[p.variable_names[0]], float))
-    w = np.asarray(p.complex(vec), complex)
+    return _margins(np.asarray(p[p.variable_names[0]], float), np.asarray(p.complex(vec), complex))
+
+
+def _margins(f: np.ndarray, w: np.ndarray) -> dict[str, float]:
+    lf = np.log(f)
     g = np.log(np.abs(w))
     out = {"pm_deg": math.nan, "ugf_hz": math.nan, "gm_db": math.nan, "pcf_hz": math.nan}
 
@@ -230,8 +246,11 @@ def noise_total(raw: Any, vec: str = "onoise_spectrum") -> float:
     through its end points, exact for white, 1/f and 1/f^2 segments and
     close on a log sweep where trapezoids overestimate.
     """
-    f, d = _xy(raw, vec)
-    s = d ** 2
+    return _noise_total(*_xy(raw, vec))
+
+
+def _noise_total(f: np.ndarray, d: np.ndarray) -> float:
+    s = np.asarray(d, float) ** 2
     total = 0.0
     for f0, f1, s0, s1 in zip(f[:-1], f[1:], s[:-1], s[1:]):
         if s0 <= 0 or s1 <= 0 or f0 <= 0:

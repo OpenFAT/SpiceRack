@@ -119,7 +119,11 @@ def ac_phase_margin_deg(ac: Any, node: str) -> float:
     number is not a stability margin.
     """
     f_unity = ac_unity_gain_hz(ac, node)
-    return 180.0 + _interp_at(np.log10(ac.frequency), ac.phase(node), math.log10(f_unity))
+    # `ac.phase` wraps to (-180, 180]: interpolate the unwrapped phase, then
+    # wrap the margin, so an unstable loop at -200 deg reads -20, not 340.
+    phase = np.degrees(np.unwrap(np.radians(np.asarray(ac.phase(node), float))))
+    pm = 180.0 + _interp_at(np.log10(ac.frequency), phase, math.log10(f_unity))
+    return (pm + 180.0) % 360.0 - 180.0
 
 
 # ── metric specs and validation ──
