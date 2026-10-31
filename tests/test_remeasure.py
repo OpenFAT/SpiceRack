@@ -103,6 +103,11 @@ def test_settling_first_order_step(tmp_path):
     v = np.where(t < t0, 0.0, final * (1 - np.exp(-(t - t0) / tau)))
     raw = write_raw(tmp_path / "s.raw", [("Transient Analysis", ["time", "v(out)"], (t, v))])
     assert rm.settling(raw, "v(out)", final=final, tol=tol, t0=t0) == pytest.approx(tau * math.log(1 / tol), rel=1e-5)
+    # absolute band: the same step settles into +-0.9 mV at tau*ln(final/0.9e-3)
+    assert rm.settling(raw, "v(out)", final=final, t0=t0, abs_tol=0.9e-3) == pytest.approx(
+        tau * math.log(final / 0.9e-3), rel=1e-5)
+    with pytest.raises(ValueError, match="exactly one band"):
+        rm.settling(raw, "v(out)", final=final, tol=tol, t0=t0, abs_tol=1e-3)
     short = write_raw(tmp_path / "short.raw", [("Transient Analysis", ["time", "v(out)"], (t[:5000], v[:5000]))])
     assert rm.settling(short, "v(out)", final=final, tol=tol, t0=t0) == math.inf
 

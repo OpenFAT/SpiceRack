@@ -123,7 +123,7 @@ first plot that has it (or `plot=`).
 | Call | Returns |
 |---|---|
 | `rm.sndr(raw, "v(out)", fs, fin, n, window=None, t0=None)` | `sndr_db`, `sfdr_db`, `enob`, `thd_db`, bins. Raises on an incoherent record (`fin*n/fs` integer, prime to `n`) unless `window="blackmanharris"` |
-| `rm.settling(raw, vec, final, tol, t0)` | seconds; `tol` relative to the step; `inf` if not settled |
+| `rm.settling(raw, vec, final, tol, t0)` | seconds; `tol` relative to the step (or `abs_tol=` in volts); `inf` if not settled |
 | `rm.slew(raw, vec, lo=0.1, hi=0.9)` | `{"rising", "falling"}` V/s |
 | `rm.loop_margins(raw, plot="Loop Stability Analysis")` | `pm_deg`, `ugf_hz`, `gm_db`, `pcf_hz`, `unity_crossings` |
 | `rm.noise_total(raw)` | V rms from `onoise_spectrum` |

@@ -148,21 +148,32 @@ def _sndr(t: np.ndarray, y: np.ndarray, fs: float, fin: float, n: int, window: s
 
 # ── time domain ──
 
-def settling(raw: Any, vec: str, final: float, tol: float, t0: float = 0.0) -> float:
-    """Seconds from ``t0`` until ``vec`` enters and stays within the band
-    ``|v - final| <= tol * |final - v(t0)|``.
+def settling(raw: Any, vec: str, final: float, tol: float | None = None, t0: float = 0.0, *,
+             abs_tol: float | None = None) -> float:
+    """Seconds from ``t0`` until ``vec`` enters and stays within a band around ``final``.
 
-    ``tol`` is relative to the step, so a first-order step settles at
-    ``tau * ln(1/tol)``. ``inf`` when the record ends outside the band.
+    Name one band: ``tol`` is relative to the step, ``|v - final| <=
+    tol * |final - v(t0)|``, so a first-order step settles at
+    ``tau * ln(1/tol)``; ``abs_tol`` is in the vector's own unit (volts),
+    as regulator and start-up specs give it. ``inf`` when the record ends
+    outside the band.
     """
     t, y = _xy(raw, vec)
-    return _settling(t, y, final, tol, t0)
+    return _settling(t, y, final, tol, t0, abs_tol=abs_tol)
 
 
-def _settling(t: np.ndarray, y: np.ndarray, final: float, tol: float, t0: float = 0.0) -> float:
-    band = tol * abs(final - float(np.interp(t0, t, y)))
+def _settling(t: np.ndarray, y: np.ndarray, final: float, tol: float | None = None, t0: float = 0.0, *,
+              abs_tol: float | None = None) -> float:
+    if (tol is None) == (abs_tol is None):
+        raise ValueError("name exactly one band: tol (relative to the step) or abs_tol (absolute)")
+    if abs_tol is not None:
+        band = abs_tol
+    else:
+        band = tol * abs(final - float(np.interp(t0, t, y)))
+        if band <= 0:
+            raise ValueError(f"no step: v(t0) equals final ({final}); tol is relative to the step, use abs_tol")
     if band <= 0:
-        raise ValueError(f"no step: v(t0) equals final ({final}); tol is relative to the step")
+        raise ValueError(f"abs_tol must be positive (got {abs_tol})")
     err = np.abs(y - final)
     out = np.nonzero((err > band) & (t >= t0))[0]
     if len(out) == 0:

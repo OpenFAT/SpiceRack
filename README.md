@@ -166,7 +166,7 @@ from spicerack import remeasure as rm
 raw = rm.read("out.raw")                       # ngspice / ESPice / VACASK raw, binary or ASCII; every plot kept
 spec = rm.sndr(raw, "v(out)", fs=5.12e6, fin=5.12e6 * 251 / 4096, n=4096)
 # -> {"sndr_db", "sfdr_db", "enob", "thd_db", "signal_bin", "coherent", "signal_bins", "harmonic_bins"}
-rm.settling(raw, "v(out)", final=0.9, tol=1e-3, t0=1e-6)        # seconds; tol is relative to the step
+rm.settling(raw, "v(out)", final=0.9, tol=1e-3, t0=1e-6)        # seconds; tol relative to the step, or abs_tol= in volts
 rm.slew(raw, "v(out)", lo=0.1, hi=0.9)                          # {"rising", "falling"} in V/s
 rm.loop_margins(raw, plot="Loop Stability Analysis")            # {"pm_deg", "gm_db", "ugf_hz", "pcf_hz", "unity_crossings"}
 rm.noise_total(raw)                                             # integrated output noise, V rms
