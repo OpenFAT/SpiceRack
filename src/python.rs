@@ -1217,8 +1217,8 @@ impl PySubcircuit {
     /// XSPICE code model instance (A-element).
     ///
     /// ```python
-    /// circuit.A("adc1", connections=["[vin]", "[dout]"], model="adc_buf")
-    /// circuit.A("dff1", connections=["[d clk $d_hi $d_hi]", "[q qbar]"], model="dff_model")
+    /// circuit.A(name="adc1", connections=["[vin]", "[dout]"], model="adc_buf")
+    /// circuit.A(name="dff1", connections=["[d clk $d_hi $d_hi]", "[q qbar]"], model="dff_model")
     /// ```
     #[pyo3(signature = (*, name, connections, model))]
     fn A(&mut self, name: &str, connections: Vec<String>, model: &str) {

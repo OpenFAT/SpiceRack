@@ -29,7 +29,8 @@ try:
     print(f"Compiled Verilog-A to: {osdi_path}")
 
     dut.R(name="std", positive="input", negative="mid", value=1 @ u_kOhm)
-    dut.raw_spice("Nmyres1 mid 0 myres r=1000")
+    dut.model("myres_dev", "myres")              # ngspice places OSDI devices through a .model
+    dut.raw_spice("Nmyres1 mid 0 myres_dev")
 
     tb = ps.Testbench(dut)
     tb.V(name="in", positive="input", negative=dut.gnd, value=5 @ u_V)
