@@ -156,6 +156,26 @@ res.measures       # .measure results by name
 
 Each analysis exposes its own axis: `dc.sweep`, `ac.frequency`, `tran.time`. `DcAnalysis` additionally lists `nodes` and `branches`. Branch currents are not saved by default, so ask for them with `tb.save("I(Vsupply)")`, or set `sim.save_currents = True` on a `CircuitSimulator` to save all of them.
 
+## Re-measuring from raw data
+
+A pass a simulator reports is a claim until separate code recomputes the deciding number. `spicerack.remeasure` reads only the vectors of a `.raw` file, never `.meas` output, and needs no simulator:
+
+```python
+from spicerack import remeasure as rm
+
+raw = rm.read("out.raw")                       # ngspice / ESPice / VACASK raw, binary or ASCII; every plot kept
+spec = rm.sndr(raw, "v(out)", fs=5.12e6, fin=5.12e6 * 251 / 4096, n=4096)
+# -> {"sndr_db", "sfdr_db", "enob", "thd_db", "signal_bin", "coherent", "signal_bins", "harmonic_bins"}
+rm.settling(raw, "v(out)", final=0.9, tol=1e-3, t0=1e-6)        # seconds; tol is relative to the step
+rm.slew(raw, "v(out)", lo=0.1, hi=0.9)                          # {"rising", "falling"} in V/s
+rm.loop_margins(raw, plot="Loop Stability Analysis")            # {"pm_deg", "gm_db", "ugf_hz", "pcf_hz"}
+rm.noise_total(raw)                                             # integrated output noise, V rms
+rm.yield_ci(passes=2300, n=2300, conf=0.95)                     # Clopper-Pearson -> (0.99840, 1.0)
+rm.compare("meas.json", {"ugf": 30.3e6}, rtol=1e-3)             # ESPice --measures vs recomputed: the disagreements
+```
+
+`sndr` refuses an incoherent record (`fin*n/fs` must be an integer prime to `n`) unless `window="blackmanharris"` is named. `noise_total` integrates `onoise_spectrum` itself; the simulator's own `v(onoise_total)` sits in the later "Integrated Noise" plot for comparison.
+
 ## Simulator configuration
 
 ```python

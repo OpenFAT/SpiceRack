@@ -723,18 +723,50 @@ impl PyRawData {
         self.inner.variables.iter().map(|v| v.name.clone()).collect()
     }
     fn __getitem__(&self, name: &str) -> PyResult<Vec<f64>> {
-        self.inner
-            .variables
-            .iter()
-            .find(|v| v.name.eq_ignore_ascii_case(name))
-            .map(|v| self.inner.re(v.index))
-            .ok_or_else(|| PyKeyError::new_err(format!("Variable '{}' not found", name)))
+        Ok(self.inner.re(self.column(name)?))
     }
     fn __getattr__(&self, name: &str) -> PyResult<Vec<f64>> {
         self.__getitem__(name)
     }
+    /// Variable `name` as complex numbers; a real column comes back with zero imaginary parts.
+    fn complex(&self, name: &str) -> PyResult<Vec<num_complex::Complex64>> {
+        let i = self.column(name)?;
+        Ok(match self.inner.complex(i) {
+            Some(c) => c.to_vec(),
+            None => self.inner.re(i).into_iter().map(|x| num_complex::Complex64::new(x, 0.0)).collect(),
+        })
+    }
     #[getter]
     fn measures(&self) -> HashMap<String, f64> { measures_to_dict(&self.inner.measures) }
+}
+
+impl PyRawData {
+    fn column(&self, name: &str) -> PyResult<usize> {
+        self.inner
+            .variables
+            .iter()
+            .find(|v| v.name.eq_ignore_ascii_case(name))
+            .map(|v| v.index)
+            .ok_or_else(|| PyKeyError::new_err(format!("Variable '{}' not found", name)))
+    }
+}
+
+/// Every plot of a `.raw` file, in file order (ngspice, ESPice, VACASK,
+/// LTspice, Spectre nutbin; binary or ASCII).
+///
+/// ```python
+/// from spicerack import read_raw
+///
+/// plots = read_raw("out.raw")
+/// noise = next(p for p in plots if p.plot_name == "Integrated Noise")
+/// ```
+#[pyfunction]
+fn read_raw(path: &str) -> PyResult<Vec<PyRawData>> {
+    let bytes = std::fs::read(path)
+        .map_err(|e| pyo3::exceptions::PyOSError::new_err(format!("{path}: {e}")))?;
+    let plots = crate::rawfile::parse_raw_all(&bytes)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{path}: {e}")))?;
+    Ok(plots.into_iter().map(|inner| PyRawData { inner }).collect())
 }
 
 #[pyclass(name = "OperatingPoint")]
@@ -1845,6 +1877,7 @@ pub fn spicerack(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Module-level functions
     m.add_function(wrap_pyfunction!(lint, m)?)?;
+    m.add_function(wrap_pyfunction!(read_raw, m)?)?;
     m.add_function(wrap_pyfunction!(compile_veriloga, m)?)?;
 
     create_unit_module(m)?;
