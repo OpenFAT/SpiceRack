@@ -1,368 +1,69 @@
 # SpiceRack
 
 [![Tests](https://github.com/OpenFAT/SpiceRack/actions/workflows/test.yaml/badge.svg?branch=main)](https://github.com/OpenFAT/SpiceRack/actions/workflows/test.yaml)
-[![Release](https://github.com/OpenFAT/SpiceRack/actions/workflows/tags.yaml/badge.svg)](https://github.com/OpenFAT/SpiceRack/actions/workflows/tags.yaml)
 [![Docs](https://github.com/OpenFAT/SpiceRack/actions/workflows/docs.yaml/badge.svg?branch=main)](https://openfat.github.io/SpiceRack/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Build SPICE circuits in Python, generate netlists, run them on whichever simulator you have installed, and read the results back as plain lists of floats.
-
-The core is a Rust crate (`spicerack`). Python bindings ship in the same package, imported as `spicerack`. The API is close enough to PySpice that most PySpice code ports with an import change, but the circuit model underneath is backend neutral: one description compiles to ngspice, HSPICE, LTspice, VACASK, Spectre, or ESPice decks (`tb.netlist("hspice")`). HSPICE is netlist-only: there is no HSPICE runner.
-
-**Status:** maintained by one person, pre-1.0 (0.1.0). The API can break between minor versions; pin a release tag or commit rather than following `main`.
-
-## Install
+Build SPICE circuits in Python, run them on the simulator you have, and get the
+results back as Python lists. One circuit description emits ngspice, LTspice,
+VACASK, Spectre, ESPice and HSPICE decks, and about 60 ready-made testbenches
+measure amplifiers, regulators, converters and PLLs for you.
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install maturin pytest
-maturin develop
+pip install fast-spicerack       # imported as `spicerack`
 ```
 
-Or with Nix: `nix develop` (build tools only; SpiceRack does not ship a simulator). `nix develop .#testing` adds ngspice, OpenVAF, VACASK and the sky130/gf180 PDKs used by the integration tests.
-
-You also need at least one simulator to actually run an analysis. Start with `ngspice` unless you need something specific. Other tools are optional and only matter for particular features:
-
-| Tool | Needed for |
-| --- | --- |
-| `ngspice` | Default backend, and the only one with XSPICE, control blocks, and Verilog co-simulation |
-| `ltspice`, `vacask`, `spectre`, `espice` | Alternative backends |
-| `openvaf` | Compiling Verilog-A to OSDI (ngspice, VACASK; ESPice compiles it itself) |
-| `iverilog` | Digital Verilog co-simulation |
-| `yosys` | Synthesizing Verilog to gate level (`verilog(mode="synthesize")`) |
-| `ciel` plus `PDK_ROOT` | Installing open PDKs (sky130, gf180mcu) |
-
-## Two ways to build a circuit
-
-The flat style builds one circuit and hands it to a simulator:
+You also need a simulator to run anything; [ngspice](https://ngspice.sourceforge.io/)
+is the default. Without one, SpiceRack still writes netlists.
 
 ```python
 import spicerack as ps
-from spicerack.unit import u_V, u_kOhm
 
-circuit = ps.Circuit("voltage_divider")
-circuit.V(name="in", positive="vin", negative=circuit.gnd, value=10 @ u_V)
-circuit.R(name="top", positive="vin", negative="vout", value=2 @ u_kOhm)
-circuit.R(name="bot", positive="vout", negative=circuit.gnd, value=1 @ u_kOhm)
-
-print(circuit)                 # the generated netlist
-
-sim = circuit.simulator(simulator="ngspice")
-print(sim.operating_point()["vout"])
-```
-
-The testbench style separates the design under test from the stimulus around it, which is what you want as soon as you run the same block under more than one set of conditions:
-
-```python
 dut = ps.Subcircuit("divider", ["vin", "vout"])
-dut.R(name="top", positive="vin", negative="vout", value=2 @ u_kOhm)
-dut.R(name="bot", positive="vout", negative=dut.gnd, value=1 @ u_kOhm)
+dut.R("top", "vin", "vout", 2e3)
+dut.R("bot", "vout", dut.gnd, 1e3)
 
 tb = ps.Testbench(dut)
-tb.V(name="supply", positive="vin", negative=dut.gnd, value=10 @ u_V)
-tb.with_backend("ngspice")
-op = tb.operating_point()
+tb.V("supply", "vin", "0", 9.0)
+
+print(tb.netlist("vacask"))             # the deck for any simulator
+print(tb.operating_point()["vout"])     # 3.0, run on ngspice
 ```
 
-Subcircuits nest. Register a definition with `tb.add_subcircuit(inverter)` or `circuit.subcircuit(inverter)`, then instantiate it with `.X("inv1", "inverter", "vdd", "a", "mid")`. Keyword arguments after the nodes become instance parameters, which is how PDK devices that are subcircuits get their geometry: `dut.X("MN1", "sky130_fd_pr__nfet_01v8", "d", "g", "s", "b", W=1, L=0.15)`.
-
-Ground is `dut.gnd` or `circuit.gnd`, which is node `"0"`. Element and analysis arguments are keyword-only, except for `X`, `model`, `include`, `lib`, `parameter`, `temp`, and `raw_spice`, which take positional arguments.
-
-## Units
-
-Units live in `spicerack.unit` and attach to a number with the `@` operator:
+A ready-made bench measures a whole spec at once:
 
 ```python
-from spicerack.unit import u_V, u_kOhm, u_pF, u_uH
+from spicerack.testbenches import step_response
 
-r = 10 @ u_kOhm
-r.value            # 10000.0, always SI base units
-r.str_spice()      # "10k", the netlist form
-float(r)           # 10000.0
+rc = ps.Subcircuit("rc", ["vin", "vout"])
+rc.R("1", "vin", "vout", 1e3)
+rc.C("1", "vout", rc.gnd, 100e-12)
+
+print(step_response(ps, rc, period=4e-6).measure()["settle_rise_0p1pct_s"])
 ```
 
-There are voltage, current, resistance, capacitance, inductance, frequency, time, and power families, plus `u_Degree`. Unicode aliases (`u_Ω`, `u_kΩ`, `u_MΩ`) exist for PySpice compatibility. Anywhere a `UnitValue` is accepted, a plain float works too and is read as SI, so `value=10000.0` also means 10 kΩ.
+## Documentation
 
-## Elements
+**[openfat.github.io/SpiceRack](https://openfat.github.io/SpiceRack/)**, also readable here in [`docs/`](docs/index.md):
 
-Element methods mirror the SPICE element letters and exist on both `Circuit` and `Subcircuit`, with the source methods also on `Testbench`.
-
-Passives are `R`, `C`, `L`, and `K` for mutual inductance. Independent sources are `V` and `I`, each taking an optional `ac=` magnitude for small-signal analyses. A value is a number, a `UnitValue`, or an expression string (`value="rload*2"`), and `R`/`C`/`L` take instance parameters as keyword arguments. For time-varying stimulus there are `Sinusoidal`, `Pulse`, `PieceWiseLinear`, `Exponential`, `SingleFrequencyFM` and `AmplitudeModulated` sources, each in a `...VoltageSource` and a `...CurrentSource` form, on `Circuit`, `Subcircuit` and `Testbench` alike. Every one takes `dc=` (default: the waveform's value at t=0, as SPICE reads a card without one), `ac=` and `ac_phase=`, and the name and both nodes may be passed positionally, as in PySpice.
-
-```python
-tb.PulseVoltageSource("clk", "clk", dut.gnd,
-    initial_value=0.0, pulsed_value=3.3, delay=1e-9, pulse_width=25e-9, period=50e-9,
-    rise_time=0.5e-9, fall_time=0.5e-9)
-```
-
-Behavioral sources `BV` and `BI` take a SPICE B-source expression:
-
-```python
-dut.BV(name="opamp", positive="out", negative=dut.gnd,
-       expression="1e6 * (V(inp) - V(inn))")
-```
-
-Controlled sources cover all four combinations: `E` (VCVS), `G` (VCCS), `F` (CCCS), and `H` (CCVS). The current-controlled pair senses through a named voltage source, so put a 0 V source in the branch you want to measure.
-
-Semiconductors are `D`, `Q` (aliased `BJT`), `M` (aliased `MOSFET`), `J` for JFETs, and `Z` for MESFETs. Switches are `S` (voltage controlled) and `W` (current controlled). `T` is a lossless transmission line taking `Z0` and `TD`. `A` instantiates an XSPICE code model, which is how the analog and digital bridges get wired up.
-
-Circuit-level directives round it out:
-
-```python
-dut.model("2N2222", "NPN", IS=14.34e-15, BF=255.9, VAF=74.03)
-dut.include("models.lib")
-dut.lib("sky130.lib.spice", "tt")
-dut.parameter("rload", "10k")
-dut.raw_spice("R99 a b 1k")           # anything the builder does not cover
-circuit.options(scale="1e-6")         # Circuit only
-circuit.temp(85.0)                    # Circuit only
-```
-
-## Analyses
-
-The same analysis methods exist on `Testbench` and on the `CircuitSimulator` returned by `circuit.simulator()`.
-
-```python
-op   = tb.operating_point()
-dc   = tb.dc(Vin=slice(0, 5, 0.1))
-ac   = tb.ac(variation="dec", number_of_points=100,
-             start_frequency=1.0, stop_frequency=1e6)
-tran = tb.transient(step_time=10e-6, end_time=5e-3)
-```
-
-Beyond those there is `noise`, `transfer_function` (aliased `tf`), `dc_sensitivity`, `ac_sensitivity`, `polezero`, and `distortion`. Each has an `add_*` twin on `Testbench` (`add_tf`, `add_polezero`, ...) that adds the card to a multi-analysis deck instead of running it. The RF and periodic steady-state group covers `pss`, `s_param`, `harmonic_balance`, `stability`, and `transient_noise`.
-
-Some analyses only exist on one simulator, so they are exposed under a backend prefix. Spectre contributes `spectre_sweep`, `spectre_montecarlo`, `spectre_pac`, `spectre_pnoise`, `spectre_pxf`, and `spectre_pstb`.
-
-```python
-sim = circuit.simulator(simulator="spectre")
-
-
-fft.enob, fft.sfdr_db, fft.snr_db, fft.thd_db
-```
-
-`Testbench` has builder equivalents (`add_spectre_sweep`, `add_spectre_monte_carlo`, and so on) that write the directive into the netlist instead of running it, which pairs with `tb.netlist("spectre")` when you want the text rather than the result.
-
-## Reading results
-
-Every result object uses the same access pattern, so you do not have to remember which analysis returns what shape:
-
-```python
-res["vout"]        # list[float], or a single float for operating_point
-res.vout           # attribute access works too
-res.measures       # .measure results by name
-```
-
-Each analysis exposes its own axis: `dc.sweep`, `ac.frequency`, `tran.time`. `DcAnalysis` additionally lists `nodes` and `branches`. Branch currents are not saved by default, so ask for them with `tb.save("I(Vsupply)")`, or set `sim.save_currents = True` on a `CircuitSimulator` to save all of them.
-
-## Re-measuring from raw data
-
-A pass a simulator reports is a claim until separate code recomputes the deciding number. `spicerack.remeasure` reads only the vectors of a `.raw` file, never `.meas` output, and needs no simulator:
-
-```python
-from spicerack import remeasure as rm
-
-raw = rm.read("out.raw")                       # ngspice / ESPice / VACASK raw, binary or ASCII; every plot kept
-spec = rm.sndr(raw, "v(out)", fs=5.12e6, fin=5.12e6 * 251 / 4096, n=4096)
-# -> {"sndr_db", "sfdr_db", "enob", "thd_db", "signal_bin", "coherent", "signal_bins", "harmonic_bins"}
-rm.settling(raw, "v(out)", final=0.9, tol=1e-3, t0=1e-6)        # seconds; tol relative to the step, or abs_tol= in volts
-rm.slew(raw, "v(out)", lo=0.1, hi=0.9)                          # {"rising", "falling"} in V/s
-rm.loop_margins(raw, plot="Loop Stability Analysis")            # {"pm_deg", "gm_db", "ugf_hz", "pcf_hz", "unity_crossings"}
-rm.noise_total(raw)                                             # integrated output noise, V rms
-rm.yield_ci(passes=2300, n=2300, conf=0.95)                     # Clopper-Pearson -> (0.99840, 1.0)
-rm.compare("meas.json", {"ugf": 30.3e6}, rtol=1e-3)             # ESPice --measures vs recomputed: the disagreements
-```
-
-`sndr` refuses an incoherent record (`fin*n/fs` must be an integer prime to `n`) unless `window="blackmanharris"` is named. `noise_total` integrates `onoise_spectrum` itself; the simulator's own `v(onoise_total)` sits in the later "Integrated Noise" plot for comparison.
-
-## Simulator configuration
-
-```python
-tb.temperature = 27.0
-tb.nominal_temperature = 25.0
-tb.options(RELTOL="1e-4", ABSTOL="1e-12", VNTOL="1e-6", GMIN="1e-12")
-
-tb.save("V(output)")
-tb.measure("TRAN", "v_peak", "MAX", "V(output)")   # lands in res.measures
-
-tb.initial_condition(output=0.0)   # .ic
-tb.node_set(output=2.5)            # .nodeset, helps DC convergence
-
-tb.step("R1", 500, 2000, 500)                      # not ngspice: it has no .step
-tb.step_sweep("R1", 100, 10000, 10, "dec")         # lin, oct, or dec
-```
-
-## Backends
-
-```python
-ps.CircuitSimulator.available_backends()   # what is actually installed
-tb.with_backend("vacask")
-sim = circuit.simulator(simulator="spectre")
-```
-
-Without an explicit choice, SpiceRack picks a backend by looking at what the circuit uses and what the analysis needs. A circuit with XSPICE elements or a control block narrows to ngspice; one with OSDI models can go to ngspice, VACASK, or Spectre.
-
-| Feature | ngspice | ltspice | vacask | spectre | espice |
-| --- | --- | --- | --- | --- | --- |
-| XSPICE (A-elements) | Yes | No | No | No | No |
-| OSDI (Verilog-A) | Yes | No | Yes | Yes | Verilog-A source only (VerA), no `.osdi` |
-| `.measure` | Yes | Yes | No | Yes | Yes |
-| Parameter sweeps | No | Yes | Yes | Yes | No |
-| Control blocks | Yes | No | No | No | No |
-| Laplace sources | Yes | Yes | No | No | No |
-| Verilog co-simulation | Yes | No | No | Yes | No |
-
-Because the DUT is backend neutral, running the same design on several simulators is a loop:
-
-```python
-for backend in ["ngspice", "vacask"]:
-    tb = ps.Testbench(dut)
-    tb.V(name="supply", positive="vin", negative=dut.gnd, value=10 @ u_V)
-    tb.with_backend(backend)
-    print(backend, tb.operating_point()["vout"])
-```
-
-### ESPice
-
-[ESPice](https://github.com/OpenFAT/EGSpice) (`espice` on `$PATH`) reads the ngspice dialect and compiles Verilog-A itself through VerA, so `@(cross)` and `transition()` models run. `veriloga("model.va")` only records the source; each backend's codegen decides what it becomes: OpenVAF → `pre_osdi` for ngspice, `load` for VACASK, `ahdl_include` for Spectre, and `.hdl "model.va"` for ESPice, with no OpenVAF run. ESPice loads no OSDI binaries, so `osdi("x.osdi")` on an ESPice bench is a codegen error, and a legacy `Circuit` deck that carries `pre_osdi` is refused. VA instances use a variable-node-count letter (`N`, `X`, `U`).
-
-The first run of a model compiles it, which needs the Zig compiler ESPice was built with on `$PATH` (or `$ZIG`); builds are cached under `$ESPICE_CACHE` (else `~/.cache/espice`). A misspelled instance parameter or a wrong node count is an error, not a silent default. Measured against the binary: op, dc (incl. `.dc temp`), ac, tran, tf, sens and `.meas` run; `.tf` names its columns `input_resistance`/`output_resistance`. `.step` is not wired (ESPice writes one plot per point and the raw reader keeps one), and noise/pz/disto result layouts are not mapped yet. Corners, `run_corners` (including `seeds=`: with `.options seed=N` ESPice draws `agauss`/`gauss`/`unif` once from that seed, as ngspice draws them per run) and the characterization recipes run on it.
-
-`SPICERACK_BACKEND=<name>` selects the backend for every run that does not name one (`with_backend()` or a recipe's `backend=` still wins).
-
-## PDKs and model libraries
-
-```python
-lib = ps.ModelLibrary(
-    f"{os.environ['PDK_ROOT']}/sky130A/libs.tech/ngspice/sky130.lib.spice",
-    corner="tt")
-
-dut = ps.Subcircuit("cs_amp", ["vdd", "vin", "vout"])
-dut.M(name="1", drain="vout", gate="vin", source=dut.gnd, bulk=dut.gnd,
-      model="sky130_fd_pr__nfet_01v8", L=0.5, W=5)
-
-tb = ps.Testbench(dut)
-tb.use_pdk(lib)
-```
-
-`ModelLibrary(path, corner=None, setup_includes=None, **backend_paths)` takes per-backend model paths as keyword arguments, so a single library object can serve several simulators. Swapping PDKs means swapping the library and the model names while the topology stays put. Examples 20 and 21 do exactly that with sky130 and gf180mcu.
-
-## Linting
-
-Checks run against the target simulator before you spend time on a failed run:
-
-```python
-for issue in tb.check_backend("ngspice"):
-    print(issue)
-
-report = ps.lint(netlist_text, backend="ngspice")
-report["errors"]     # [{"line": int, "message": str}, ...]
-report["warnings"]   # same, plus "suggestion" and "backends_affected"
-```
-
-It catches missing models, dangling nodes, and constructs the chosen backend will not accept. Warnings name the other backends affected, which is useful when you are deciding where a design can run.
-
-## Verilog-A
-
-Requires `openvaf` on `$PATH` and a backend with OSDI support (ngspice, VACASK, or Spectre). The OSDI version has to match what your ngspice build expects.
-
-```python
-osdi_path = dut.veriloga(VERILOGA_SOURCE)     # source text or a .va path
-dut.raw_spice("Nmyres1 mid 0 myres r=1000")   # instantiate the compiled model
-
-dut.osdi("model.osdi")                        # or load a prebuilt binary
-path = ps.compile_veriloga("model.va")        # or compile without attaching
-```
-
-## Digital Verilog co-simulation
-
-Requires ngspice built with XSPICE, plus `iverilog` on `$PATH` (and `yosys` if you synthesize). At the low level you declare bridge models and place them as `A` elements:
-
-```python
-dut.model("adc_bridge_model", "adc_bridge", in_low=0.8, in_high=2.0)
-dut.model("dac_bridge_model", "dac_bridge", out_low=0.0, out_high=3.3)
-
-dut.A(name="adc1", connections=["[clk rst]", "[dclk drst]"],
-      model="adc_bridge_model")
-```
-
-`circuit.verilog(source=..., mode="simulate" | "synthesize", instance_name=..., connections={...}, pdk=..., liberty=..., spice_models=...)` wires a Verilog module in directly and handles the bridging for you. In `simulate` mode it compiles with iverilog and drives ngspice's `d_cosim` XSPICE model. In `synthesize` mode it runs Yosys against a Liberty file and emits gate-level subcircuit calls into the netlist instead. Example 18 builds the bridges by hand rather than calling `verilog()`, so treat the high-level path as less exercised than the rest of the API.
-
-## Design testbench recipes
-
-`spicerack.testbenches` holds about 60 ready-made benches, each checked against a closed-form oracle on ngspice:
-
-| Family | Benches |
+| Page | Covers |
 | --- | --- |
-| Op-amps and loops | `opamp_open_loop`, `loop_gain` (Tian, at any break), `step_response`, `cmrr`, `offset_icmr`, `output_swing`, `harmonic_distortion`, `amplifier_voltage_gain` |
-| Noise, ports, RF | `noise_spectrum`, `port_impedance`, `rf_two_port`, `rf_compression_ip3` |
-| Regulators and references | `supply_rejection`, `regulator_line_sweep`, `regulator_load_sweep`, `regulator_step`, `supply_startup`, `regulator_loop_margins`, `bandgap_reference`, `bandgap_tempco` |
-| Current-mode and charge | `current_mirror_output`, `current_reference`, `transconductor_gm`, `switched_cap_transfer`, `charge_pump_current`, `charge_amplifier` |
-| Converters | `adc_dynamic`, `adc_static_linearity`, `comparator_threshold`, `comparator_delay`, `comparator_kickback`, `dac_transition`, `dac_dynamic`, `dac_output_impedance`, `sample_hold_dynamic`, `pipeline_stage_residue` |
-| Timing | `oscillator_frequency`, `oscillator_sweep`, `oscillator_jitter`, `pll_lock_time`, `pll_loop_margins`, `pll_reference_spur`, `pfd_cp_transfer`, `dll_lock`, `delay_line_range`, `clock_buffer_timing` |
+| [Circuits](docs/circuits.md) | building circuits: elements, sources, units, models, hierarchy, JSON |
+| [Simulating](docs/simulate.md) | analyses, results, simulator settings, choosing a backend, linting |
+| [Models and PDKs](docs/models.md) | model libraries and corners, Verilog-A, digital Verilog |
+| [Testbenches](docs/testbenches.md) | the bench catalog, corners and Monte Carlo, spec checks |
+| [Re-measuring](docs/remeasure.md) | SNDR, settling, margins, noise and yield recomputed from `.raw` files |
+| [Tools](docs/tools.md) | the `spice2rack` converter, the Rust crate, the JSON format |
+| [API reference](docs/reference.md) | every class and signature |
 
-Each returns a `DesignBench`; `bench.measure()` runs its own analyses and returns its metrics. The full catalog, metric definitions and limits are in [`skills/spicerack/TESTBENCHES.md`](skills/spicerack/TESTBENCHES.md). The machinery for checking metrics across corners:
+[examples/](examples/) has 22 runnable scripts.
 
-```python
-from spicerack.testbenches import (
-    CornerCase, MetricSpec, ValidationRule,
-    amplifier_voltage_gain, bandgap_reference,
-    corner_netlists, extract_metrics, validate_metrics)
-
-bench = amplifier_voltage_gain(ps, dut, load_resistance=10e3)
-netlist = bench.netlist("ngspice")      # generate without simulating
-
-corners = [CornerCase("tt_27", temperature=27, parameters={"vdd_nom": 3.3})]
-cornered = corner_netlists(lambda: bandgap_reference(...), corners)
-
-metrics = extract_metrics(waveforms, [MetricSpec("vout_final", "vout", "final")])
-report = validate_metrics(metrics, [
-    ValidationRule("output window", "vout_final", minimum=1.18, maximum=1.23),
-])
-```
-
-`run_corners(build, measure, corners, seeds=N)` runs a bench over every corner (model library section, temperature, supply, via `pdk_corners(lib, sections, temperatures, vdds)`) and every Monte Carlo seed, and returns one metric row per run. `MonteCarloPlan` instead emits a Spectre `montecarlo` statement (Spectre only); apply it with `plan.apply_to(bench)` or get the text straight from `monte_carlo_netlist(bench, plan)`.
-
-For Liberty characterization there are `input_capacitance` (charge method, rise and fall), `delay_table` (NLDM delay and output transition over input slew x load), and `setup_time` / `hold_time` (bisection on your pass/fail predicate). One thing to know: `bench.validation` is a `list[str]` of plain-English intent, not executable rules. You write the `ValidationRule` objects yourself.
-
-## Output file parsing
-
-Reading results back is native Rust rather than a shell-out, which is most of why the round trip is quick. SpiceRack parses nutmeg `.raw` files from ngspice and VACASK in both ASCII and binary form, including the column-major FastAccess layout, and LTspice raw files with their UTF-16-LE headers. Spectre is run with `-format nutbin` so it writes Nutmeg too; PSF binary files are detected but not parsed. Simulator `.meas` output is parsed into `res.measures`, and node naming is normalized across backends so `res["vout"]` means the same thing no matter who ran the simulation.
-
-## Circuit IR
-
-Circuits lower to a backend-neutral intermediate representation before any netlist text is generated, and the code generators for SPICE3, Spectre, and VACASK dialects all read from it. The IR is documented as JSON Schema in [schema/circuit-ir.schema.json](schema/circuit-ir.schema.json), so other tools can produce circuits for SpiceRack without going through the Python API.
-
-## Using the Rust crate directly
-
-The Python bindings are a default feature. Turn them off to use the crate on its own:
-
-```toml
-[dependencies]
-spicerack = { version = "0.1", default-features = false }
-```
-
-That gives you the circuit builder, the IR and code generators, backend drivers, and the raw-file parsers, with no Python or PyO3 in the build.
-
-## Examples
-
-[examples/](examples/) has 22 runnable scripts ordered roughly by difficulty, starting at a voltage divider and ending with the design testbench library. Along the way: RC and RLC filters, BJT and JFET amplifiers, a CMOS inverter, an op-amp, a rectifier, a differential pair, controlled sources, subcircuits, transmission lines, switches, a PWL DAC, linting, simulator configuration, inline Verilog-A, digital Verilog, and hot-swapping backends and PDKs.
-
-## Docs
-
-- [User guide](docs/guide.html)
-- [API reference](docs/reference.html): every class, element method, analysis, and result type
-- [Examples index](docs/examples.html)
-
-## Tests
+## Development
 
 ```bash
-cargo test
-maturin develop
-python3 -m pytest -v
+nix develop .#testing          # Rust, maturin, ngspice, OpenVAF, VACASK, PDKs
+maturin develop && python3 -m pytest && cargo test
 ```
 
-## License
-
-MIT. See [LICENSE](LICENSE).
+Pre-1.0: pin a version, as the API can change between minor releases.
+MIT licensed, see [LICENSE](LICENSE).

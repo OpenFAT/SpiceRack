@@ -127,6 +127,11 @@
           '';
         };
 
+        # `nix develop .#docs -c mkdocs build`: the documentation site from docs/.
+        devShells.docs = pkgs.mkShell {
+          packages = [ (pkgs.python312.withPackages (ps: [ ps.mkdocs ps.mkdocs-material ])) ];
+        };
+
         packages.default = spicerackRs;
       }
     );

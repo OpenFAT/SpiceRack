@@ -1,0 +1,46 @@
+site_name: SpiceRack
+site_url: https://openfat.github.io/SpiceRack/
+site_description: Build SPICE circuits in Python, run them on any simulator, measure specs with ready-made testbenches.
+repo_url: https://github.com/OpenFAT/SpiceRack
+edit_uri: edit/main/docs/
+docs_dir: docs
+strict: true
+validation:
+  omitted_files: warn
+  absolute_links: warn
+  unrecognized_links: warn
+  anchors: warn
+  links:
+    not_found: warn
+    anchors: warn
+
+theme:
+  name: material
+  features:
+    - content.code.copy
+    - navigation.sections
+    - search.highlight
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle: { icon: material/brightness-4, name: Dark mode }
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle: { icon: material/brightness-7, name: Light mode }
+
+markdown_extensions:
+  - tables
+  - admonition
+  - toc: { permalink: true }
+  - pymdownx.highlight
+  - pymdownx.superfences
+
+nav:
+  - Home: index.md
+  - Circuits: circuits.md
+  - Simulating: simulate.md
+  - Models and PDKs: models.md
+  - Testbenches: testbenches.md
+  - Re-measuring: remeasure.md
+  - Tools: tools.md
+  - API reference: reference.md
