@@ -12,6 +12,10 @@ name: Release
         description: Tag to release, vX.Y.Z; created on the commit being built
         type: string
         required: true
+      ref:
+        description: "Commit to build and tag (default: the calling run's commit)"
+        type: string
+        default: ""
 
 permissions:
   contents: write
@@ -22,6 +26,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
       - name: Tag matches Cargo.toml and pyproject.toml
         if: github.ref_type == 'tag' || inputs.tag != ''
         env:
@@ -36,6 +42,8 @@ jobs:
   test:
     needs: version
     uses: ./.github/workflows/test.yaml
+    with:
+      ref: ${{ inputs.ref }}
 
   # ── Python wheels (maturin) ──
   python:
@@ -53,6 +61,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
 
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
@@ -81,6 +91,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
       - name: Build sdist
         uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1
         with:
@@ -109,7 +121,7 @@ jobs:
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           tag_name: ${{ inputs.tag || github.ref_name }}
-          target_commitish: ${{ github.sha }}
+          target_commitish: ${{ inputs.ref || github.sha }}
           files: release/*
           generate_release_notes: true
           prerelease: ${{ contains(inputs.tag || github.ref_name, '-') }}

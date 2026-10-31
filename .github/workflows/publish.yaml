@@ -1,23 +1,26 @@
 name: Publish
 
-# Releasing a version, start to finish:
-#   1. Actions -> Publish -> Run workflow, pick the bump (patch/minor/major or
-#      an explicit X.Y.Z). This opens a pull request that moves the version in
-#      Cargo.toml, pyproject.toml and Cargo.lock; bots never push to main.
-#   2. Merge it once the merge gate passes.
-#   3. The merge changes pyproject.toml on main, which runs this workflow
-#      again. If that version has no tag yet, the Release workflow
-#      (tags.yaml) tests, builds the wheels and sdist, and creates the tag and
-#      the GitHub release; then the same files go to PyPI.
+# Releasing a version is one click: Actions -> Publish -> Run workflow, pick
+# the bump (patch/minor/major or an explicit X.Y.Z). One run then:
+#   1. opens a pull request moving the version in Cargo.toml, pyproject.toml
+#      and Cargo.lock (tools/bump_version.py);
+#   2. runs the full test suite on that branch;
+#   3. merges the pull request only if the tests passed;
+#   4. at the merge commit, runs the Release workflow (tags.yaml: tests again,
+#      wheels, sdist, the tag and the GitHub release);
+#   5. uploads the same files to PyPI.
+# It all happens in this run because a merge made with the run's own token
+# starts no other workflow.
+#
+# A version bump merged by hand (a person editing the version in a pull
+# request) still releases: that push to main runs `check`, then 4 and 5.
 #
 # One-time setup:
 #   - PyPI: a trusted publisher for project "fast-spicerack": owner OpenFAT,
 #     repository SpiceRack, workflow publish.yaml, environment pypi.
-#   - GitHub: an environment named "pypi", and Settings -> Actions -> General
-#     -> "Allow GitHub Actions to create and approve pull requests".
-#   - Secret RELEASE_TOKEN (fine-grained PAT, contents + pull requests write).
-#     Without it the bump pull request is opened with the default token, and
-#     GitHub starts no CI for it: close and reopen it to run the checks.
+#   - GitHub: an environment named "pypi", and "Allow GitHub Actions to create
+#     and approve pull requests" in the organization's and the repository's
+#     Actions settings.
 
 "on":
   workflow_dispatch:
@@ -37,17 +40,19 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # ── Step 1: the version bump, as a pull request ──
+  # ── One click: bump, test, merge ──
   bump:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       contents: write
       pull-requests: write
+    outputs:
+      version: ${{ steps.bump.outputs.version }}
+      branch: ${{ steps.pr.outputs.branch }}
+      pr: ${{ steps.pr.outputs.pr }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          token: ${{ secrets.RELEASE_TOKEN || github.token }}
 
       - name: Bump Cargo.toml, pyproject.toml and Cargo.lock
         id: bump
@@ -56,8 +61,9 @@ jobs:
         run: python3 tools/bump_version.py "$BUMP" >> "$GITHUB_OUTPUT"
 
       - name: Open the release pull request
+        id: pr
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
+          GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.bump.outputs.version }}
         run: |
           branch="release/v$VERSION"
@@ -66,10 +72,40 @@ jobs:
           git switch -c "$branch"
           git commit -am "release: v$VERSION"
           git push origin "$branch"
-          gh pr create --base main --head "$branch" --title "release: v$VERSION" \
-            --body "Moves the version to $VERSION. Merging it publishes v$VERSION to PyPI and GitHub (publish.yaml)."
+          url=$(gh pr create --base main --head "$branch" --title "release: v$VERSION" \
+            --body "Moves the version to $VERSION. The Publish run that opened this tests it, merges it, and releases v$VERSION to GitHub and PyPI.")
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          echo "pr=${url##*/}" >> "$GITHUB_OUTPUT"
 
-  # ── Step 3: a merged bump becomes a release ──
+  test:
+    needs: bump
+    permissions:
+      contents: read
+    uses: ./.github/workflows/test.yaml
+    with:
+      ref: ${{ needs.bump.outputs.branch }}
+
+  merge:
+    needs: [bump, test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      sha: ${{ steps.merge.outputs.sha }}
+    steps:
+      - name: Merge the tested release pull request
+        id: merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ needs.bump.outputs.pr }}
+        run: |
+          gh pr merge "$PR" -R "$GITHUB_REPOSITORY" --merge --delete-branch
+          sha=$(gh pr view "$PR" -R "$GITHUB_REPOSITORY" --json mergeCommit -q .mergeCommit.oid)
+          [ -n "$sha" ] || { echo "::error::pull request $PR has no merge commit"; exit 1; }
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+  # ── A version bump merged by hand ──
   check:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
@@ -96,17 +132,20 @@ jobs:
             echo "tag=v$v" >> "$GITHUB_OUTPUT"
           fi
 
+  # ── Both paths: release and upload ──
   release:
-    needs: check
-    if: needs.check.outputs.tag != ''
+    needs: [bump, merge, check]
+    if: always() && (needs.merge.result == 'success' || needs.check.outputs.tag != '')
     permissions:
       contents: write
     uses: ./.github/workflows/tags.yaml
     with:
-      tag: ${{ needs.check.outputs.tag }}
+      tag: ${{ needs.check.outputs.tag || format('v{0}', needs.bump.outputs.version) }}
+      ref: ${{ needs.merge.outputs.sha }}
 
   pypi:
     needs: release
+    if: always() && needs.release.result == 'success'
     runs-on: ubuntu-latest
     environment:
       name: pypi
