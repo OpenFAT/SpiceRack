@@ -68,13 +68,10 @@ pkgs.stdenv.mkDerivation rec {
     "-DSuiteSparse_DIR=${pkgs.suitesparse}"
   ];
 
-  installPhase = ''
-    runHook preInstall
-    mkdir -p $out/bin
-    # The simulator binary is built into the simulator/ subdirectory.
-    cp simulator/vacask $out/bin/vacask
-    runHook postInstall
-  '';
+  # CMake's own install: bin/vacask plus lib/vacask/mod/**.osdi (the device
+  # models OpenVAF compiled, e.g. spice/capacitor.osdi) and lib/vacask/config,
+  # where the binary looks for them relative to itself. Copying only the
+  # binary left every netlist that loads a device module unrunnable.
 
   meta = {
     description = "VACASK – Verilog-A Circuit Analysis Kernel";
