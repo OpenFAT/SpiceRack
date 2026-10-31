@@ -84,7 +84,7 @@ Rp p 0 1k
         assert!(matches!(&v.top.components[0], Component::Mosfet { nb: None, .. }));
         assert!(matches!(&v.top.components[1], Component::Mosfet { params, .. } if params.contains(&("off".into(), String::new()))));
         let text = netlist(&v, Dialect::Ngspice).unwrap();
-        assert!(text.contains("M1 d g s vdm\n") && text.contains("M2 d g s b nch w=1u off") && text.contains("vdmos(pchan vto=1)"), "{text}");
+        assert!(text.contains("M1 d g s vdm\n") && text.contains("M2 d g s b nch w=1u off") && text.contains("vdmos (pchan vto=1)"), "{text}");
         assert!(netlist(&v, Dialect::Spectre).is_err());
         // Optional waveform parentheses, `sine`, `.pz`, `.sens`.
         let w = parse("t\nV1 a 0 pulse 0 5 1n 1n 1n 5n 10n\nV2 b 0 dc 0 Sine(0 1 1k)\nR1 a 0 1k\n.pz a 0 b 0 vol pz\n.sens v(a) ac dec 10 1 1meg\n", "t", Dialect::Ngspice).unwrap().0;

@@ -65,3 +65,21 @@ def test_not_run_blocks_are_rare():
     """A `not run` block is untested prose; keep the list short and named."""
     marked = {p.name: len(re.findall(r"<!--\s*not run:", p.read_text())) for p in PAGES}
     assert {k: v for k, v in marked.items() if v} == {"models.md": 3}
+
+
+def test_verilog_a_model_parameter_reaches_ngspice():
+    """Regression: `.model m vres(r=3000.0)` (no space) made ngspice-45 drop the
+    OSDI parameter and simulate r at its 1 kOhm default (0.5 V, not 0.75 V)."""
+    import spicerack as ps
+
+    dut = ps.Subcircuit("vdiv", ["vdd", "out"])
+    dut.veriloga('`include "disciplines.vams"\nmodule vres(a, b); inout a, b; electrical a, b;\n'
+                 'parameter real r = 1000.0; analog I(a, b) <+ V(a, b) / r; endmodule\n')
+    dut.model("vres_3k", "vres", r=3e3)
+    dut.R("top", "vdd", "out", 1e3)
+    dut.raw_spice("N1 out 0 vres_3k")
+    tb = ps.Testbench(dut)
+    tb.V("dd", "vdd", "0", 1.0)
+    tb.with_backend("ngspice")
+    assert ".model vres_3k vres (r=3000.0)" in tb.netlist("ngspice")
+    assert tb.operating_point()["out"] == pytest.approx(0.75, abs=1e-9)

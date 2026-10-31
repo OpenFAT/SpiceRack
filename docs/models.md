@@ -59,16 +59,19 @@ endmodule
 
 dut = ps.Subcircuit("vdiv", ["vdd", "out"])
 dut.veriloga(VRES)                           # returns the .va path
-dut.model("vres_dev", "vres")                # ngspice places an OSDI device through a .model
+dut.model("vres_3k", "vres", r=3e3)          # ngspice places an OSDI device through a .model
 dut.R("top", "vdd", "out", 1e3)
-dut.raw_spice("N1 out 0 vres_dev")           # the instance card
+dut.raw_spice("N1 out 0 vres_3k")            # the instance card
 
 tb = ps.Testbench(dut)
 tb.V("dd", "vdd", "0", 1.0)
 tb.with_backend("ngspice")
-print(tb.operating_point()["out"])           # 0.5: two 1 kOhm in series
+print(tb.operating_point()["out"])           # 0.75: 1 kOhm over the 3 kOhm model
 ```
 
+Parameters go on the `.model` card. A parameter the module marks
+`(* type="instance" *)` can instead go on the instance line
+(`N1 out 0 vres_3k r=3k`); ngspice refuses any other parameter there.
 Needs `openvaf` on `$PATH` (except on ESPice), and an ngspice whose OSDI
 version matches it. `dut.osdi("model.osdi")` loads a binary you compiled
 yourself; `ps.compile_veriloga("model.va")` compiles one and returns its path.

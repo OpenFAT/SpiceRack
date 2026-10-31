@@ -150,6 +150,9 @@ fn laplace_source(
 }
 
 /// Xyce rejects BSIM3 as level 8 and reads 49 (RG Table 2-36; 7.10 run).
+/// The parameter list is separated from the type by a space: ngspice-45
+/// silently drops the parameters of an OSDI (Verilog-A) model written
+/// `vres(r=3k)`, while `vres (r=3k)` applies them; built-in types read both.
 fn model(d: Dialect, m: &ModelDef) -> String {
     let mos = matches!(m.kind.to_ascii_lowercase().as_str(), "nmos" | "pmos");
     let level8 = |(k, v): &(String, String)| k.eq_ignore_ascii_case("level") && v.trim() == "8";
@@ -160,7 +163,7 @@ fn model(d: Dialect, m: &ModelDef) -> String {
     let mut s = format!(".model {} {}", m.name, m.kind);
     if !m.parameters.is_empty() {
         let ps: Vec<String> = m.parameters.iter().map(|(k, v)| if v.is_empty() { k.clone() } else { format!("{k}={v}") }).collect();
-        s.push_str(&format!("({})", ps.join(" ")));
+        s.push_str(&format!(" ({})", ps.join(" ")));
     }
     s
 }
@@ -841,7 +844,7 @@ mod tests {
         let netlist = netlist(cg, &ir).unwrap();
         assert!(netlist.contains("M1 out in vdd vdd pmos_3p3 W=2u L=180n"), "missing M1: {}", netlist);
         assert!(netlist.contains("M2 out in 0 0 nmos_3p3 W=1u L=180n"), "missing M2: {}", netlist);
-        assert!(netlist.contains(".model nmos_3p3 NMOS(VTO=0.7 KP=110e-6)"), "missing model: {}", netlist);
+        assert!(netlist.contains(".model nmos_3p3 NMOS (VTO=0.7 KP=110e-6)"), "missing model: {}", netlist);
         assert!(netlist.contains(".temp 27"), "missing temp: {}", netlist);
         assert!(netlist.contains(".dc Vdd 0 3"), "missing dc: {}", netlist);
     }
