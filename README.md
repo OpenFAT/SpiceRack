@@ -14,7 +14,7 @@ The core is a Rust crate (`spicerack`). Python bindings ship in the same package
 ## Install
 
 ```bash
-pip install spicerack
+pip install fast-spicerack    # imported as `import spicerack`
 ```
 
 From source:

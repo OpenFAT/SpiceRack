@@ -11,7 +11,7 @@ name: Publish
 #      the GitHub release; then the same files go to PyPI.
 #
 # One-time setup:
-#   - PyPI: a trusted publisher for project "spicerack": owner OpenFAT,
+#   - PyPI: a trusted publisher for project "fast-spicerack": owner OpenFAT,
 #     repository SpiceRack, workflow publish.yaml, environment pypi.
 #   - GitHub: an environment named "pypi", and Settings -> Actions -> General
 #     -> "Allow GitHub Actions to create and approve pull requests".
@@ -110,7 +110,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/project/spicerack/
+      url: https://pypi.org/project/fast-spicerack/
     permissions:
       id-token: write
     steps:
