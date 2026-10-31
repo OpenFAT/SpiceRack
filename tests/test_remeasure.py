@@ -102,10 +102,10 @@ def test_settling_first_order_step(tmp_path):
     t = np.linspace(0, 20e-6, 20001)
     v = np.where(t < t0, 0.0, final * (1 - np.exp(-(t - t0) / tau)))
     raw = write_raw(tmp_path / "s.raw", [("Transient Analysis", ["time", "v(out)"], (t, v))])
-    assert rm.settling(raw, "v(out)", final=final, tol=tol, t0=t0) == pytest.approx(tau * math.log(1 / tol), rel=1e-5)
+    assert rm.settling(raw, "v(out)", final=final, tol=tol, t0=t0) == pytest.approx(tau * math.log(1 / tol), rel=1e-5, abs=0)
     # absolute band: the same step settles into +-0.9 mV at tau*ln(final/0.9e-3)
     assert rm.settling(raw, "v(out)", final=final, t0=t0, abs_tol=0.9e-3) == pytest.approx(
-        tau * math.log(final / 0.9e-3), rel=1e-5)
+        tau * math.log(final / 0.9e-3), rel=1e-5, abs=0)
     with pytest.raises(ValueError, match="exactly one band"):
         rm.settling(raw, "v(out)", final=final, tol=tol, t0=t0, abs_tol=1e-3)
     short = write_raw(tmp_path / "short.raw", [("Transient Analysis", ["time", "v(out)"], (t[:5000], v[:5000]))])
@@ -117,8 +117,8 @@ def test_slew_of_linear_edges(tmp_path):
     v = np.array([0, 0, 1, 1, 0, 0.0])  # 1 V in 1 us up, 1 V in 2 us down
     raw = write_raw(tmp_path / "s.raw", [("Transient Analysis", ["time", "v(out)"], (t, v))])
     got = rm.slew(raw, "v(out)", lo=0.1, hi=0.9)
-    assert got["rising"] == pytest.approx(1e6, rel=1e-12)
-    assert got["falling"] == pytest.approx(0.5e6, rel=1e-12)
+    assert got["rising"] == pytest.approx(1e6, rel=1e-12, abs=0)
+    assert got["falling"] == pytest.approx(0.5e6, rel=1e-12, abs=0)
     rise = write_raw(tmp_path / "r.raw", [("Transient Analysis", ["time", "v(out)"], (t[:4], v[:4]))])
     assert math.isnan(rm.slew(rise, "v(out)")["falling"])
 
@@ -140,7 +140,7 @@ def test_loop_margins_two_pole(tmp_path):
     ugf = math.sqrt((-qb + math.sqrt(qb * qb - 4 * qa * qc)) / (2 * qa))
     pm = 180 - math.degrees(math.atan(ugf / p1) + math.atan(ugf / p2))
     got = rm.loop_margins(raw, plot="Loop Stability Analysis")
-    assert got["ugf_hz"] == pytest.approx(ugf, rel=1e-4)
+    assert got["ugf_hz"] == pytest.approx(ugf, rel=1e-4, abs=0)
     assert got["pm_deg"] == pytest.approx(pm, abs=1e-3)
     assert math.isnan(got["gm_db"]) and math.isnan(got["pcf_hz"])  # two poles never reach -180
     assert got["unity_crossings"] == 1
@@ -150,7 +150,7 @@ def test_loop_margins_three_pole_gain_margin(tmp_path):
     a0, p = 4.0, 1e4
     raw = lstb(tmp_path / "l.raw", lambda f: a0 / (1 + 1j * f / p) ** 3)
     got = rm.loop_margins(raw)
-    assert got["pcf_hz"] == pytest.approx(p * math.sqrt(3), rel=1e-4)  # 3 atan(f/p) = 180 deg
+    assert got["pcf_hz"] == pytest.approx(p * math.sqrt(3), rel=1e-4, abs=0)  # 3 atan(f/p) = 180 deg
     # |W| = a0 / 2^3 there. Linear in ln f over h = ln(10)/200: h^2/8 * |d2 ln|W| / d(ln f)^2| (1.125 at
     # the crossing) = 2e-5 Np on |W| plus as much again through the located crossing, ~3e-4 dB.
     assert got["gm_db"] == pytest.approx(20 * math.log10(8 / a0), abs=1e-3)
@@ -172,7 +172,7 @@ def test_noise_total_is_exact_on_power_laws(tmp_path):
                         (1e-30 * f ** 2, 1e-30 * (1e18 - 1) / 3)):
         raw = write_raw(tmp_path / "n.raw", [("Noise Spectral Density Curves", ["frequency", "onoise_spectrum"],
                                               (f, np.sqrt(s)))])
-        assert rm.noise_total(raw) == pytest.approx(math.sqrt(integral), rel=1e-12)
+        assert rm.noise_total(raw) == pytest.approx(math.sqrt(integral), rel=1e-12, abs=0)
 
 
 def test_noise_total_rc_against_ktc_on_ngspice(tmp_path):
@@ -188,10 +188,10 @@ def test_noise_total_rc_against_ktc_on_ngspice(tmp_path):
     fc = 1 / (2 * math.pi * r * c)
     kt = 1.380649e-23 * 300.15
     want = math.sqrt(kt / c * 2 / math.pi * (math.atan(f2 / fc) - math.atan(f1 / fc)))
-    assert rm.noise_total(raw) == pytest.approx(want, rel=1e-3)
+    assert rm.noise_total(raw) == pytest.approx(want, rel=1e-3, abs=0)
     # every plot kept: ngspice's own integral sits in the later plot
     totals = [p for p in raw if p.plot_name == "Integrated Noise"]
-    assert totals and totals[0]["v(onoise_total)"][0] == pytest.approx(want, rel=1e-3)
+    assert totals and totals[0]["v(onoise_total)"][0] == pytest.approx(want, rel=1e-3, abs=0)
 
 
 # ── yield ──
@@ -216,9 +216,9 @@ def binomial_ci(k, n, conf):
 
 def test_yield_ci_closed_forms_and_reference():
     low, high = rm.yield_ci(passes=2300, n=2300, conf=0.95)
-    assert high == 1.0 and low == pytest.approx(0.025 ** (1 / 2300), rel=1e-12)
+    assert high == 1.0 and low == pytest.approx(0.025 ** (1 / 2300), rel=1e-12, abs=0)
     low, high = rm.yield_ci(passes=0, n=50, conf=0.9)
-    assert low == 0.0 and high == pytest.approx(1 - 0.05 ** (1 / 50), rel=1e-12)
+    assert low == 0.0 and high == pytest.approx(1 - 0.05 ** (1 / 50), rel=1e-12, abs=0)
     for k, n, conf in ((7, 20, 0.95), (1, 10, 0.99), (37, 40, 0.9)):
         assert rm.yield_ci(k, n, conf) == pytest.approx(binomial_ci(k, n, conf), abs=1e-9)
     with pytest.raises(ValueError):
