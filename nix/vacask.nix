@@ -56,6 +56,13 @@ pkgs.stdenv.mkDerivation rec {
 
     # --- Header fixes ---
     sed -i 's|suitesparse/klu.h|klu.h|g' include/klumatrix.h
+
+    # --- Portable device models ---
+    # OpenVAF compiles for the build machine's CPU by default ('native'). A
+    # store path built on one CI runner and fetched from the cache onto a
+    # runner with an older CPU then dies with SIGILL in every device model.
+    sed -i 's|ARGS "''${options_list}" "--allow"|ARGS "''${options_list}" "--target_cpu" "generic" "--allow"|' devices/CMakeLists.txt
+    grep -q -- '"--target_cpu" "generic"' devices/CMakeLists.txt
   '';
 
   # Suppress clang warnings that newer clang promotes to hard errors.
