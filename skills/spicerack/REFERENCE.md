@@ -114,6 +114,25 @@ Every result type has `result[node]`, `result.measures`.
 
 `ac[node]` is the real part. Use `.magnitude()` for `|H|`.
 
+## Re-measuring (`spicerack.remeasure`)
+
+Recompute a deciding number from the raw file instead of trusting `.meas`.
+`raw = rm.read(path)` keeps every plot; each function finds its vector in the
+first plot that has it (or `plot=`).
+
+| Call | Returns |
+|---|---|
+| `rm.sndr(raw, "v(out)", fs, fin, n, window=None, t0=None)` | `sndr_db`, `sfdr_db`, `enob`, `thd_db`, bins. Raises on an incoherent record (`fin*n/fs` integer, prime to `n`) unless `window="blackmanharris"` |
+| `rm.settling(raw, vec, final, tol, t0)` | seconds; `tol` relative to the step; `inf` if not settled |
+| `rm.slew(raw, vec, lo=0.1, hi=0.9)` | `{"rising", "falling"}` V/s |
+| `rm.loop_margins(raw, plot="Loop Stability Analysis")` | `pm_deg`, `ugf_hz`, `gm_db`, `pcf_hz` |
+| `rm.noise_total(raw)` | V rms from `onoise_spectrum` |
+| `rm.yield_ci(passes, n, conf)` | Clopper-Pearson `(low, high)` |
+| `rm.compare(meas_json, recomputed, rtol)` | disagreements with ESPice `--measures` JSON; `[]` = agree |
+
+Sample a transient for `sndr` with a max step well under `1/fs` (or ngspice
+`.options interp`): interpolating uneven time points adds distortion.
+
 ## Units
 
 `from spicerack.unit import u_V, u_kOhm, ...` then `10 @ u_V`.
