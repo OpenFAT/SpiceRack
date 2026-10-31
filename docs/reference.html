@@ -35,6 +35,7 @@ keyword-only unless noted.</p>
   <li><a href="#units">Units</a></li>
   <li><a href="#modellibrary">ModelLibrary</a></li>
   <li><a href="#functions">Module functions</a></li>
+  <li><a href="#remeasure">remeasure</a></li>
 </ul>
 </div>
 
@@ -198,7 +199,7 @@ float). <code>.nodes</code> and <code>.branches</code> exist on
 <tr><td><code>DistortionAnalysis</code></td><td><code>.frequency</code></td></tr>
 <tr><td><code>PssAnalysis</code>, <code>SParamAnalysis</code>, <code>HarmonicBalanceAnalysis</code>, <code>StabilityAnalysis</code>, <code>TransientNoiseAnalysis</code></td><td><code>.frequency</code> or <code>.time</code> axis</td></tr>
 <tr><td><code>SamplingAnalysis</code></td><td>None</td></tr>
-<tr><td><code>RawData</code></td><td><code>.title</code>, <code>.plot_name</code>, <code>.is_complex</code>, <code>.variable_names</code></td></tr>
+<tr><td><code>RawData</code></td><td><code>.title</code>, <code>.plot_name</code>, <code>.is_complex</code>, <code>.variable_names</code>, <code>.complex(name)</code> → <code>list[complex]</code></td></tr>
 </table>
 
 <h2 id="units">Units</h2>
@@ -232,6 +233,35 @@ simulator. Attach with <code>tb.use_pdk(lib)</code>.</p>
 <td><code>{"errors": [{"line", "message"}], "warnings": [{"line", "message", "suggestion", "backends_affected"}]}</code></td></tr>
 <tr><td><code>compile_veriloga(source_or_path: str) -> str</code></td>
 <td>Compile Verilog-A to an OSDI binary; returns its path. Requires <code>openvaf</code>.</td></tr>
+<tr><td><code>read_raw(path: str) -> list[RawData]</code></td>
+<td>Every plot of a <code>.raw</code> file (ngspice, ESPice, VACASK, LTspice, Spectre nutbin; binary or ASCII), in file order.</td></tr>
+</table>
+
+<h2 id="remeasure">remeasure</h2>
+<p><code>from spicerack import remeasure as rm</code>. Deciding numbers recomputed
+from the vectors of a raw file, never from the simulator's <code>.meas</code>
+output. <code>raw</code> is the list <code>rm.read(path)</code> returns, or one
+<code>RawData</code>; a function reads its vector from the first plot holding it,
+or from the plot named <code>plot=</code>.</p>
+<table>
+<tr><th>Function</th><th>Returns</th></tr>
+<tr><td><code>read(path)</code></td><td><code>list[RawData]</code>, every plot</td></tr>
+<tr><td><code>sndr(raw, vec, fs, fin, n, window=None, t0=None, max_harmonic=6)</code></td>
+<td><code>{"sndr_db", "sfdr_db", "enob", "thd_db", "signal_bin", "coherent", "signal_bins", "harmonic_bins"}</code>.
+<code>n</code> samples at <code>t0 + k/fs</code> (default: ending at the last time point). Refuses an incoherent
+record (<code>fin*n/fs</code> an integer prime to <code>n</code>) unless <code>window="blackmanharris"</code>.</td></tr>
+<tr><td><code>settling(raw, vec, final, tol, t0=0.0)</code></td>
+<td>Seconds from <code>t0</code> until <code>|v - final| &lt;= tol*|final - v(t0)|</code> holds to the end; <code>inf</code> if never.</td></tr>
+<tr><td><code>slew(raw, vec, lo=0.1, hi=0.9)</code></td>
+<td><code>{"rising", "falling"}</code> in V/s between fractions of the full swing; <code>nan</code> for a missing edge.</td></tr>
+<tr><td><code>loop_margins(raw, plot=None, vec="loop_gain")</code></td>
+<td><code>{"pm_deg", "ugf_hz", "gm_db", "pcf_hz"}</code> from a complex loop gain (ESPice <code>.lstb</code>); <code>nan</code> when unbracketed.</td></tr>
+<tr><td><code>noise_total(raw, vec="onoise_spectrum")</code></td>
+<td>Integrated noise in V rms over the swept band; power-law segments.</td></tr>
+<tr><td><code>yield_ci(passes, n, conf=0.95)</code></td><td>Clopper-Pearson <code>(low, high)</code>.</td></tr>
+<tr><td><code>compare(meas_json, recomputed, rtol=1e-3, atol=0.0)</code></td>
+<td>Rows <code>{"name", "simulator", "recomputed", "reason"}</code>, one per disagreement with ESPice's
+<code>--measures</code> JSON (nominal variant). Empty means agreement.</td></tr>
 </table>
 
 </main>
