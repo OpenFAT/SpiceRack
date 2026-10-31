@@ -254,3 +254,12 @@ def test_compare_lists_every_disagreement(tmp_path):
 def test_complex_of_a_real_column(tmp_path):
     raw = write_raw(tmp_path / "r.raw", [("AC", ["frequency", "v(a)"], (np.array([1.0, 2.0]), np.array([3.0, 4.0])))])
     assert raw[0].complex("V(A)") == [3 + 0j, 4 + 0j]
+
+
+def test_remeasure_imports_first_in_a_fresh_interpreter():
+    """Regression: remeasure imported testbenches at module level, and testbenches
+    imports remeasure, so `from spicerack import remeasure` failed in a fresh process."""
+    import sys
+    done = subprocess.run([sys.executable, "-c", "from spicerack import remeasure as rm; rm.slew"],
+                          capture_output=True, text=True)
+    assert done.returncode == 0, done.stderr
