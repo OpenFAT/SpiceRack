@@ -14,6 +14,12 @@ The core is a Rust crate (`spicerack`). Python bindings ship in the same package
 ## Install
 
 ```bash
+pip install fast-spicerack    # imported as `import spicerack`
+```
+
+From source:
+
+```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install maturin pytest
