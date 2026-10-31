@@ -38,6 +38,12 @@ def test_crossings_returns_every_crossing_not_just_the_first():
     assert len(crossings(x, y, 1.0)) == 4
 
 
+def test_crossings_counts_an_edge_through_a_sample_once():
+    """Regression: a sample exactly on the threshold reported the edge twice."""
+    assert crossings([0.0, 1.0, 2.0], [0.0, 0.5, 1.0], 0.5) == [1.0]
+    assert crossings([0.0, 1.0, 2.0, 3.0, 4.0], [0.0, 0.5, 1.0, 0.5, 0.0], 0.5) == [1.0, 3.0]
+
+
 def test_crossings_empty_when_threshold_never_reached():
     assert crossings([0.0, 1.0], [0.0, 0.5], 10.0) == []
 

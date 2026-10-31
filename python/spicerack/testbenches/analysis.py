@@ -46,8 +46,10 @@ def crossings(
     x = np.asarray(x_values, float)[:n]
     y = np.asarray(y_values, float)[:n]
     x0, x1, y0, y1 = x[:-1], x[1:], y[:-1], y[1:]
-    up = (y0 <= threshold) & (threshold <= y1)
-    down = (y0 >= threshold) & (threshold >= y1)
+    # Half-open: a sample exactly on the threshold belongs to one segment only,
+    # or the same edge is reported twice (a zero-length period).
+    up = (y0 < threshold) & (threshold <= y1)
+    down = (y0 > threshold) & (threshold >= y1)
     hit = up if rising is True else down if rising is False else up | down
     x0, x1, y0, y1 = x0[hit], x1[hit], y0[hit], y1[hit]
     flat = y1 == y0
