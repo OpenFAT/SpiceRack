@@ -13,6 +13,7 @@ from typing import Any, Callable
 import numpy as np
 
 from .analysis import ac_bandwidth_hz, ac_passband_db, ac_phase_margin_deg, crossings
+from ._digital import _codes
 
 
 @dataclass
@@ -144,15 +145,27 @@ def amplifier_current_gain(
     source_name: str = "in",
     ac_magnitude: float = 1e-6,
     load_resistance: float | None = None,
+    input_bias_current: float = 0.0,
+    output_bias_voltage: float = 0.0,
 ) -> DesignBench:
+    """Small-signal current gain and bandwidth, ``i(out_sense) / i_in``.
+
+    A mirror or current-steering cell needs its bias: ``input_bias_current``
+    is the DC the input source pushes into ``input_node`` (positive into the
+    pin), ``output_bias_voltage`` the DC the sense source holds the output at.
+    With both 0 a mirror is unbiased and an NMOS output sits in triode, so
+    the gain reads ~0.
+    """
     tb = ps.Testbench(dut)
-    tb.I(name=source_name, positive=input_node, negative=reference_node, value=0.0, ac=ac_magnitude)
+    # SPICE drives an I source's current out of its + node: -bias pushes +bias into the pin.
+    tb.I(name=source_name, positive=input_node, negative=reference_node, value=-input_bias_current,
+         ac=ac_magnitude)
     # The sense source is the output's return path to the reference: a floating
     # sense node carries no current, so the branch would read 0 for every DUT.
     if load_resistance is None:
-        tb.V(name="out_sense", positive=output_node, negative=reference_node, value=0.0)
+        tb.V(name="out_sense", positive=output_node, negative=reference_node, value=output_bias_voltage)
     else:
-        tb.V(name="out_sense", positive=output_node, negative="out_sense_n", value=0.0)
+        tb.V(name="out_sense", positive=output_node, negative="out_sense_n", value=output_bias_voltage)
         tb.R(name="load", positive="out_sense_n", negative=reference_node, value=load_resistance)
     tb.save("I(Vout_sense)", f"V({output_node})")
     tb.add_operating_point()
@@ -358,9 +371,7 @@ def adc_ramp(
     tb.add_transient(step_time=conversion_period / 50, end_time=end_time)
 
     def extract(tran: Any) -> dict[str, float]:
-        t = (np.arange(conversions) + 0.9) * conversion_period
-        bits = np.array([_sample(tran, node, t) > logic_high / 2.0 for node in output_nodes])
-        codes = (bits.astype(int) << np.arange(len(output_nodes))[:, None]).sum(axis=0)
+        codes = _codes(tran, output_nodes, (np.arange(conversions) + 0.9) * conversion_period, logic_high)
         steps = np.diff(codes)
         # Missing codes are counted over full scale, the conventional definition,
         # so a partial ramp reports codes it never reached as missing; compare
