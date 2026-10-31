@@ -636,11 +636,14 @@ def pll_lock(
 ) -> DesignBench:
     """Reference-driven transient; output frequency and control settling.
 
-    Phase noise and reference spurs are not reachable here: ngspice injects no
-    device noise into a transient, and the `.four` table it would need is not
-    parsed. Deterministic quantities -- frequency, control settling -- are.
+    The max step is 1/200 of the *output* period on every backend: a trapezoidal
+    transient shifts an oscillator by -(2*pi*h/T)**2/12, so the step sets the
+    frequency error. Reference spurs are deterministic and reachable
+    (``timing_2.pll_reference_spur``); phase noise is not, because ngspice injects no
+    device noise into a transient.
     """
     period = 1.0 / reference_frequency
+    step = period / (200 * max(divide_ratio, 1.0))
     tb = ps.Testbench(dut)
     tb.PulseVoltageSource(
         name="ref",
@@ -654,7 +657,8 @@ def pll_lock(
         fall_time=period / 100,
     )
     tb.save(f"V({reference_node})", f"V({output_node})", f"V({control_node})")
-    tb.add_transient(step_time=period / 200, end_time=period * cycles)
+    tran_args = dict(step_time=step, end_time=period * cycles, max_time=step)
+    tb.add_transient(**tran_args)
 
     def extract(tran: Any) -> dict[str, float]:
         time = np.asarray(tran.time, float)
@@ -662,8 +666,10 @@ def pll_lock(
         vctrl = np.asarray(tran[control_node], float)
         settle_from = 0.5 * time[-1]
         # Mean frequency over every rising edge in the second half: one period
-        # alone inherits the timestep quantisation of its two edges.
-        edges = [x for x in crossings(time, vco, (vco.max() + vco.min()) / 2.0, rising=True)
+        # alone inherits the timestep quantisation of its two edges. The mid-level
+        # comes from the settled half: startup overshoot moves the whole-record one.
+        settled = vco[time >= settle_from]
+        edges = [x for x in crossings(time, vco, (settled.max() + settled.min()) / 2.0, rising=True)
                  if x >= settle_from]
         if len(edges) < 2:
             raise ValueError(f"need at least 2 rising crossings after {settle_from:g}s, got {len(edges)}")
@@ -686,6 +692,7 @@ def pll_lock(
         result_fields=["tran.time", f"tran['{control_node}']", f"tran['{output_node}']"],
         validation=["control voltage settles", "output period matches reference ratio"],
         extractor=extract,
+        runner=lambda: tb.transient(**tran_args),
     )
 
 
