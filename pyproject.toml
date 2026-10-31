@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "fast-spicerack"
-version = "0.1.0"
+version = "0.1.1"
 description = "Build SPICE circuits, generate netlists, run simulator backends, and read results"
 readme = "README.md"
 license = "MIT"
