@@ -1,6 +1,7 @@
 """The metric contract: a bench either computes what it declares, or says it can't."""
 import math
 
+import numpy as np
 import pytest
 
 import spicerack as ps
@@ -13,6 +14,7 @@ from spicerack.testbenches.analysis import (
     HALF_POWER_DB,
     ac_bandwidth_hz,
     ac_passband_db,
+    ac_phase_margin_deg,
     crossings,
 )
 
@@ -34,6 +36,12 @@ def test_crossings_returns_every_crossing_not_just_the_first():
     assert crossings(x, y, 1.0, rising=True) == [0.5, 2.5]
     assert crossings(x, y, 1.0, rising=False) == [1.5, 3.5]
     assert len(crossings(x, y, 1.0)) == 4
+
+
+def test_crossings_counts_an_edge_through_a_sample_once():
+    """Regression: a sample exactly on the threshold reported the edge twice."""
+    assert crossings([0.0, 1.0, 2.0], [0.0, 0.5, 1.0], 0.5) == [1.0]
+    assert crossings([0.0, 1.0, 2.0, 3.0, 4.0], [0.0, 0.5, 1.0, 0.5, 0.0], 0.5) == [1.0, 3.0]
 
 
 def test_crossings_empty_when_threshold_never_reached():
@@ -282,3 +290,28 @@ def test_control_settling_tracks_a_known_ramp():
     m = bench.metrics(result)
     # Peak-to-peak of a ramp over the second half of the record.
     assert m["control_settling_v"] == pytest.approx(slope * (cycles / fref) / 2, rel=1e-3)
+
+
+class _LoopAc:
+    """An AcAnalysis stand-in carrying a closed-form loop gain W(f) at node 'w'."""
+
+    def __init__(self, w_of_f, ppd=200):
+        self.frequency = np.logspace(0, 9, 9 * ppd + 1)
+        self._w = w_of_f(self.frequency)
+
+    def magnitude_db(self, node):
+        return 20 * np.log10(np.abs(self._w))
+
+    def phase(self, node):
+        return np.degrees(np.angle(self._w))  # wrapped to (-180, 180], as the native class does
+
+
+def test_phase_margin_of_an_unstable_loop_is_negative():
+    """Regression: 180 + wrapped phase read an unstable loop at -209.5 deg as PM = +330.5."""
+    p = 1e4
+    x = math.sqrt(20 ** (2 / 3) - 1)  # |20 / (1 + jx)^3| = 1
+    ac = _LoopAc(lambda f: 20 / (1 + 1j * f / p) ** 3)
+    assert ac_phase_margin_deg(ac, "w") == pytest.approx(180 - 3 * math.degrees(math.atan(x)), abs=1e-3)
+    stable = _LoopAc(lambda f: 4 / (1 + 1j * f / p) ** 3)
+    x = math.sqrt(4 ** (2 / 3) - 1)
+    assert ac_phase_margin_deg(stable, "w") == pytest.approx(180 - 3 * math.degrees(math.atan(x)), abs=1e-3)

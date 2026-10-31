@@ -80,6 +80,11 @@ def sndr(raw: Any, vec: str, fs: float, fin: float, n: int, window: str | None =
     ngspice's ``.options interp``.
     """
     t, y = _xy(raw, vec)
+    return _sndr(t, y, fs, fin, n, window, t0, max_harmonic)
+
+
+def _sndr(t: np.ndarray, y: np.ndarray, fs: float, fin: float, n: int, window: str | None = None,
+          t0: float | None = None, max_harmonic: int = 6) -> dict[str, Any]:
     if n < 8 or not 0 < fin < fs / 2:
         raise ValueError(f"need n >= 8 and 0 < fin < fs/2 (n={n}, fin={fin}, fs={fs})")
     start = t[-1] - n / fs if t0 is None else t0
@@ -128,7 +133,7 @@ def sndr(raw: Any, vec: str, fs: float, fin: float, n: int, window: str | None =
     rest = np.ones(len(power), bool)
     rest[dc] = rest[sig] = False
     spur = power[rest].max() if rest.any() else 0.0
-    sndr_db = 10 * math.log10(p_sig / p_nd)
+    sndr_db = 10 * math.log10(p_sig / p_nd) if p_nd > 0 else math.inf
     return {
         "sndr_db": sndr_db,
         "sfdr_db": 10 * math.log10(power[sig].max() / spur),
@@ -143,17 +148,32 @@ def sndr(raw: Any, vec: str, fs: float, fin: float, n: int, window: str | None =
 
 # ── time domain ──
 
-def settling(raw: Any, vec: str, final: float, tol: float, t0: float = 0.0) -> float:
-    """Seconds from ``t0`` until ``vec`` enters and stays within the band
-    ``|v - final| <= tol * |final - v(t0)|``.
+def settling(raw: Any, vec: str, final: float, tol: float | None = None, t0: float = 0.0, *,
+             abs_tol: float | None = None) -> float:
+    """Seconds from ``t0`` until ``vec`` enters and stays within a band around ``final``.
 
-    ``tol`` is relative to the step, so a first-order step settles at
-    ``tau * ln(1/tol)``. ``inf`` when the record ends outside the band.
+    Name one band: ``tol`` is relative to the step, ``|v - final| <=
+    tol * |final - v(t0)|``, so a first-order step settles at
+    ``tau * ln(1/tol)``; ``abs_tol`` is in the vector's own unit (volts),
+    as regulator and start-up specs give it. ``inf`` when the record ends
+    outside the band.
     """
     t, y = _xy(raw, vec)
-    band = tol * abs(final - float(np.interp(t0, t, y)))
+    return _settling(t, y, final, tol, t0, abs_tol=abs_tol)
+
+
+def _settling(t: np.ndarray, y: np.ndarray, final: float, tol: float | None = None, t0: float = 0.0, *,
+              abs_tol: float | None = None) -> float:
+    if (tol is None) == (abs_tol is None):
+        raise ValueError("name exactly one band: tol (relative to the step) or abs_tol (absolute)")
+    if abs_tol is not None:
+        band = abs_tol
+    else:
+        band = tol * abs(final - float(np.interp(t0, t, y)))
+        if band <= 0:
+            raise ValueError(f"no step: v(t0) equals final ({final}); tol is relative to the step, use abs_tol")
     if band <= 0:
-        raise ValueError(f"no step: v(t0) equals final ({final}); tol is relative to the step")
+        raise ValueError(f"abs_tol must be positive (got {abs_tol})")
     err = np.abs(y - final)
     out = np.nonzero((err > band) & (t >= t0))[0]
     if len(out) == 0:
@@ -171,6 +191,10 @@ def slew(raw: Any, vec: str, lo: float = 0.1, hi: float = 0.9) -> dict[str, floa
     and first falling edge. ``nan`` for an edge the record does not hold.
     """
     t, y = _xy(raw, vec)
+    return _slew(t, y, lo, hi)
+
+
+def _slew(t: np.ndarray, y: np.ndarray, lo: float = 0.1, hi: float = 0.9) -> dict[str, float]:
     if not 0 <= lo < hi <= 1:
         raise ValueError(f"need 0 <= lo < hi <= 1 (lo={lo}, hi={hi})")
     v_lo = y.min() + lo * (y.max() - y.min())
@@ -194,17 +218,24 @@ def loop_margins(raw: Any, plot: str | None = None, vec: str = "loop_gain") -> d
 
     ``pm_deg = 180 + angle(W)`` at the first ``|W| = 1`` crossing (``ugf_hz``);
     ``gm_db = -20 log10 |W|`` where W first crosses the negative real axis
-    (``pcf_hz``). Between sweep points ``ln|W|`` and the phase are linear in
+    (``pcf_hz``). ``unity_crossings`` counts the ``|W| = 1`` crossings: more
+    than one (a conditionally stable or gain-boosted loop) means the first
+    margin is not the whole story. Between sweep points ``ln|W|`` and the phase are linear in
     ``ln f``. ``nan`` for a crossing the sweep does not bracket.
     """
     p = _plot(raw, vec, plot)
-    lf = np.log(np.asarray(p[p.variable_names[0]], float))
-    w = np.asarray(p.complex(vec), complex)
+    return _margins(np.asarray(p[p.variable_names[0]], float), np.asarray(p.complex(vec), complex))
+
+
+def _margins(f: np.ndarray, w: np.ndarray) -> dict[str, float]:
+    lf = np.log(f)
     g = np.log(np.abs(w))
-    out = {"pm_deg": math.nan, "ugf_hz": math.nan, "gm_db": math.nan, "pcf_hz": math.nan}
+    cross = (g[:-1] * g[1:] <= 0) & (g[:-1] != g[1:])
+    out = {"pm_deg": math.nan, "ugf_hz": math.nan, "gm_db": math.nan, "pcf_hz": math.nan,
+           "unity_crossings": int(cross.sum())}
 
     for k in range(1, len(w)):
-        if g[k - 1] * g[k] <= 0 and g[k - 1] != g[k]:
+        if cross[k - 1]:
             frac = g[k - 1] / (g[k - 1] - g[k])
             a0 = np.angle(-w[k - 1])
             a1 = a0 + np.angle(-w[k] / -w[k - 1])  # the short way round
@@ -230,8 +261,11 @@ def noise_total(raw: Any, vec: str = "onoise_spectrum") -> float:
     through its end points, exact for white, 1/f and 1/f^2 segments and
     close on a log sweep where trapezoids overestimate.
     """
-    f, d = _xy(raw, vec)
-    s = d ** 2
+    return _noise_total(*_xy(raw, vec))
+
+
+def _noise_total(f: np.ndarray, d: np.ndarray) -> float:
+    s = np.asarray(d, float) ** 2
     total = 0.0
     for f0, f1, s0, s1 in zip(f[:-1], f[1:], s[:-1], s[1:]):
         if s0 <= 0 or s1 <= 0 or f0 <= 0:

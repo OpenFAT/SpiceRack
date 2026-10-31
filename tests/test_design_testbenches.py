@@ -37,11 +37,8 @@ FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 
 def ps():
-    try:
-        import spicerack
-        return spicerack
-    except ImportError:
-        pytest.skip("spicerack not built")
+    import spicerack  # unsupported fails, never skips: an unbuilt extension is an error
+    return spicerack
 
 
 def dut(name, ports):

@@ -166,9 +166,9 @@ from spicerack import remeasure as rm
 raw = rm.read("out.raw")                       # ngspice / ESPice / VACASK raw, binary or ASCII; every plot kept
 spec = rm.sndr(raw, "v(out)", fs=5.12e6, fin=5.12e6 * 251 / 4096, n=4096)
 # -> {"sndr_db", "sfdr_db", "enob", "thd_db", "signal_bin", "coherent", "signal_bins", "harmonic_bins"}
-rm.settling(raw, "v(out)", final=0.9, tol=1e-3, t0=1e-6)        # seconds; tol is relative to the step
+rm.settling(raw, "v(out)", final=0.9, tol=1e-3, t0=1e-6)        # seconds; tol relative to the step, or abs_tol= in volts
 rm.slew(raw, "v(out)", lo=0.1, hi=0.9)                          # {"rising", "falling"} in V/s
-rm.loop_margins(raw, plot="Loop Stability Analysis")            # {"pm_deg", "gm_db", "ugf_hz", "pcf_hz"}
+rm.loop_margins(raw, plot="Loop Stability Analysis")            # {"pm_deg", "gm_db", "ugf_hz", "pcf_hz", "unity_crossings"}
 rm.noise_total(raw)                                             # integrated output noise, V rms
 rm.yield_ci(passes=2300, n=2300, conf=0.95)                     # Clopper-Pearson -> (0.99840, 1.0)
 rm.compare("meas.json", {"ugf": 30.3e6}, rtol=1e-3)             # ESPice --measures vs recomputed: the disagreements
@@ -291,7 +291,18 @@ dut.A(name="adc1", connections=["[clk rst]", "[dclk drst]"],
 
 ## Design testbench recipes
 
-`spicerack.testbenches` holds ready-made benches for amplifier voltage gain, ADC ramp, DAC linearity, PLL lock, and bandgap reference, plus the machinery for checking their output across corners:
+`spicerack.testbenches` holds about 60 ready-made benches, each checked against a closed-form oracle on ngspice:
+
+| Family | Benches |
+| --- | --- |
+| Op-amps and loops | `opamp_open_loop`, `loop_gain` (Tian, at any break), `step_response`, `cmrr`, `offset_icmr`, `output_swing`, `harmonic_distortion`, `amplifier_voltage_gain` |
+| Noise, ports, RF | `noise_spectrum`, `port_impedance`, `rf_two_port`, `rf_compression_ip3` |
+| Regulators and references | `supply_rejection`, `regulator_line_sweep`, `regulator_load_sweep`, `regulator_step`, `supply_startup`, `regulator_loop_margins`, `bandgap_reference`, `bandgap_tempco` |
+| Current-mode and charge | `current_mirror_output`, `current_reference`, `transconductor_gm`, `switched_cap_transfer`, `charge_pump_current`, `charge_amplifier` |
+| Converters | `adc_dynamic`, `adc_static_linearity`, `comparator_threshold`, `comparator_delay`, `comparator_kickback`, `dac_transition`, `dac_dynamic`, `dac_output_impedance`, `sample_hold_dynamic`, `pipeline_stage_residue` |
+| Timing | `oscillator_frequency`, `oscillator_sweep`, `oscillator_jitter`, `pll_lock_time`, `pll_loop_margins`, `pll_reference_spur`, `pfd_cp_transfer`, `dll_lock`, `delay_line_range`, `clock_buffer_timing` |
+
+Each returns a `DesignBench`; `bench.measure()` runs its own analyses and returns its metrics. The full catalog, metric definitions and limits are in [`skills/spicerack/TESTBENCHES.md`](skills/spicerack/TESTBENCHES.md). The machinery for checking metrics across corners:
 
 ```python
 from spicerack.testbenches import (
