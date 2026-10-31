@@ -1,0 +1,122 @@
+name: Publish
+
+# Releasing a version, start to finish:
+#   1. Actions -> Publish -> Run workflow, pick the bump (patch/minor/major or
+#      an explicit X.Y.Z). This opens a pull request that moves the version in
+#      Cargo.toml, pyproject.toml and Cargo.lock; bots never push to main.
+#   2. Merge it once the merge gate passes.
+#   3. The merge changes pyproject.toml on main, which runs this workflow
+#      again. If that version has no tag yet, the Release workflow
+#      (tags.yaml) tests, builds the wheels and sdist, and creates the tag and
+#      the GitHub release; then the same files go to PyPI.
+#
+# One-time setup:
+#   - PyPI: a trusted publisher for project "spicerack": owner OpenFAT,
+#     repository SpiceRack, workflow publish.yaml, environment pypi.
+#   - GitHub: an environment named "pypi", and Settings -> Actions -> General
+#     -> "Allow GitHub Actions to create and approve pull requests".
+#   - Secret RELEASE_TOKEN (fine-grained PAT, contents + pull requests write).
+#     Without it the bump pull request is opened with the default token, and
+#     GitHub starts no CI for it: close and reopen it to run the checks.
+
+"on":
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: patch, minor, major, or an explicit X.Y.Z
+        required: true
+        default: patch
+  push:
+    branches: [main]
+    paths: [pyproject.toml]
+
+permissions: {}
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+jobs:
+  # ── Step 1: the version bump, as a pull request ──
+  bump:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          token: ${{ secrets.RELEASE_TOKEN || github.token }}
+
+      - name: Bump Cargo.toml, pyproject.toml and Cargo.lock
+        id: bump
+        env:
+          BUMP: ${{ inputs.bump }}
+        run: python3 tools/bump_version.py "$BUMP" >> "$GITHUB_OUTPUT"
+
+      - name: Open the release pull request
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
+          VERSION: ${{ steps.bump.outputs.version }}
+        run: |
+          branch="release/v$VERSION"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git commit -am "release: v$VERSION"
+          git push origin "$branch"
+          gh pr create --base main --head "$branch" --title "release: v$VERSION" \
+            --body "Moves the version to $VERSION. Merging it publishes v$VERSION to PyPI and GitHub (publish.yaml)."
+
+  # ── Step 3: a merged bump becomes a release ──
+  check:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: A version this push moved, and not yet tagged?
+        id: version
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          version() { sed -n 's/^version = "\(.*\)"$/\1/p' | head -1; }
+          v=$(version < pyproject.toml)
+          git fetch -q --depth=1 origin "$BEFORE"
+          was=$(git show "$BEFORE:pyproject.toml" | version)
+          if [ "$v" = "$was" ]; then
+            echo "pyproject.toml changed but the version is still $v; nothing to publish"
+          elif git ls-remote --exit-code --tags origin "refs/tags/v$v" >/dev/null; then
+            echo "v$v is already released; nothing to publish"
+          else
+            echo "tag=v$v" >> "$GITHUB_OUTPUT"
+          fi
+
+  release:
+    needs: check
+    if: needs.check.outputs.tag != ''
+    permissions:
+      contents: write
+    uses: ./.github/workflows/tags.yaml
+    with:
+      tag: ${{ needs.check.outputs.tag }}
+
+  pypi:
+    needs: release
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/spicerack/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: dist
+          merge-multiple: true
+
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
