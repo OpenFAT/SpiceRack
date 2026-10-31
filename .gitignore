@@ -28,3 +28,4 @@ build/
 target_nix/
 result
 result-*
+site/

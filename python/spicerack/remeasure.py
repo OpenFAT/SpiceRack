@@ -29,7 +29,6 @@ from typing import Any, Mapping
 import numpy as np
 
 from ._native import read_raw
-from .testbenches.analysis import crossings
 
 #: 4-term Blackman-Harris: sidelobes at -92 dB, main lobe +-4 bins.
 _BLACKMAN_HARRIS = (0.35875, 0.48829, 0.14128, 0.01168)
@@ -195,6 +194,10 @@ def slew(raw: Any, vec: str, lo: float = 0.1, hi: float = 0.9) -> dict[str, floa
 
 
 def _slew(t: np.ndarray, y: np.ndarray, lo: float = 0.1, hi: float = 0.9) -> dict[str, float]:
+    # Imported here: testbenches imports remeasure, so a module-level import
+    # of the testbenches package from remeasure is circular.
+    from .testbenches.analysis import crossings
+
     if not 0 <= lo < hi <= 1:
         raise ValueError(f"need 0 <= lo < hi <= 1 (lo={lo}, hi={hi})")
     v_lo = y.min() + lo * (y.max() - y.min())
