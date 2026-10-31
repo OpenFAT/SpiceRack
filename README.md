@@ -168,7 +168,7 @@ spec = rm.sndr(raw, "v(out)", fs=5.12e6, fin=5.12e6 * 251 / 4096, n=4096)
 # -> {"sndr_db", "sfdr_db", "enob", "thd_db", "signal_bin", "coherent", "signal_bins", "harmonic_bins"}
 rm.settling(raw, "v(out)", final=0.9, tol=1e-3, t0=1e-6)        # seconds; tol is relative to the step
 rm.slew(raw, "v(out)", lo=0.1, hi=0.9)                          # {"rising", "falling"} in V/s
-rm.loop_margins(raw, plot="Loop Stability Analysis")            # {"pm_deg", "gm_db", "ugf_hz", "pcf_hz"}
+rm.loop_margins(raw, plot="Loop Stability Analysis")            # {"pm_deg", "gm_db", "ugf_hz", "pcf_hz", "unity_crossings"}
 rm.noise_total(raw)                                             # integrated output noise, V rms
 rm.yield_ci(passes=2300, n=2300, conf=0.95)                     # Clopper-Pearson -> (0.99840, 1.0)
 rm.compare("meas.json", {"ugf": 30.3e6}, rtol=1e-3)             # ESPice --measures vs recomputed: the disagreements

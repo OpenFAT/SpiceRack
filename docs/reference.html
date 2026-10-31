@@ -255,7 +255,7 @@ record (<code>fin*n/fs</code> an integer prime to <code>n</code>) unless <code>w
 <tr><td><code>slew(raw, vec, lo=0.1, hi=0.9)</code></td>
 <td><code>{"rising", "falling"}</code> in V/s between fractions of the full swing; <code>nan</code> for a missing edge.</td></tr>
 <tr><td><code>loop_margins(raw, plot=None, vec="loop_gain")</code></td>
-<td><code>{"pm_deg", "ugf_hz", "gm_db", "pcf_hz"}</code> from a complex loop gain (ESPice <code>.lstb</code>); <code>nan</code> when unbracketed.</td></tr>
+<td><code>{"pm_deg", "ugf_hz", "gm_db", "pcf_hz", "unity_crossings"}</code> from a complex loop gain (ESPice <code>.lstb</code>); <code>nan</code> when unbracketed.</td></tr>
 <tr><td><code>noise_total(raw, vec="onoise_spectrum")</code></td>
 <td>Integrated noise in V rms over the swept band; power-law segments.</td></tr>
 <tr><td><code>yield_ci(passes, n, conf=0.95)</code></td><td>Clopper-Pearson <code>(low, high)</code>.</td></tr>

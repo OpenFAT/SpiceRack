@@ -138,6 +138,7 @@ def test_loop_margins_two_pole(tmp_path):
     assert got["ugf_hz"] == pytest.approx(ugf, rel=1e-4)
     assert got["pm_deg"] == pytest.approx(pm, abs=1e-3)
     assert math.isnan(got["gm_db"]) and math.isnan(got["pcf_hz"])  # two poles never reach -180
+    assert got["unity_crossings"] == 1
 
 
 def test_loop_margins_three_pole_gain_margin(tmp_path):

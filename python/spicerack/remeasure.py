@@ -133,7 +133,7 @@ def _sndr(t: np.ndarray, y: np.ndarray, fs: float, fin: float, n: int, window: s
     rest = np.ones(len(power), bool)
     rest[dc] = rest[sig] = False
     spur = power[rest].max() if rest.any() else 0.0
-    sndr_db = 10 * math.log10(p_sig / p_nd)
+    sndr_db = 10 * math.log10(p_sig / p_nd) if p_nd > 0 else math.inf
     return {
         "sndr_db": sndr_db,
         "sfdr_db": 10 * math.log10(power[sig].max() / spur),
@@ -207,7 +207,9 @@ def loop_margins(raw: Any, plot: str | None = None, vec: str = "loop_gain") -> d
 
     ``pm_deg = 180 + angle(W)`` at the first ``|W| = 1`` crossing (``ugf_hz``);
     ``gm_db = -20 log10 |W|`` where W first crosses the negative real axis
-    (``pcf_hz``). Between sweep points ``ln|W|`` and the phase are linear in
+    (``pcf_hz``). ``unity_crossings`` counts the ``|W| = 1`` crossings: more
+    than one (a conditionally stable or gain-boosted loop) means the first
+    margin is not the whole story. Between sweep points ``ln|W|`` and the phase are linear in
     ``ln f``. ``nan`` for a crossing the sweep does not bracket.
     """
     p = _plot(raw, vec, plot)
@@ -217,10 +219,12 @@ def loop_margins(raw: Any, plot: str | None = None, vec: str = "loop_gain") -> d
 def _margins(f: np.ndarray, w: np.ndarray) -> dict[str, float]:
     lf = np.log(f)
     g = np.log(np.abs(w))
-    out = {"pm_deg": math.nan, "ugf_hz": math.nan, "gm_db": math.nan, "pcf_hz": math.nan}
+    cross = (g[:-1] * g[1:] <= 0) & (g[:-1] != g[1:])
+    out = {"pm_deg": math.nan, "ugf_hz": math.nan, "gm_db": math.nan, "pcf_hz": math.nan,
+           "unity_crossings": int(cross.sum())}
 
     for k in range(1, len(w)):
-        if g[k - 1] * g[k] <= 0 and g[k - 1] != g[k]:
+        if cross[k - 1]:
             frac = g[k - 1] / (g[k - 1] - g[k])
             a0 = np.angle(-w[k - 1])
             a1 = a0 + np.angle(-w[k] / -w[k - 1])  # the short way round

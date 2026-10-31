@@ -125,7 +125,7 @@ first plot that has it (or `plot=`).
 | `rm.sndr(raw, "v(out)", fs, fin, n, window=None, t0=None)` | `sndr_db`, `sfdr_db`, `enob`, `thd_db`, bins. Raises on an incoherent record (`fin*n/fs` integer, prime to `n`) unless `window="blackmanharris"` |
 | `rm.settling(raw, vec, final, tol, t0)` | seconds; `tol` relative to the step; `inf` if not settled |
 | `rm.slew(raw, vec, lo=0.1, hi=0.9)` | `{"rising", "falling"}` V/s |
-| `rm.loop_margins(raw, plot="Loop Stability Analysis")` | `pm_deg`, `ugf_hz`, `gm_db`, `pcf_hz` |
+| `rm.loop_margins(raw, plot="Loop Stability Analysis")` | `pm_deg`, `ugf_hz`, `gm_db`, `pcf_hz`, `unity_crossings` |
 | `rm.noise_total(raw)` | V rms from `onoise_spectrum` |
 | `rm.yield_ci(passes, n, conf)` | Clopper-Pearson `(low, high)` |
 | `rm.compare(meas_json, recomputed, rtol)` | disagreements with ESPice `--measures` JSON; `[]` = agree |
