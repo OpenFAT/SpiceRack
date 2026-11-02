@@ -178,11 +178,8 @@ pub fn lint_netlist(netlist: &str, backend: Option<&str>) -> LintResult {
         }
     }
 
-    let family = match backend {
-        Some("ngspice" | "ngspice-subprocess" | "ngspice-shared") => "ngspice",
-        Some(b) => b,
-        None => "",
-    };
+    // An alias (`ngspice-shared`) checks as the dialect it names.
+    let family = backend.map_or("", |b| crate::ir::Dialect::from_backend_name(b).map_or(b, |d| d.name()));
     for r in &rows {
         for (fam, _, msg, sugg) in BACKEND_CARDS.iter().filter(|c| c.0 == family && r.card(c.1)) {
             match sugg {

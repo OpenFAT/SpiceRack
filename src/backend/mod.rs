@@ -1,7 +1,7 @@
-//! Simulator backends: a closed set, one `enum`, one `match` per question.
+//! Simulator backends: the [`RUNNABLE`] dialects, one `match` per question.
 //!
-//! A backend executes netlist text verbatim. Turning IR into that text is the
-//! codegen's job; [`BackendKind::dialect`] names which dialect to ask it for.
+//! A backend executes netlist text verbatim, in its own [`Dialect`]. Turning
+//! IR into that text is the codegen's job.
 
 pub mod ngspice;
 pub mod ltspice;
@@ -45,16 +45,9 @@ pub enum BackendError {
 
 pub use crate::codegen::{netlist, Dialect};
 
-/// Every simulator SpiceRack can drive.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BackendKind {
-    /// `ngspice -b` subprocess.
-    Ngspice,
-    Ltspice,
-    Vacask,
-    Spectre,
-    Espice,
-}
+/// The dialects a simulator here runs; a universal analysis runs on each, in
+/// this order of preference.
+pub const RUNNABLE: [Dialect; 5] = [Dialect::Ngspice, Dialect::Ltspice, Dialect::Vacask, Dialect::Spectre, Dialect::Espice];
 
 use crate::ir::feature::*;
 
@@ -72,7 +65,7 @@ const ESPICE_CAPS: u8 = OSDI | MEASURES;
 
 /// Analysis kinds (`ir::Analysis::kind_str`) → dialects that run them, in
 /// preference order, and the workaround to suggest without one. A kind not
-/// listed runs on every dialect in `ANYWHERE`.
+/// listed runs on every dialect in [`RUNNABLE`].
 const ROUTES: &[(&[&str], &[Dialect], &str)] = {
     use Dialect::*;
     &[
@@ -89,83 +82,62 @@ const ROUTES: &[(&[&str], &[Dialect], &str)] = {
         (&["pac", "pnoise", "pxf", "pstb"], &[Spectre], "N/A"),
     ]
 };
-const ANYWHERE: &[Dialect] = &[Dialect::Ngspice, Dialect::Ltspice, Dialect::Vacask, Dialect::Spectre, Dialect::Espice];
-
 fn route(analysis: &str) -> (&'static [Dialect], &'static str) {
     ROUTES
         .iter()
         .find(|(kinds, _, _)| kinds.contains(&analysis))
-        .map_or((ANYWHERE, "N/A"), |&(_, d, alt)| (d, alt))
+        .map_or((&RUNNABLE, "N/A"), |&(_, d, alt)| (d, alt))
 }
 
-impl BackendKind {
-    /// Parse a user-facing backend name. `ngspice-shared` and
-    /// `vacask-shared` are kept as aliases of the executables.
-    #[allow(clippy::should_implement_trait)]
-    pub fn from_str(s: &str) -> Option<Self> {
-        Some(match s {
-            "ngspice" | "ngspice-subprocess" | "ngspice-shared" => Self::Ngspice,
-            "ltspice" => Self::Ltspice,
-            "vacask" | "vacask-shared" => Self::Vacask,
-            "spectre" => Self::Spectre,
-            "espice" => Self::Espice,
-            _ => return None,
-        })
-    }
+/// A user-facing backend name (a [`RUNNABLE`] dialect's name or one of
+/// [`Dialect::ALIASES`]) as the dialect it runs; `None` for anything else.
+pub fn parse(name: &str) -> Option<Dialect> {
+    Dialect::from_backend_name(name).filter(|d| RUNNABLE.contains(d))
+}
 
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Ngspice => "ngspice",
-            Self::Ltspice => "ltspice",
-            Self::Vacask => "vacask",
-            Self::Spectre => "spectre",
-            Self::Espice => "espice",
-        }
-    }
-
-    pub fn dialect(self) -> Dialect {
-        match self {
-            Self::Ngspice => Dialect::Ngspice,
-            Self::Ltspice => Dialect::Ltspice,
-            Self::Vacask => Dialect::Vacask,
-            Self::Spectre => Dialect::Spectre,
-            Self::Espice => Dialect::Espice,
-        }
-    }
-
-    /// What this simulator can do, as `ir::feature` bits.
+impl Dialect {
+    /// What this dialect's simulator can do, as `ir::feature` bits; nothing
+    /// for a dialect no simulator here runs.
     pub fn capabilities(self) -> u8 {
         match self {
-            Self::Ngspice => NGSPICE_CAPS,
-            Self::Ltspice => LTSPICE_CAPS,
-            Self::Vacask => VACASK_CAPS,
-            Self::Spectre => SPECTRE_CAPS,
-            Self::Espice => ESPICE_CAPS,
+            Dialect::Ngspice => NGSPICE_CAPS,
+            Dialect::Ltspice => LTSPICE_CAPS,
+            Dialect::Vacask => VACASK_CAPS,
+            Dialect::Spectre => SPECTRE_CAPS,
+            Dialect::Espice => ESPICE_CAPS,
+            Dialect::Hspice | Dialect::Xyce | Dialect::Cdl | Dialect::Verilog => 0,
         }
     }
 
-    /// Execute `netlist` (already in `self.dialect()`) and read the results.
+    /// Executes `netlist` (already in this dialect) and reads the results.
+    ///
+    /// # Errors
+    /// `SimulationError` for a dialect outside [`RUNNABLE`] (HSPICE, Xyce,
+    /// CDL, Verilog), and whatever the simulator run returns.
     pub fn run(self, netlist: &str) -> Result<RawData, BackendError> {
         match self {
-            Self::Ngspice => ngspice::run(netlist),
-            Self::Ltspice => ltspice::run(netlist),
-            Self::Vacask => vacask::run(netlist),
-            Self::Spectre => spectre::run(netlist),
-            Self::Espice => espice::run(netlist),
+            Dialect::Ngspice => ngspice::run(netlist),
+            Dialect::Ltspice => ltspice::run(netlist),
+            Dialect::Vacask => vacask::run(netlist),
+            Dialect::Spectre => spectre::run(netlist),
+            Dialect::Espice => espice::run(netlist),
+            Dialect::Hspice | Dialect::Xyce | Dialect::Cdl | Dialect::Verilog => {
+                Err(BackendError::SimulationError(format!("no {} simulator is driven by SpiceRack", self.name())))
+            }
         }
     }
 }
 
 /// Backends installed on this machine, in preference order. Cached.
-pub fn available() -> &'static [BackendKind] {
-    static CACHE: OnceLock<Vec<BackendKind>> = OnceLock::new();
+pub fn available() -> &'static [Dialect] {
+    static CACHE: OnceLock<Vec<Dialect>> = OnceLock::new();
     CACHE.get_or_init(|| {
         let found = [
-            (BackendKind::Ngspice, is_on_path("ngspice")),
-            (BackendKind::Ltspice, ltspice::find().is_some()),
-            (BackendKind::Vacask, is_on_path("vacask")),
-            (BackendKind::Spectre, is_on_path("spectre")),
-            (BackendKind::Espice, is_on_path("espice")),
+            (Dialect::Ngspice, is_on_path("ngspice")),
+            (Dialect::Ltspice, ltspice::find().is_some()),
+            (Dialect::Vacask, is_on_path("vacask")),
+            (Dialect::Spectre, is_on_path("spectre")),
+            (Dialect::Espice, is_on_path("espice")),
         ];
         found.into_iter().filter(|&(_, ok)| ok).map(|(k, _)| k).collect()
     })
@@ -174,13 +146,12 @@ pub fn available() -> &'static [BackendKind] {
 /// Pick the backend for one analysis kind. An explicit name (argument, else
 /// `$SPICERACK_BACKEND`) wins if it can run the analysis; otherwise the first
 /// installed backend, in `ROUTES` order, that supports the circuit's features.
-pub fn select(analysis: &str, override_backend: Option<&str>, features: &FeatureFlags) -> Result<BackendKind, BackendError> {
+pub fn select(analysis: &str, override_backend: Option<&str>, features: &FeatureFlags) -> Result<Dialect, BackendError> {
     let (dialects, alternative) = route(analysis);
     let env = std::env::var("SPICERACK_BACKEND").ok().filter(|s| !s.is_empty());
     if let Some(name) = override_backend.or(env.as_deref()) {
-        let kind = BackendKind::from_str(name)
-            .ok_or_else(|| BackendError::SimulationError(format!("Unknown backend: {name}")))?;
-        if !dialects.contains(&kind.dialect()) {
+        let kind = parse(name).ok_or_else(|| BackendError::SimulationError(format!("Unknown backend: {name}")))?;
+        if !dialects.contains(&kind) {
             return Err(unsupported(analysis, name, dialects[0], alternative));
         }
         return Ok(kind);
@@ -191,7 +162,7 @@ pub fn select(analysis: &str, override_backend: Option<&str>, features: &Feature
         return Err(BackendError::NoBackend);
     }
     for d in dialects {
-        if let Some(&k) = available.iter().find(|k| k.dialect() == *d && features.needs & !k.capabilities() == 0) {
+        if let Some(&k) = available.iter().find(|k| *k == d && features.needs & !k.capabilities() == 0) {
             return Ok(k);
         }
     }
@@ -291,17 +262,17 @@ mod tests {
 
     #[test]
     fn capability_table_filters_by_feature() {
-        let runs = |k: BackendKind, needs: u8| needs & !k.capabilities() == 0;
-        assert!(runs(BackendKind::Ngspice, XSPICE));
-        assert!(!runs(BackendKind::Vacask, XSPICE));
-        assert!(!runs(BackendKind::Spectre, XSPICE));
-        assert!(!runs(BackendKind::Ltspice, OSDI));
-        assert!(runs(BackendKind::Espice, OSDI));
-        assert!(!runs(BackendKind::Ngspice, STEP_PARAMS | MEASURES));
-        assert!(!runs(BackendKind::Vacask, STEP_PARAMS | MEASURES));
-        assert!(runs(BackendKind::Spectre, STEP_PARAMS | MEASURES));
-        assert!(runs(BackendKind::Ltspice, STEP_PARAMS | MEASURES));
-        assert!(runs(BackendKind::Ngspice, 0));
+        let runs = |k: Dialect, needs: u8| needs & !k.capabilities() == 0;
+        assert!(runs(Dialect::Ngspice, XSPICE));
+        assert!(!runs(Dialect::Vacask, XSPICE));
+        assert!(!runs(Dialect::Spectre, XSPICE));
+        assert!(!runs(Dialect::Ltspice, OSDI));
+        assert!(runs(Dialect::Espice, OSDI));
+        assert!(!runs(Dialect::Ngspice, STEP_PARAMS | MEASURES));
+        assert!(!runs(Dialect::Vacask, STEP_PARAMS | MEASURES));
+        assert!(runs(Dialect::Spectre, STEP_PARAMS | MEASURES));
+        assert!(runs(Dialect::Ltspice, STEP_PARAMS | MEASURES));
+        assert!(runs(Dialect::Ngspice, 0));
     }
 
     #[test]
@@ -311,15 +282,15 @@ mod tests {
         assert_eq!(route("hb").0, &[Vacask, Spectre]);
         assert_eq!(route("trannoise").0, &[Vacask]);
         assert_eq!(route("pnoise").0, &[Spectre]);
-        assert_eq!(route("tran").0, ANYWHERE);
+        assert_eq!(route("tran").0, RUNNABLE);
         assert_eq!(route("tran").0.last(), Some(&Espice), "espice is never preferred first");
     }
 
     #[test]
     fn explicit_backend_must_run_the_analysis() {
         let none = FeatureFlags::default();
-        assert_eq!(select("pz", Some("ngspice"), &none).unwrap(), BackendKind::Ngspice);
-        assert_eq!(select("dc", Some("vacask-shared"), &none).unwrap(), BackendKind::Vacask);
+        assert_eq!(select("pz", Some("ngspice"), &none).unwrap(), Dialect::Ngspice);
+        assert_eq!(select("dc", Some("vacask-shared"), &none).unwrap(), Dialect::Vacask);
         assert!(matches!(select("pz", Some("ltspice"), &none), Err(BackendError::UnsupportedAnalysis { .. })));
         assert!(matches!(select("hb", Some("ngspice"), &none), Err(BackendError::UnsupportedAnalysis { .. })));
         assert!(select("op", Some("xyce"), &none).is_err());
@@ -327,10 +298,15 @@ mod tests {
 
     #[test]
     fn names_round_trip() {
-        for k in [BackendKind::Ngspice, BackendKind::Ltspice,
-                  BackendKind::Vacask, BackendKind::Spectre, BackendKind::Espice] {
-            assert_eq!(BackendKind::from_str(k.name()), Some(k));
+        for d in RUNNABLE {
+            assert_eq!(parse(d.name()), Some(d));
         }
-        assert_eq!(BackendKind::from_str("ngspice-subprocess"), Some(BackendKind::Ngspice));
+        for (alias, d) in Dialect::ALIASES {
+            assert_eq!(parse(alias), Some(d));
+        }
+        assert_eq!(parse("hspice"), None, "emitted, never run");
+        assert_eq!(parse("Ngspice"), None, "backend names are exact");
+        assert!(Dialect::Xyce.run("").is_err());
+        assert_eq!(Dialect::Cdl.capabilities(), 0);
     }
 }

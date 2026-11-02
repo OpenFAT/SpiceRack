@@ -1,14 +1,14 @@
 #![cfg(feature = "backend")]
 //! End-to-end coverage of the analyses the ESPice backend exposes, mirroring
 //! tests/test_ngspice_analyses.rs: each test runs a real deck through
-//! `BackendKind::Espice` and asserts a closed-form number.
+//! `Dialect::Espice` and asserts a closed-form number.
 //!
 //! Skipped automatically when espice is not on PATH. Not mirrored: XSPICE,
 //! `.control` and Laplace (not ESPice features), `.disto`/`.pz`/`.noise`
 //! (their result layouts are not mapped by this backend yet), `.four`
 //! (ESPice writes the table as a raw plot, not to stdout).
 
-use spicerack::backend::BackendKind;
+use spicerack::backend::Dialect;
 use spicerack::measure_parse::parse_measures;
 use spicerack::result::{MeasureResult, RawData};
 
@@ -27,7 +27,7 @@ fn run(deck: &str) -> Option<RawData> {
         return None;
     }
     Some(
-        BackendKind::Espice
+        Dialect::Espice
             .run(deck)
             .unwrap_or_else(|e| panic!("deck failed: {e}\n{deck}")),
     )

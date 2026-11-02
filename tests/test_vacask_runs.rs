@@ -6,7 +6,7 @@
 //!
 //! Skips when `vacask` is not on PATH so CI without it still passes.
 
-use spicerack::backend::{netlist as emit, BackendKind, Dialect};
+use spicerack::backend::{netlist as emit, Dialect};
 use spicerack::ir::*;
 use spicerack::result::RawData;
 
@@ -25,7 +25,7 @@ fn run(ir: &CircuitIR) -> Option<RawData> {
         eprintln!("skipping: vacask not on PATH");
         return None;
     }
-    match BackendKind::Vacask.run(&netlist) {
+    match Dialect::Vacask.run(&netlist) {
         Ok(raw) => Some(raw),
         Err(e) => panic!("vacask rejected the generated deck: {}\n--- deck ---\n{}", e, netlist),
     }

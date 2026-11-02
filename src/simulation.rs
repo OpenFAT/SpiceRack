@@ -13,7 +13,7 @@ pub fn run(ir: &CircuitIR, backend: Option<&str>) -> Result<RawData, BackendErro
         .and_then(|tb| tb.analyses.first())
         .map_or("op", |a| a.kind_str());
     let sim = select(kind, backend, &ir.compute_features())?;
-    let deck = netlist(ir, sim.dialect()).map_err(|e| BackendError::SimulationError(e.to_string()))?;
+    let deck = netlist(ir, sim).map_err(|e| BackendError::SimulationError(e.to_string()))?;
     let mut raw = sim.run(&deck)?;
     raw.backend_hint = sim.name().to_string();
     // LTspice writes `.meas` results to its log, everyone else to stdout.

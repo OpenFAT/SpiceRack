@@ -1,13 +1,13 @@
 #![cfg(feature = "backend")]
 //! End-to-end coverage of every analysis the library exposes on ngspice.
 //!
-//! Each test runs a real deck through `BackendKind::Ngspice` and asserts a
+//! Each test runs a real deck through `Dialect::Ngspice` and asserts a
 //! closed-form number, not merely that the process exited 0. Verified against
 //! ngspice 44.2.
 //!
 //! Skipped automatically when ngspice is not on PATH.
 
-use spicerack::backend::BackendKind;
+use spicerack::backend::Dialect;
 use spicerack::measure_parse::parse_measures;
 use spicerack::result::{MeasureResult, RawData};
 
@@ -26,13 +26,13 @@ fn run(deck: &str) -> Option<RawData> {
         return None;
     }
     Some(
-        BackendKind::Ngspice
+        Dialect::Ngspice
             .run(deck)
             .unwrap_or_else(|e| panic!("deck failed: {e}\n{deck}")),
     )
 }
 
-/// `BackendKind::run` only captures stdout; `Simulator::run` is what normally
+/// `Dialect::run` only captures stdout; `Simulator::run` is what normally
 /// turns it into measures. These tests go straight to the backend, so they
 /// parse it themselves.
 fn measures(raw: &RawData) -> Vec<MeasureResult> {

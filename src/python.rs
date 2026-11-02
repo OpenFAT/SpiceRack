@@ -14,7 +14,7 @@ use pyo3::prelude::*;
 use pyo3::exceptions::{PyKeyError, PyAttributeError, PyRuntimeError, PyValueError};
 use pyo3::types::PyDict;
 
-use crate::ir::{self, Analysis, CircuitIR, Component, IrNum, IrValue, IrWaveform};
+use crate::ir::{self, Analysis, CircuitIR, Component, Dialect, IrNum, IrValue, IrWaveform};
 use crate::result::*;
 use crate::unit as u;
 
@@ -117,12 +117,11 @@ fn kw_volts(kwargs: Option<Bound<'_, PyDict>>) -> PyResult<Vec<(String, f64)>> {
 
 /// Refuse a backend name at selection time rather than at the first run.
 fn check_backend_name(name: &str) -> PyResult<()> {
-    if crate::backend::BackendKind::from_str(name).is_none() {
-        return Err(PyValueError::new_err(format!(
-            "unknown backend {name:?}; expected one of ngspice, ngspice-subprocess, \
-             ngspice-shared, ltspice, vacask, vacask-shared, spectre, espice")));
+    if crate::backend::parse(name).is_some() {
+        return Ok(());
     }
-    Ok(())
+    let names = crate::backend::RUNNABLE.map(Dialect::name).into_iter().chain(Dialect::ALIASES.map(|a| a.0));
+    Err(PyValueError::new_err(format!("unknown backend {name:?}; expected one of {}", names.collect::<Vec<_>>().join(", "))))
 }
 
 /// Extract DC sweep params: kwargs like Vinput=slice(-2, 5, 0.01)
@@ -226,13 +225,10 @@ fn lowered(mut ir: CircuitIR) -> PyResult<CircuitIR> {
 /// The deck `backend` runs for `ir`.
 fn emit_ir_netlist(ir: CircuitIR, backend: &str) -> PyResult<String> {
     let ir = lowered(ir)?;
-    use crate::codegen::Dialect;
-    let d = match backend.to_ascii_lowercase().as_str() {
-        "hspice" => Dialect::Hspice,
-        name => crate::backend::BackendKind::from_str(name)
-            .ok_or_else(|| PyValueError::new_err(format!("unknown backend '{backend}'")))?
-            .dialect(),
-    };
+    // Every runnable dialect, and HSPICE, which is written but never run here.
+    let d = Dialect::from_backend_name(&backend.to_ascii_lowercase())
+        .filter(|d| *d == Dialect::Hspice || crate::backend::RUNNABLE.contains(d))
+        .ok_or_else(|| PyValueError::new_err(format!("unknown backend '{backend}'")))?;
     crate::codegen::netlist(&ir, d).map_err(runtime_err)
 }
 

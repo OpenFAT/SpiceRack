@@ -47,6 +47,18 @@ impl Dialect {
     pub fn family(self) -> Dialect {
         if self == Dialect::Espice { Dialect::Ngspice } else { self }
     }
+
+    /// Backend names kept as aliases of a dialect's own name, so scripts
+    /// that name the old shared-library backends still run.
+    pub const ALIASES: [(&'static str, Dialect); 3] =
+        [("ngspice-subprocess", Dialect::Ngspice), ("ngspice-shared", Dialect::Ngspice), ("vacask-shared", Dialect::Vacask)];
+
+    /// The dialect a backend name selects: its [`Self::name`] or one of
+    /// [`Self::ALIASES`], spelled exactly (unlike `FromStr`, case matters).
+    pub fn from_backend_name(s: &str) -> Option<Dialect> {
+        let alias = Self::ALIASES.iter().find(|a| a.0 == s).map(|a| a.1);
+        alias.or_else(|| Self::ALL.into_iter().find(|d| d.name() == s))
+    }
 }
 
 impl std::str::FromStr for Dialect {
@@ -528,7 +540,7 @@ pub struct ModelLibrary {
 // ── Feature flags ──
 
 /// What a deck needs from its simulator, one bit per feature
-/// (`backend::BackendKind::capabilities` is the same mask, what it can do).
+/// (`Dialect::capabilities`, in `backend`, is the same mask: what a simulator does).
 pub mod feature {
     pub const XSPICE: u8 = 1 << 0;
     pub const OSDI: u8 = 1 << 1;
@@ -648,7 +660,7 @@ impl CircuitIR {
         let features = self.compute_features();
         let mut issues = Vec::new();
 
-        let kind = match crate::backend::BackendKind::from_str(backend) {
+        let kind = match crate::backend::parse(backend) {
             Some(k) => k,
             None => {
                 issues.push(Issue {
@@ -666,7 +678,7 @@ impl CircuitIR {
         }
 
         if features.element_count > 10_000
-            && (backend == "ngspice" || backend == "ngspice-subprocess") {
+            && kind == Dialect::Ngspice {
                 issues.push(Issue {
                     severity: IssueSeverity::Warning,
                     message: format!(
