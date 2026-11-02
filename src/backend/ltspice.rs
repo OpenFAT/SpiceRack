@@ -9,7 +9,7 @@ use std::process::Command;
 use super::{exec, is_on_path, read_results, scratch, BackendError};
 use crate::result::RawData;
 
-pub(super) fn run(netlist: &str) -> Result<RawData, BackendError> {
+pub(super) fn run(netlist: &str) -> Result<Vec<RawData>, BackendError> {
     let (exe, wine) = find().ok_or_else(|| BackendError::SimulationError("LTspice not found on this system".into()))?;
     // `plotwinsize=0` disables waveform compression (lossy decimation) and
     // `numdgt=15` switches the raw file to double precision. Raw-file format
@@ -34,9 +34,9 @@ pub(super) fn run(netlist: &str) -> Result<RawData, BackendError> {
     // LTspice reports simulation errors (and `.meas` results) in the log.
     let stdout = exec(&mut cmd, "LTspice", Some(&cir.with_extension("log")))?;
     let log = std::fs::read_to_string(cir.with_extension("log")).unwrap_or_default();
-    let mut raw = read_results(&cir.with_extension("raw"), stdout)?;
-    raw.log_content = log;
-    Ok(raw)
+    let mut plots = read_results(&cir.with_extension("raw"), stdout)?;
+    plots.iter_mut().for_each(|p| p.log_content.clone_from(&log));
+    Ok(plots)
 }
 
 /// The LTspice executable, and whether it needs Wine.

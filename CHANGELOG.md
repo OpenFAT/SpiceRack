@@ -31,6 +31,7 @@ One line per change, written by hand, citing its pull request. Every number is m
 - python: `spicerack.testbenches` exports `ac_gain_db` and the other AC extractors the skill documents (`crossings`, `ac_passband_db`, `ac_bandwidth_hz`, `ac_unity_gain_hz`, `ac_phase_margin_deg`) (#?).
 - python: `CircuitSimulator.spectre_monte_carlo`, the spelling `Testbench.add_spectre_monte_carlo` uses; `spectre_montecarlo` stays as an alias that warns `DeprecationWarning` (#?).
 - skills: the backend names list `vacask-shared`; a test checks the skill names every name the module accepts (#?).
+- codegen, backend, simulation: an ngspice deck with a `.meas` or `.four` runs every analysis from its `.control` block, in card order, and the backend writes every plot of the run (`set appendwrite`, one `write` per plot in `$plots`); before, only the first ac/tran/dc ran there and the other analyses' plots never reached the raw file. `Dialect::run_all` and `simulation::run_all` return every plot; `run` still returns the first. Real ngspice on `.op` + `.tran` + `.meas`: v(out) = 1 V to 1e-12, v(a) is the 1 kHz sine to 1e-9, `vmax` within 5e-6 of 1 (#?).
 
 ## 0.1.2 (2026-10-31)
 

@@ -205,6 +205,47 @@ fn xspice_s_xfer_is_the_working_laplace_path() {
     assert!((db + 3.0103).abs() < 1e-2, "s_xfer corner {db} dB");
 }
 
+// ── several analyses beside a .meas ──
+
+/// Regression: with a `.meas`, the codegen moved one analysis into the
+/// `.control` block and wrote only its plot; the `.op` ran afterwards and
+/// never reached the result. Closed forms: a 1k/1k divider from 2 V is
+/// 1 V at `out`; `a` follows the 1 V, 1 kHz sine exactly (a source across a
+/// resistor); its sampled maximum at a 1 µs step is within
+/// 1 - cos(pi * 1e-3) = 4.9e-6 of 1.
+#[test]
+fn every_analysis_of_a_measured_testbench_reaches_the_result() {
+    use spicerack::ir::*;
+    let v = |name: &str, np: &str, value: f64, waveform: Option<IrWaveform>| Component::VoltageSource {
+        name: name.into(), np: np.into(), nm: "0".into(), value: IrValue::Numeric { value }, ac_magnitude: None, ac_phase: None, waveform, port: None,
+    };
+    let r = |name: &str, n1: &str, n2: &str| Component::Resistor { name: name.into(), n1: n1.into(), n2: n2.into(), value: IrValue::Numeric { value: 1e3 }, model: None, params: vec![] };
+    let sin = IrWaveform::Sin { offset: 0.0.into(), amplitude: 1.0.into(), frequency: 1e3.into(), delay: 0.0.into(), damping: 0.0.into(), phase: 0.0.into() };
+    let top = Subcircuit {
+        name: "op and tran".into(),
+        components: vec![v("1", "in", 2.0, None), r("1", "in", "out"), r("2", "out", "0"), v("2", "a", 0.0, Some(sin)), r("3", "a", "0")],
+        ..Default::default()
+    };
+    let tb = Testbench {
+        analyses: vec![Analysis::Op, Analysis::Transient { step: 1e-6, stop: 1e-3, start: None, max_step: Some(1e-6), uic: false }],
+        measures: vec!["tran vmax MAX v(a)".into()],
+        ..Default::default()
+    };
+    let ir = CircuitIR { top, testbench: Some(tb), ..Default::default() };
+    let deck = spicerack::codegen::netlist(&ir, Dialect::Ngspice).unwrap();
+    assert!(deck.contains(".control\nop\ntran 1u 1m 0 1u\n.endc\n"), "every analysis runs in the block:\n{deck}");
+    let plots = spicerack::simulation::run_all(&ir, Some("ngspice")).unwrap_or_else(|e| panic!("{e}\n{deck}"));
+    let names: Vec<&str> = plots.iter().map(|p| p.plot_name.as_str()).collect();
+    assert_eq!(names, ["Operating Point", "Transient Analysis"]);
+    assert!(close(scalar(&plots[0], "out"), 1.0, 1e-12), "op v(out) = {}", scalar(&plots[0], "out"));
+    let (time, a) = (column(&plots[1], "time"), column(&plots[1], "a"));
+    for (t, x) in time.iter().zip(a) {
+        assert!((x - (2.0 * std::f64::consts::PI * 1e3 * t).sin()).abs() < 1e-9, "t={t}: v(a) = {x}");
+    }
+    let vmax = plots[0].measures.iter().find(|m| m.name == "vmax").unwrap_or_else(|| panic!("{:?}", plots[0].measures));
+    assert!((vmax.value - 1.0).abs() < 5e-6, "vmax = {}", vmax.value);
+}
+
 // ── .sp and RF ports ──
 
 /// A voltage source as an RF port, written by the codegen (manual §4.1.11).

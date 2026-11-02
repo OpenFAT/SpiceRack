@@ -6,7 +6,7 @@ use std::process::Command;
 use super::{exec, read_results, scratch, sorted_files, BackendError};
 use crate::result::RawData;
 
-pub(super) fn run(netlist: &str) -> Result<RawData, BackendError> {
+pub(super) fn run(netlist: &str) -> Result<Vec<RawData>, BackendError> {
     // The deck runs in a scratch dir so the per-analysis raw files land
     // somewhere disposable, which moves any relative `load`/`include` path
     // out from under the user's cwd. Resolve those before writing.

@@ -9,7 +9,7 @@ use std::process::Command;
 use super::{exec, read_results, scratch, BackendError};
 use crate::result::RawData;
 
-pub(super) fn run(netlist: &str) -> Result<RawData, BackendError> {
+pub(super) fn run(netlist: &str) -> Result<Vec<RawData>, BackendError> {
     let (dir, deck) = scratch(netlist, "deck.sp")?;
     let raw = dir.path().join("out.raw");
     let stdout = exec(

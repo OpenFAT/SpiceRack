@@ -517,24 +517,24 @@ fn raw_lines(out: &mut String, lines: &[String], drop_four: bool) {
     }
 }
 
-/// Where an ngspice deck runs its analysis from a `.control` block: the
-/// index in `tb.analyses` of the analysis to move there, and the `fourier`
-/// commands to follow it, one per `.four` (an `Analysis::Fourier`, or a raw
-/// or extra line, with its `+` continuations).
+/// Whether an ngspice deck runs its analyses from a `.control` block, and
+/// the `fourier` commands to run there, one per `.four` (an
+/// `Analysis::Fourier`, or a raw or extra line, with its `+` continuations).
 ///
 /// ngspice refuses `.measure` ("No .measure possible in batch mode (-b) with
 /// -r rawfile set!") and ignores `.four` (".fourier line ignored since
 /// rawfile was produced") under `-b -r`, so a deck with either (from the
-/// testbench or a raw line) runs its first `.ac`/`.tran`/`.dc` from a block,
-/// where `.four` has to be the `fourier` command (there is no `four`
-/// command); `.meas` cards stay where they are. The backend appends the
-/// `write`: only it knows the rawfile's path. Only those three analyses:
-/// `.measure` takes no other one, and `write` keeps only the current plot,
-/// which for `noise`, `disto` and `pz` would drop the others. `None` when
-/// nothing needs a block, no such analysis exists, or a raw control block
-/// already runs the deck (the backend refuses a deck left with a `.meas` or
-/// `.four` and no block that runs it, rather than lose its results).
-fn control_run(x: bool, ir: &CircuitIR, tb: &Testbench) -> Option<(usize, Vec<String>)> {
+/// testbench or a raw line) runs every analysis from one block, in card
+/// order, where `.four` has to be the `fourier` command (there is no `four`
+/// command); `.meas` cards stay where they are. Every analysis goes in: one
+/// left as a dot card would run after the block, past the backend's
+/// `write`, and its plot would be lost. The backend appends the `write` of
+/// every plot: only it knows the rawfile's path. `None` when nothing needs a
+/// block, the deck has no `.ac`/`.tran`/`.dc` for a `.measure` to read, or a
+/// raw control block already runs the deck (the backend refuses a deck left
+/// with a `.meas` or `.four` and no block that runs it, rather than lose its
+/// results).
+fn control_run(x: bool, ir: &CircuitIR, tb: &Testbench) -> Option<Vec<String>> {
     let raw = || ir.subcircuit_defs.iter().chain(std::iter::once(&ir.top)).flat_map(|s| &s.raw_spice).chain(&tb.extra_lines).map(String::as_str);
     let mut fourier = fourier_commands(raw());
     for a in &tb.analyses {
@@ -547,8 +547,7 @@ fn control_run(x: bool, ir: &CircuitIR, tb: &Testbench) -> Option<(usize, Vec<St
     if (tb.measures.is_empty() && !raw().any(is_meas) && fourier.is_empty()) || runs_in_control(raw()) {
         return None;
     }
-    let at = tb.analyses.iter().position(|a| matches!(a, Analysis::Ac { .. } | Analysis::Transient { .. } | Analysis::Dc { .. }))?;
-    Some((at, fourier))
+    tb.analyses.iter().any(|a| matches!(a, Analysis::Ac { .. } | Analysis::Transient { .. } | Analysis::Dc { .. })).then_some(fourier)
 }
 
 pub(super) fn netlist(d: Dialect, ir: &CircuitIR) -> Result<String, CodeGenError> {
@@ -684,19 +683,32 @@ pub(super) fn netlist(d: Dialect, ir: &CircuitIR) -> Result<String, CodeGenError
             w!(out, "{}\n", step_param(d, sp)?);
         }
         raw_lines(&mut out, &tb.extra_lines, drop_four);
-        for (i, a) in tb.analyses.iter().enumerate() {
-            match &control {
-                Some((at, fourier)) if i == *at => {
-                    // `.tran 1u 1m` -> bare `tran 1u 1m` inside the block.
-                    w!(out, ".control\n{}\n", analysis(d, x, a)?.trim_start_matches('.'));
-                    for f in fourier {
-                        w!(out, "{f}\n");
+        match &control {
+            Some(fourier) => {
+                // `fourier` reads the current plot: it follows the first
+                // transient (at the end of the block when there is none).
+                let at = tb.analyses.iter().position(|a| matches!(a, Analysis::Transient { .. }));
+                let four = |out: &mut String| fourier.iter().for_each(|f| w!(out, "{f}\n"));
+                out.push_str(".control\n");
+                for (i, a) in tb.analyses.iter().enumerate() {
+                    // As a command, `.four` would run the transient again.
+                    if !matches!(a, Analysis::Fourier { .. }) {
+                        // `.tran 1u 1m` -> bare `tran 1u 1m` inside the block.
+                        w!(out, "{}\n", analysis(d, x, a)?.trim_start_matches('.'));
                     }
-                    out.push_str(".endc\n");
+                    if at == Some(i) {
+                        four(&mut out);
+                    }
                 }
-                // Left as a dot-card, `.four` runs the analysis a second time.
-                Some(_) if matches!(a, Analysis::Fourier { .. }) => {}
-                _ => w!(out, "{}\n", analysis(d, x, a)?),
+                if at.is_none() {
+                    four(&mut out);
+                }
+                out.push_str(".endc\n");
+            }
+            None => {
+                for a in &tb.analyses {
+                    w!(out, "{}\n", analysis(d, x, a)?);
+                }
             }
         }
     }
@@ -1472,10 +1484,10 @@ mod tests {
     }
 
     #[test]
-    fn measures_move_the_first_ac_tran_or_dc_into_a_control_block() {
+    fn measures_move_every_analysis_into_a_control_block() {
         let ir = divider(vec![Analysis::Op, ac(), tran()], &["ac g find vdb(output) at=100"], &[]);
         let deck = netlist(Dialect::Ngspice, &ir).unwrap();
-        assert!(deck.ends_with(".meas ac g find vdb(output) at=100\n.op\n.control\nac dec 10 1 1k\n.endc\n.tran 1u 10m\n.end"), "{deck}");
+        assert!(deck.ends_with(".meas ac g find vdb(output) at=100\n.control\nop\nac dec 10 1 1k\ntran 1u 10m\n.endc\n.end"), "{deck}");
         // ESPice and LTspice read `.measure` under their rawfile option.
         for d in [Dialect::Espice, Dialect::Ltspice] {
             assert!(!netlist(d, &ir).unwrap().contains(".control"), "{d:?}");
