@@ -359,6 +359,10 @@ class TestLiveSimulation:
         time = tran.time
         assert len(time) > 10
         assert time[-1] >= 1.9e-3
+        # A result column is a plain list of floats, by item and by attribute.
+        for col in (time, tran["out"], tran.out, tran["OUT"]):
+            assert type(col) is list and all(type(x) is float for x in col)
+        assert tran["out"] == tran.out == tran["OUT"] and len(tran["out"]) == len(time)
 
     def test_ac_analysis(self):
         c = ps().Circuit("ac_live")
@@ -412,6 +416,9 @@ def test_ac_magnitude_and_phase_match_rc_theory():
         # Real part is not the magnitude anywhere past DC.
         if f > fc:
             assert real < mag
+    # The real part of a complex column is still a plain list of floats.
+    assert type(ac["vout"]) is list and all(type(x) is float for x in ac["vout"])
+    assert type(ac.frequency) is list and ac.frequency[0] == 1.0
 
 
 def test_noise_runs_when_saves_are_set():

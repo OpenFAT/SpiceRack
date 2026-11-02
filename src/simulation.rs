@@ -1,7 +1,7 @@
 //! The one pipeline: `CircuitIR` → codegen in the selected backend's dialect
 //! → backend runs the text verbatim → `RawData`.
 
-use crate::backend::{netlist, select, BackendError};
+use crate::backend::{netlist, select, BackendError, Dialect};
 use crate::ir::{Analysis, CircuitIR};
 use crate::result::RawData;
 
@@ -14,11 +14,11 @@ pub fn run(ir: &CircuitIR, backend: Option<&str>) -> Result<RawData, BackendErro
     let sim = select(first, backend, &ir.compute_features())?;
     let deck = netlist(ir, sim).map_err(|e| BackendError::SimulationError(e.to_string()))?;
     let mut raw = sim.run(&deck)?;
-    raw.backend_hint = sim.name().to_string();
+    raw.backend_hint = Some(sim);
     // LTspice writes `.meas` results to its log, everyone else to stdout.
-    let text = if raw.backend_hint == "ltspice" && !raw.log_content.is_empty() { &raw.log_content } else { &raw.stdout };
+    let text = if sim == Dialect::Ltspice && !raw.log_content.is_empty() { &raw.log_content } else { &raw.stdout };
     if !text.is_empty() {
-        raw.measures = crate::measure_parse::parse_measures(text, &raw.backend_hint);
+        raw.measures = crate::measure_parse::parse_measures(text, Some(sim));
     }
     Ok(raw)
 }

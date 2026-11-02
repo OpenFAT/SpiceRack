@@ -111,7 +111,7 @@ fn ngspice(dir: &Path, deck: &str, secs: u64) -> Result<Option<Run>, String> {
             return Ok(None);
         }
         let text = String::from_utf8_lossy(&out.stdout);
-        measures = parse_measures(&text, "ngspice").into_iter().map(|m| (m.name.to_lowercase(), m.value)).collect();
+        measures = parse_measures(&text, Some(spicerack::ir::Dialect::Ngspice)).into_iter().map(|m| (m.name.to_lowercase(), m.value)).collect();
         measures.sort_by(|a, b| a.0.cmp(&b.0));
     }
     Ok(Some(Run { plots, measures }))
@@ -145,7 +145,7 @@ fn analyses(deck: &str) -> BTreeMap<&'static str, usize> {
 fn column(r: &RawData, i: usize) -> Vec<Complex64> {
     match r.complex(i) {
         Some(c) => c.to_vec(),
-        None => r.re(i).into_iter().map(|x| Complex64::new(x, 0.0)).collect(),
+        None => r.re(i).iter().map(|&x| Complex64::new(x, 0.0)).collect(),
     }
 }
 
@@ -241,7 +241,7 @@ fn compare(a: &Run, b: &Run) -> Result<(), String> {
         // Span-relative: a sweep crossing zero lands within an ulp of it, and
         // `-50m` and `-0.05` are two such ulps in ngspice's number parser.
         let span = xa.iter().fold(0.0f64, |m, x| m.max(x.abs()));
-        if !transient && (xa.len() != xb.len() || xa.iter().zip(&xb).any(|(x, y)| (x - y).abs() > 1e-9 * span)) {
+        if !transient && (xa.len() != xb.len() || xa.iter().zip(xb.iter()).any(|(x, y)| (x - y).abs() > 1e-9 * span)) {
             return Err(format!("{}: sweep grid changed ({} -> {} points)", pa.plot_name, xa.len(), xb.len()));
         }
         if transient && !matches!((xa.last(), xb.last()), (Some(&x), Some(&y)) if close(x, y)) {

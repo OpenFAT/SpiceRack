@@ -12,7 +12,7 @@ use std::collections::HashMap;
 
 use pyo3::prelude::*;
 use pyo3::exceptions::{PyKeyError, PyAttributeError, PyRuntimeError, PyValueError};
-use pyo3::types::PyDict;
+use pyo3::types::{PyDict, PyList};
 
 use crate::ir::{self, Analysis, CircuitIR, Component, Dialect, IrNum, IrValue, IrWaveform, PssBase};
 use crate::result::*;
@@ -757,19 +757,19 @@ impl PyRawData {
     fn variable_names(&self) -> Vec<String> {
         self.inner.variables.iter().map(|v| v.name.clone()).collect()
     }
-    fn __getitem__(&self, name: &str) -> PyResult<Vec<f64>> {
-        Ok(self.inner.re(self.column(name)?))
+    fn __getitem__<'py>(&self, py: Python<'py>, name: &str) -> PyResult<Bound<'py, PyList>> {
+        float_list(py, &self.inner.re(self.column(name)?))
     }
-    fn __getattr__(&self, name: &str) -> PyResult<Vec<f64>> {
-        self.__getitem__(name)
+    fn __getattr__<'py>(&self, py: Python<'py>, name: &str) -> PyResult<Bound<'py, PyList>> {
+        self.__getitem__(py, name)
     }
     /// Variable `name` as complex numbers; a real column comes back with zero imaginary parts.
-    fn complex(&self, name: &str) -> PyResult<Vec<num_complex::Complex64>> {
+    fn complex<'py>(&self, py: Python<'py>, name: &str) -> PyResult<Bound<'py, PyList>> {
         let i = self.column(name)?;
-        Ok(match self.inner.complex(i) {
-            Some(c) => c.to_vec(),
-            None => self.inner.re(i).into_iter().map(|x| num_complex::Complex64::new(x, 0.0)).collect(),
-        })
+        match self.inner.complex(i) {
+            Some(c) => PyList::new(py, c),
+            None => PyList::new(py, self.inner.re(i).iter().map(|&x| num_complex::Complex64::new(x, 0.0))),
+        }
     }
     #[getter]
     fn measures(&self) -> HashMap<String, f64> { measures_to_dict(&self.inner.measures) }
@@ -830,6 +830,13 @@ impl PyOperatingPoint {
     }
 }
 
+/// A column as a Python list of floats, built from the stored slice with no
+/// intermediate `Vec` (pyo3 has no NumPy here, so a list is what callers
+/// get, as before).
+fn float_list<'py>(py: Python<'py>, xs: &[f64]) -> PyResult<Bound<'py, PyList>> {
+    PyList::new(py, xs)
+}
+
 /// Per-point transform of a complex waveform, for `magnitude`/`magnitude_db`/`phase`.
 fn complex_part(
     a: &crate::result::Results,
@@ -857,17 +864,19 @@ macro_rules! analysis_class {
 
         #[pymethods]
         impl $ty {
-            fn __getitem__(&self, name: &str) -> PyResult<Vec<f64>> {
-                self.inner.get(name).ok_or_else(|| PyKeyError::new_err(format!("Node '{}' not found", name)))
+            fn __getitem__<'py>(&self, py: Python<'py>, name: &str) -> PyResult<Bound<'py, PyList>> {
+                let col = self.inner.get(name).ok_or_else(|| PyKeyError::new_err(format!("Node '{}' not found", name)))?;
+                float_list(py, &col)
             }
 
-            fn __getattr__(&self, name: &str) -> PyResult<Vec<f64>> {
-                self.inner.get(name).ok_or_else(|| PyAttributeError::new_err(format!("No node '{}'", name)))
+            fn __getattr__<'py>(&self, py: Python<'py>, name: &str) -> PyResult<Bound<'py, PyList>> {
+                let col = self.inner.get(name).ok_or_else(|| PyAttributeError::new_err(format!("No node '{}'", name)))?;
+                float_list(py, &col)
             }
 
             $(
                 #[getter]
-                fn $axis(&self) -> Vec<f64> { self.inner.axis() }
+                fn $axis<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyList>> { float_list(py, &self.inner.axis()) }
             )?
 
             #[getter]

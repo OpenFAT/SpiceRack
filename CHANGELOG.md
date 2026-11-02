@@ -16,6 +16,7 @@ One line per change, written by hand, citing its pull request. Every number is m
 - tests: spice-bench decks ngspice-45 cannot run are named known failures (469 listed, 28 quarantined past the CPU budget); a CPU-limit kill is now reported as a timeout (#14).
 - backend: `select` routes on the `Analysis` itself, not a kind string; one predicate (`runs`) for selection and `check_backend`, with a compile-time check that every feature bit has its issue row (audit 30, 41, 42).
 - ir: a frequency sweep's spacing is `Sweep` (dec, oct, lin, log), held in `FreqSweep` and the SpectreRF steady state in `PssBase`, both flattened so IR JSON is byte-identical; `AcSweepParams` is now `FreqSweep`. A bad sweep name is a `ValueError` at the Python call and a load error in JSON, where it used to reach the deck (audit 40).
+- result: `RawData::backend_hint` is an `Option<Dialect>` (was a string, empty for ngspice) and `VarInfo::var_type` a `VarType`; `parse_measures` takes the `Option<Dialect>`. One `normalize::canonical` pass returns a name's canonical form and whether it is a current (was `normalize_var_name` plus `is_current_name`, two lowercasings each). `Results::column` allocates only for a name with capitals, `RawData::re`/`Results::get`/`axis` borrow a real column, and a Python result column is built into the list straight from it; Python sees the same lists (audit 43, 44).
 
 ## 0.1.2 (2026-10-31)
 

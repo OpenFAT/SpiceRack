@@ -22,7 +22,7 @@ pub fn run(d: Dialect, deck: &str) -> RawData {
 /// turns it into measures. These tests go straight to the backend, so they
 /// parse it themselves.
 pub fn measures(d: Dialect, raw: &RawData) -> Vec<MeasureResult> {
-    parse_measures(&raw.stdout, d.name())
+    parse_measures(&raw.stdout, Some(d))
 }
 
 /// Index of a vector by bare node name — ngspice reports node voltages as

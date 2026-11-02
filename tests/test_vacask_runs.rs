@@ -42,7 +42,7 @@ fn col(raw: &RawData, name: &str) -> Vec<f64> {
                 raw.variables.iter().map(|v| &v.name).collect::<Vec<_>>()
             )
         });
-    raw.re(i)
+    raw.re(i).into_owned()
 }
 
 fn cplx(raw: &RawData, name: &str) -> Vec<num_complex::Complex64> {

@@ -4,7 +4,7 @@
 //! (ngspice writes one per analysis, not in card order).
 
 use num_complex::Complex64;
-use crate::result::{RawData, VarInfo};
+use crate::result::{RawData, VarInfo, VarType};
 
 #[derive(Debug, thiserror::Error)]
 pub enum RawFileError {
@@ -86,7 +86,7 @@ fn parse_utf8(data: &[u8]) -> Result<(RawData, usize), RawFileError> {
                     raw.variables.push(VarInfo {
                         index: i.parse().map_err(bad("variable index"))?,
                         name: name.to_string(),
-                        var_type: ty.to_string(),
+                        var_type: VarType::parse(ty),
                     });
                 }
             }
