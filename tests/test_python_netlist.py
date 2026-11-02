@@ -532,6 +532,30 @@ class TestWaveformSources:
         with pytest.raises(Exception, match="PWL"):
             tb.netlist("ltspice")
 
+    def test_trnoise_and_trrandom_sources(self):
+        # ngspice manual 4.1.7/4.1.8. Both add to the DC value (ngspice 45
+        # holds `3 TRRANDOM(.. 3)` at 6 V), so the default DC is 0. ngspice only.
+        c = ps().Circuit("t")
+        c.TransientNoiseVoltageSource("n", "n", c.gnd, noise_rms=0.1, time_step=1e-6)
+        c.TransientNoiseCurrentSource("rts", "r", c.gnd, noise_rms=1e-3, time_step=1e-6, flicker_exponent=1.0,
+                                      flicker_rms=1e-4, rts_amplitude=15e-3, rts_capture_time=22e-6, rts_emission_time=50e-6)
+        c.RandomVoltageSource("u", "u", c.gnd, random_type="uniform", duration=1e-6, parameter1=2, parameter2=3)
+        c.RandomCurrentSource("g", "g", c.gnd, random_type="Gaussian", duration="ts")
+        n = str(c)
+        assert "Vn n 0 0 TRNOISE(0.1 0.000001 0 0)\n" in n
+        assert "Irts r 0 0 TRNOISE(0.001 0.000001 1 0.0001 0.015 0.000022 0.00005)" in n
+        assert "Vu u 0 0 TRRANDOM(1 0.000001 0 2 3)" in n
+        assert "Ig g 0 0 TRRANDOM(2 {ts} 0 1 0)" in n
+        with pytest.raises(ValueError, match="random type 'normal'"):
+            c.RandomVoltageSource("x", "x", c.gnd, random_type="normal", duration=1e-6)
+        dut = ps().Subcircuit("d")
+        dut.R("1", "n", "0", 1e3)
+        tb = ps().Testbench(dut)
+        tb.TransientNoiseVoltageSource("n", "n", "0", noise_rms=0.1, time_step=1e-6)
+        assert "TRNOISE(" in tb.netlist("ngspice")
+        with pytest.raises(Exception, match="TRNOISE"):
+            tb.netlist("espice")
+
     def test_pwl_voltage(self):
         c = ps().Circuit("t")
         c.PieceWiseLinearVoltageSource(

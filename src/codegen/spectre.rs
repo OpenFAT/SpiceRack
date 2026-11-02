@@ -204,6 +204,10 @@ fn emit_waveform_params(wf: &IrWaveform) -> Result<String, CodeGenError> {
         // Spectre has ammodindex/ammodfreq/ammodphase (`[CMP]` p.685) but
         // publishes no waveform equation, and SPICE's own AM() definition
         // varies between simulators. Refusing beats guessing the mapping.
+        // Spectre's `noisefile`/`noisevec` are small-signal spot noise, not a
+        // transient source (dev/research/ir-gaps.md §2).
+        IrWaveform::TrNoise { .. } => return Err(unsupported_component("TRNOISE source (ngspice only)")),
+        IrWaveform::TrRandom { .. } => return Err(unsupported_component("TRRANDOM source (ngspice only)")),
         IrWaveform::Am { .. } => {
             return Err(unsupported_component(
                 "AM source (Spectre documents ammodindex/ammodfreq but no waveform equation; \

@@ -600,6 +600,14 @@ impl Cx<'_> {
             Tag::Exp => IrWaveform::Exp { initial: g(0), pulsed: g(1), rise_delay: g(2), rise_tau: g(3), fall_delay: g(4), fall_tau: g(5) },
             Tag::Sffm => IrWaveform::Sffm { offset: g(0), amplitude: g(1), carrier_freq: g(2), modulation_index: g(3), signal_freq: g(4) },
             Tag::Am => IrWaveform::Am { amplitude: g(0), offset: g(1), modulating_freq: g(2), carrier_freq: g(3), delay: g(4) },
+            Tag::Trnoise => IrWaveform::TrNoise { na: g(0), nt: g(1), nalpha: g(2), namp: g(3), rtsam: g(4), rtscapt: g(5), rtsemt: g(6) },
+            // TYPE must be a number ngspice defines; PARAM1 defaults to 1
+            // (manual §4.1.8).
+            Tag::Trrandom => {
+                let kind = a.first()?.num().filter(|t| t.fract() == 0.0 && (1.0..=4.0).contains(t))? as u8;
+                let p1 = a.get(3).cloned().unwrap_or(IrNum::Num(1.0));
+                IrWaveform::TrRandom { kind: RandomKind::try_from(kind).ok()?, ts: a.get(1)?.clone(), td: g(2), p1, p2: g(4) }
+            }
             _ => return None,
         })
     }

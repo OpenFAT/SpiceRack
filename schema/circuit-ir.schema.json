@@ -1237,6 +1237,36 @@
             }
           },
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "description": "ngspice TRNOISE(NA NT NALPHA NAMP RTSAM RTSCAPT RTSEMT), added to the DC value (ngspice manual 4.1.7). ngspice only.",
+          "required": ["type", "na", "nt", "nalpha", "namp", "rtsam", "rtscapt", "rtsemt"],
+          "properties": {
+            "type": { "const": "TrNoise" },
+            "na": { "type": ["number", "string"] },
+            "nt": { "type": ["number", "string"] },
+            "nalpha": { "type": ["number", "string"] },
+            "namp": { "type": ["number", "string"] },
+            "rtsam": { "type": ["number", "string"] },
+            "rtscapt": { "type": ["number", "string"] },
+            "rtsemt": { "type": ["number", "string"] }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "description": "ngspice TRRANDOM(TYPE TS TD PARAM1 PARAM2), added to the DC value (ngspice manual 4.1.8). ngspice only.",
+          "required": ["type", "kind", "ts", "td", "p1", "p2"],
+          "properties": {
+            "type": { "const": "TrRandom" },
+            "kind": { "description": "1 uniform, 2 Gaussian, 3 exponential, 4 Poisson.", "enum": [1, 2, 3, 4] },
+            "ts": { "type": ["number", "string"] },
+            "td": { "type": ["number", "string"] },
+            "p1": { "type": ["number", "string"] },
+            "p2": { "type": ["number", "string"] }
+          },
+          "additionalProperties": false
         }
       ]
     },

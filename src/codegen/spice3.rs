@@ -71,6 +71,10 @@ fn refuse_wave(d: Dialect, letter: char, name: &str, wf: &IrWaveform) -> Result<
             (Dialect::Espice, _) | (Dialect::Ngspice, 'V') => return Ok(()),
             _ => "PWL r=/td= (repeat, delay)",
         },
+        // ESPice 0.3.0 refuses both cards ("the trnoise source waveform is
+        // not supported"); HSPICE, LTspice and Xyce have no source form.
+        IrWaveform::TrNoise { .. } if d != Dialect::Ngspice => "TRNOISE (ngspice only)",
+        IrWaveform::TrRandom { .. } if d != Dialect::Ngspice => "TRRANDOM (ngspice only)",
         _ => return Ok(()),
     };
     Err(CodeGenError::UnsupportedComponent { backend: d.name().into(), component: format!("{letter}{name}: {why}") })
@@ -109,6 +113,18 @@ fn waveform(out: &mut String, d: Dialect, x: bool, wf: &IrWaveform) {
         }
         IrWaveform::Am { amplitude, offset, modulating_freq, carrier_freq, delay } => {
             w!(out, "AM({} {} {} {} {})", w(amplitude), w(offset), w(modulating_freq), w(carrier_freq), w(delay))
+        }
+        // The RTS fields are left off when all zero, as the manual's
+        // white and 1/f examples write the card.
+        IrWaveform::TrNoise { na, nt, nalpha, namp, rtsam, rtscapt, rtsemt } => {
+            w!(out, "TRNOISE({} {} {} {}", w(na), w(nt), w(nalpha), w(namp));
+            if !(*rtsam == 0.0 && *rtscapt == 0.0 && *rtsemt == 0.0) {
+                w!(out, " {} {} {}", w(rtsam), w(rtscapt), w(rtsemt));
+            }
+            out.push(')');
+        }
+        IrWaveform::TrRandom { kind, ts, td, p1, p2 } => {
+            w!(out, "TRRANDOM({} {} {} {} {})", *kind as u8, w(ts), w(td), w(p1), w(p2))
         }
     }
 }

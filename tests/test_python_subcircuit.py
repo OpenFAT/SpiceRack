@@ -561,9 +561,9 @@ class TestSubcircuitSerialization:
 
 class TestSubcircuitWaveforms:
     def test_every_source_on_both_builders(self):
-        """Subcircuit and Testbench get their twelve sources from one table."""
+        """Subcircuit and Testbench get their sixteen sources from one table."""
         ps = import_spicerack()
-        waves = ("Sinusoidal", "Pulse", "PieceWiseLinear", "Exponential", "SingleFrequencyFM", "AmplitudeModulated")
+        waves = ("Sinusoidal", "Pulse", "PieceWiseLinear", "Exponential", "SingleFrequencyFM", "AmplitudeModulated", "TransientNoise", "Random")
         names = [f"{w}{k}Source" for w in waves for k in ("Voltage", "Current")]
         for cls in (ps.Subcircuit, ps.Testbench):
             assert [n for n in names if hasattr(cls, n)] == names, cls.__name__

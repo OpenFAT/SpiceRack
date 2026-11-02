@@ -53,6 +53,8 @@ Waveform sources, each a `...VoltageSource` and a `...CurrentSource`, also on
 | `Exponential` | `initial_value, pulsed_value, rise_delay_time, rise_time_constant, fall_delay_time, fall_time_constant` |
 | `SingleFrequencyFM` | `offset, amplitude, carrier_frequency, modulation_index, signal_frequency` |
 | `AmplitudeModulated` | `offset, amplitude, modulating_frequency, carrier_frequency, signal_delay` |
+| `TransientNoise` | `noise_rms, time_step, flicker_exponent=0, flicker_rms=0, rts_amplitude=0, rts_capture_time=0, rts_emission_time=0`: ngspice `TRNOISE`, added to `dc`; other dialects refuse it |
+| `Random` | `random_type, duration, time_delay=0, parameter1=1, parameter2=0`: ngspice `TRRANDOM`, `random_type` one of `uniform`, `gaussian`, `exponential`, `poisson`; added to `dc`; other dialects refuse it |
 
 ## Directives and models (`Circuit`, `Subcircuit`)
 

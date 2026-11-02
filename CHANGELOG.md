@@ -23,6 +23,7 @@ One line per change, written by hand, citing its pull request. Every number is m
 
 - codegen, backend: an ESPice deck writes a Laplace source as ESPice's own `E/G … LAPLACE` card instead of an XSPICE `s_xfer` element ESPice cannot read, and ESPice is offered for Laplace decks; real `espice` reproduces the closed-form single-pole, Butterworth and current-output responses, and carries the DC gain into `.op` (#?).
 - ir, codegen, python: PWL takes `repeat`/`delay` (ngspice `r=`/`td=`; Python `repeat_time=`, `delay_time=`), written for ngspice voltage sources and ESPice and refused by every other dialect and by ngspice current sources; JSON without them loads and writes back byte for byte. Real ngspice repeats the triangle two periods on to 1e-9 V (python-api-gaps §3 F) (#?).
+- ir, import, codegen, python: TRNOISE and TRRANDOM sources (`IrWaveform::TrNoise`, `TrRandom` with a closed `RandomKind`, its TYPE number in JSON), lowered from ngspice decks, written for ngspice and refused by every other dialect, ESPice included (it refuses the cards); Python `TransientNoise*Source` and `Random*Source` on `Subcircuit` and `Testbench`. Both add to the DC value, so a card with none writes back with DC 0. Real ngspice: white TRNOISE has sample std within 5 standard errors of NA (N = 4000), uniform TRRANDOM stays in range with its mean within 5 standard errors (ir-gaps §3 #8) (#?).
 
 ## 0.1.2 (2026-10-31)
 

@@ -128,6 +128,12 @@ impl Py {
                             IrWaveform::Am { amplitude, offset, modulating_freq, carrier_freq, delay } => ("AmplitudeModulated", format!(
                                 "offset={}, amplitude={}, modulating_frequency={}, carrier_frequency={}, signal_delay={}",
                                 w(offset), w(amplitude), w(modulating_freq), w(carrier_freq), w(delay))),
+                            IrWaveform::TrNoise { na, nt, nalpha, namp, rtsam, rtscapt, rtsemt } => ("TransientNoise", format!(
+                                "noise_rms={}, time_step={}, flicker_exponent={}, flicker_rms={}, rts_amplitude={}, rts_capture_time={}, rts_emission_time={}",
+                                w(na), w(nt), w(nalpha), w(namp), w(rtsam), w(rtscapt), w(rtsemt))),
+                            IrWaveform::TrRandom { kind, ts, td, p1, p2 } => ("Random", format!(
+                                "random_type={}, duration={}, time_delay={}, parameter1={}, parameter2={}",
+                                py_str(kind.name()), w(ts), w(td), w(p1), w(p2))),
                         };
                         // `dc=` only when it is not what the waveform starts at.
                         let dc = match dc {

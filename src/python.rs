@@ -1014,7 +1014,7 @@ fn verilog_block(
 
 // ── High-level waveform sources ──
 
-/// `#[pymethods] impl $ty { ... }` with the twelve waveform sources (six
+/// `#[pymethods] impl $ty { ... }` with the sixteen waveform sources (eight
 /// waveforms, each as a V and an I) appended: one table for Subcircuit and
 /// Testbench, which each add the built source with their own `place_wave`.
 /// Every source takes `dc=` (else its waveform's t=0 value, as SPICE reads a
@@ -1026,10 +1026,10 @@ fn verilog_block(
 macro_rules! pymethods_with_waves {
     ($hash:tt $attr:tt impl $ty:ty { $($body:tt)* }) => {
         pymethods_with_waves!(@emit $hash $attr $ty { $($body)* }
-            [SinusoidalVoltageSource PulseVoltageSource PieceWiseLinearVoltageSource ExponentialVoltageSource SingleFrequencyFMVoltageSource AmplitudeModulatedVoltageSource false]
-            [SinusoidalCurrentSource PulseCurrentSource PieceWiseLinearCurrentSource ExponentialCurrentSource SingleFrequencyFMCurrentSource AmplitudeModulatedCurrentSource true]);
+            [SinusoidalVoltageSource PulseVoltageSource PieceWiseLinearVoltageSource ExponentialVoltageSource SingleFrequencyFMVoltageSource AmplitudeModulatedVoltageSource TransientNoiseVoltageSource RandomVoltageSource false]
+            [SinusoidalCurrentSource PulseCurrentSource PieceWiseLinearCurrentSource ExponentialCurrentSource SingleFrequencyFMCurrentSource AmplitudeModulatedCurrentSource TransientNoiseCurrentSource RandomCurrentSource true]);
     };
-    (@emit $hash:tt $attr:tt $ty:ty { $($body:tt)* } $([$sin:ident $pulse:ident $pwl:ident $exp:ident $sffm:ident $am:ident $current:literal])*) => {
+    (@emit $hash:tt $attr:tt $ty:ty { $($body:tt)* } $([$sin:ident $pulse:ident $pwl:ident $exp:ident $sffm:ident $am:ident $noise:ident $random:ident $current:literal])*) => {
         $hash $attr
         impl $ty {
             $($body)*
@@ -1091,6 +1091,30 @@ macro_rules! pymethods_with_waves {
                 offset: IrNum, amplitude: IrNum, modulating_frequency: IrNum, carrier_frequency: IrNum, signal_delay: IrNum, dc: Option<f64>, ac: Option<f64>, ac_phase: Option<f64>,
             ) -> PyResult<()> {
                 let wf = IrWaveform::Am { amplitude, offset, modulating_freq: modulating_frequency, carrier_freq: carrier_frequency, delay: signal_delay };
+                Self::place_wave(slf, $current, name, positive, negative, wf, dc, ac, ac_phase);
+                Ok(())
+            }
+
+            // ngspice TRNOISE(NA NT NALPHA NAMP RTSAM RTSCAPT RTSEMT), by meaning.
+            #[pyo3(signature = (name, positive, negative, *, noise_rms, time_step, flicker_exponent=IrNum::Num(0.0), flicker_rms=IrNum::Num(0.0), rts_amplitude=IrNum::Num(0.0), rts_capture_time=IrNum::Num(0.0), rts_emission_time=IrNum::Num(0.0), dc=None, ac=None, ac_phase=None))]
+            fn $noise(
+                slf: PyRefMut<'_, Self>, name: &str, positive: &str, negative: &str,
+                noise_rms: IrNum, time_step: IrNum, flicker_exponent: IrNum, flicker_rms: IrNum, rts_amplitude: IrNum, rts_capture_time: IrNum, rts_emission_time: IrNum, dc: Option<f64>, ac: Option<f64>, ac_phase: Option<f64>,
+            ) -> PyResult<()> {
+                let wf = IrWaveform::TrNoise { na: noise_rms, nt: time_step, nalpha: flicker_exponent, namp: flicker_rms, rtsam: rts_amplitude, rtscapt: rts_capture_time, rtsemt: rts_emission_time };
+                Self::place_wave(slf, $current, name, positive, negative, wf, dc, ac, ac_phase);
+                Ok(())
+            }
+
+            // ngspice TRRANDOM(TYPE TS TD PARAM1 PARAM2), PySpice's names;
+            // `random_type` is uniform, gaussian, exponential or poisson.
+            #[pyo3(signature = (name, positive, negative, *, random_type, duration, time_delay=IrNum::Num(0.0), parameter1=IrNum::Num(1.0), parameter2=IrNum::Num(0.0), dc=None, ac=None, ac_phase=None))]
+            fn $random(
+                slf: PyRefMut<'_, Self>, name: &str, positive: &str, negative: &str,
+                random_type: &str, duration: IrNum, time_delay: IrNum, parameter1: IrNum, parameter2: IrNum, dc: Option<f64>, ac: Option<f64>, ac_phase: Option<f64>,
+            ) -> PyResult<()> {
+                let kind = random_type.parse().map_err(PyValueError::new_err)?;
+                let wf = IrWaveform::TrRandom { kind, ts: duration, td: time_delay, p1: parameter1, p2: parameter2 };
                 Self::place_wave(slf, $current, name, positive, negative, wf, dc, ac, ac_phase);
                 Ok(())
             }

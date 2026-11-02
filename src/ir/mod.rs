@@ -401,6 +401,69 @@ pub enum IrWaveform {
     Exp { initial: IrNum, pulsed: IrNum, rise_delay: IrNum, rise_tau: IrNum, fall_delay: IrNum, fall_tau: IrNum },
     Sffm { offset: IrNum, amplitude: IrNum, carrier_freq: IrNum, modulation_index: IrNum, signal_freq: IrNum },
     Am { amplitude: IrNum, offset: IrNum, modulating_freq: IrNum, carrier_freq: IrNum, delay: IrNum },
+    /// ngspice transient noise (manual §4.1.7): Gaussian white noise of rms
+    /// `na`, a new sample every `nt` seconds; 1/f noise of exponent `nalpha`
+    /// and rms `namp`; a random telegraph signal of amplitude `rtsam` with
+    /// mean capture and emission times `rtscapt`, `rtsemt` (0 for none),
+    /// added to the source's DC value. ngspice only: no other dialect has a source form.
+    TrNoise { na: IrNum, nt: IrNum, nalpha: IrNum, namp: IrNum, rtsam: IrNum, rtscapt: IrNum, rtsemt: IrNum },
+    /// ngspice random source (manual §4.1.8): a `kind` draw held for `ts`
+    /// seconds, starting after `td` (the output is `p2` until then), added
+    /// to the source's DC value as TRNOISE is. `p1`,
+    /// `p2`: range and offset (uniform, values within `p2 ± p1`), standard
+    /// deviation and mean (Gaussian), mean and offset (exponential), lambda
+    /// and offset (Poisson). ngspice only.
+    TrRandom { kind: RandomKind, ts: IrNum, td: IrNum, p1: IrNum, p2: IrNum },
+}
+
+/// TRRANDOM's distribution, its `TYPE` number in the deck and in JSON;
+/// any other number fails to load.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "u8", into = "u8")]
+#[repr(u8)]
+pub enum RandomKind {
+    Uniform = 1,
+    Gaussian = 2,
+    Exponential = 3,
+    Poisson = 4,
+}
+
+impl RandomKind {
+    /// The four kinds, in `TYPE` order.
+    pub const ALL: [RandomKind; 4] = [RandomKind::Uniform, RandomKind::Gaussian, RandomKind::Exponential, RandomKind::Poisson];
+
+    /// The lowercase name (`uniform`, ...), as Python spells it.
+    pub fn name(self) -> &'static str {
+        match self {
+            RandomKind::Uniform => "uniform",
+            RandomKind::Gaussian => "gaussian",
+            RandomKind::Exponential => "exponential",
+            RandomKind::Poisson => "poisson",
+        }
+    }
+}
+
+impl TryFrom<u8> for RandomKind {
+    type Error = String;
+
+    fn try_from(t: u8) -> Result<Self, String> {
+        Self::ALL.into_iter().find(|k| *k as u8 == t).ok_or_else(|| format!("unknown TRRANDOM type {t} (expected 1 to 4)"))
+    }
+}
+
+impl From<RandomKind> for u8 {
+    fn from(k: RandomKind) -> u8 {
+        k as u8
+    }
+}
+
+impl std::str::FromStr for RandomKind {
+    type Err = String;
+
+    /// Reads a [`RandomKind::name`] in any case.
+    fn from_str(s: &str) -> Result<Self, String> {
+        Self::ALL.into_iter().find(|k| k.name().eq_ignore_ascii_case(s)).ok_or_else(|| format!("unknown random type '{s}' (expected uniform, gaussian, exponential or poisson)"))
+    }
 }
 
 impl IrWaveform {
@@ -414,6 +477,8 @@ impl IrWaveform {
             Exp { initial, pulsed, rise_delay, rise_tau, fall_delay, fall_tau } => vec![initial, pulsed, rise_delay, rise_tau, fall_delay, fall_tau],
             Sffm { offset, amplitude, carrier_freq, modulation_index, signal_freq } => vec![offset, amplitude, carrier_freq, modulation_index, signal_freq],
             Am { amplitude, offset, modulating_freq, carrier_freq, delay } => vec![amplitude, offset, modulating_freq, carrier_freq, delay],
+            TrNoise { na, nt, nalpha, namp, rtsam, rtscapt, rtsemt } => vec![na, nt, nalpha, namp, rtsam, rtscapt, rtsemt],
+            TrRandom { ts, td, p1, p2, .. } => vec![ts, td, p1, p2],
         }
     }
 
@@ -428,6 +493,8 @@ impl IrWaveform {
             Exp { initial, pulsed, rise_delay, rise_tau, fall_delay, fall_tau } => vec![initial, pulsed, rise_delay, rise_tau, fall_delay, fall_tau],
             Sffm { offset, amplitude, carrier_freq, modulation_index, signal_freq } => vec![offset, amplitude, carrier_freq, modulation_index, signal_freq],
             Am { amplitude, offset, modulating_freq, carrier_freq, delay } => vec![amplitude, offset, modulating_freq, carrier_freq, delay],
+            TrNoise { na, nt, nalpha, namp, rtsam, rtscapt, rtsemt } => vec![na, nt, nalpha, namp, rtsam, rtscapt, rtsemt],
+            TrRandom { ts, td, p1, p2, .. } => vec![ts, td, p1, p2],
         }
     }
 
@@ -439,15 +506,18 @@ impl IrWaveform {
         }).collect()
     }
 
-    /// The value at t=0, which SPICE takes as the DC value of a card that
-    /// gives none (AM starts at 0).
+    /// The DC value SPICE takes for a card that gives none: the value at
+    /// t=0 (AM starts at 0), and 0 for TRNOISE and TRRANDOM, which add to it.
     pub fn at_zero(&self) -> IrValue {
         use IrWaveform::*;
         match self {
             Sin { offset, .. } | Sffm { offset, .. } => offset.into(),
             Pulse { initial, .. } | Exp { initial, .. } => initial.into(),
             Pwl { values, .. } => values.first().map_or(IrValue::Numeric { value: 0.0 }, |p| (&p.1).into()),
-            Am { .. } => IrValue::Numeric { value: 0.0 },
+            // TRNOISE and TRRANDOM add to the card's DC value instead of
+            // replacing it (ngspice 45: `V1 a 0 3 TRRANDOM(1 1u 10u 2 3)`
+            // holds 6 V before TD), so a card with none has DC 0.
+            Am { .. } | TrNoise { .. } | TrRandom { .. } => IrValue::Numeric { value: 0.0 },
         }
     }
 }
@@ -998,6 +1068,18 @@ mod tests {
         assert_eq!(serde_json::to_string(&set).unwrap(), r#"{"type":"Pwl","values":[[0.0,0.0],[0.001,"vdd"]],"repeat":0.0,"delay":"td"}"#);
     }
 
+    /// TRRANDOM's type is its deck number in JSON; one ngspice does not
+    /// define fails the load.
+    #[test]
+    fn trrandom_kind_is_its_type_number() {
+        let j = r#"{"type":"TrRandom","kind":2,"ts":1e-6,"td":0.0,"p1":1.0,"p2":0.0}"#;
+        let w: IrWaveform = serde_json::from_str(j).unwrap();
+        assert!(matches!(w, IrWaveform::TrRandom { kind: RandomKind::Gaussian, .. }));
+        assert_eq!(serde_json::to_string(&w).unwrap(), j);
+        let err = serde_json::from_str::<IrWaveform>(&j.replace(":2,", ":7,")).unwrap_err().to_string();
+        assert!(err.contains("unknown TRRANDOM type 7"), "{err}");
+    }
+
     /// The sweep name is parsed where JSON is read: any case loads, and a
     /// name no simulator has fails the load instead of reaching a deck.
     #[test]
@@ -1056,6 +1138,8 @@ mod tests {
             IrWaveform::Exp { initial: 0.0.into(), pulsed: 1.0.into(), rise_delay: x(), rise_tau: 1e-9.into(), fall_delay: 1e-6.into(), fall_tau: 1e-9.into() },
             IrWaveform::Sffm { offset: 0.0.into(), amplitude: 1.0.into(), carrier_freq: 1e6.into(), modulation_index: x(), signal_freq: 1e3.into() },
             IrWaveform::Am { amplitude: 1.0.into(), offset: 0.0.into(), modulating_freq: 1e3.into(), carrier_freq: 1e6.into(), delay: x() },
+            IrWaveform::TrNoise { na: x(), nt: 1e-9.into(), nalpha: 1.0.into(), namp: 1e-3.into(), rtsam: 0.0.into(), rtscapt: 0.0.into(), rtsemt: 0.0.into() },
+            IrWaveform::TrRandom { kind: RandomKind::Exponential, ts: 1e-6.into(), td: 0.0.into(), p1: x(), p2: 0.5.into() },
         ];
         let sources = waveforms.into_iter().map(|w| Component::VoltageSource { name: "w".into(), np: "a".into(), nm: "0".into(), value: w.at_zero(), ac_magnitude: Some(1.0), ac_phase: None, waveform: Some(w) });
         let all_components: Vec<Component> = all_components.into_iter().chain(sources).collect();

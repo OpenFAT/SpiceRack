@@ -98,8 +98,11 @@ Each comes as `...VoltageSource` and `...CurrentSource`, on all three objects:
 | `ExponentialVoltageSource` | `initial_value, pulsed_value, rise_delay_time, rise_time_constant, fall_delay_time, fall_time_constant` |
 | `SingleFrequencyFMVoltageSource` | `offset, amplitude, carrier_frequency, modulation_index, signal_frequency` |
 | `AmplitudeModulatedVoltageSource` | `offset, amplitude, modulating_frequency, carrier_frequency, signal_delay` |
+| `TransientNoiseVoltageSource` | `noise_rms, time_step, flicker_exponent, flicker_rms, rts_amplitude, rts_capture_time, rts_emission_time` (ngspice `TRNOISE`; ngspice only) |
+| `RandomVoltageSource` | `random_type` (`uniform`, `gaussian`, `exponential`, `poisson`), `duration, time_delay, parameter1, parameter2` (ngspice `TRRANDOM`; ngspice only) |
 
 All take `dc=` (the DC value for `.op`; default: the waveform at t=0), `ac=` and `ac_phase=`.
+The noise and random sources add to `dc=` (default 0) rather than replace it.
 
 ```python
 tb.PulseVoltageSource("clk", "vclk", "0", initial_value=0.0, pulsed_value=1.8,

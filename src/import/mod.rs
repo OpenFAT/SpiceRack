@@ -41,7 +41,7 @@ tags! {
     // analyses
     Op, Dc, Sweep, Ac, Tran, Uic, Noise, Tf, Sens, Pz, Four,
     // elements and their fields
-    R, C, L, K, V, I, Sdc, Sac, Pulse, Sin, Pwl, Exp, Sffm, Am, Poly, E, G, F, H, B, D, Q, M, J, Z, S, W, T, X,
+    R, C, L, K, V, I, Sdc, Sac, Pulse, Sin, Pwl, Exp, Sffm, Am, Trnoise, Trrandom, Poly, E, G, F, H, B, D, Q, M, J, Z, S, W, T, X,
     Mname, Inst, Ana, Ctl,
     // values
     Pair, Val, Name, Node, Key, Word, Str, Expr, Num, Mag, Frac,

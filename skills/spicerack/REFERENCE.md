@@ -55,7 +55,12 @@ tb.PulseVoltageSource(name=, positive=, negative=, initial_value=0, pulsed_value
                       pulse_width=50e-9, period=100e-9, rise_time=1e-9, fall_time=1e-9)  # no delay_time
 tb.PieceWiseLinearVoltageSource(name=, positive=, negative=, values=[(t, v), ...],
                                repeat_time=None, delay_time=None)  # ngspice r=/td=; ngspice + ESPice only
+tb.TransientNoiseVoltageSource(name=, positive=, negative=, noise_rms=, time_step=)  # ngspice TRNOISE only
+tb.RandomVoltageSource(name=, positive=, negative=, random_type="uniform", duration=,
+                       time_delay=0, parameter1=1, parameter2=0)              # ngspice TRRANDOM only
 ```
+The noise and random sources add to the DC value (default 0); every dialect but ngspice
+(ESPice included) refuses them.
 Current variants replace `Voltage` with `Current`. `dc_offset` is the DC (operating-point)
 value; `offset` is the SIN offset. `PieceWiseLinearCurrentSource` exists on `Testbench`
 only, and `ac=`/`ac_phase=` on the sinusoid only on `Testbench`/`Subcircuit`.
