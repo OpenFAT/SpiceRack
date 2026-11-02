@@ -7,6 +7,7 @@ to verify no crashes in the circuit builder or unit system.
 Run: maturin develop && pytest tests/test_python_examples.py -v
 """
 import pytest
+import re
 import subprocess
 import sys
 import os
@@ -16,7 +17,7 @@ EXAMPLES_DIR = Path(__file__).parent.parent / "examples"
 REPO_ROOT = EXAMPLES_DIR.parent
 
 
-def run_example(filename):
+def run_example(filename, timeout=30):
     """Run an example script as subprocess, return (returncode, stdout, stderr)."""
     import spicerack  # noqa: F401  unsupported fails, never skips: an unbuilt extension is an error
     script = EXAMPLES_DIR / filename
@@ -26,7 +27,7 @@ def run_example(filename):
     env["PYTHONPATH"] = os.pathsep.join(path for path in paths if path)
     result = subprocess.run(
         [sys.executable, str(script)],
-        capture_output=True, text=True, timeout=30, env=env,
+        capture_output=True, text=True, timeout=timeout, env=env,
     )
     return result
 
@@ -129,15 +130,34 @@ class TestExamples:
         assert r.returncode == 0, r.stderr
         assert "Backend: ngspice" in r.stdout
 
+    # Goldens: V(vout) from ngspice-45 and ESPice 0.3.0 in `nix develop
+    # .#testing`, on the PDKs pinned in nix/pdks.nix (sky130 8afc834,
+    # gf180mcu 1e35547), recorded 2026-11-02. Tolerance 1e-3 relative:
+    # ngspice's default RELTOL, the accuracy an .op converges to, so another
+    # simulator build may land anywhere inside it. Each example loads sky130's
+    # whole tt corner in ngspice (~40 s); hence the longer timeout.
+
     def test_20_pdk_hotswap(self):
-        r = run_example("20_pdk_hotswap.py")
+        r = run_example("20_pdk_hotswap.py", timeout=300)
         assert r.returncode == 0, r.stderr
-        assert "PDK: sky130" in r.stdout
+        vout = {pdk: float(v) for pdk, v in re.findall(r"PDK: (\w+).*?V\(vout\) = ([\d.]+) V", r.stdout, re.S)}
+        assert vout == pytest.approx({"sky130": 1.576323, "gf180mcu": 2.507821}, rel=1e-3)
+        # The NMOS conducts: its 5k drain resistor drops more than 0.1 V.
+        assert 0 < vout["sky130"] < 1.8 - 0.1
+        assert 0 < vout["gf180mcu"] < 3.3 - 0.1
 
     def test_21_combined_hotswap(self):
-        r = run_example("21_combined_hotswap.py")
+        r = run_example("21_combined_hotswap.py", timeout=300)
         assert r.returncode == 0, r.stderr
-        assert "Combined Backend" in r.stdout
+        vout = {(pdk, sim): float(v) for pdk, sim, v in re.findall(r"--- (\w+) / (\w+) ---\s+V\(vout\) = ([\d.]+) V", r.stdout)}
+        assert vout == pytest.approx({
+            ("sky130", "ngspice"): 0.146308, ("sky130", "espice"): 0.146308,
+            ("gf180mcu", "ngspice"): 0.295838,
+        }, rel=1e-3)
+        # Two simulators, one deck: ESPice is an independent oracle for ngspice.
+        assert vout[("sky130", "espice")] == pytest.approx(vout[("sky130", "ngspice")], rel=1e-3)
+        assert 0 < vout[("sky130", "ngspice")] < 1.8
+        assert 0 < vout[("gf180mcu", "ngspice")] < 3.3
 
     def test_22_design_testbenches(self):
         r = run_example("22_design_testbenches.py")

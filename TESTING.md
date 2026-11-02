@@ -47,14 +47,24 @@ provenance, never by re-deriving it the way codegen does.
 | `test_remeasure.py` | closed forms, never the code's own method |
 | `test_espice_backend.py`, `test_vacask_backend.py` | the real simulator's numbers for the emitted deck |
 | `test_docs.py`, `test_python_examples.py` | the docs and examples run, and print the numbers they claim |
+| `test_python_examples.py::test_20_pdk_hotswap`, `test_21_combined_hotswap` | real ngspice on the pinned sky130 and gf180mcu PDKs (`nix/pdks.nix`, `PDK_ROOT`): V(vout) against goldens recorded with ngspice-45 and ESPice 0.3.0, at 1e-3 relative (ngspice's default RELTOL); ESPice's sky130 inverter against ngspice's at the same tolerance; 0 < V(vout) < VDD |
+| `test_python_simulator.py::TestNgbehavior` | ngspice's own "Compatibility modes selected" note (Rust: `test_ngspice_analyses.rs`); a `.spiceinit` whose `shell touch` marks it read, in the working and home directories |
 | `test_python_*.py`, `test_design_testbenches.py` | API contract: spec examples per method |
 | `test_bump_version.py` | a copy of the manifests, each bump kind and each refusal |
 
 ## Known gaps
 
 `nix develop .#testing` provides every simulator and corpus the tests read
-(ngspice, VACASK, ESPice built from source, the spice-bench suite and the
-corpora); outside it those tests fail, they never skip.
+(ngspice, VACASK, ESPice built from source, the spice-bench suite, the
+corpora, and the sky130 `8afc834` and gf180mcu `1e35547` PDKs as `PDK_ROOT`,
+pinned by content hash in `nix/pdks.nix`); outside it those tests fail, they
+never skip.
+
+- Examples 20 and 21 load sky130's whole `tt` corner in ngspice, about 35 s
+  each: together about 70 s of the merge tier.
+- ESPice 0.3.0 refuses gf180mcu's FET subcircuits (the BSIM4 instance
+  parameter `mulu0`), so example 21 runs gf180mcu on ngspice alone and its
+  ngspice number is checked against the golden only.
 
 - LTspice and Spectre are not installed anywhere SpiceRack is tested, so their
   decks are checked against the manuals only.
