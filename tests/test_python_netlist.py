@@ -516,6 +516,15 @@ class TestWaveformSources:
         n = tb.netlist("ngspice")
         for card in (".tf v(out) Vin", ".sens v(out)", ".pz in 0 out 0 vol pz", ".disto dec 10 100 1meg"):
             assert card in n, n
+        # Keywords are parsed at the call: any case reads, a wrong one raises.
+        tb.add_polezero("in", "0", "out", "0", "CUR", "Zer")
+        assert ".pz in 0 out 0 cur zer" in tb.netlist("ngspice")
+        with pytest.raises(ValueError, match="unknown transfer type 'volt'"):
+            tb.add_polezero("in", "0", "out", "0", "volt", "pz")
+        with pytest.raises(ValueError, match="unknown Spectre analysis 'op'"):
+            tb.add_spectre_sweep("r", 1.0, 2.0, 1.0, "op1", "op")
+        with pytest.raises(ValueError, match="unknown sweep 'decade'"):
+            ps().Circuit("t").simulator().step_sweep("r", 1.0, 10.0, 2.0, "decade")
 
     def test_pwl_repeat_and_delay_reach_the_card(self):
         # PySpice's repeat_time/delay_time are ngspice's r=/td= (manual 4.1.4),

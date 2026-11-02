@@ -375,15 +375,15 @@ fn sweep_line(scale: &str, target: &str, name: &str, param: &str, start: f64, st
 fn step_sweep(sp: &StepParam) -> Result<String, CodeGenError> {
     let name = sp.param.to_ascii_lowercase();
     let scale = format!("step_{}", sanitize(&name));
-    match sp.sweep_type.as_deref().map(str::to_ascii_lowercase).as_deref() {
-        Some("dec") | Some("oct") => {
-            let mode = sp.sweep_type.as_deref().unwrap().to_ascii_lowercase();
-            Ok(format!(
-                "sweep {} variable=\"{}\" from={} to={} mode=\"{}\" points={}",
-                scale, name, num(sp.start), num(sp.stop), mode, sp.step as u64,
-            ))
-        }
-        _ => Ok(format!(
+    match sp.sweep_type {
+        Some(mode @ (Sweep::Dec | Sweep::Oct)) => Ok(format!(
+            "sweep {} variable=\"{}\" from={} to={} mode=\"{}\" points={}",
+            scale, name, num(sp.start), num(sp.stop), mode.name(), sp.step as u64,
+        )),
+        // Spectre's total-count log sweep; it used to fall through to a
+        // linear step here.
+        Some(Sweep::Log) => Err(unsupported_analysis(format!("step '{name}': log sweep (VACASK sweeps lin, dec or oct)"))),
+        Some(Sweep::Lin) | None => Ok(format!(
             "sweep {} variable=\"{}\" from={} to={} step={}",
             scale, name, num(sp.start), num(sp.stop), num(sp.step),
         )),
@@ -1176,6 +1176,12 @@ mod tests {
         assert!(n.contains("sweep step_rval variable=\"rval\""), "{}", n);
         // A stepped name must not also be a netlist parameter.
         assert!(!n.contains("parameters rval"), "{}", n);
+        // VACASK sweeps lin, dec or oct: a log step is refused, not run linear.
+        let mut log = ir.clone();
+        log.testbench.as_mut().unwrap().step_params[0].sweep_type = Some(Sweep::Log);
+        assert!(netlist(&log).unwrap_err().to_string().contains("log sweep"));
+        log.testbench.as_mut().unwrap().step_params[0].sweep_type = Some(Sweep::Oct);
+        assert!(netlist(&log).unwrap().contains("mode=\"oct\""));
     }
 
     #[test]

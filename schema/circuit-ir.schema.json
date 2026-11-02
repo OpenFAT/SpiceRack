@@ -38,6 +38,11 @@
   },
   "additionalProperties": false,
   "$defs": {
+    "SpectreAnalysis": {
+      "type": "string",
+      "description": "The analysis a Spectre sweep or montecarlo runs inside it. SpiceRack writes it lowercase and also reads other cases.",
+      "enum": ["dc", "ac", "tran", "noise", "xf", "sp", "stb", "pss", "pac", "pnoise", "pxf", "pstb", "hb"]
+    },
     "Sweep": {
       "type": "string",
       "description": "How a frequency sweep spaces its points: per decade, per octave, in total (lin), or log-spaced in total (Spectre). SpiceRack writes it lowercase and also reads other cases.",
@@ -1402,7 +1407,7 @@
         "sweep_type": {
           "oneOf": [
             {
-              "type": "string"
+              "$ref": "#/$defs/Sweep"
             },
             {
               "type": "null"
@@ -1645,10 +1650,12 @@
               "type": "string"
             },
             "tf_type": {
-              "type": "string"
+              "description": "vol or cur (any case on load).",
+              "enum": ["vol", "cur"]
             },
             "pz_type": {
-              "type": "string"
+              "description": "pol, zer or pz (any case on load).",
+              "enum": ["pol", "zer", "pz"]
             }
           },
           "additionalProperties": false
@@ -1903,7 +1910,7 @@
               "type": "string"
             },
             "inner_type": {
-              "type": "string"
+              "$ref": "#/$defs/SpectreAnalysis"
             }
           },
           "additionalProperties": false
@@ -1928,7 +1935,7 @@
               "type": "string"
             },
             "inner_type": {
-              "type": "string"
+              "$ref": "#/$defs/SpectreAnalysis"
             },
             "seed": {
               "oneOf": [

@@ -622,7 +622,7 @@ fn refusals_are_errors_not_broken_decks() {
 
     // Analyses VACASK does not implement.
     for a in [
-        Analysis::PoleZero { node1: "a".into(), node2: "0".into(), node3: "b".into(), node4: "0".into(), tf_type: "vol".into(), pz_type: "pz".into() },
+        Analysis::PoleZero { node1: "a".into(), node2: "0".into(), node3: "b".into(), node4: "0".into(), tf_type: PzTransfer::Vol, pz_type: PzKind::Pz },
         Analysis::Distortion { sweep: FreqSweep { variation: Sweep::Dec, points: 10, start: 1.0, stop: 1e3 }, f2overf1: None },
         Analysis::Sensitivity { output: "v(out)".into(), ac: None },
     ] {

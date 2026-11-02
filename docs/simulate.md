@@ -37,7 +37,11 @@ nz   = tb.noise("vout", "0", "Vin", variation="dec", points=20, start_frequency=
 | `spectre_sweep`, `spectre_montecarlo`, `spectre_pac`, `spectre_pnoise`, `spectre_pxf`, `spectre_pstb` | Spectre only |
 
 `variation` is `"dec"`, `"oct"`, `"lin"` or `"log"` (Spectre only), in any
-case; any other name raises `ValueError` when the analysis is built.
+case; any other name raises `ValueError` when the analysis is built. The same
+holds for the other keywords: `polezero`/`add_polezero` `tf_type` (`vol`, `cur`)
+and `pz_type` (`pol`, `zer`, `pz`), `step_sweep` (`lin`, `dec`, `oct`, `log`),
+and the Spectre `inner_type` (`dc`, `ac`, `tran`, `noise`, `xf`, `sp`, `stb`,
+`pss`, `pac`, `pnoise`, `pxf`, `pstb`, `hb`).
 
 Set `max_time` on every transient you measure from: without it the simulator
 picks its own grid, and edges and peaks move with it.

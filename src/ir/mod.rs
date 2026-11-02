@@ -576,7 +576,8 @@ pub struct StepParam {
     pub start: f64,
     pub stop: f64,
     pub step: f64,
-    pub sweep_type: Option<String>,
+    /// `lin`, `dec`, `oct` (or Spectre's `log`); `None` is linear.
+    pub sweep_type: Option<Sweep>,
 }
 
 // ── Analysis types ──
@@ -592,7 +593,7 @@ pub enum Analysis {
     Noise { output: String, reference: String, source: String, #[serde(flatten)] sweep: FreqSweep, points_per_summary: Option<u32> },
     Tf { output: String, source: String },
     Sensitivity { output: String, ac: Option<FreqSweep> },
-    PoleZero { node1: String, node2: String, node3: String, node4: String, tf_type: String, pz_type: String },
+    PoleZero { node1: String, node2: String, node3: String, node4: String, tf_type: PzTransfer, pz_type: PzKind },
     Distortion { #[serde(flatten)] sweep: FreqSweep, f2overf1: Option<f64> },
     /// `sc_iter` (shooting iterations, ngspice's default 50), `steady_coeff`
     /// (the convergence weight, default 1e-3) and `uic` are ngspice's
@@ -610,8 +611,8 @@ pub enum Analysis {
     TransientNoise { step: f64, stop: f64 },
     Fourier { fundamental: f64, outputs: Vec<String>, num_harmonics: Option<u32> },
     // Vendor-specific
-    SpectreSweep { param: String, start: f64, stop: f64, step: f64, inner: String, inner_type: String },
-    SpectreMonteCarlo { iterations: u32, inner: String, inner_type: String, seed: Option<u64> },
+    SpectreSweep { param: String, start: f64, stop: f64, step: f64, inner: String, inner_type: SpectreAnalysis },
+    SpectreMonteCarlo { iterations: u32, inner: String, inner_type: SpectreAnalysis, seed: Option<u64> },
     SpectrePac { #[serde(flatten)] pss: PssBase, #[serde(flatten)] sweep: FreqSweep, sweep_type: String },
     SpectrePnoise { #[serde(flatten)] pss: PssBase, output: String, reference: String, #[serde(flatten)] sweep: FreqSweep },
     SpectrePxf { #[serde(flatten)] pss: PssBase, output: String, source: String, #[serde(flatten)] sweep: FreqSweep },
@@ -666,47 +667,101 @@ pub struct FreqSweep {
     pub stop: f64,
 }
 
-/// How a frequency sweep spaces its points. JSON spells it lowercase and
-/// reads any case; anything else fails to load.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase", try_from = "String")]
-pub enum Sweep {
-    Dec,
-    Oct,
-    Lin,
-    /// Spectre's `log=N`: N points in total, log-spaced.
-    Log,
-}
+/// A closed set of deck keywords: `name()` is the keyword, `FromStr` and
+/// JSON read it in any case (anything else fails, naming the choices), and
+/// JSON writes it lowercase, so the text is parsed once, where it enters.
+macro_rules! keywords {
+    ($(#[$m:meta])* $name:ident, $what:literal { $($(#[$vm:meta])* $v:ident = $s:literal),+ $(,)? }) => {
+        $(#[$m])*
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+        #[serde(try_from = "String", into = "&'static str")]
+        pub enum $name { $($(#[$vm])* $v),+ }
 
-impl Sweep {
-    /// The SPICE keyword: `dec`, `oct`, `lin`, `log`.
-    pub fn name(self) -> &'static str {
-        match self {
-            Sweep::Dec => "dec",
-            Sweep::Oct => "oct",
-            Sweep::Lin => "lin",
-            Sweep::Log => "log",
+        impl $name {
+            /// Every keyword, in declaration order.
+            pub const ALL: &'static [$name] = &[$($name::$v),+];
+
+            /// The keyword as a deck and JSON spell it.
+            pub fn name(self) -> &'static str {
+                match self { $($name::$v => $s),+ }
+            }
         }
+
+        impl std::str::FromStr for $name {
+            type Err = String;
+
+            /// Reads a [`Self::name`] in any case.
+            fn from_str(s: &str) -> Result<Self, String> {
+                Self::ALL.iter().copied().find(|k| k.name().eq_ignore_ascii_case(s)).ok_or_else(|| {
+                    let names: Vec<&str> = Self::ALL.iter().map(|k| k.name()).collect();
+                    let (last, rest) = names.split_last().expect("a keyword set is never empty");
+                    format!("unknown {} '{s}' (expected {} or {last})", $what, rest.join(", "))
+                })
+            }
+        }
+
+        impl TryFrom<String> for $name {
+            type Error = String;
+
+            fn try_from(s: String) -> Result<Self, String> {
+                s.parse()
+            }
+        }
+
+        impl From<$name> for &'static str {
+            fn from(k: $name) -> Self {
+                k.name()
+            }
+        }
+    };
+}
+
+keywords! {
+    /// How a sweep spaces its points: a frequency sweep, or a `.step`.
+    Sweep, "sweep" {
+        Dec = "dec",
+        Oct = "oct",
+        Lin = "lin",
+        /// Spectre's `log=N`: N points in total, log-spaced.
+        Log = "log",
     }
 }
 
-impl std::str::FromStr for Sweep {
-    type Err = String;
-
-    /// Reads a [`Sweep::name`] in any case.
-    fn from_str(s: &str) -> Result<Self, String> {
-        [Sweep::Dec, Sweep::Oct, Sweep::Lin, Sweep::Log]
-            .into_iter()
-            .find(|w| w.name().eq_ignore_ascii_case(s))
-            .ok_or_else(|| format!("unknown sweep '{s}' (expected dec, oct, lin or log)"))
+keywords! {
+    /// What a `.pz` transfer function relates (ngspice manual §11.3.6):
+    /// output over input voltage, or output voltage over input current.
+    PzTransfer, "transfer type" {
+        Vol = "vol",
+        Cur = "cur",
     }
 }
 
-impl TryFrom<String> for Sweep {
-    type Error = String;
+keywords! {
+    /// What a `.pz` finds: poles, zeros, or both.
+    PzKind, "pole-zero type" {
+        Pol = "pol",
+        Zer = "zer",
+        Pz = "pz",
+    }
+}
 
-    fn try_from(s: String) -> Result<Self, String> {
-        s.parse()
+keywords! {
+    /// The analysis a Spectre `sweep` or `montecarlo` runs inside it, as
+    /// its statement keyword (`[REF]` analysis statements).
+    SpectreAnalysis, "Spectre analysis" {
+        Dc = "dc",
+        Ac = "ac",
+        Tran = "tran",
+        Noise = "noise",
+        Xf = "xf",
+        Sp = "sp",
+        Stb = "stb",
+        Pss = "pss",
+        Pac = "pac",
+        Pnoise = "pnoise",
+        Pxf = "pxf",
+        Pstb = "pstb",
+        Hb = "hb",
     }
 }
 
@@ -1092,6 +1147,38 @@ mod tests {
         assert_eq!(serde_json::to_string(&set).unwrap(), r#"{"type":"Pwl","values":[[0.0,0.0],[0.001,"vdd"]],"repeat":0.0,"delay":"td"}"#);
     }
 
+    /// The keyword fields that were strings (`.pz` types, a `.step` sweep,
+    /// a Spectre child analysis) load from the JSON the string code wrote
+    /// (0.1.2, the test suite's own values) and write it back byte for byte;
+    /// a keyword no simulator has fails the load.
+    #[test]
+    fn keyword_json_from_0_1_2_round_trips_byte_for_byte() {
+        let old = [
+            r#"{"type":"PoleZero","node1":"in","node2":"0","node3":"out","node4":"0","tf_type":"vol","pz_type":"pz"}"#,
+            r#"{"type":"PoleZero","node1":"in","node2":"0","node3":"out","node4":"0","tf_type":"cur","pz_type":"pol"}"#,
+            r#"{"type":"PoleZero","node1":"in","node2":"0","node3":"out","node4":"0","tf_type":"vol","pz_type":"zer"}"#,
+            r#"{"type":"SpectreSweep","param":"R1","start":1000.0,"stop":10000.0,"step":1000.0,"inner":"dc1","inner_type":"dc"}"#,
+            r#"{"type":"SpectreSweep","param":"rload","start":1000.0,"stop":10000.0,"step":1000.0,"inner":"ac1","inner_type":"ac"}"#,
+            r#"{"type":"SpectreMonteCarlo","iterations":100,"inner":"tran1","inner_type":"tran","seed":42}"#,
+        ];
+        for s in old {
+            let a: Analysis = serde_json::from_str(s).unwrap_or_else(|e| panic!("{s}: {e}"));
+            assert_eq!(serde_json::to_string(&a).unwrap(), s);
+        }
+        let pz: Analysis = serde_json::from_str(old[1]).unwrap();
+        assert!(matches!(pz, Analysis::PoleZero { tf_type: PzTransfer::Cur, pz_type: PzKind::Pol, .. }));
+        let mc: Analysis = serde_json::from_str(old[5]).unwrap();
+        assert!(matches!(mc, Analysis::SpectreMonteCarlo { inner_type: SpectreAnalysis::Tran, .. }));
+        for s in [r#"{"param":"R1","start":100.0,"stop":10000.0,"step":100.0,"sweep_type":"dec"}"#, r#"{"param":"R1","start":100.0,"stop":10000.0,"step":100.0,"sweep_type":null}"#] {
+            let sp: StepParam = serde_json::from_str(s).unwrap();
+            assert_eq!(serde_json::to_string(&sp).unwrap(), s);
+        }
+        let err = serde_json::from_str::<Analysis>(&old[0].replace("\"vol\"", "\"volt\"")).unwrap_err().to_string();
+        assert!(err.contains("unknown transfer type 'volt' (expected vol or cur)"), "{err}");
+        let err = serde_json::from_str::<Analysis>(&old[5].replace("\"tran\"", "\"op\"")).unwrap_err().to_string();
+        assert!(err.contains("unknown Spectre analysis 'op'"), "{err}");
+    }
+
     /// A `.pss` and a V source written before the shooting controls and RF
     /// ports existed load with them unset and write back byte for byte.
     #[test]
@@ -1220,7 +1307,7 @@ mod tests {
             Analysis::Noise { output: "V(out)".into(), reference: "0".into(), source: "V1".into(), sweep: FreqSweep { variation: Sweep::Dec, points: 10, start: 1.0, stop: 1e6 }, points_per_summary: None },
             Analysis::Tf { output: "V(out)".into(), source: "Vin".into() },
             Analysis::Sensitivity { output: "V(out)".into(), ac: Some(FreqSweep { variation: Sweep::Dec, points: 10, start: 1.0, stop: 1e6 }) },
-            Analysis::PoleZero { node1: "in".into(), node2: "0".into(), node3: "out".into(), node4: "0".into(), tf_type: "vol".into(), pz_type: "pz".into() },
+            Analysis::PoleZero { node1: "in".into(), node2: "0".into(), node3: "out".into(), node4: "0".into(), tf_type: PzTransfer::Vol, pz_type: PzKind::Pz },
             Analysis::Distortion { sweep: FreqSweep { variation: Sweep::Dec, points: 10, start: 1.0, stop: 1e6 }, f2overf1: Some(0.9) },
             Analysis::Pss { fundamental: 1e6, stabilization: 100e-6, observe_node: "out".into(), points_per_period: 100, harmonics: 10, sc_iter: None, steady_coeff: None, uic: false },
             Analysis::HarmonicBalance { frequencies: vec![1e6, 2e6], harmonics: vec![5, 3] },
@@ -1228,8 +1315,8 @@ mod tests {
             Analysis::Stability { probe: "iprobe".into(), sweep: FreqSweep { variation: Sweep::Dec, points: 100, start: 1.0, stop: 1e9 } },
             Analysis::TransientNoise { step: 1e-9, stop: 1e-6 },
             Analysis::Fourier { fundamental: 1e3, outputs: vec!["V(out)".into()], num_harmonics: Some(10) },
-            Analysis::SpectreSweep { param: "R1".into(), start: 1e3, stop: 10e3, step: 1e3, inner: "dc1".into(), inner_type: "dc".into() },
-            Analysis::SpectreMonteCarlo { iterations: 100, inner: "tran1".into(), inner_type: "tran".into(), seed: Some(42) },
+            Analysis::SpectreSweep { param: "R1".into(), start: 1e3, stop: 10e3, step: 1e3, inner: "dc1".into(), inner_type: SpectreAnalysis::Dc },
+            Analysis::SpectreMonteCarlo { iterations: 100, inner: "tran1".into(), inner_type: SpectreAnalysis::Tran, seed: Some(42) },
             Analysis::SpectrePac { pss: PssBase { pss_fundamental: 1e6, pss_stabilization: 100e-6, pss_harmonics: 10 }, sweep: FreqSweep { variation: Sweep::Dec, points: 100, start: 1.0, stop: 1e9 }, sweep_type: "relative".into() },
             Analysis::SpectrePnoise { pss: PssBase { pss_fundamental: 1e6, pss_stabilization: 100e-6, pss_harmonics: 10 }, output: "out".into(), reference: "0".into(), sweep: FreqSweep { variation: Sweep::Dec, points: 100, start: 1.0, stop: 1e9 } },
             Analysis::SpectrePxf { pss: PssBase { pss_fundamental: 1e6, pss_stabilization: 100e-6, pss_harmonics: 10 }, output: "out".into(), source: "V1".into(), sweep: FreqSweep { variation: Sweep::Dec, points: 100, start: 1.0, stop: 1e9 } },

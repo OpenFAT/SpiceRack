@@ -283,7 +283,7 @@ mod tests {
     }
 
     fn pz() -> Analysis {
-        Analysis::PoleZero { node1: "a".into(), node2: "0".into(), node3: "b".into(), node4: "0".into(), tf_type: "vol".into(), pz_type: "pz".into() }
+        Analysis::PoleZero { node1: "a".into(), node2: "0".into(), node3: "b".into(), node4: "0".into(), tf_type: crate::ir::PzTransfer::Vol, pz_type: crate::ir::PzKind::Pz }
     }
 
     #[test]

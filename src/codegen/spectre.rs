@@ -228,14 +228,12 @@ fn emit_sweep_header(idx: usize, sp: &StepParam) -> Result<String, CodeGenError>
     let suffix: String = sp.param.chars()
         .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '_' })
         .collect();
-    let sweep = match sp.sweep_type.as_deref() {
-        Some("dec") | Some("DEC") => format!("dec={}", spectre_num(sp.step)),
-        Some("lin") | Some("LIN") | None => format!("step={}", spectre_num(sp.step)),
-        Some("log") | Some("LOG") => format!("log={}", spectre_num(sp.step)),
-        Some(other) => {
-            return Err(unsupported_analysis(&format!(
-                "parameter sweep type '{other}' (Spectre sweep accepts step/lin/dec/log)"
-            )));
+    let sweep = match sp.sweep_type {
+        Some(Sweep::Dec) => format!("dec={}", spectre_num(sp.step)),
+        Some(Sweep::Lin) | None => format!("step={}", spectre_num(sp.step)),
+        Some(Sweep::Log) => format!("log={}", spectre_num(sp.step)),
+        Some(Sweep::Oct) => {
+            return Err(unsupported_analysis("parameter sweep type 'oct' (Spectre sweep accepts step/lin/dec/log)"));
         }
     };
     Ok(format!(
@@ -1029,7 +1027,7 @@ fn emit_analysis(analysis: &Analysis, keep_case: bool) -> Result<String, CodeGen
                 spectre_num(*stop),
                 spectre_num(*step),
                 inner,
-                inner_type,
+                inner_type.name(),
             )
         }
 
@@ -1045,7 +1043,7 @@ fn emit_analysis(analysis: &Analysis, keep_case: bool) -> Result<String, CodeGen
             let seed_str = seed.map(|s| format!(" seed={s}")).unwrap_or_default();
             format!(
                 "mc1 montecarlo numruns={}{} {{\n  {} {}\n}}",
-                iterations, seed_str, inner, inner_type,
+                iterations, seed_str, inner, inner_type.name(),
             )
         }
 

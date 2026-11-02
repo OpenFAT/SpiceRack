@@ -243,7 +243,7 @@ impl Py {
                 py_str(output), py_str(a.variation.name()), a.points, py_num(a.start), py_num(a.stop)
             )),
             Analysis::PoleZero { node1, node2, node3, node4, tf_type, pz_type } => self.line(format!(
-                "tb.add_polezero({}, {}, {}, {}, {}, {})", py_str(node1), py_str(node2), py_str(node3), py_str(node4), py_str(tf_type), py_str(pz_type)
+                "tb.add_polezero({}, {}, {}, {}, {}, {})", py_str(node1), py_str(node2), py_str(node3), py_str(node4), py_str(tf_type.name()), py_str(pz_type.name())
             )),
             Analysis::Distortion { sweep: FreqSweep { variation, points, start, stop }, f2overf1 } => self.line(format!(
                 "tb.add_distortion(variation={}, points={points}, start_frequency={}, stop_frequency={}, f2overf1={})",

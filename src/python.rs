@@ -401,21 +401,26 @@ mod card {
         Analysis::Sensitivity { output: output.into(), ac }
     }
 
-    pub fn polezero(nodes: [&str; 4], tf_type: &str, pz_type: &str) -> Analysis {
+    /// `tf_type` is vol or cur, `pz_type` pol, zer or pz (any case); else
+    /// a `ValueError`.
+    pub fn polezero(nodes: [&str; 4], tf_type: &str, pz_type: &str) -> PyResult<Analysis> {
         let [node1, node2, node3, node4] = nodes.map(String::from);
-        Analysis::PoleZero { node1, node2, node3, node4, tf_type: tf_type.into(), pz_type: pz_type.into() }
+        let (tf_type, pz_type) = (tf_type.parse().map_err(PyValueError::new_err)?, pz_type.parse().map_err(PyValueError::new_err)?);
+        Ok(Analysis::PoleZero { node1, node2, node3, node4, tf_type, pz_type })
     }
 
     pub fn distortion(variation: &str, points: u32, start: f64, stop: f64, f2overf1: Option<f64>) -> PyResult<Analysis> {
         Ok(Analysis::Distortion { sweep: sweep(variation, points, start, stop)?, f2overf1 })
     }
 
-    pub fn spectre_sweep(param: &str, start: f64, stop: f64, step: f64, inner: &str, inner_type: &str) -> Analysis {
-        Analysis::SpectreSweep { param: param.into(), start, stop, step, inner: inner.into(), inner_type: inner_type.into() }
+    pub fn spectre_sweep(param: &str, start: f64, stop: f64, step: f64, inner: &str, inner_type: &str) -> PyResult<Analysis> {
+        let inner_type = inner_type.parse().map_err(PyValueError::new_err)?;
+        Ok(Analysis::SpectreSweep { param: param.into(), start, stop, step, inner: inner.into(), inner_type })
     }
 
-    pub fn spectre_monte_carlo(iterations: u32, inner: &str, inner_type: &str, seed: Option<u64>) -> Analysis {
-        Analysis::SpectreMonteCarlo { iterations, inner: inner.into(), inner_type: inner_type.into(), seed }
+    pub fn spectre_monte_carlo(iterations: u32, inner: &str, inner_type: &str, seed: Option<u64>) -> PyResult<Analysis> {
+        let inner_type = inner_type.parse().map_err(PyValueError::new_err)?;
+        Ok(Analysis::SpectreMonteCarlo { iterations, inner: inner.into(), inner_type, seed })
     }
 }
 
@@ -517,10 +522,10 @@ impl PySimulator {
     }
 
     #[pyo3(signature = (param, start, stop, step, sweep_type))]
-    fn step_sweep(&mut self, param: &str, start: f64, stop: f64, step: f64, sweep_type: &str) {
-        self.tb().step_params.push(ir::StepParam {
-            param: param.to_string(), start, stop, step, sweep_type: Some(sweep_type.to_string()),
-        });
+    fn step_sweep(&mut self, param: &str, start: f64, stop: f64, step: f64, sweep_type: &str) -> PyResult<()> {
+        let sweep_type = Some(sweep_type.parse().map_err(PyValueError::new_err)?);
+        self.tb().step_params.push(ir::StepParam { param: param.to_string(), start, stop, step, sweep_type });
+        Ok(())
     }
 
     // ── Analyses ──
@@ -587,7 +592,7 @@ impl PySimulator {
     fn polezero(
         &self, node1: &str, node2: &str, node3: &str, node4: &str, tf_type: &str, pz_type: &str,
     ) -> PyResult<PyPoleZeroAnalysis> {
-        let a = card::polezero([node1, node2, node3, node4], tf_type, pz_type);
+        let a = card::polezero([node1, node2, node3, node4], tf_type, pz_type)?;
         Ok(PyPoleZeroAnalysis { inner: Results::from_raw(self.run(a)?) })
     }
 
@@ -662,13 +667,13 @@ impl PySimulator {
     fn spectre_sweep(
         &self, param: &str, start: f64, stop: f64, step: f64, inner_analysis: &str, inner_type: &str,
     ) -> PyResult<PyRawData> {
-        Ok(PyRawData { inner: self.run_spectre(card::spectre_sweep(param, start, stop, step, inner_analysis, inner_type))? })
+        Ok(PyRawData { inner: self.run_spectre(card::spectre_sweep(param, start, stop, step, inner_analysis, inner_type)?)? })
     }
 
     /// Spectre Monte Carlo wrapping an inner analysis.
     #[pyo3(signature = (num_iterations, inner_analysis, inner_type="ac", seed=None))]
     fn spectre_montecarlo(&self, num_iterations: u32, inner_analysis: &str, inner_type: &str, seed: Option<u64>) -> PyResult<PyRawData> {
-        Ok(PyRawData { inner: self.run_spectre(card::spectre_monte_carlo(num_iterations, inner_analysis, inner_type, seed))? })
+        Ok(PyRawData { inner: self.run_spectre(card::spectre_monte_carlo(num_iterations, inner_analysis, inner_type, seed)?)? })
     }
 
     /// SpectreRF Periodic AC (PAC) analysis with automatic PSS prerequisite.
@@ -1658,8 +1663,9 @@ impl PyTestbench {
     }
 
     #[pyo3(signature = (node1, node2, node3, node4, tf_type, pz_type))]
-    fn add_polezero(mut slf: PyRefMut<'_, Self>, node1: &str, node2: &str, node3: &str, node4: &str, tf_type: &str, pz_type: &str) {
-        slf.as_super().tb().analyses.push(card::polezero([node1, node2, node3, node4], tf_type, pz_type));
+    fn add_polezero(mut slf: PyRefMut<'_, Self>, node1: &str, node2: &str, node3: &str, node4: &str, tf_type: &str, pz_type: &str) -> PyResult<()> {
+        slf.as_super().tb().analyses.push(card::polezero([node1, node2, node3, node4], tf_type, pz_type)?);
+        Ok(())
     }
 
     #[pyo3(signature = (variation="dec", points=10, start_frequency=100.0, stop_frequency=1e8, f2overf1=None))]
@@ -1684,13 +1690,15 @@ impl PyTestbench {
     }
 
     #[pyo3(signature = (param, start, stop, step, inner_analysis, inner_type))]
-    fn add_spectre_sweep(mut slf: PyRefMut<'_, Self>, param: &str, start: f64, stop: f64, step: f64, inner_analysis: &str, inner_type: &str) {
-        slf.as_super().tb().analyses.push(card::spectre_sweep(param, start, stop, step, inner_analysis, inner_type));
+    fn add_spectre_sweep(mut slf: PyRefMut<'_, Self>, param: &str, start: f64, stop: f64, step: f64, inner_analysis: &str, inner_type: &str) -> PyResult<()> {
+        slf.as_super().tb().analyses.push(card::spectre_sweep(param, start, stop, step, inner_analysis, inner_type)?);
+        Ok(())
     }
 
     #[pyo3(signature = (num_iterations, inner_analysis, inner_type, seed=None))]
-    fn add_spectre_monte_carlo(mut slf: PyRefMut<'_, Self>, num_iterations: u32, inner_analysis: &str, inner_type: &str, seed: Option<u64>) {
-        slf.as_super().tb().analyses.push(card::spectre_monte_carlo(num_iterations, inner_analysis, inner_type, seed));
+    fn add_spectre_monte_carlo(mut slf: PyRefMut<'_, Self>, num_iterations: u32, inner_analysis: &str, inner_type: &str, seed: Option<u64>) -> PyResult<()> {
+        slf.as_super().tb().analyses.push(card::spectre_monte_carlo(num_iterations, inner_analysis, inner_type, seed)?);
+        Ok(())
     }
 
     // ── Serialization ──

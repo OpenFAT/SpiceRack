@@ -597,19 +597,19 @@ fn spectre_sweep_and_montecarlo_blocks_match_documented_forms() {
     assert_eq!(
         analysis(Analysis::SpectreSweep {
             param: "rload".into(), start: 1e3, stop: 10e3, step: 1e3,
-            inner: "ac1".into(), inner_type: "ac".into(),
+            inner: "ac1".into(), inner_type: SpectreAnalysis::Ac,
         }),
         "sweep1 sweep param=rload start=1k stop=10k step=1k {\n  ac1 ac\n}",
     );
     assert_eq!(
         analysis(Analysis::SpectreMonteCarlo {
-            iterations: 200, inner: "tran1".into(), inner_type: "tran".into(), seed: Some(1234),
+            iterations: 200, inner: "tran1".into(), inner_type: SpectreAnalysis::Tran, seed: Some(1234),
         }),
         "mc1 montecarlo numruns=200 seed=1234 {\n  tran1 tran\n}",
     );
     assert_eq!(
         analysis(Analysis::SpectreMonteCarlo {
-            iterations: 8, inner: "tran1".into(), inner_type: "tran".into(), seed: None,
+            iterations: 8, inner: "tran1".into(), inner_type: SpectreAnalysis::Tran, seed: None,
         }),
         "mc1 montecarlo numruns=8 {\n  tran1 tran\n}",
     );
@@ -646,7 +646,7 @@ fn spectre_refuses_transient_noise() {
 fn spectre_refuses_foreign_analyses() {
     let r = try_analysis(&Analysis::PoleZero {
         node1: "1".into(), node2: "0".into(), node3: "3".into(), node4: "0".into(),
-        tf_type: "vol".into(), pz_type: "pz".into(),
+        tf_type: PzTransfer::Vol, pz_type: PzKind::Pz,
     });
     assert!(matches!(r, Err(CodeGenError::UnsupportedAnalysis { .. })), "{r:?}");
 }

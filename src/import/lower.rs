@@ -484,7 +484,7 @@ impl Cx<'_> {
             }
             Tag::Step => {
                 let k = self.all(card, Tag::Num);
-                let sweep_type = self.kid(card, Tag::StepKind).map(|s| self.text(s).to_ascii_lowercase());
+                let sweep_type = self.kid(card, Tag::StepKind).and_then(|s| self.text(s).parse().ok());
                 let step = StepParam { param: self.text(self.kid(card, Tag::Name).unwrap()).to_string(), start: self.num(k[0]).unwrap_or(f64::NAN), stop: self.num(k[1]).unwrap_or(f64::NAN), step: self.num(k[2]).unwrap_or(f64::NAN), sweep_type };
                 if step.start.is_nan() || step.stop.is_nan() || step.step.is_nan() {
                     return false;
@@ -578,7 +578,7 @@ impl Cx<'_> {
                 },
                 _ => return None,
             },
-            Tag::Pz => Analysis::PoleZero { node1: word(0)?, node2: word(1)?, node3: word(2)?, node4: word(3)?, tf_type: word(4)?.to_ascii_lowercase(), pz_type: word(5)?.to_ascii_lowercase() },
+            Tag::Pz => Analysis::PoleZero { node1: word(0)?, node2: word(1)?, node3: word(2)?, node4: word(3)?, tf_type: word(4)?.parse().ok()?, pz_type: word(5)?.parse().ok()? },
             Tag::Four => Analysis::Fourier { fundamental: n(0)?, outputs: self.texts(card, Tag::Out), num_harmonics: None },
             _ => return None,
         })

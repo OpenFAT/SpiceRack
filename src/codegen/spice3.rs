@@ -297,9 +297,14 @@ fn step_param(d: Dialect, sp: &StepParam) -> Result<String, CodeGenError> {
             sp.param,
         )));
     }
+    // Xyce and LTspice step lin, dec or oct only; Spectre's `log` is not
+    // theirs.
+    if sp.sweep_type == Some(Sweep::Log) && matches!(d, Dialect::Xyce | Dialect::Ltspice) {
+        return Err(CodeGenError::Other(format!("{} `.step` has no log sweep (stepping '{}')", d.name(), sp.param)));
+    }
     // Xyce: `.step [lin|dec|oct] <name> <start> <stop> <inc>`, no `param` (RG p.155).
     if d == Dialect::Xyce {
-        let sweep = sp.sweep_type.as_ref().map(|t| format!("{t} ")).unwrap_or_default();
+        let sweep = sp.sweep_type.map(|t| format!("{} ", t.name())).unwrap_or_default();
         return Ok(format!(".step {sweep}{} {} {} {}", sp.param, sp.start, sp.stop, sp.step));
     }
     if d != Dialect::Ltspice {
@@ -313,7 +318,7 @@ fn step_param(d: Dialect, sp: &StepParam) -> Result<String, CodeGenError> {
     // LTspice: `.step [lin|oct|dec] param <name> <start> <stop> <inc>`.
     // The `param` keyword is mandatory in both forms.
     Ok(match sp.sweep_type {
-        Some(ref sweep) => format!(".step {} param {} {} {} {}", sweep, sp.param, sp.start, sp.stop, sp.step),
+        Some(sweep) => format!(".step {} param {} {} {} {}", sweep.name(), sp.param, sp.start, sp.stop, sp.step),
         None => format!(".step param {} {} {} {}", sp.param, sp.start, sp.stop, sp.step),
     })
 }
@@ -928,7 +933,7 @@ fn analysis(d: Dialect, x: bool, a: &Analysis) -> Result<String, CodeGenError> {
             s
         }
         Analysis::PoleZero { node1, node2, node3, node4, tf_type, pz_type } if ng => {
-            format!(".pz {} {} {} {} {} {}", node1, node2, node3, node4, tf_type, pz_type)
+            format!(".pz {} {} {} {} {} {}", node1, node2, node3, node4, tf_type.name(), pz_type.name())
         }
         Analysis::Distortion { sweep: FreqSweep { variation, points, start, stop }, f2overf1 } if ng => {
             let mut s = format!(".disto {} {} {} {}", variation.name(), points, num(d, x, *start), num(d, x, *stop));
@@ -1273,7 +1278,7 @@ mod tests {
         // PoleZero
         let pz = Analysis::PoleZero {
             node1: "1".into(), node2: "0".into(), node3: "3".into(), node4: "0".into(),
-            tf_type: "vol".into(), pz_type: "pz".into(),
+            tf_type: PzTransfer::Vol, pz_type: PzKind::Pz,
         };
         assert_eq!(analysis(cg, false, &pz).unwrap(), ".pz 1 0 3 0 vol pz");
 
@@ -1423,7 +1428,7 @@ mod tests {
             start: 1000.0,
             stop: 10000.0,
             step: 10.0,
-            sweep_type: Some("dec".into()),
+            sweep_type: Some(Sweep::Dec),
         };
         assert_eq!(step_param(cg, &sp).unwrap(), ".step dec param rval 1000 10000 10");
     }
@@ -1647,7 +1652,7 @@ mod tests {
         let pz = Analysis::PoleZero {
             node1: "1".into(), node2: "0".into(),
             node3: "3".into(), node4: "0".into(),
-            tf_type: "vol".into(), pz_type: "pz".into(),
+            tf_type: PzTransfer::Vol, pz_type: PzKind::Pz,
         };
         assert!(analysis(cg_xy, false, &pz).is_err(), "pz should error on ltspice");
 
@@ -1666,7 +1671,7 @@ mod tests {
         let pz = Analysis::PoleZero {
             node1: "1".into(), node2: "0".into(),
             node3: "3".into(), node4: "0".into(),
-            tf_type: "vol".into(), pz_type: "pz".into(),
+            tf_type: PzTransfer::Vol, pz_type: PzKind::Pz,
         };
         assert!(analysis(cg_ng, false, &pz).is_ok(), "pz should work on ngspice");
     }
