@@ -208,14 +208,14 @@ impl Py {
                 let kw: Vec<String> = sweeps.iter().map(|s| format!("{}: slice({}, {}, {})", py_str(&s.source), py_num(s.start), py_num(s.stop), py_num(s.step))).collect();
                 self.line(format!("tb.add_dc(**{{{}}})", kw.join(", ")))
             }
-            Analysis::Ac { variation, points, start, stop } => self.line(format!("tb.add_ac(variation={}, number_of_points={points}, start_frequency={}, stop_frequency={})", py_str(variation), py_num(*start), py_num(*stop))),
+            Analysis::Ac { sweep: FreqSweep { variation, points, start, stop } } => self.line(format!("tb.add_ac(variation={}, number_of_points={points}, start_frequency={}, stop_frequency={})", py_str(variation.name()), py_num(*start), py_num(*stop))),
             Analysis::Transient { step, stop, start, max_step, uic } => {
                 let opt = |x: &Option<f64>| x.map_or("None".into(), py_num);
                 self.line(format!("tb.add_transient(step_time={}, end_time={}, start_time={}, max_time={}, use_initial_condition={})", py_num(*step), py_num(*stop), opt(start), opt(max_step), if *uic { "True" } else { "False" }))
             }
-            Analysis::Noise { output, reference, source, variation, points, start, stop, points_per_summary } => {
+            Analysis::Noise { output, reference, source, sweep: FreqSweep { variation, points, start, stop }, points_per_summary } => {
                 let pps = points_per_summary.map_or("None".into(), |p| p.to_string());
-                self.line(format!("tb.add_noise({}, {}, {}, variation={}, points={points}, start_frequency={}, stop_frequency={}, points_per_summary={pps})", py_str(output), py_str(reference), py_str(source), py_str(variation), py_num(*start), py_num(*stop)))
+                self.line(format!("tb.add_noise({}, {}, {}, variation={}, points={points}, start_frequency={}, stop_frequency={}, points_per_summary={pps})", py_str(output), py_str(reference), py_str(source), py_str(variation.name()), py_num(*start), py_num(*stop)))
             }
             Analysis::Fourier { fundamental, outputs, num_harmonics } => {
                 let outs: Vec<String> = outputs.iter().map(|o| py_str(o)).collect();
@@ -226,14 +226,14 @@ impl Py {
             Analysis::Sensitivity { output, ac: None } => self.line(format!("tb.add_dc_sensitivity({})", py_str(output))),
             Analysis::Sensitivity { output, ac: Some(a) } => self.line(format!(
                 "tb.add_ac_sensitivity({}, variation={}, number_of_points={}, start_frequency={}, stop_frequency={})",
-                py_str(output), py_str(&a.variation), a.points, py_num(a.start), py_num(a.stop)
+                py_str(output), py_str(a.variation.name()), a.points, py_num(a.start), py_num(a.stop)
             )),
             Analysis::PoleZero { node1, node2, node3, node4, tf_type, pz_type } => self.line(format!(
                 "tb.add_polezero({}, {}, {}, {}, {}, {})", py_str(node1), py_str(node2), py_str(node3), py_str(node4), py_str(tf_type), py_str(pz_type)
             )),
-            Analysis::Distortion { variation, points, start, stop, f2overf1 } => self.line(format!(
+            Analysis::Distortion { sweep: FreqSweep { variation, points, start, stop }, f2overf1 } => self.line(format!(
                 "tb.add_distortion(variation={}, points={points}, start_frequency={}, stop_frequency={}, f2overf1={})",
-                py_str(variation), py_num(*start), py_num(*stop), f2overf1.map_or("None".into(), py_num)
+                py_str(variation.name()), py_num(*start), py_num(*stop), f2overf1.map_or("None".into(), py_num)
             )),
             // Spectre/VACASK-only analyses; the importer reads SPICE decks, so none arrive.
             other => {

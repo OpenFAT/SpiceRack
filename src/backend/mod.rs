@@ -290,7 +290,7 @@ mod tests {
         use Dialect::*;
         let tran = Analysis::Transient { step: 1e-9, stop: 1e-6, start: None, max_step: None, uic: false };
         let sens = |ac| Analysis::Sensitivity { output: "v(b)".into(), ac };
-        let ac = crate::ir::AcSweepParams { variation: "dec".into(), points: 10, start: 1.0, stop: 1e6 };
+        let ac = crate::ir::FreqSweep { variation: crate::ir::Sweep::Dec, points: 10, start: 1.0, stop: 1e6 };
         assert_eq!(route(&pz()).0, &[Ngspice]);
         assert_eq!(route(&Analysis::HarmonicBalance { frequencies: vec![1e6], harmonics: vec![5] }).0, &[Vacask, Spectre]);
         assert_eq!(route(&Analysis::TransientNoise { step: 1e-9, stop: 1e-6 }).0, &[Vacask]);

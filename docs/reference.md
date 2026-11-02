@@ -115,6 +115,9 @@ Waveform sources, each a `...VoltageSource` and a `...CurrentSource`, also on
 | `spectre_sweep`, `spectre_montecarlo` | `RawData` (Spectre) |
 | `spectre_pac`, `spectre_pnoise`, `spectre_pxf`, `spectre_pstb` | periodic small-signal (Spectre) |
 
+`variation` is `"dec"`, `"oct"`, `"lin"` or `"log"` (Spectre only), in any
+case; any other name raises `ValueError` when the analysis is built.
+
 ## Results
 
 Every result: `res["node"]` or `res.node` (a float for `OperatingPoint`, a list

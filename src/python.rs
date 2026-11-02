@@ -14,7 +14,7 @@ use pyo3::prelude::*;
 use pyo3::exceptions::{PyKeyError, PyAttributeError, PyRuntimeError, PyValueError};
 use pyo3::types::PyDict;
 
-use crate::ir::{self, Analysis, CircuitIR, Component, Dialect, IrNum, IrValue, IrWaveform};
+use crate::ir::{self, Analysis, CircuitIR, Component, Dialect, IrNum, IrValue, IrWaveform, PssBase};
 use crate::result::*;
 use crate::unit as u;
 
@@ -369,18 +369,27 @@ fn hoisted(top: &mut ir::Subcircuit, child: &ir::Subcircuit) -> ir::Subcircuit {
 /// One `Analysis` per card that both forms build: `CircuitSimulator.x()`
 /// runs it, `Testbench.add_x()` queues it.
 mod card {
-    use crate::ir::{AcSweepParams, Analysis};
+    use pyo3::{exceptions::PyValueError, PyResult};
 
-    pub fn ac(variation: &str, points: u32, start: f64, stop: f64) -> Analysis {
-        Analysis::Ac { variation: variation.into(), points, start, stop }
+    use crate::ir::{Analysis, FreqSweep};
+
+    /// Where a Python sweep name becomes a [`crate::ir::Sweep`]: anything
+    /// but dec, oct, lin or log (any case) is a `ValueError` here.
+    pub fn sweep(variation: &str, points: u32, start: f64, stop: f64) -> PyResult<FreqSweep> {
+        Ok(FreqSweep { variation: variation.parse().map_err(PyValueError::new_err)?, points, start, stop })
+    }
+
+    pub fn ac(variation: &str, points: u32, start: f64, stop: f64) -> PyResult<Analysis> {
+        Ok(Analysis::Ac { sweep: sweep(variation, points, start, stop)? })
     }
 
     pub fn transient(step: f64, stop: f64, start: Option<f64>, max_step: Option<f64>, uic: bool) -> Analysis {
         Analysis::Transient { step, stop, start, max_step, uic }
     }
 
-    pub fn noise(output: &str, reference: &str, source: &str, variation: &str, points: u32, start: f64, stop: f64, points_per_summary: Option<u32>) -> Analysis {
-        Analysis::Noise { output: output.into(), reference: reference.into(), source: source.into(), variation: variation.into(), points, start, stop, points_per_summary }
+    pub fn noise(output: &str, reference: &str, source: &str, variation: &str, points: u32, start: f64, stop: f64, points_per_summary: Option<u32>) -> PyResult<Analysis> {
+        let sweep = sweep(variation, points, start, stop)?;
+        Ok(Analysis::Noise { output: output.into(), reference: reference.into(), source: source.into(), sweep, points_per_summary })
     }
 
     pub fn tf(output: &str, source: &str) -> Analysis {
@@ -388,8 +397,7 @@ mod card {
     }
 
     /// `.sens`: DC without `ac`, else over that AC sweep.
-    pub fn sensitivity(output: &str, ac: Option<(&str, u32, f64, f64)>) -> Analysis {
-        let ac = ac.map(|(variation, points, start, stop)| AcSweepParams { variation: variation.into(), points, start, stop });
+    pub fn sensitivity(output: &str, ac: Option<FreqSweep>) -> Analysis {
         Analysis::Sensitivity { output: output.into(), ac }
     }
 
@@ -398,8 +406,8 @@ mod card {
         Analysis::PoleZero { node1, node2, node3, node4, tf_type: tf_type.into(), pz_type: pz_type.into() }
     }
 
-    pub fn distortion(variation: &str, points: u32, start: f64, stop: f64, f2overf1: Option<f64>) -> Analysis {
-        Analysis::Distortion { variation: variation.into(), points, start, stop, f2overf1 }
+    pub fn distortion(variation: &str, points: u32, start: f64, stop: f64, f2overf1: Option<f64>) -> PyResult<Analysis> {
+        Ok(Analysis::Distortion { sweep: sweep(variation, points, start, stop)?, f2overf1 })
     }
 
     pub fn spectre_sweep(param: &str, start: f64, stop: f64, step: f64, inner: &str, inner_type: &str) -> Analysis {
@@ -528,7 +536,7 @@ impl PySimulator {
 
     #[pyo3(signature = (variation="dec", number_of_points=10, start_frequency=1.0, stop_frequency=1e9))]
     fn ac(&self, variation: &str, number_of_points: u32, start_frequency: f64, stop_frequency: f64) -> PyResult<PyAcAnalysis> {
-        let a = card::ac(variation, number_of_points, start_frequency, stop_frequency);
+        let a = card::ac(variation, number_of_points, start_frequency, stop_frequency)?;
         Ok(PyAcAnalysis { inner: Results::from_raw(self.run(a)?) })
     }
 
@@ -546,7 +554,7 @@ impl PySimulator {
         &self, output_node: &str, ref_node: &str, src: &str, variation: &str, points: u32,
         start_frequency: f64, stop_frequency: f64, points_per_summary: Option<u32>,
     ) -> PyResult<PyNoiseAnalysis> {
-        let a = card::noise(output_node, ref_node, src, variation, points, start_frequency, stop_frequency, points_per_summary);
+        let a = card::noise(output_node, ref_node, src, variation, points, start_frequency, stop_frequency, points_per_summary)?;
         Ok(PyNoiseAnalysis { inner: Results::from_raw(self.run(a)?) })
     }
 
@@ -571,7 +579,7 @@ impl PySimulator {
         &self, output_variable: &str, variation: &str, number_of_points: u32,
         start_frequency: f64, stop_frequency: f64,
     ) -> PyResult<PySensitivityAnalysis> {
-        let a = card::sensitivity(output_variable, Some((variation, number_of_points, start_frequency, stop_frequency)));
+        let a = card::sensitivity(output_variable, Some(card::sweep(variation, number_of_points, start_frequency, stop_frequency)?));
         Ok(PySensitivityAnalysis { inner: Results::from_raw(self.run(a)?) })
     }
 
@@ -587,7 +595,7 @@ impl PySimulator {
     fn distortion(
         &self, variation: &str, points: u32, start_frequency: f64, stop_frequency: f64, f2overf1: Option<f64>,
     ) -> PyResult<PyDistortionAnalysis> {
-        let a = card::distortion(variation, points, start_frequency, stop_frequency, f2overf1);
+        let a = card::distortion(variation, points, start_frequency, stop_frequency, f2overf1)?;
         Ok(PyDistortionAnalysis { inner: Results::from_raw(self.run(a)?) })
     }
 
@@ -605,7 +613,7 @@ impl PySimulator {
 
     #[pyo3(signature = (variation="dec", number_of_points=10, start_frequency=1e6, stop_frequency=1e10))]
     fn s_param(&self, variation: &str, number_of_points: u32, start_frequency: f64, stop_frequency: f64) -> PyResult<PySParamAnalysis> {
-        let a = Analysis::SPar { variation: variation.into(), points: number_of_points, start: start_frequency, stop: stop_frequency };
+        let a = Analysis::SPar { sweep: card::sweep(variation, number_of_points, start_frequency, stop_frequency)? };
         Ok(PySParamAnalysis { inner: Results::from_raw(self.run(a)?) })
     }
 
@@ -615,7 +623,7 @@ impl PySimulator {
         &self, output_current: &str, input_source: &str, z_in: f64, z_out: f64,
         variation: &str, points: u32, start_freq: f64, stop_freq: f64,
     ) -> PyResult<PySParamAnalysis> {
-        let mut ir = self.deck(card::ac(variation, points, start_freq, stop_freq));
+        let mut ir = self.deck(card::ac(variation, points, start_freq, stop_freq)?);
         if let Some(tb) = &mut ir.testbench {
             tb.extra_lines.push(format!(".net {output_current} {input_source} Rout={z_out} Rin={z_in}"));
         }
@@ -634,7 +642,7 @@ impl PySimulator {
         &self, probe: &str, variation: &str, number_of_points: u32, start_frequency: f64, stop_frequency: f64,
     ) -> PyResult<PyStabilityAnalysis> {
         let a = Analysis::Stability {
-            probe: probe.into(), variation: variation.into(), points: number_of_points, start: start_frequency, stop: stop_frequency,
+            probe: probe.into(), sweep: card::sweep(variation, number_of_points, start_frequency, stop_frequency)?,
         };
         Ok(PyStabilityAnalysis { inner: Results::from_raw(self.run(a)?) })
     }
@@ -668,8 +676,8 @@ impl PySimulator {
         variation: &str, points: u32, start_freq: f64, stop_freq: f64, sweep_type: &str,
     ) -> PyResult<PyAcAnalysis> {
         let a = Analysis::SpectrePac {
-            pss_fundamental, pss_stabilization, pss_harmonics, variation: variation.into(), points,
-            start: start_freq, stop: stop_freq, sweep_type: sweep_type.into(),
+            pss: PssBase { pss_fundamental, pss_stabilization, pss_harmonics },
+            sweep: card::sweep(variation, points, start_freq, stop_freq)?, sweep_type: sweep_type.into(),
         };
         Ok(PyAcAnalysis { inner: Results::from_raw(self.run_spectre(a)?) })
     }
@@ -681,8 +689,8 @@ impl PySimulator {
         pss_harmonics: u32, variation: &str, points: u32, start_freq: f64, stop_freq: f64,
     ) -> PyResult<PyNoiseAnalysis> {
         let a = Analysis::SpectrePnoise {
-            pss_fundamental, pss_stabilization, pss_harmonics, output: output_node.into(), reference: ref_node.into(),
-            variation: variation.into(), points, start: start_freq, stop: stop_freq,
+            pss: PssBase { pss_fundamental, pss_stabilization, pss_harmonics }, output: output_node.into(), reference: ref_node.into(),
+            sweep: card::sweep(variation, points, start_freq, stop_freq)?,
         };
         Ok(PyNoiseAnalysis { inner: Results::from_raw(self.run_spectre(a)?) })
     }
@@ -694,8 +702,8 @@ impl PySimulator {
         pss_harmonics: u32, variation: &str, points: u32, start_freq: f64, stop_freq: f64,
     ) -> PyResult<PyAcAnalysis> {
         let a = Analysis::SpectrePxf {
-            pss_fundamental, pss_stabilization, pss_harmonics, output: output_node.into(), source: source.into(),
-            variation: variation.into(), points, start: start_freq, stop: stop_freq,
+            pss: PssBase { pss_fundamental, pss_stabilization, pss_harmonics }, output: output_node.into(), source: source.into(),
+            sweep: card::sweep(variation, points, start_freq, stop_freq)?,
         };
         Ok(PyAcAnalysis { inner: Results::from_raw(self.run_spectre(a)?) })
     }
@@ -707,8 +715,8 @@ impl PySimulator {
         pss_harmonics: u32, variation: &str, points: u32, start_freq: f64, stop_freq: f64,
     ) -> PyResult<PyStabilityAnalysis> {
         let a = Analysis::SpectrePstb {
-            pss_fundamental, pss_stabilization, pss_harmonics, probe: probe.into(),
-            variation: variation.into(), points, start: start_freq, stop: stop_freq,
+            pss: PssBase { pss_fundamental, pss_stabilization, pss_harmonics }, probe: probe.into(),
+            sweep: card::sweep(variation, points, start_freq, stop_freq)?,
         };
         Ok(PyStabilityAnalysis { inner: Results::from_raw(self.run_spectre(a)?) })
     }
@@ -1570,8 +1578,9 @@ impl PyTestbench {
     }
 
     #[pyo3(signature = (variation="dec", number_of_points=10, start_frequency=1.0, stop_frequency=1e9))]
-    fn add_ac(mut slf: PyRefMut<'_, Self>, variation: &str, number_of_points: u32, start_frequency: f64, stop_frequency: f64) {
-        slf.as_super().tb().analyses.push(card::ac(variation, number_of_points, start_frequency, stop_frequency));
+    fn add_ac(mut slf: PyRefMut<'_, Self>, variation: &str, number_of_points: u32, start_frequency: f64, stop_frequency: f64) -> PyResult<()> {
+        slf.as_super().tb().analyses.push(card::ac(variation, number_of_points, start_frequency, stop_frequency)?);
+        Ok(())
     }
 
     #[pyo3(signature = (step_time, end_time, start_time=None, max_time=None, use_initial_condition=false))]
@@ -1595,9 +1604,10 @@ impl PyTestbench {
     }
 
     #[pyo3(signature = (output_variable, variation="dec", number_of_points=10, start_frequency=100.0, stop_frequency=1e5))]
-    fn add_ac_sensitivity(mut slf: PyRefMut<'_, Self>, output_variable: &str, variation: &str, number_of_points: u32, start_frequency: f64, stop_frequency: f64) {
-        let a = card::sensitivity(output_variable, Some((variation, number_of_points, start_frequency, stop_frequency)));
+    fn add_ac_sensitivity(mut slf: PyRefMut<'_, Self>, output_variable: &str, variation: &str, number_of_points: u32, start_frequency: f64, stop_frequency: f64) -> PyResult<()> {
+        let a = card::sensitivity(output_variable, Some(card::sweep(variation, number_of_points, start_frequency, stop_frequency)?));
         slf.as_super().tb().analyses.push(a);
+        Ok(())
     }
 
     #[pyo3(signature = (node1, node2, node3, node4, tf_type, pz_type))]
@@ -1606,17 +1616,19 @@ impl PyTestbench {
     }
 
     #[pyo3(signature = (variation="dec", points=10, start_frequency=100.0, stop_frequency=1e8, f2overf1=None))]
-    fn add_distortion(mut slf: PyRefMut<'_, Self>, variation: &str, points: u32, start_frequency: f64, stop_frequency: f64, f2overf1: Option<f64>) {
-        slf.as_super().tb().analyses.push(card::distortion(variation, points, start_frequency, stop_frequency, f2overf1));
+    fn add_distortion(mut slf: PyRefMut<'_, Self>, variation: &str, points: u32, start_frequency: f64, stop_frequency: f64, f2overf1: Option<f64>) -> PyResult<()> {
+        slf.as_super().tb().analyses.push(card::distortion(variation, points, start_frequency, stop_frequency, f2overf1)?);
+        Ok(())
     }
 
     #[pyo3(signature = (output_node, ref_node, src, variation="dec", points=10, start_frequency=1e3, stop_frequency=1e8, points_per_summary=None))]
     fn add_noise(
         mut slf: PyRefMut<'_, Self>, output_node: &str, ref_node: &str, src: &str, variation: &str, points: u32,
         start_frequency: f64, stop_frequency: f64, points_per_summary: Option<u32>,
-    ) {
-        let a = card::noise(output_node, ref_node, src, variation, points, start_frequency, stop_frequency, points_per_summary);
+    ) -> PyResult<()> {
+        let a = card::noise(output_node, ref_node, src, variation, points, start_frequency, stop_frequency, points_per_summary)?;
         slf.as_super().tb().analyses.push(a);
+        Ok(())
     }
 
     #[pyo3(signature = (fundamental_frequency, outputs, num_harmonics=None))]

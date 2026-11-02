@@ -419,7 +419,7 @@ fn spectre_dc_sweeps_pick_the_documented_selector() {
 #[test]
 fn spectre_ac_and_tran_match_documented_parameters() {
     assert_eq!(
-        analysis(Analysis::Ac { variation: "dec".into(), points: 100, start: 1.0, stop: 1e9 }),
+        analysis(Analysis::Ac { sweep: FreqSweep { variation: Sweep::Dec, points: 100, start: 1.0, stop: 1e9 } }),
         "ac1 ac start=1 stop=1G dec=100",
     );
     assert_eq!(
@@ -436,7 +436,7 @@ fn spectre_ac_and_tran_match_documented_parameters() {
 #[test]
 fn spectre_rejects_octave_frequency_sweeps() {
     let r = try_analysis(&Analysis::Ac {
-        variation: "oct".into(), points: 10, start: 1.0, stop: 1e6,
+        sweep: FreqSweep { variation: Sweep::Oct, points: 10, start: 1.0, stop: 1e6 },
     });
     assert!(matches!(r, Err(CodeGenError::UnsupportedAnalysis { .. })), "{r:?}");
 }
@@ -450,7 +450,7 @@ fn spectre_noise_puts_the_output_in_the_terminal_list() {
     assert_eq!(
         analysis(Analysis::Noise {
             output: "out".into(), reference: "0".into(), source: "Vin".into(),
-            variation: "dec".into(), points: 10, start: 1.0, stop: 1e6,
+            sweep: FreqSweep { variation: Sweep::Dec, points: 10, start: 1.0, stop: 1e6 },
             points_per_summary: None,
         }),
         "noise1 (out 0) noise start=1 stop=1M dec=10 iprobe=vin",
@@ -482,7 +482,7 @@ fn spectre_sens_matches_documented_control_statement() {
     assert_eq!(
         analysis(Analysis::Sensitivity {
             output: "out".into(),
-            ac: Some(AcSweepParams { variation: "dec".into(), points: 10, start: 1.0, stop: 1e6 }),
+            ac: Some(FreqSweep { variation: Sweep::Dec, points: 10, start: 1.0, stop: 1e6 }),
         }),
         "sensac1 ac start=1 stop=1M dec=10\nsens (out) for (sensac1)",
     );
@@ -509,12 +509,12 @@ fn spectre_rf_large_signal_analyses_match_documented_parameters() {
         "hb1 hb fundfreqs=[1G 1.01G] maxharms=[5 3]",
     );
     assert_eq!(
-        analysis(Analysis::SPar { variation: "dec".into(), points: 20, start: 1e6, stop: 1e9 }),
+        analysis(Analysis::SPar { sweep: FreqSweep { variation: Sweep::Dec, points: 20, start: 1e6, stop: 1e9 } }),
         "sp1 sp start=1M stop=1G dec=20",
     );
     assert_eq!(
         analysis(Analysis::Stability {
-            probe: "IPRB0".into(), variation: "dec".into(), points: 20, start: 1.0, stop: 1e9,
+            probe: "IPRB0".into(), sweep: FreqSweep { variation: Sweep::Dec, points: 20, start: 1.0, stop: 1e9 },
         }),
         "stb1 stb start=1 stop=1G dec=20 probe=iprb0",
     );
@@ -526,8 +526,8 @@ fn spectre_rf_large_signal_analyses_match_documented_parameters() {
 #[test]
 fn spectre_periodic_small_signal_analyses_drop_invented_parameters() {
     let pac = analysis(Analysis::SpectrePac {
-        pss_fundamental: 1e9, pss_stabilization: 1e-7, pss_harmonics: 10,
-        variation: "dec".into(), points: 100, start: 1.0, stop: 1e9,
+        pss: PssBase { pss_fundamental: 1e9, pss_stabilization: 1e-7, pss_harmonics: 10 },
+        sweep: FreqSweep { variation: Sweep::Dec, points: 100, start: 1.0, stop: 1e9 },
         sweep_type: "relative".into(),
     });
     assert_eq!(
@@ -537,9 +537,9 @@ fn spectre_periodic_small_signal_analyses_drop_invented_parameters() {
     );
 
     let pnoise = analysis(Analysis::SpectrePnoise {
-        pss_fundamental: 1e9, pss_stabilization: 1e-7, pss_harmonics: 10,
+        pss: PssBase { pss_fundamental: 1e9, pss_stabilization: 1e-7, pss_harmonics: 10 },
         output: "out".into(), reference: "0".into(),
-        variation: "dec".into(), points: 10, start: 1.0, stop: 1e6,
+        sweep: FreqSweep { variation: Sweep::Dec, points: 10, start: 1.0, stop: 1e6 },
     });
     assert_eq!(
         pnoise,
@@ -549,9 +549,9 @@ fn spectre_periodic_small_signal_analyses_drop_invented_parameters() {
     assert!(!pnoise.contains("refprobe"), "{pnoise}");
 
     let pxf = analysis(Analysis::SpectrePxf {
-        pss_fundamental: 1e9, pss_stabilization: 1e-7, pss_harmonics: 10,
+        pss: PssBase { pss_fundamental: 1e9, pss_stabilization: 1e-7, pss_harmonics: 10 },
         output: "out".into(), source: "Vin".into(),
-        variation: "dec".into(), points: 10, start: 1.0, stop: 1e6,
+        sweep: FreqSweep { variation: Sweep::Dec, points: 10, start: 1.0, stop: 1e6 },
     });
     assert_eq!(
         pxf,
@@ -561,8 +561,8 @@ fn spectre_periodic_small_signal_analyses_drop_invented_parameters() {
     assert!(!pxf.contains("isrc"), "{pxf}");
 
     let pstb = analysis(Analysis::SpectrePstb {
-        pss_fundamental: 1e9, pss_stabilization: 1e-7, pss_harmonics: 10,
-        probe: "IPRB0".into(), variation: "dec".into(), points: 10, start: 1.0, stop: 1e6,
+        pss: PssBase { pss_fundamental: 1e9, pss_stabilization: 1e-7, pss_harmonics: 10 },
+        probe: "IPRB0".into(), sweep: FreqSweep { variation: Sweep::Dec, points: 10, start: 1.0, stop: 1e6 },
     });
     assert_eq!(
         pstb,

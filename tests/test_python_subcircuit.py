@@ -859,6 +859,21 @@ class TestTestbenchCreation:
         assert ".ac dec 10 1 1meg" in netlist
         assert ".meas tran vmax MAX V(out)" in netlist
 
+    def test_sweep_name_is_checked_when_the_analysis_is_built(self):
+        # Spec: dec/oct/lin/log in any case; anything else is a ValueError at
+        # the call, not a deck a simulator later rejects.
+        ps = import_spicerack()
+        tb = ps.Testbench(ps.Subcircuit("d", ["a"]))
+        tb.add_ac(variation="DEC", number_of_points=10, start_frequency=1.0, stop_frequency=1e6)
+        assert ".ac dec 10 1 1meg" in tb.netlist("ngspice")
+        with pytest.raises(ValueError, match="unknown sweep 'decade'"):
+            tb.add_ac(variation="decade", number_of_points=10, start_frequency=1.0, stop_frequency=1e6)
+        with pytest.raises(ValueError, match="unknown sweep"):
+            tb.add_noise("a", "0", "V1", variation="per-decade")
+        with pytest.raises(ValueError, match="unknown sweep"):
+            tb.ac(variation="decade", number_of_points=10, start_frequency=1.0, stop_frequency=1e6)
+        assert [a["type"] for a in json.loads(tb.to_json())["testbench"]["analyses"]] == ["Ac"]
+
     def test_testbench_statistical_analysis_builders(self):
         ps = import_spicerack()
         dut = ps.Subcircuit("amp_mc", ["vin", "vout"])

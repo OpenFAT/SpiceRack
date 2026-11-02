@@ -535,7 +535,7 @@ impl Cx<'_> {
                     Some(DcSweep { source: self.text(w[0]).to_string(), start: self.number(w[1])?, stop: self.number(w[2])?, step: self.number(w[3])? })
                 }).collect::<Option<_>>()?,
             },
-            Tag::Ac => Analysis::Ac { variation: word(0)?.to_ascii_lowercase(), points: self.count(k[1])?, start: n(2)?, stop: n(3)? },
+            Tag::Ac => Analysis::Ac { sweep: FreqSweep { variation: word(0)?.parse().ok()?, points: self.count(k[1])?, start: n(2)?, stop: n(3)? } },
             Tag::Tran => {
                 let uic = self.kid(card, Tag::Uic).is_some();
                 let p: Vec<f64> = self.all(card, Tag::Num).into_iter().map(|r| self.num(r)).collect::<Option<_>>()?;
@@ -560,10 +560,12 @@ impl Cx<'_> {
                     output: nodes.first()?.clone(),
                     reference: nodes.get(1).cloned().unwrap_or_else(|| "0".into()),
                     source: self.text(self.kid(card, Tag::Name)?).to_string(),
-                    variation: self.text(self.kid(card, Tag::Word)?).to_ascii_lowercase(),
-                    points: self.count(nums[0])?,
-                    start: self.num(nums[1])?,
-                    stop: self.num(nums[2])?,
+                    sweep: FreqSweep {
+                        variation: self.text(self.kid(card, Tag::Word)?).parse().ok()?,
+                        points: self.count(nums[0])?,
+                        start: self.num(nums[1])?,
+                        stop: self.num(nums[2])?,
+                    },
                     points_per_summary: nums.get(3).and_then(|&r| self.text(r).parse().ok()),
                 }
             }
@@ -572,7 +574,7 @@ impl Cx<'_> {
                 [out] => Analysis::Sensitivity { output: self.text(*out).to_string(), ac: None },
                 [out, var, pts, a, b] => Analysis::Sensitivity {
                     output: self.text(*out).to_string(),
-                    ac: Some(AcSweepParams { variation: self.text(*var).to_ascii_lowercase(), points: self.count(*pts)?, start: self.number(*a)?, stop: self.number(*b)? }),
+                    ac: Some(FreqSweep { variation: self.text(*var).parse().ok()?, points: self.count(*pts)?, start: self.number(*a)?, stop: self.number(*b)? }),
                 },
                 _ => return None,
             },
@@ -1106,7 +1108,7 @@ impl Cx<'_> {
         let p = self.pairs(card);
         let n = |k: &str| self.get(&p, k).and_then(|v| self.number(v));
         let s = |k: &str| self.get(&p, k).map(|v| self.text(v).to_string());
-        let sweep = || ["dec", "lin", "log"].iter().find_map(|v| n(v).map(|x| (v.to_string(), x as u32)));
+        let sweep = || [Sweep::Dec, Sweep::Lin, Sweep::Log].into_iter().find_map(|v| n(v.name()).map(|x| (v, x as u32)));
         Some(match (kind, ns.as_slice()) {
             ("dc", []) if p.is_empty() => Analysis::Op,
             ("dc", []) => {
@@ -1119,12 +1121,12 @@ impl Cx<'_> {
             }
             ("ac", []) => {
                 let (variation, points) = sweep()?;
-                Analysis::Ac { variation, points, start: n("start")?, stop: n("stop")? }
+                Analysis::Ac { sweep: FreqSweep { variation, points, start: n("start")?, stop: n("stop")? } }
             }
             ("tran", []) => Analysis::Transient { step: n("step")?, stop: n("stop")?, start: n("start"), max_step: n("maxstep"), uic: s("skipdc").as_deref() == Some("yes") },
             ("noise", [out, reference]) => {
                 let (variation, points) = sweep()?;
-                Analysis::Noise { output: out.clone(), reference: reference.clone(), source: s("iprobe")?, variation, points, start: n("start")?, stop: n("stop")?, points_per_summary: None }
+                Analysis::Noise { output: out.clone(), reference: reference.clone(), source: s("iprobe")?, sweep: FreqSweep { variation, points, start: n("start")?, stop: n("stop")? }, points_per_summary: None }
             }
             _ => return None,
         })
@@ -1189,16 +1191,16 @@ impl Cx<'_> {
                 }).collect();
                 let Some(sweeps) = sweeps else { return false };
                 let kind = self.kid(st, Tag::Word).map(|w| self.text(w).to_string()).unwrap_or_default();
-                let freq = || -> Option<(String, u32, f64, f64)> {
-                    let mode = s("mode")?;
-                    let pts = n("points")? as u32 + u32::from(mode == "lin");
-                    Some((mode, pts, n("from")?, n("to")?))
+                let freq = || -> Option<FreqSweep> {
+                    let mode: Sweep = s("mode")?.parse().ok()?;
+                    let points = n("points")? as u32 + u32::from(mode == Sweep::Lin);
+                    Some(FreqSweep { variation: mode, points, start: n("from")?, stop: n("to")? })
                 };
                 let a = match kind.as_str() {
                     "op" if !sweeps.is_empty() => Some(Analysis::Dc { sweeps }),
                     _ if !sweeps.is_empty() => None,
                     "op" => Some(Analysis::Op),
-                    "ac" => freq().map(|(variation, points, start, stop)| Analysis::Ac { variation, points, start, stop }),
+                    "ac" => freq().map(|sweep| Analysis::Ac { sweep }),
                     "tran" => (|| {
                         let ic = match self.get(&p, "ic") { Some(v) => self.node_list(v)?, None => vec![] };
                         let ns = match self.get(&p, "nodeset") { Some(v) => self.node_list(v)?, None => vec![] };
@@ -1209,7 +1211,7 @@ impl Cx<'_> {
                         self.tb.node_sets.extend(ns);
                         a
                     }),
-                    "noise" => freq().and_then(|(variation, points, start, stop)| Some(Analysis::Noise { output: s("out")?, reference: "0".into(), source: s("in")?, variation, points, start, stop, points_per_summary: None })),
+                    "noise" => freq().and_then(|sweep| Some(Analysis::Noise { output: s("out")?, reference: "0".into(), source: s("in")?, sweep, points_per_summary: None })),
                     "dcxf" => s("out").map(|o| Analysis::Tf { output: o, source: String::new() }),
                     _ => None,
                 };

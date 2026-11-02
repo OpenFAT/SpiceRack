@@ -110,14 +110,12 @@ fn emit_value(v: &IrValue) -> String {
 /// identical "Sweep interval parameters" block:
 /// `start stop center span step lin dec log values valuesfile`.
 /// There is no `oct` — SPICE's octave sweep has no Spectre spelling.
-fn sweep_points(variation: &str, points: u32) -> Result<String, CodeGenError> {
-    match variation.to_ascii_lowercase().as_str() {
-        "dec" => Ok(format!("dec={points}")),
-        "lin" => Ok(format!("lin={points}")),
-        "log" => Ok(format!("log={points}")),
-        other => Err(unsupported_analysis(&format!(
-            "frequency sweep type '{other}' (Spectre accepts only dec/lin/log, see spectre -h ac)"
-        ))),
+fn sweep_points(variation: Sweep, points: u32) -> Result<String, CodeGenError> {
+    match variation {
+        Sweep::Dec | Sweep::Lin | Sweep::Log => Ok(format!("{}={points}", variation.name())),
+        Sweep::Oct => Err(unsupported_analysis(
+            "frequency sweep type 'oct' (Spectre accepts only dec/lin/log, see spectre -h ac)",
+        )),
     }
 }
 
@@ -820,12 +818,12 @@ fn emit_analysis(analysis: &Analysis, keep_case: bool) -> Result<String, CodeGen
         }
 
         // `[REF]` p.43 `Name ac parameter=value ...` with start/stop/dec.
-        Analysis::Ac { variation, points, start, stop } => {
+        Analysis::Ac { sweep: FreqSweep { variation, points, start, stop } } => {
             format!(
                 "ac1 ac start={} stop={} {}",
                 spectre_num(*start),
                 spectre_num(*stop),
-                sweep_points(variation, *points)?,
+                sweep_points(*variation, *points)?,
             )
         }
 
@@ -858,7 +856,7 @@ fn emit_analysis(analysis: &Analysis, keep_case: bool) -> Result<String, CodeGen
         // circuit". #16 `oprobe` and #17 `iprobe` name *components*, not
         // nodes — so the output goes in the terminal list and only the
         // input source becomes `iprobe`.
-        Analysis::Noise { output, reference, source, variation, points, start, stop, .. } => {
+        Analysis::Noise { output, reference, source, sweep: FreqSweep { variation, points, start, stop }, .. } => {
             let neg = if reference.is_empty() { "0" } else { bare_node(reference) };
             format!(
                 "noise1 ({} {}) noise start={} stop={} {} iprobe={}",
@@ -866,7 +864,7 @@ fn emit_analysis(analysis: &Analysis, keep_case: bool) -> Result<String, CodeGen
                 neg,
                 spectre_num(*start),
                 spectre_num(*stop),
-                sweep_points(variation, *points)?,
+                sweep_points(*variation, *points)?,
                 inst_ref(source, keep_case),
             )
         }
@@ -895,7 +893,7 @@ fn emit_analysis(analysis: &Analysis, keep_case: bool) -> Result<String, CodeGen
                     "sensac1 ac start={} stop={} {}\nsens ({}) for (sensac1)",
                     spectre_num(p.start),
                     spectre_num(p.stop),
-                    sweep_points(&p.variation, p.points)?,
+                    sweep_points(p.variation, p.points)?,
                     bare_node(output),
                 ),
                 None => format!("sensdc1 dc\nsens ({}) for (sensdc1)", bare_node(output)),
@@ -936,23 +934,23 @@ fn emit_analysis(analysis: &Analysis, keep_case: bool) -> Result<String, CodeGen
         // must also contain `port` instances — "There must be at least one
         // active port statement in the circuit" — which the IR cannot
         // express, so this statement alone is necessary but not sufficient.
-        Analysis::SPar { variation, points, start, stop } => {
+        Analysis::SPar { sweep: FreqSweep { variation, points, start, stop } } => {
             format!(
                 "sp1 sp start={} stop={} {}",
                 spectre_num(*start),
                 spectre_num(*stop),
-                sweep_points(variation, *points)?,
+                sweep_points(*variation, *points)?,
             )
         }
 
         // `[REF]` p.393-394: `Name stb parameter=value ...`, `probe` =
         // "Probe instance around which the loop gain is calculated".
-        Analysis::Stability { probe, variation, points, start, stop } => {
+        Analysis::Stability { probe, sweep: FreqSweep { variation, points, start, stop } } => {
             format!(
                 "stb1 stb start={} stop={} {} probe={}",
                 spectre_num(*start),
                 spectre_num(*stop),
-                sweep_points(variation, *points)?,
+                sweep_points(*variation, *points)?,
                 inst_ref(probe, keep_case),
             )
         }
@@ -1018,7 +1016,7 @@ fn emit_analysis(analysis: &Analysis, keep_case: bool) -> Result<String, CodeGen
         // `[REF]` p.245-246 `pac`: sweep interval params plus `sweeptype`
         // (#11, values absolute/relative/unspecified). PSS is its
         // prerequisite (`[REF]` p.272).
-        Analysis::SpectrePac { pss_fundamental, pss_stabilization, pss_harmonics, variation, points, start, stop, sweep_type } => {
+        Analysis::SpectrePac { pss: PssBase { pss_fundamental, pss_stabilization, pss_harmonics }, sweep: FreqSweep { variation, points, start, stop }, sweep_type } => {
             format!(
                 "pss1 pss fund={} tstab={} harms={}\npac1 pac start={} stop={} {} sweeptype={}",
                 spectre_num(*pss_fundamental),
@@ -1026,7 +1024,7 @@ fn emit_analysis(analysis: &Analysis, keep_case: bool) -> Result<String, CodeGen
                 pss_harmonics,
                 spectre_num(*start),
                 spectre_num(*stop),
-                sweep_points(variation, *points)?,
+                sweep_points(*variation, *points)?,
                 sweep_type,
             )
         }
@@ -1035,7 +1033,7 @@ fn emit_analysis(analysis: &Analysis, keep_case: bool) -> Result<String, CodeGen
         // parameters are `oprobe` (#13) and `iprobe` (#14) — both component
         // names. There is no `refprobe` (the previous version emitted one);
         // the reference node belongs in the terminal list.
-        Analysis::SpectrePnoise { pss_fundamental, pss_stabilization, pss_harmonics, output, reference, variation, points, start, stop } => {
+        Analysis::SpectrePnoise { pss: PssBase { pss_fundamental, pss_stabilization, pss_harmonics }, output, reference, sweep: FreqSweep { variation, points, start, stop } } => {
             let neg = if reference.is_empty() { "0" } else { bare_node(reference) };
             format!(
                 "pss1 pss fund={} tstab={} harms={}\npnoise1 ({} {}) pnoise start={} stop={} {}",
@@ -1046,7 +1044,7 @@ fn emit_analysis(analysis: &Analysis, keep_case: bool) -> Result<String, CodeGen
                 neg,
                 spectre_num(*start),
                 spectre_num(*stop),
-                sweep_points(variation, *points)?,
+                sweep_points(*variation, *points)?,
             )
         }
 
@@ -1054,7 +1052,7 @@ fn emit_analysis(analysis: &Analysis, keep_case: bool) -> Result<String, CodeGen
         // probe parameter is `probe` (#13, the *output*). Like `xf` it
         // computes transfer functions from every source, so there is no
         // input-source parameter (the previous version emitted `isrc=`).
-        Analysis::SpectrePxf { pss_fundamental, pss_stabilization, pss_harmonics, output, source: _, variation, points, start, stop } => {
+        Analysis::SpectrePxf { pss: PssBase { pss_fundamental, pss_stabilization, pss_harmonics }, output, source: _, sweep: FreqSweep { variation, points, start, stop } } => {
             format!(
                 "pss1 pss fund={} tstab={} harms={}\npxf1 ({} 0) pxf start={} stop={} {}",
                 spectre_num(*pss_fundamental),
@@ -1063,13 +1061,13 @@ fn emit_analysis(analysis: &Analysis, keep_case: bool) -> Result<String, CodeGen
                 bare_node(output),
                 spectre_num(*start),
                 spectre_num(*stop),
-                sweep_points(variation, *points)?,
+                sweep_points(*variation, *points)?,
             )
         }
 
         // `[REF]` p.298-299 `pstb`: `probe` (#11) = "Probe instance around
         // which the loop gain is calculated".
-        Analysis::SpectrePstb { pss_fundamental, pss_stabilization, pss_harmonics, probe, variation, points, start, stop } => {
+        Analysis::SpectrePstb { pss: PssBase { pss_fundamental, pss_stabilization, pss_harmonics }, probe, sweep: FreqSweep { variation, points, start, stop } } => {
             format!(
                 "pss1 pss fund={} tstab={} harms={}\npstb1 pstb start={} stop={} {} probe={}",
                 spectre_num(*pss_fundamental),
@@ -1077,7 +1075,7 @@ fn emit_analysis(analysis: &Analysis, keep_case: bool) -> Result<String, CodeGen
                 pss_harmonics,
                 spectre_num(*start),
                 spectre_num(*stop),
-                sweep_points(variation, *points)?,
+                sweep_points(*variation, *points)?,
                 inst_ref(probe, keep_case),
             )
         }
@@ -1259,7 +1257,7 @@ mod tests {
         assert!(dc_str.contains("dc1 dc"), "dc: {}", dc_str);
         assert!(dc_str.contains("dev=vsrc param=dc"), "dc selector: {}", dc_str);
 
-        let ac = Analysis::Ac { variation: "dec".into(), points: 100, start: 1.0, stop: 1e9 };
+        let ac = Analysis::Ac { sweep: FreqSweep { variation: Sweep::Dec, points: 100, start: 1.0, stop: 1e9 } };
         let ac_str = emit_analysis(&ac, false).unwrap();
         assert!(ac_str.contains("ac1 ac"), "ac: {}", ac_str);
         assert!(ac_str.contains("dec=100"), "ac dec: {}", ac_str);

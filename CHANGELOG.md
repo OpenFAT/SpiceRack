@@ -15,6 +15,7 @@ One line per change, written by hand, citing its pull request. Every number is m
 - ci: a nightly tier (`nightly.yaml`) runs the import suite over the corpora, behind the `corpus` feature; the merge tier leaves it out (20 min of a 4-vCPU runner) (#14).
 - tests: spice-bench decks ngspice-45 cannot run are named known failures (469 listed, 28 quarantined past the CPU budget); a CPU-limit kill is now reported as a timeout (#14).
 - backend: `select` routes on the `Analysis` itself, not a kind string; one predicate (`runs`) for selection and `check_backend`, with a compile-time check that every feature bit has its issue row (audit 30, 41, 42).
+- ir: a frequency sweep's spacing is `Sweep` (dec, oct, lin, log), held in `FreqSweep` and the SpectreRF steady state in `PssBase`, both flattened so IR JSON is byte-identical; `AcSweepParams` is now `FreqSweep`. A bad sweep name is a `ValueError` at the Python call and a load error in JSON, where it used to reach the deck (audit 40).
 
 ## 0.1.2 (2026-10-31)
 

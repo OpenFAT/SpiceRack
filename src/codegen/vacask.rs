@@ -375,14 +375,15 @@ fn step_sweep(sp: &StepParam) -> Result<String, CodeGenError> {
 /// Frequency-swept analyses. For `dec`/`oct` SPICE's N is points per
 /// decade/octave and so is VACASK's; for `lin` SPICE's N is the TOTAL point
 /// count while VACASK counts intervals, hence the `- 1`.
-fn freq_sweep(variation: &str, points: u32, start: f64, stop: f64)
+fn freq_sweep(variation: Sweep, points: u32, start: f64, stop: f64)
     -> Result<String, CodeGenError>
 {
-    let mode = variation.to_ascii_lowercase();
-    if !matches!(mode.as_str(), "dec" | "oct" | "lin") {
-        return Err(unsupported_analysis(format!("frequency sweep type '{}'", variation)));
-    }
-    let n = if mode == "lin" { points.saturating_sub(1) } else { points };
+    let mode = variation.name();
+    let n = match variation {
+        Sweep::Dec | Sweep::Oct => points,
+        Sweep::Lin => points.saturating_sub(1),
+        Sweep::Log => return Err(unsupported_analysis("frequency sweep type 'log'")),
+    };
     if n == 0 {
         return Err(unsupported_analysis(format!("frequency sweep with {} points", points)));
     }
@@ -418,10 +419,10 @@ fn analysis_block(idx: usize, a: &Analysis, native: bool) -> Result<Vec<String>,
             out.push(format!("  analysis {} op", name));
         }
 
-        Analysis::Ac { variation, points, start, stop } => {
+        Analysis::Ac { sweep: FreqSweep { variation, points, start, stop } } => {
             out.push(format!(
                 "analysis {} ac {}",
-                name, freq_sweep(variation, *points, *start, *stop)?
+                name, freq_sweep(*variation, *points, *start, *stop)?
             ));
         }
 
@@ -444,7 +445,7 @@ fn analysis_block(idx: usize, a: &Analysis, native: bool) -> Result<Vec<String>,
             out.push(s);
         }
 
-        Analysis::Noise { output, reference, source, variation, points, start, stop, .. } => {
+        Analysis::Noise { output, reference, source, sweep: FreqSweep { variation, points, start, stop }, .. } => {
             if !reference.is_empty() && reference != "0" {
                 return Err(unsupported_analysis(
                     "noise with a non-ground reference node (VACASK's `out=` names one node)",
@@ -455,7 +456,7 @@ fn analysis_block(idx: usize, a: &Analysis, native: bool) -> Result<Vec<String>,
                 name,
                 bare_node(output).to_ascii_lowercase(),
                 source.to_ascii_lowercase(),
-                freq_sweep(variation, *points, *start, *stop)?,
+                freq_sweep(*variation, *points, *start, *stop)?,
             ));
         }
 
@@ -1083,9 +1084,9 @@ mod tests {
 
     #[test]
     fn ac_lin_counts_intervals_but_dec_does_not() {
-        let lin = emit_analysis(&Analysis::Ac { variation: "lin".into(), points: 101, start: 1.0, stop: 1e3 }).unwrap();
+        let lin = emit_analysis(&Analysis::Ac { sweep: FreqSweep { variation: Sweep::Lin, points: 101, start: 1.0, stop: 1e3 } }).unwrap();
         assert!(lin.contains("points=100"), "{}", lin);
-        let dec = emit_analysis(&Analysis::Ac { variation: "dec".into(), points: 10, start: 1.0, stop: 1e3 }).unwrap();
+        let dec = emit_analysis(&Analysis::Ac { sweep: FreqSweep { variation: Sweep::Dec, points: 10, start: 1.0, stop: 1e3 } }).unwrap();
         assert!(dec.contains("points=10"), "{}", dec);
     }
 

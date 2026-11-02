@@ -492,26 +492,26 @@ pub struct StepParam {
 pub enum Analysis {
     Op,
     Dc { sweeps: Vec<DcSweep> },
-    Ac { variation: String, points: u32, start: f64, stop: f64 },
+    Ac { #[serde(flatten)] sweep: FreqSweep },
     Transient { step: f64, stop: f64, start: Option<f64>, max_step: Option<f64>, uic: bool },
-    Noise { output: String, reference: String, source: String, variation: String, points: u32, start: f64, stop: f64, points_per_summary: Option<u32> },
+    Noise { output: String, reference: String, source: String, #[serde(flatten)] sweep: FreqSweep, points_per_summary: Option<u32> },
     Tf { output: String, source: String },
-    Sensitivity { output: String, ac: Option<AcSweepParams> },
+    Sensitivity { output: String, ac: Option<FreqSweep> },
     PoleZero { node1: String, node2: String, node3: String, node4: String, tf_type: String, pz_type: String },
-    Distortion { variation: String, points: u32, start: f64, stop: f64, f2overf1: Option<f64> },
+    Distortion { #[serde(flatten)] sweep: FreqSweep, f2overf1: Option<f64> },
     Pss { fundamental: f64, stabilization: f64, observe_node: String, points_per_period: u32, harmonics: u32 },
     HarmonicBalance { frequencies: Vec<f64>, harmonics: Vec<u32> },
-    SPar { variation: String, points: u32, start: f64, stop: f64 },
-    Stability { probe: String, variation: String, points: u32, start: f64, stop: f64 },
+    SPar { #[serde(flatten)] sweep: FreqSweep },
+    Stability { probe: String, #[serde(flatten)] sweep: FreqSweep },
     TransientNoise { step: f64, stop: f64 },
     Fourier { fundamental: f64, outputs: Vec<String>, num_harmonics: Option<u32> },
     // Vendor-specific
     SpectreSweep { param: String, start: f64, stop: f64, step: f64, inner: String, inner_type: String },
     SpectreMonteCarlo { iterations: u32, inner: String, inner_type: String, seed: Option<u64> },
-    SpectrePac { pss_fundamental: f64, pss_stabilization: f64, pss_harmonics: u32, variation: String, points: u32, start: f64, stop: f64, sweep_type: String },
-    SpectrePnoise { pss_fundamental: f64, pss_stabilization: f64, pss_harmonics: u32, output: String, reference: String, variation: String, points: u32, start: f64, stop: f64 },
-    SpectrePxf { pss_fundamental: f64, pss_stabilization: f64, pss_harmonics: u32, output: String, source: String, variation: String, points: u32, start: f64, stop: f64 },
-    SpectrePstb { pss_fundamental: f64, pss_stabilization: f64, pss_harmonics: u32, probe: String, variation: String, points: u32, start: f64, stop: f64 },
+    SpectrePac { #[serde(flatten)] pss: PssBase, #[serde(flatten)] sweep: FreqSweep, sweep_type: String },
+    SpectrePnoise { #[serde(flatten)] pss: PssBase, output: String, reference: String, #[serde(flatten)] sweep: FreqSweep },
+    SpectrePxf { #[serde(flatten)] pss: PssBase, output: String, source: String, #[serde(flatten)] sweep: FreqSweep },
+    SpectrePstb { #[serde(flatten)] pss: PssBase, probe: String, #[serde(flatten)] sweep: FreqSweep },
 }
 
 impl Analysis {
@@ -551,12 +551,68 @@ pub struct DcSweep {
     pub step: f64,
 }
 
+/// A frequency sweep. Flattened into each analysis that carries one, so the
+/// JSON keeps the four fields `variation`, `points`, `start`, `stop` inline.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct AcSweepParams {
-    pub variation: String,
+pub struct FreqSweep {
+    pub variation: Sweep,
+    /// Per decade or octave, or in total for [`Sweep::Lin`].
     pub points: u32,
     pub start: f64,
     pub stop: f64,
+}
+
+/// How a frequency sweep spaces its points. JSON spells it lowercase and
+/// reads any case; anything else fails to load.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase", try_from = "String")]
+pub enum Sweep {
+    Dec,
+    Oct,
+    Lin,
+    /// Spectre's `log=N`: N points in total, log-spaced.
+    Log,
+}
+
+impl Sweep {
+    /// The SPICE keyword: `dec`, `oct`, `lin`, `log`.
+    pub fn name(self) -> &'static str {
+        match self {
+            Sweep::Dec => "dec",
+            Sweep::Oct => "oct",
+            Sweep::Lin => "lin",
+            Sweep::Log => "log",
+        }
+    }
+}
+
+impl std::str::FromStr for Sweep {
+    type Err = String;
+
+    /// Reads a [`Sweep::name`] in any case.
+    fn from_str(s: &str) -> Result<Self, String> {
+        [Sweep::Dec, Sweep::Oct, Sweep::Lin, Sweep::Log]
+            .into_iter()
+            .find(|w| w.name().eq_ignore_ascii_case(s))
+            .ok_or_else(|| format!("unknown sweep '{s}' (expected dec, oct, lin or log)"))
+    }
+}
+
+impl TryFrom<String> for Sweep {
+    type Error = String;
+
+    fn try_from(s: String) -> Result<Self, String> {
+        s.parse()
+    }
+}
+
+/// The periodic steady state a SpectreRF small-signal analysis linearizes
+/// around (`pac`, `pnoise`, `pxf`, `pstb`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PssBase {
+    pub pss_fundamental: f64,
+    pub pss_stabilization: f64,
+    pub pss_harmonics: u32,
 }
 
 // ── Simulation options ──
@@ -892,6 +948,43 @@ mod tests {
         }
     }
 
+    /// The flat `variation`/`points`/`start`/`stop` and `pss_*` fields that
+    /// `FreqSweep` and `PssBase` now hold. Every line is the JSON the string
+    /// `variation` code wrote (0.1.2, taken from the test suite's own decks);
+    /// it loads, and writes back byte for byte.
+    #[test]
+    fn sweep_json_from_0_1_2_round_trips_byte_for_byte() {
+        let old = [
+            r#"{"type":"Ac","variation":"dec","points":50,"start":1.0,"stop":10000000000.0}"#,
+            r#"{"type":"Distortion","variation":"dec","points":10,"start":1.0,"stop":1000.0,"f2overf1":null}"#,
+            r#"{"type":"Noise","output":"p2","reference":"0","source":"Vp1","variation":"dec","points":50,"start":1000000.0,"stop":10000000000.0,"points_per_summary":null}"#,
+            r#"{"type":"SPar","variation":"dec","points":20,"start":1000000.0,"stop":1000000000.0}"#,
+            r#"{"type":"Sensitivity","output":"out","ac":{"variation":"dec","points":10,"start":1.0,"stop":1000000.0}}"#,
+            r#"{"type":"SpectrePac","pss_fundamental":1000000000.0,"pss_stabilization":1e-7,"pss_harmonics":10,"variation":"dec","points":100,"start":1.0,"stop":1000000000.0,"sweep_type":"relative"}"#,
+            r#"{"type":"SpectrePnoise","pss_fundamental":1000000000.0,"pss_stabilization":1e-7,"pss_harmonics":10,"output":"out","reference":"0","variation":"dec","points":10,"start":1.0,"stop":1000000.0}"#,
+            r#"{"type":"SpectrePstb","pss_fundamental":1000000000.0,"pss_stabilization":1e-7,"pss_harmonics":10,"probe":"IPRB0","variation":"dec","points":10,"start":1.0,"stop":1000000.0}"#,
+            r#"{"type":"SpectrePxf","pss_fundamental":1000000000.0,"pss_stabilization":1e-7,"pss_harmonics":10,"output":"out","source":"Vin","variation":"dec","points":10,"start":1.0,"stop":1000000.0}"#,
+            r#"{"type":"Stability","probe":"IPRB0","variation":"dec","points":20,"start":1.0,"stop":1000000000.0}"#,
+            r#"{"type":"Noise","output":"o","reference":"0","source":"V1","variation":"oct","points":3,"start":1.0,"stop":8.0,"points_per_summary":2}"#,
+            r#"{"type":"Ac","variation":"lin","points":2,"start":1000.0,"stop":2000.0}"#,
+            r#"{"type":"Ac","variation":"log","points":7,"start":1.0,"stop":1000.0}"#,
+        ];
+        for s in old {
+            let a: Analysis = serde_json::from_str(s).unwrap_or_else(|e| panic!("{s}: {e}"));
+            assert_eq!(serde_json::to_string(&a).unwrap(), s);
+        }
+    }
+
+    /// The sweep name is parsed where JSON is read: any case loads, and a
+    /// name no simulator has fails the load instead of reaching a deck.
+    #[test]
+    fn sweep_names_parse_once_at_load() {
+        let ac = |v: &str| serde_json::from_str::<Analysis>(&format!(r#"{{"type":"Ac","variation":"{v}","points":5,"start":1.0,"stop":10.0}}"#));
+        assert_eq!(ac("DEC").unwrap(), Analysis::Ac { sweep: FreqSweep { variation: Sweep::Dec, points: 5, start: 1.0, stop: 10.0 } });
+        let err = ac("decade").unwrap_err().to_string();
+        assert!(err.contains("unknown sweep 'decade'"), "{err}");
+    }
+
     /// A testbench written before 0.1.3 names its DUT in `dut`; the field is
     /// gone, and such JSON still loads (no `deny_unknown_fields`).
     #[test]
@@ -974,25 +1067,25 @@ mod tests {
         let analyses = vec![
             Analysis::Op,
             Analysis::Dc { sweeps: vec![DcSweep { source: "V1".into(), start: 0.0, stop: 5.0, step: 0.01 }] },
-            Analysis::Ac { variation: "dec".into(), points: 100, start: 1.0, stop: 1e9 },
+            Analysis::Ac { sweep: FreqSweep { variation: Sweep::Dec, points: 100, start: 1.0, stop: 1e9 } },
             Analysis::Transient { step: 1e-9, stop: 1e-3, start: Some(0.0), max_step: Some(1e-10), uic: true },
-            Analysis::Noise { output: "V(out)".into(), reference: "0".into(), source: "V1".into(), variation: "dec".into(), points: 10, start: 1.0, stop: 1e6, points_per_summary: None },
+            Analysis::Noise { output: "V(out)".into(), reference: "0".into(), source: "V1".into(), sweep: FreqSweep { variation: Sweep::Dec, points: 10, start: 1.0, stop: 1e6 }, points_per_summary: None },
             Analysis::Tf { output: "V(out)".into(), source: "Vin".into() },
-            Analysis::Sensitivity { output: "V(out)".into(), ac: Some(AcSweepParams { variation: "dec".into(), points: 10, start: 1.0, stop: 1e6 }) },
+            Analysis::Sensitivity { output: "V(out)".into(), ac: Some(FreqSweep { variation: Sweep::Dec, points: 10, start: 1.0, stop: 1e6 }) },
             Analysis::PoleZero { node1: "in".into(), node2: "0".into(), node3: "out".into(), node4: "0".into(), tf_type: "vol".into(), pz_type: "pz".into() },
-            Analysis::Distortion { variation: "dec".into(), points: 10, start: 1.0, stop: 1e6, f2overf1: Some(0.9) },
+            Analysis::Distortion { sweep: FreqSweep { variation: Sweep::Dec, points: 10, start: 1.0, stop: 1e6 }, f2overf1: Some(0.9) },
             Analysis::Pss { fundamental: 1e6, stabilization: 100e-6, observe_node: "out".into(), points_per_period: 100, harmonics: 10 },
             Analysis::HarmonicBalance { frequencies: vec![1e6, 2e6], harmonics: vec![5, 3] },
-            Analysis::SPar { variation: "lin".into(), points: 201, start: 1e6, stop: 10e9 },
-            Analysis::Stability { probe: "iprobe".into(), variation: "dec".into(), points: 100, start: 1.0, stop: 1e9 },
+            Analysis::SPar { sweep: FreqSweep { variation: Sweep::Lin, points: 201, start: 1e6, stop: 10e9 } },
+            Analysis::Stability { probe: "iprobe".into(), sweep: FreqSweep { variation: Sweep::Dec, points: 100, start: 1.0, stop: 1e9 } },
             Analysis::TransientNoise { step: 1e-9, stop: 1e-6 },
             Analysis::Fourier { fundamental: 1e3, outputs: vec!["V(out)".into()], num_harmonics: Some(10) },
             Analysis::SpectreSweep { param: "R1".into(), start: 1e3, stop: 10e3, step: 1e3, inner: "dc1".into(), inner_type: "dc".into() },
             Analysis::SpectreMonteCarlo { iterations: 100, inner: "tran1".into(), inner_type: "tran".into(), seed: Some(42) },
-            Analysis::SpectrePac { pss_fundamental: 1e6, pss_stabilization: 100e-6, pss_harmonics: 10, variation: "dec".into(), points: 100, start: 1.0, stop: 1e9, sweep_type: "relative".into() },
-            Analysis::SpectrePnoise { pss_fundamental: 1e6, pss_stabilization: 100e-6, pss_harmonics: 10, output: "out".into(), reference: "0".into(), variation: "dec".into(), points: 100, start: 1.0, stop: 1e9 },
-            Analysis::SpectrePxf { pss_fundamental: 1e6, pss_stabilization: 100e-6, pss_harmonics: 10, output: "out".into(), source: "V1".into(), variation: "dec".into(), points: 100, start: 1.0, stop: 1e9 },
-            Analysis::SpectrePstb { pss_fundamental: 1e6, pss_stabilization: 100e-6, pss_harmonics: 10, probe: "iprobe".into(), variation: "dec".into(), points: 100, start: 1.0, stop: 1e9 },
+            Analysis::SpectrePac { pss: PssBase { pss_fundamental: 1e6, pss_stabilization: 100e-6, pss_harmonics: 10 }, sweep: FreqSweep { variation: Sweep::Dec, points: 100, start: 1.0, stop: 1e9 }, sweep_type: "relative".into() },
+            Analysis::SpectrePnoise { pss: PssBase { pss_fundamental: 1e6, pss_stabilization: 100e-6, pss_harmonics: 10 }, output: "out".into(), reference: "0".into(), sweep: FreqSweep { variation: Sweep::Dec, points: 100, start: 1.0, stop: 1e9 } },
+            Analysis::SpectrePxf { pss: PssBase { pss_fundamental: 1e6, pss_stabilization: 100e-6, pss_harmonics: 10 }, output: "out".into(), source: "V1".into(), sweep: FreqSweep { variation: Sweep::Dec, points: 100, start: 1.0, stop: 1e9 } },
+            Analysis::SpectrePstb { pss: PssBase { pss_fundamental: 1e6, pss_stabilization: 100e-6, pss_harmonics: 10 }, probe: "iprobe".into(), sweep: FreqSweep { variation: Sweep::Dec, points: 100, start: 1.0, stop: 1e9 } },
         ];
 
         analyses.iter().for_each(assert_tagged);
@@ -1026,7 +1119,7 @@ mod tests {
             "dc"
         );
         assert_eq!(
-            Analysis::Ac { variation: "dec".into(), points: 10, start: 1.0, stop: 1e6 }.kind_str(),
+            Analysis::Ac { sweep: FreqSweep { variation: Sweep::Dec, points: 10, start: 1.0, stop: 1e6 } }.kind_str(),
             "ac"
         );
         assert_eq!(
@@ -1034,7 +1127,7 @@ mod tests {
             "tran"
         );
         assert_eq!(
-            Analysis::Noise { output: "out".into(), reference: "0".into(), source: "V1".into(), variation: "dec".into(), points: 10, start: 1.0, stop: 1e6, points_per_summary: None }.kind_str(),
+            Analysis::Noise { output: "out".into(), reference: "0".into(), source: "V1".into(), sweep: FreqSweep { variation: Sweep::Dec, points: 10, start: 1.0, stop: 1e6 }, points_per_summary: None }.kind_str(),
             "noise"
         );
         assert_eq!(
@@ -1046,7 +1139,7 @@ mod tests {
             "hb"
         );
         assert_eq!(
-            Analysis::Stability { probe: "p".into(), variation: "dec".into(), points: 10, start: 1.0, stop: 1e6 }.kind_str(),
+            Analysis::Stability { probe: "p".into(), sweep: FreqSweep { variation: Sweep::Dec, points: 10, start: 1.0, stop: 1e6 } }.kind_str(),
             "stb"
         );
         assert_eq!(
@@ -1054,7 +1147,7 @@ mod tests {
             "trannoise"
         );
         assert_eq!(
-            Analysis::SpectrePac { pss_fundamental: 1e6, pss_stabilization: 10e-6, pss_harmonics: 10, variation: "dec".into(), points: 10, start: 1.0, stop: 1e6, sweep_type: "relative".into() }.kind_str(),
+            Analysis::SpectrePac { pss: PssBase { pss_fundamental: 1e6, pss_stabilization: 10e-6, pss_harmonics: 10 }, sweep: FreqSweep { variation: Sweep::Dec, points: 10, start: 1.0, stop: 1e6 }, sweep_type: "relative".into() }.kind_str(),
             "pac"
         );
     }

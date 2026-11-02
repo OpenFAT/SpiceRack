@@ -608,8 +608,8 @@ fn analysis(d: Dialect, x: bool, a: &Analysis) -> Result<String, CodeGenError> {
             }
             s
         }
-        Analysis::Ac { variation, points, start, stop } => {
-            format!(".ac {} {} {} {}", variation, points, num(d, x, *start), num(d, x, *stop))
+        Analysis::Ac { sweep: FreqSweep { variation, points, start, stop } } => {
+            format!(".ac {} {} {} {}", variation.name(), points, num(d, x, *start), num(d, x, *stop))
         }
         // HSPICE reads extra positional fields as further step/stop
         // segments, so the start is `START=` and the step cap `delmax`.
@@ -644,7 +644,7 @@ fn analysis(d: Dialect, x: bool, a: &Analysis) -> Result<String, CodeGenError> {
             }
             s
         }
-        Analysis::Noise { output, reference, source, variation, points, start, stop, points_per_summary } => {
+        Analysis::Noise { output, reference, source, sweep: FreqSweep { variation, points, start, stop }, points_per_summary } => {
             let out_spec = if reference.is_empty() || reference == "0" {
                 format!("V({})", output)
             } else {
@@ -654,10 +654,10 @@ fn analysis(d: Dialect, x: bool, a: &Analysis) -> Result<String, CodeGenError> {
             if hs {
                 return Ok(format!(
                     ".ac {} {} {} {}\n.noise {} {} {}",
-                    variation, points, num(d, x, *start), num(d, x, *stop), out_spec, source, points_per_summary.unwrap_or(0),
+                    variation.name(), points, num(d, x, *start), num(d, x, *stop), out_spec, source, points_per_summary.unwrap_or(0),
                 ));
             }
-            let mut s = format!(".noise {} {} {} {} {} {}", out_spec, source, variation, points, num(d, x, *start), num(d, x, *stop));
+            let mut s = format!(".noise {} {} {} {} {} {}", out_spec, source, variation.name(), points, num(d, x, *start), num(d, x, *stop));
             // `pts_per_summary` is an ngspice/SPICE3 extension; LTspice's
             // `.noise` card stops at the stop frequency.
             if let (Some(pps), true) = (points_per_summary, ng || d == Dialect::Xyce) {
@@ -690,15 +690,15 @@ fn analysis(d: Dialect, x: bool, a: &Analysis) -> Result<String, CodeGenError> {
         Analysis::Sensitivity { output, ac } if ng || (hs && ac.is_none()) => {
             let mut s = format!(".sens {}", output);
             if let Some(p) = ac {
-                s.push_str(&format!(" AC {} {} {} {}", p.variation, p.points, num(d, x, p.start), num(d, x, p.stop)));
+                s.push_str(&format!(" AC {} {} {} {}", p.variation.name(), p.points, num(d, x, p.start), num(d, x, p.stop)));
             }
             s
         }
         Analysis::PoleZero { node1, node2, node3, node4, tf_type, pz_type } if ng => {
             format!(".pz {} {} {} {} {} {}", node1, node2, node3, node4, tf_type, pz_type)
         }
-        Analysis::Distortion { variation, points, start, stop, f2overf1 } if ng => {
-            let mut s = format!(".disto {} {} {} {}", variation, points, num(d, x, *start), num(d, x, *stop));
+        Analysis::Distortion { sweep: FreqSweep { variation, points, start, stop }, f2overf1 } if ng => {
+            let mut s = format!(".disto {} {} {} {}", variation.name(), points, num(d, x, *start), num(d, x, *stop));
             if let Some(ratio) = f2overf1 {
                 s.push_str(&format!(" {}", ratio));
             }
@@ -709,8 +709,8 @@ fn analysis(d: Dialect, x: bool, a: &Analysis) -> Result<String, CodeGenError> {
         Analysis::Pss { fundamental, stabilization, observe_node, points_per_period, harmonics } if ng => {
             format!(".pss {} {} {} {} {}", fundamental, stabilization, observe_node, points_per_period, harmonics)
         }
-        Analysis::SPar { variation, points, start, stop } if ng => {
-            format!(".sp {} {} {} {}", variation, points, start, stop)
+        Analysis::SPar { sweep: FreqSweep { variation, points, start, stop } } if ng => {
+            format!(".sp {} {} {} {}", variation.name(), points, start, stop)
         }
         // Harmonic balance, loop-gain stability, transient noise and the
         // SpectreRF family have no SPICE3-family card.
@@ -986,7 +986,7 @@ mod tests {
         assert!(dc_str.starts_with(".dc V1"), "dc: {}", dc_str);
 
         // AC
-        let ac = Analysis::Ac { variation: "dec".into(), points: 100, start: 1.0, stop: 1e9 };
+        let ac = Analysis::Ac { sweep: FreqSweep { variation: Sweep::Dec, points: 100, start: 1.0, stop: 1e9 } };
         let ac_str = analysis(cg, false, &ac).unwrap();
         assert!(ac_str.starts_with(".ac dec 100"), "ac: {}", ac_str);
 
@@ -1005,10 +1005,8 @@ mod tests {
             output: "out".into(),
             reference: "0".into(),
             source: "V1".into(),
-            variation: "dec".into(),
-            points: 10,
-            start: 1.0,
-            stop: 1e6,
+            sweep: FreqSweep { variation: Sweep::Dec,
+            points: 10, start: 1.0, stop: 1e6 },
             points_per_summary: None,
         };
         let noise_str = analysis(cg, false, &noise).unwrap();
@@ -1031,7 +1029,7 @@ mod tests {
 
         // Distortion
         let disto = Analysis::Distortion {
-            variation: "dec".into(), points: 10, start: 1e3, stop: 1e6, f2overf1: None,
+            sweep: FreqSweep { variation: Sweep::Dec, points: 10, start: 1e3, stop: 1e6 }, f2overf1: None,
         };
         let disto_str = analysis(cg, false, &disto).unwrap();
         assert!(disto_str.starts_with(".disto dec 10"), "disto: {}", disto_str);
@@ -1301,8 +1299,7 @@ mod tests {
         assert!(analysis(cg_xy, false, &pz).is_err(), "pz should error on ltspice");
 
         let disto = Analysis::Distortion {
-            variation: "dec".into(), points: 10,
-            start: 1e3, stop: 1e6, f2overf1: None,
+            sweep: FreqSweep { variation: Sweep::Dec, points: 10, start: 1e3, stop: 1e6 }, f2overf1: None,
         };
         assert!(analysis(cg_xy, false, &disto).is_err(), "disto should error on ltspice");
 
@@ -1495,7 +1492,7 @@ mod tests {
             fundamental: 1e9, stabilization: 1e-7, observe_node: "v(out)".into(),
             points_per_period: 128, harmonics: 10,
         };
-        let sp = Analysis::SPar { variation: "dec".into(), points: 10, start: 1e6, stop: 1e10 };
+        let sp = Analysis::SPar { sweep: FreqSweep { variation: Sweep::Dec, points: 10, start: 1e6, stop: 1e10 } };
         assert_eq!(analysis(Dialect::Ngspice, false, &pss).unwrap(), ".pss 1000000000 0.0000001 v(out) 128 10");
         assert_eq!(analysis(Dialect::Ngspice, false, &sp).unwrap(), ".sp dec 10 1000000 10000000000");
         for a in [&pss, &sp] {
