@@ -141,6 +141,37 @@ fn hand_written_control_deck_reports_measures_and_data() {
     assert!(close(column(&raw, "out")[10], 5.0, 1e-9));
 }
 
+/// A hand-written deck with top-level `.meas` or `.four` and no `.control`
+/// block that runs it would go to ngspice with `-r`, which drops those
+/// results and exits 0. The backend refuses it, naming the card, before
+/// ngspice runs.
+#[test]
+fn top_level_meas_or_four_without_a_control_block_is_refused() {
+    let meas = "* t\nV1 in 0 1\nR1 in 0 1k\n.MEASURE dc i1 find i(V1) at=1\n.dc V1 0 1 1\n.end\n";
+    let four = "* t\nV1 in 0 SIN(0 1 1k)\nR1 in 0 1k\n.tran 1u 2m\n.four 1k v(in)\n.end\n";
+    for (deck, card) in [(meas, ".MEASURE dc i1"), (four, ".four 1k v(in)")] {
+        let err = Dialect::Ngspice.run(deck).expect_err("results would be lost").to_string();
+        assert!(err.contains(card) && err.contains(".control block"), "{err}");
+    }
+}
+
+/// A raw `.four` line (here a testbench line with a `+` continuation) runs
+/// as `fourier` in the codegen's `.control` block: the table reaches stdout.
+#[test]
+fn raw_four_line_reports_its_fourier_table() {
+    let deck = common::emitted(
+        Dialect::Ngspice,
+        "* four\nV1 in 0 SIN(0 1 1k)\nR1 in out 1k\nC1 out 0 1n\n.tran 1u 10m\n.end\n",
+        |ir| ir.testbench.as_mut().unwrap().extra_lines.extend([".four 1k".to_string(), "+ v(in)".to_string()]),
+    );
+    assert!(deck.contains(".control\ntran 1u 10m\nfourier 1k v(in)\n.endc\n"), "{deck}");
+    let raw = run(&deck);
+    // A clean 1 V sine: fundamental 1 V, THD ~0 (closed form).
+    assert!(raw.stdout.contains("Fourier analysis for v(in)"), "{}", raw.stdout);
+    let thd: f64 = raw.stdout.split("THD: ").nth(1).and_then(|s| s.split(' ').next()).and_then(|s| s.parse().ok()).expect("THD in table");
+    assert!(thd < 1e-6, "THD {thd} %");
+}
+
 // ── circuit features claimed in the capability table ──
 
 #[test]

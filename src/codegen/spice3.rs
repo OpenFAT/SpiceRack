@@ -180,7 +180,7 @@ fn instance(out: &mut String, inst: &Instance) {
 
 /// Components, instances, raw text — the part of a block after its models,
 /// one line each.
-fn body(out: &mut String, d: Dialect, x: bool, sc: &Subcircuit) -> Result<(), CodeGenError> {
+fn body(out: &mut String, d: Dialect, x: bool, sc: &Subcircuit, drop_four: bool) -> Result<(), CodeGenError> {
     for e in sc.elements() {
         match e {
             Element::Component(c) => component(out, d, x, c)?,
@@ -188,9 +188,7 @@ fn body(out: &mut String, d: Dialect, x: bool, sc: &Subcircuit) -> Result<(), Co
         }
         out.push('\n');
     }
-    for l in &sc.raw_spice {
-        w!(out, "{l}\n");
-    }
+    raw_lines(out, &sc.raw_spice, drop_four);
     Ok(())
 }
 
@@ -220,7 +218,7 @@ fn quote(d: Dialect) -> &'static str {
     if d == Dialect::Hspice { "'" } else { "" }
 }
 
-fn subcircuit(out: &mut String, d: Dialect, x: bool, sc: &Subcircuit) -> Result<(), CodeGenError> {
+fn subcircuit(out: &mut String, d: Dialect, x: bool, sc: &Subcircuit, drop_four: bool) -> Result<(), CodeGenError> {
     w!(out, ".subckt {}", sc.name);
     for port in &sc.ports {
         w!(out, " {}", port.name);
@@ -236,7 +234,7 @@ fn subcircuit(out: &mut String, d: Dialect, x: bool, sc: &Subcircuit) -> Result<
         model(out, d, m);
         out.push('\n');
     }
-    body(out, d, x, sc)?;
+    body(out, d, x, sc, drop_four)?;
     w!(out, ".ends {}\n", sc.name);
     Ok(())
 }
@@ -420,29 +418,87 @@ pub(crate) fn runs_in_control<'a>(lines: impl IntoIterator<Item = &'a str>) -> b
     false
 }
 
+/// True if `line` is a `.meas`/`.measure` card (any case).
+pub(crate) fn is_meas(line: &str) -> bool {
+    line.split_whitespace().next().and_then(|w| w.get(..5)).is_some_and(|w| w.eq_ignore_ascii_case(".meas"))
+}
+
+/// True if `line` is a `.four` card (any case).
+pub(crate) fn is_four(line: &str) -> bool {
+    line.split_whitespace().next().is_some_and(|w| w.eq_ignore_ascii_case(".four"))
+}
+
+/// True if `line` continues the card above it (`+ ...`).
+fn is_continuation(line: &str) -> bool {
+    line.trim_start().starts_with('+')
+}
+
+/// The `.four` cards among `lines`, each joined with its `+` continuation
+/// lines, as `fourier` commands: `.four 1k v(a)` / `+ v(b)` is
+/// `fourier 1k v(a) v(b)`.
+fn fourier_commands<'a>(lines: impl Iterator<Item = &'a str>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut open = false;
+    for l in lines {
+        if is_continuation(l) {
+            if let (true, Some(cmd)) = (open, out.last_mut()) {
+                l.trim_start()[1..].split_whitespace().for_each(|t| w!(cmd, " {t}"));
+            }
+            continue;
+        }
+        open = is_four(l);
+        if open {
+            let mut cmd = String::from("fourier");
+            l.split_whitespace().skip(1).for_each(|t| w!(cmd, " {t}"));
+            out.push(cmd);
+        }
+    }
+    out
+}
+
+/// Raw lines, one each; with `drop_four`, every `.four` card and its `+`
+/// continuation lines are left out (the deck runs them as `fourier`
+/// commands in its `.control` block instead).
+fn raw_lines(out: &mut String, lines: &[String], drop_four: bool) {
+    let mut four = false;
+    for l in lines {
+        if !is_continuation(l) {
+            four = drop_four && is_four(l);
+        }
+        if !four {
+            w!(out, "{l}\n");
+        }
+    }
+}
+
 /// Where an ngspice deck runs its analysis from a `.control` block: the
 /// index in `tb.analyses` of the analysis to move there, and the `fourier`
-/// command to follow it.
+/// commands to follow it, one per `.four` (an `Analysis::Fourier`, or a raw
+/// or extra line, with its `+` continuations).
 ///
 /// ngspice refuses `.measure` ("No .measure possible in batch mode (-b) with
 /// -r rawfile set!") and ignores `.four` (".fourier line ignored since
-/// rawfile was produced") under `-b -r`, so a deck with either runs its first
-/// `.ac`/`.tran`/`.dc` from a block, where `.four` has to be the `fourier`
-/// command (there is no `four` command). The backend appends the `write`: only
-/// it knows the rawfile's path. Only those three analyses: `.measure` takes
-/// no other one, and `write` keeps only the current plot, which for `noise`,
-/// `disto` and `pz` would drop the others. `None` when nothing needs a block,
-/// no such analysis exists, or a raw control block already runs the deck.
-fn control_run(x: bool, ir: &CircuitIR, tb: &Testbench) -> Option<(usize, Option<String>)> {
-    let raw = || ir.top.raw_spice.iter().chain(ir.subcircuit_defs.iter().flat_map(|s| &s.raw_spice)).chain(&tb.extra_lines).map(String::as_str);
-    let meas = |l: &str| l.split_whitespace().next().and_then(|w| w.get(..5)).is_some_and(|w| w.eq_ignore_ascii_case(".meas"));
-    let fourier = tb.analyses.iter().find_map(|a| match a {
-        Analysis::Fourier { fundamental, outputs, .. } if !outputs.is_empty() => {
-            Some(format!("fourier {} {}", num(Dialect::Ngspice, x, *fundamental), outputs.join(" ")))
+/// rawfile was produced") under `-b -r`, so a deck with either (from the
+/// testbench or a raw line) runs its first `.ac`/`.tran`/`.dc` from a block,
+/// where `.four` has to be the `fourier` command (there is no `four`
+/// command); `.meas` cards stay where they are. The backend appends the
+/// `write`: only it knows the rawfile's path. Only those three analyses:
+/// `.measure` takes no other one, and `write` keeps only the current plot,
+/// which for `noise`, `disto` and `pz` would drop the others. `None` when
+/// nothing needs a block, no such analysis exists, or a raw control block
+/// already runs the deck (the backend refuses a deck left with a `.meas` or
+/// `.four` and no block that runs it, rather than lose its results).
+fn control_run(x: bool, ir: &CircuitIR, tb: &Testbench) -> Option<(usize, Vec<String>)> {
+    let raw = || ir.subcircuit_defs.iter().chain(std::iter::once(&ir.top)).flat_map(|s| &s.raw_spice).chain(&tb.extra_lines).map(String::as_str);
+    let mut fourier = fourier_commands(raw());
+    for a in &tb.analyses {
+        if let Analysis::Fourier { fundamental, outputs, .. } = a {
+            let mut cmd = format!("fourier {}", num(Dialect::Ngspice, x, *fundamental));
+            outputs.iter().for_each(|o| w!(cmd, " {o}"));
+            fourier.push(cmd);
         }
-        _ => None,
-    });
-    if (tb.measures.is_empty() && !raw().any(meas) && fourier.is_none()) || runs_in_control(raw()) {
+    }
+    if (tb.measures.is_empty() && !raw().any(is_meas) && fourier.is_empty()) || runs_in_control(raw()) {
         return None;
     }
     let at = tb.analyses.iter().position(|a| matches!(a, Analysis::Ac { .. } | Analysis::Transient { .. } | Analysis::Dc { .. }))?;
@@ -455,6 +511,11 @@ pub(super) fn netlist(d: Dialect, ir: &CircuitIR) -> Result<String, CodeGenError
     // back for ngspice, each is spelled to land on the same double. Others
     // (Python's `3.3`) keep their decimal spelling.
     let x = ir.raw_dialect.map(Dialect::family) == Some(Dialect::Ngspice);
+    let control = match &ir.testbench {
+        Some(tb) if d == Dialect::Ngspice => control_run(x, ir, tb),
+        _ => None,
+    };
+    let drop_four = control.is_some();
     // ponytail: ~64 bytes a card is a guess; the String grows past it.
     let cards = std::iter::once(&ir.top).chain(&ir.subcircuit_defs).map(|s| s.components.len() + s.instances.len()).sum::<usize>();
     let mut out = String::with_capacity(64 * (cards + 16));
@@ -499,10 +560,10 @@ pub(super) fn netlist(d: Dialect, ir: &CircuitIR) -> Result<String, CodeGenError
 
     for sc in &ir.subcircuit_defs {
         out.push('\n');
-        subcircuit(&mut out, d, x, sc)?;
+        subcircuit(&mut out, d, x, sc, drop_four)?;
     }
 
-    body(&mut out, d, x, &ir.top)?;
+    body(&mut out, d, x, &ir.top, drop_four)?;
 
     if let Some(ref tb) = ir.testbench {
         for comp in &tb.stimulus {
@@ -576,22 +637,19 @@ pub(super) fn netlist(d: Dialect, ir: &CircuitIR) -> Result<String, CodeGenError
         for sp in &tb.step_params {
             w!(out, "{}\n", step_param(d, sp)?);
         }
-        for l in &tb.extra_lines {
-            w!(out, "{l}\n");
-        }
-        let control = if d == Dialect::Ngspice { control_run(x, ir, tb) } else { None };
+        raw_lines(&mut out, &tb.extra_lines, drop_four);
         for (i, a) in tb.analyses.iter().enumerate() {
             match &control {
                 Some((at, fourier)) if i == *at => {
                     // `.tran 1u 1m` -> bare `tran 1u 1m` inside the block.
                     w!(out, ".control\n{}\n", analysis(d, x, a)?.trim_start_matches('.'));
-                    if let Some(f) = fourier {
+                    for f in fourier {
                         w!(out, "{f}\n");
                     }
                     out.push_str(".endc\n");
                 }
                 // Left as a dot-card, `.four` runs the analysis a second time.
-                Some((_, Some(_))) if matches!(a, Analysis::Fourier { .. }) => {}
+                Some(_) if matches!(a, Analysis::Fourier { .. }) => {}
                 _ => w!(out, "{}\n", analysis(d, x, a)?),
             }
         }
@@ -1347,8 +1405,12 @@ mod tests {
 
     #[test]
     fn a_raw_meas_line_counts_as_a_measure() {
-        let deck = netlist(Dialect::Ngspice, &divider(vec![tran()], &[], &[".MEASURE tran v1 find v(output) at=1m"])).unwrap();
-        assert!(deck.contains(".control\ntran 1u 10m\n.endc"), "{deck}");
+        let deck = netlist(Dialect::Ngspice, &divider(vec![tran()], &[], &[".MEASURE tran v1 find v(output)", "+ at=1m"])).unwrap();
+        // The card and its continuation stay where they were written.
+        assert!(deck.ends_with(".MEASURE tran v1 find v(output)\n+ at=1m\n.control\ntran 1u 10m\n.endc\n.end"), "{deck}");
+        let mut ir = divider(vec![tran()], &[], &[]);
+        ir.top.raw_spice = vec![".meas tran v2 find v(output) at=1m".into()];
+        assert!(netlist(Dialect::Ngspice, &ir).unwrap().contains(".control\ntran 1u 10m\n.endc"));
     }
 
     #[test]
@@ -1378,15 +1440,35 @@ mod tests {
     #[test]
     fn four_becomes_the_fourier_command_after_the_transient() {
         let deck = netlist(Dialect::Ngspice, &divider(vec![tran(), four(&["v(output)"]), four(&["v(input)"])], &[], &[])).unwrap();
-        assert!(deck.ends_with(".control\ntran 1u 10m\nfourier 1k v(output)\n.endc\n.end"), "{deck}");
+        // Each `.four` gets its command; the old backend rewrite kept only the first.
+        assert!(deck.ends_with(".control\ntran 1u 10m\nfourier 1k v(output)\nfourier 1k v(input)\n.endc\n.end"), "{deck}");
     }
 
     #[test]
-    fn four_without_a_transient_or_outputs_stays_a_card() {
+    fn four_without_a_transient_stays_a_card() {
+        // No analysis to run from a block: the backend refuses this deck.
         let alone = netlist(Dialect::Ngspice, &divider(vec![four(&["v(output)"])], &[], &[])).unwrap();
         assert!(alone.ends_with(".four 1k v(output)\n.end") && !alone.contains(".control"), "{alone}");
-        let bare = netlist(Dialect::Ngspice, &divider(vec![tran(), four(&[])], &[], &[])).unwrap();
-        assert!(bare.ends_with(".tran 1u 10m\n.four 1k\n.end"), "{bare}");
+    }
+
+    #[test]
+    fn raw_four_cards_with_continuations_become_fourier_commands() {
+        // Spec (ngspice manual, `.four`): `.four freq ov1 <ov2 ...>`; a `+`
+        // line continues the card. Raw cards in the body and the testbench
+        // lines, and the testbench's own `.four`, each get a command.
+        let mut ir = divider(vec![tran(), four(&["v(output)"])], &[], &[".FOUR 2k v(input)", "+ v(output)", ".print tran v(output)"]);
+        ir.top.raw_spice = vec![".four 3k".into(), "  + v(input)".into()];
+        let deck = netlist(Dialect::Ngspice, &ir).unwrap();
+        assert!(deck.ends_with(".print tran v(output)\n.control\ntran 1u 10m\nfourier 3k v(input)\nfourier 2k v(input) v(output)\nfourier 1k v(output)\n.endc\n.end"), "{deck}");
+        assert!(!deck.to_ascii_lowercase().contains(".four") && !deck.contains("+ v("), "{deck}");
+        // Other dialects keep the cards as written.
+        assert!(netlist(Dialect::Ltspice, &ir).unwrap().contains(".FOUR 2k v(input)\n+ v(output)"));
+    }
+
+    #[test]
+    fn a_raw_four_line_alone_moves_the_transient() {
+        let deck = netlist(Dialect::Ngspice, &divider(vec![tran()], &[], &[".four 1k v(output)"])).unwrap();
+        assert!(deck.ends_with(".control\ntran 1u 10m\nfourier 1k v(output)\n.endc\n.end"), "{deck}");
     }
 
     // ── Issue 03: ModelLibrary per-backend path + corner ──

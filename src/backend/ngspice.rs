@@ -5,7 +5,7 @@ use std::path::Path;
 use std::process::Command;
 
 use super::{exec, read_results, scratch, BackendError};
-use crate::codegen::spice3::runs_in_control;
+use crate::codegen::spice3::{is_four, is_meas, runs_in_control};
 use crate::result::RawData;
 
 /// Run a deck through `ngspice -b` and read back its rawfile.
@@ -15,7 +15,20 @@ use crate::result::RawData;
 /// deck with `.measure` or `.four` in that shape, and a hand-written one may
 /// be). This is run mechanics (where the rawfile goes), not dialect
 /// translation.
+///
+/// # Errors
+/// `SimulationError` for a deck with a `.meas` or `.four` card and no
+/// `.control` block that runs its analysis: under `-r`, ngspice would drop
+/// those results and exit 0.
 pub(super) fn run(netlist: &str) -> Result<RawData, BackendError> {
+    if !runs_in_control(netlist.lines()) && let Some(card) = netlist.lines().find(|l| is_meas(l) || is_four(l)) {
+        return Err(BackendError::SimulationError(format!(
+            "'{}': ngspice drops .meas and .four results when it writes a rawfile (-r). \
+             Run the analysis (ac, tran or dc) from a .control block, which the ngspice \
+             netlist SpiceRack writes does, or remove the card.",
+            card.trim()
+        )));
+    }
     let (dir, cir) = scratch(netlist, "deck.cir")?;
     let raw_path = dir.path().join("out.raw");
     let mut cmd = Command::new("ngspice");

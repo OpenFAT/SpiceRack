@@ -43,7 +43,7 @@ Each of these returns a plausible wrong number rather than an error.
 
 **Results are `list[float]`, not numpy arrays.** Slice and iterate them; `.mean()` and stride-slicing raise.
 
-**`.measure` reaches stdout only for `ac`, `dc` and `tran`.** That is ngspice's own limit (it refuses `.measure` under `-b -r rawfile`, so `tb.netlist("ngspice")` runs the first of those three analyses from a `.control` block, `.four` becoming the `fourier` command, and the backend appends the `write`). A `.measure` attached to a noise or pole-zero run returns nothing.
+**`.measure` reaches stdout only for `ac`, `dc` and `tran`.** That is ngspice's own limit (it refuses `.measure` under `-b -r rawfile`, so `tb.netlist("ngspice")` runs the first of those three analyses from a `.control` block, `.four` becoming the `fourier` command, and the backend appends the `write`; raw `.meas`/`.four` lines count too). A `.measure` attached to a noise or pole-zero run alone is refused at run time instead of returning nothing.
 
 ## Metrics
 

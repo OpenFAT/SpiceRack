@@ -88,10 +88,13 @@ To write a deck with several analyses, queue them with the `add_*` twins
 `add_fourier`, ...) and print `tb.netlist(...)`. HSPICE is netlist-only: there
 is no HSPICE runner.
 
-An ngspice deck with a `.meas` or `add_fourier` runs its first `ac`, `tran` or
-`dc` from a `.control` block (with `fourier` after it), because ngspice refuses
-`.measure` and ignores `.four` when it writes a rawfile with `-r`. Run such a
-deck by hand with `ngspice -b deck.cir`; the results print to stdout.
+An ngspice deck with a `.meas` or a `.four` (from `measure`, `add_fourier`, or a
+raw or extra line) runs its first `ac`, `tran` or `dc` from a `.control` block,
+with a `fourier` command for each `.four`, because ngspice refuses `.measure` and
+ignores `.four` when it writes a rawfile with `-r`. Run such a deck by hand with
+`ngspice -b deck.cir`; the results print to stdout. A bench with a `.meas` or
+`.four` and none of those three analyses is refused when it runs, rather than
+returning without its results.
 
 ## Choosing a simulator
 
