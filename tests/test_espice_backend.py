@@ -1,22 +1,21 @@
 """ESPice from Python: the deck a Testbench emits, and the numbers it returns.
 
-The netlist assertions run anywhere. The simulation tests skip when `espice`
-is not on PATH. Verilog-A goes to ESPice as source (`.hdl`, compiled by VerA);
+The netlist assertions run anywhere. The simulation tests need `espice` on
+PATH (`nix develop .#testing`) and fail without it. Verilog-A goes to ESPice as source (`.hdl`, compiled by VerA);
 no OpenVAF and no OSDI on this path.
 
 Run: maturin develop && pytest tests/test_espice_backend.py -v
 """
 import math
 import os
-import shutil
 
 import pytest
 
-ps = pytest.importorskip("spicerack")
+import spicerack as ps
 from spicerack.testbenches import (  # noqa: E402
     CornerCase, delay_table, input_capacitance, run_corners)
 
-needs_espice = pytest.mark.skipif(not shutil.which("espice"), reason="espice not on PATH")
+needs_espice = pytest.mark.needs("espice")
 
 VRES = """`include "disciplines.vams"
 module vres(a, b);

@@ -1,0 +1,30 @@
+name: Nightly
+
+# The nightly tier (TESTING.md): every spice-bench deck and pinned corpus
+# through the importer, re-emitted and re-run on ngspice. Too slow for the
+# merge gate (about 20 min of a 4-vCPU runner).
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  corpus:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@9383ce2bf08796b65508822f5982f49151badc4e # main
+
+      - name: Setup Nix cache
+        uses: DeterminateSystems/magic-nix-cache-action@f69a2d3e148e90223fe63ab6e3f6331f2e7e33dc # main
+
+      - name: Import suite over the corpora
+        run: nix develop .#testing --command cargo test --no-default-features --features corpus --release --test test_import_suite -- --nocapture

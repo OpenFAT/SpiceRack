@@ -10,12 +10,8 @@ import os
 
 
 def import_spicerack():
-    """Import spicerack, skip if not built yet."""
-    try:
-        import spicerack
-        return spicerack
-    except ImportError:
-        pytest.skip("spicerack not built -- run 'maturin develop' first")
+    import spicerack  # unsupported fails, never skips: an unbuilt extension is an error
+    return spicerack
 
 
 # ── Subcircuit Tests ──
@@ -501,10 +497,8 @@ class TestSubcircuitInstances:
         top.instance(child, "1", "a", "0", r=2000.0)
         assert "X1 a 0 rload r=2000" in ps.Testbench(top).netlist("ngspice")
 
+    @pytest.mark.needs("ngspice")
     def test_circuit_x_params_override_the_subckt_default(self):
-        import shutil
-        if not shutil.which("ngspice"):
-            pytest.skip("ngspice not installed")
         ps = import_spicerack()
         from spicerack.unit import u_kOhm
         load = ps.Subcircuit("rload", ["a", "b"], r="1k")

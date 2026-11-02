@@ -10,19 +10,13 @@ import pytest
 
 
 def ps():
-    try:
-        import spicerack
-        return spicerack
-    except ImportError:
-        pytest.skip("spicerack not built")
+    import spicerack  # unsupported fails, never skips: an unbuilt extension is an error
+    return spicerack
 
 
 def unit():
-    try:
-        from spicerack import unit
-        return unit
-    except ImportError:
-        pytest.skip("spicerack not built")
+    from spicerack import unit
+    return unit
 
 
 # ======================================================================

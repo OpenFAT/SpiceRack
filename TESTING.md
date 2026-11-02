@@ -11,7 +11,7 @@ trusts. The rules behind it are in `AGENTS.md` (Testing).
 | merge | both suites in the testing shell | `nix develop .#testing -c cargo test`, then `maturin develop && python3 -m pytest` in a `--system-site-packages` venv | `.github/workflows/test.yaml`, every PR and every push to `main` |
 | docs | the site builds strictly; every Python example in it runs | `nix develop .#docs -c mkdocs build --strict`; `tests/test_docs.py` | `.github/workflows/docs.yaml`; pytest |
 | release | tag matches `Cargo.toml` and `pyproject.toml`, wheels for every target, sdist | `tools/bump_version.py`, then the release workflow | `.github/workflows/tags.yaml`, `publish.yaml` |
-| nightly | none yet | | |
+| nightly | the spice-bench and corpus import suite (`--features corpus`) | `nix develop .#testing -c cargo test --no-default-features --features corpus --release --test test_import_suite` | `.github/workflows/nightly.yaml`, 03:17 UTC daily and on demand |
 
 `tools/check_style.py` is vendored from the `code-style` skill
 (https://github.com/OmarSiwy/NixOSConfig/tree/main/skills, sha256 `55f417592f6e7ec3…`).
@@ -31,8 +31,8 @@ provenance, never by re-deriving it the way codegen does.
 | `test_espice_analyses.rs` | real ESPice; the same closed forms as the ngspice suite |
 | `test_laplace_ngspice.rs` | real ngspice 44.2; closed-form Laplace responses |
 | `test_vacask_runs.rs` | real VACASK: the emitted deck parses and writes a raw file with the expected numbers |
-| `test_dialects.rs` | one circuit in every dialect, read back by ESPice (`--tokenizer=<d>`), same numbers |
-| `test_import_suite.rs` | spice-bench decks (`SPICE_BENCH`): parse, JSON round trip, re-emitted as ngspice, every plot and `.meas` reproduced |
+| `test_dialects.rs` | one circuit in every dialect, read back by ESPice (`--tokenizer=<d>`), same numbers; the dialects it cannot do yet are named in `ESPICE_REFUSES` |
+| `test_import_suite.rs` | spice-bench decks (`SPICE_BENCH`, a pinned nix fetch): parse, JSON round trip, re-emitted as ngspice, every plot and `.meas` reproduced by real ngspice; decks ngspice itself cannot run are named in `tests/fixtures/spice_bench_known_failures.txt`, decks past the CPU budget in `spice_bench_slow.txt`. Parse/emit fixpoint over the ngspice, HSPICE, Xyce, VACASK and LTspice corpora (`*_CORPUS`, pinned in `flake.nix`) |
 | `test_spectre_golden.rs` | goldens; Spectre is licence-gated, so the text is checked against the Spectre reference manual |
 | `test_ltspice_dialect.rs` | emitted text against the LTspice help; no LTspice binary, so unverified by execution |
 | `test_backends.rs`, `test_unit.rs` | spec examples |
@@ -50,6 +50,18 @@ provenance, never by re-deriving it the way codegen does.
 
 ## Known gaps
 
+`nix develop .#testing` provides every simulator and corpus the tests read
+(ngspice, VACASK, ESPice built from source, the spice-bench suite and the
+corpora); outside it those tests fail, they never skip.
+
 - LTspice and Spectre are not installed anywhere SpiceRack is tested, so their
   decks are checked against the manuals only.
-- There is no nightly tier.
+- The spice-bench round trip runs only in the nightly tier: 2,586 CPU seconds
+  (5 min 25 s wall on a 20-thread machine, 20 min on a 4-vCPU CI runner), past
+  the merge budget. A change to `src/import` should run it locally before merging.
+- No public Spectre corpus is pinned (ESPice's `spectre_fixtures` are gone
+  upstream), so `spectre_corpus_fixpoint` is a known failure
+  (`#[should_panic]`).
+- ESPice reads back only the HSPICE deck in `test_dialects.rs`: the ngspice
+  and ESPice decks spell Laplace as an XSPICE `s_xfer`, which ESPice cannot
+  read, and codegen refuses the B source for Spectre.

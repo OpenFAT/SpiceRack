@@ -5,9 +5,17 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     rust-overlay.url = "github:oxalica/rust-overlay";
     flake-utils.url = "github:numtide/flake-utils";
+    # ESPice, built from source: the oracle `espice` the dialect and backend
+    # tests run.
+    espice.url = "git+https://github.com/OpenFAT/ESPice.git?shallow=1";
+    espice.inputs.conformance.follows = "conformance";
+    # The VAMS conformance suite: its HSPICE decks and spice-bench's fetch.sh.
+    conformance.url = "github:OpenFAT/VAMS-Conformance-Suite";
+    conformance.inputs.nixpkgs.follows = "nixpkgs";
+    conformance.inputs.flake-utils.follows = "flake-utils";
   };
 
-  outputs = { self, nixpkgs, rust-overlay, flake-utils }:
+  outputs = { self, nixpkgs, rust-overlay, flake-utils, espice, conformance }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         overlays = [
@@ -24,6 +32,21 @@
         ]);
         openvaf = import ./nix/openvaf.nix { inherit pkgs; };
         vacask = import ./nix/vacask.nix { inherit pkgs; openvafPkg = openvaf; };
+        spiceBench = import ./nix/spice-bench.nix { inherit pkgs conformance; };
+        # Read-only deck corpora for tests/test_import_suite.rs's fixpoints.
+        xyceRegression = pkgs.fetchFromGitHub {
+          owner = "Xyce";
+          repo = "Xyce_Regression";
+          rev = "bbde402756cdf542627ff7ea0056db130fcb005b";
+          sparseCheckout = [ "Netlists" ];
+          hash = "sha256-D+eOS9tMNZ9L/xVOuQnL2ahIO2zhIiv1YiucOWjAAng=";
+        };
+        spiceDatasets = pkgs.fetchFromGitHub {
+          owner = "symbench";
+          repo = "spice-datasets";
+          rev = "a3a1c4fc3b8d3d5cd4e986b50e85bd5858751559";
+          hash = "sha256-sf1d3jLmCPNg7yphMedOlCtGTUQCeyxPu4hdRdgzkQQ=";
+        };
 
         srcFiltered = pkgs.lib.cleanSourceWith {
           src = ./.;
@@ -85,7 +108,16 @@
             pkgs.ngspice
             openvaf
             vacask
+            espice.packages.${system}.espice
           ];
+          # tests/test_import_suite.rs: the spice-bench round trip and the
+          # per-dialect fixpoint corpora.
+          SPICE_BENCH = spiceBench;
+          NGSPICE_CORPUS = spiceBench;
+          HSPICE_CORPUS = "${conformance}/tests/netlist";
+          XYCE_CORPUS = "${xyceRegression}/Netlists";
+          VACASK_CORPUS = vacask.src;
+          LTSPICE_CORPUS = spiceDatasets;
 
           shellHook = ''
             # ── openvaf-r -> openvaf alias ──

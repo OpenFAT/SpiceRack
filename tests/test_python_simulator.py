@@ -13,11 +13,8 @@ import pytest
 
 
 def ps():
-    try:
-        import spicerack
-        return spicerack
-    except ImportError:
-        pytest.skip("spicerack not built")
+    import spicerack  # unsupported fails, never skips: an unbuilt extension is an error
+    return spicerack
 
 
 # ======================================================================
@@ -271,17 +268,12 @@ class TestAnalysisMethods:
 
 
 # ======================================================================
-# Live simulation (ngspice only, skipped if not available)
+# Live simulation (ngspice; fails without it)
 # ======================================================================
 
+@pytest.mark.needs("ngspice")
 class TestLiveSimulation:
     """Tests that actually run simulations. Require ngspice."""
-
-    @pytest.fixture(autouse=True)
-    def check_ngspice(self):
-        import shutil
-        if not shutil.which("ngspice"):
-            pytest.skip("ngspice not installed")
 
     def _divider_sim(self):
         c = ps().Circuit("live_test")

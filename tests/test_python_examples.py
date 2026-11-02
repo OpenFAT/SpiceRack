@@ -16,19 +16,11 @@ EXAMPLES_DIR = Path(__file__).parent.parent / "examples"
 REPO_ROOT = EXAMPLES_DIR.parent
 
 
-def _skip_if_not_built():
-    try:
-        import spicerack
-    except ImportError:
-        pytest.skip("spicerack not built")
-
-
 def run_example(filename):
     """Run an example script as subprocess, return (returncode, stdout, stderr)."""
-    _skip_if_not_built()
+    import spicerack  # noqa: F401  unsupported fails, never skips: an unbuilt extension is an error
     script = EXAMPLES_DIR / filename
-    if not script.exists():
-        pytest.skip(f"{filename} not found")
+    assert script.exists(), f"{filename} not found"
     env = os.environ.copy()
     paths = [str(REPO_ROOT / "python"), str(REPO_ROOT), env.get("PYTHONPATH", "")]
     env["PYTHONPATH"] = os.pathsep.join(path for path in paths if path)

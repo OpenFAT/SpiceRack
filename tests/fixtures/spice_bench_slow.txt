@@ -1,0 +1,32 @@
+# Decks of the spice-bench suite (`$SPICE_BENCH`) that ngspice-45 cannot
+# finish in the 120 s CPU budget on the machine that wrote this list:
+# quarantined by name in tests/test_import_suite.rs spice_bench_round_trip,
+# which runs every check on them but the simulation. One deck per line.
+circuitsim90/MOS2_LARGE/add32.sp              killed at the CPU budget
+circuitsim90/MOS2_LARGE/chip2.sp              killed at the CPU budget
+circuitsim90/MOS2_LARGE/mem_plus.sp           killed at the CPU budget
+circuitsim90/MOS2_LARGE/pc_frame.sp           killed at the CPU budget
+circuitsim90/MOS2_LARGE/ram2k.sp              killed at the CPU budget
+circuitsim90/MOS2_LARGE/smult20.sp            killed at the CPU budget
+circuitsim90/MOS2_LARGE/voter.sp              killed at the CPU budget
+circuitsim90/MOS2_LARGE/voter25.sp            killed at the CPU budget
+ngspice/iscas85/c2670/c2670.sp                killed at the CPU budget
+ngspice/iscas85/c2670/c2670_ann.sp            killed at the CPU budget
+ngspice/iscas85/c3540/c3540.sp                killed at the CPU budget
+ngspice/iscas85/c3540/c3540_ann.sp            killed at the CPU budget
+ngspice/iscas85/c5315/c5315.sp                killed at the CPU budget
+ngspice/iscas85/c5315/c5315_ann.sp            killed at the CPU budget
+ngspice/iscas85/c6288/c6288.sp                killed at the CPU budget
+ngspice/iscas85/c6288/c6288_ann.sp            killed at the CPU budget
+ngspice/iscas85/c7552/c7552.sp                killed at the CPU budget
+ngspice/iscas85/c7552/c7552_ann.sp            killed at the CPU budget
+ngspice/kicad/Dual-NMOS-Amp/Dual-NMOS-amp.sp  killed at the CPU budget
+ngspice/kicad/GaN_Test/GaN_boost.sp           killed at the CPU budget
+ngspice/tests/mesa/mesa-12.sp                 killed at the CPU budget
+ngspice/tests/mesa/mesa12.sp                  killed at the CPU budget
+ngspice/tests/vbic/FG.sp                      killed at the CPU budget
+postlayout/c7552_sky130.sp                    killed at the CPU budget
+postlayout/tdc_sky130.sp                      crossed the budget on one run and not on another
+powergrid/ibmpg1t.sp                          killed at the CPU budget
+powergrid/ibmpg3.sp                           killed at the CPU budget
+powergrid/ssram_trans.sp                      killed at the CPU budget

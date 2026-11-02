@@ -12,12 +12,10 @@ use spicerack::codegen::Dialect;
 use spicerack::ir::{Analysis, CircuitIR, Component, IrValue, Subcircuit, Testbench};
 use spicerack::result::RawData;
 
-fn ngspice_available() -> bool {
-    std::process::Command::new("ngspice")
-        .arg("--version")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+/// Unsupported fails, never skips: no ngspice is a failure.
+fn require_ngspice() {
+    let ok = std::process::Command::new("ngspice").arg("--version").output().is_ok_and(|o| o.status.success());
+    assert!(ok, "ngspice not on PATH: run the tests in `nix develop .#testing`");
 }
 
 fn ngspice() -> Dialect {
@@ -57,16 +55,9 @@ fn netlist(cg: &Dialect, c: &Deck) -> Result<String, String> {
     spicerack::codegen::netlist(&c.ir(), *cg).map_err(|e| e.to_string())
 }
 
-fn run(deck: &str) -> Option<RawData> {
-    if !ngspice_available() {
-        eprintln!("ngspice not on PATH — skipping");
-        return None;
-    }
-    Some(
-        Dialect::Ngspice
-            .run(deck)
-            .unwrap_or_else(|e| panic!("deck failed: {e}\n{deck}")),
-    )
+fn run(deck: &str) -> RawData {
+    require_ngspice();
+    Dialect::Ngspice.run(deck).unwrap_or_else(|e| panic!("deck failed: {e}\n{deck}"))
 }
 
 fn index_of(raw: &RawData, name: &str) -> usize {
@@ -99,9 +90,7 @@ fn onepole_deck(cg: &Dialect, tau: f64, sweep: &str) -> String {
 fn the_old_verbatim_bsource_really_is_fatal() {
     // Guards the reason this module exists: if ngspice ever grows a
     // `Laplace()` built-in, the translation below stops being necessary.
-    if !ngspice_available() {
-        return;
-    }
+    require_ngspice();
     let deck = "* fatal\nV1 in 0 AC 1\n\
                 B1 out 0 V=Laplace(v(in), 1/(1+s*1.59e-4))\n\
                 Rl out 0 1meg\n.ac lin 1 1000 1000\n.end\n";
@@ -118,7 +107,7 @@ fn single_pole_is_minus_3db_and_minus_45_degrees_at_the_corner() {
     // tau = 1/(2*pi*1000) -> corner at exactly 1 kHz.
     let deck = onepole_deck(&ngspice(), 1.591_549_431e-4, ".ac lin 1 1000 1000");
     assert!(deck.contains("s_xfer"), "{deck}");
-    let Some(raw) = run(&deck) else { return };
+    let raw = run(&deck);
     let (mag, phase) = ac(&raw, "out", 0);
     assert!((mag - std::f64::consts::FRAC_1_SQRT_2).abs() < 1e-4, "|H| = {mag}");
     assert!((phase + 45.0).abs() < 1e-3, "arg H = {phase} deg");
@@ -127,7 +116,7 @@ fn single_pole_is_minus_3db_and_minus_45_degrees_at_the_corner() {
 #[test]
 fn single_pole_rolls_off_at_20db_per_decade() {
     let deck = onepole_deck(&ngspice(), 1.591_549_431e-4, ".ac dec 1 100 100000");
-    let Some(raw) = run(&deck) else { return };
+    let raw = run(&deck);
     // 100 Hz (a decade below the corner) -> ~unity.
     let (m100, p100) = ac(&raw, "out", 0);
     assert!((m100 - 0.995_037).abs() < 1e-4, "|H|(100) = {m100}");
@@ -146,7 +135,7 @@ fn lead_lag_matches_the_closed_form() {
     c.bv("1", "out", "0", "Laplace(V(in), (1+s*1e-3)/(1+s*1e-6))");
     c.r("l", "out", "0", 1e6);
     c.raw_spice(".ac lin 1 1000 1000");
-    let Some(raw) = run(&netlist(&ngspice(), &c).unwrap()) else { return };
+    let raw = run(&netlist(&ngspice(), &c).unwrap());
     let (mag, phase) = ac(&raw, "out", 0);
     let w = 2.0 * std::f64::consts::PI * 1000.0;
     let expect = num_complex::Complex64::new(1.0, w * 1e-3) / num_complex::Complex64::new(1.0, w * 1e-6);
@@ -166,7 +155,7 @@ fn two_pole_butterworth_is_minus_3db_at_the_corner_and_minus_90_degrees() {
     c.raw_spice(".ac lin 1 1000 1000");
     let deck = netlist(&ngspice(), &c).unwrap();
     assert!(deck.contains("int_ic=[0 0]"), "two integrator stages expected:\n{deck}");
-    let Some(raw) = run(&deck) else { return };
+    let raw = run(&deck);
     let (mag, phase) = ac(&raw, "out", 0);
     assert!((mag - std::f64::consts::FRAC_1_SQRT_2).abs() < 1e-5, "|H| = {mag}");
     assert!((phase + 90.0).abs() < 1e-3, "arg H = {phase} deg");
@@ -180,7 +169,7 @@ fn differentiator_with_a_pole_gives_plus_20db_per_decade() {
     c.bv("1", "out", "0", "Laplace(V(in), s/(1+s*1e-6))");
     c.r("l", "out", "0", 1e6);
     c.raw_spice(".ac dec 1 100 1000");
-    let Some(raw) = run(&netlist(&ngspice(), &c).unwrap()) else { return };
+    let raw = run(&netlist(&ngspice(), &c).unwrap());
     for (i, f) in [100.0_f64, 1000.0].into_iter().enumerate() {
         let w = 2.0 * std::f64::consts::PI * f;
         let (mag, phase) = ac(&raw, "out", i);
@@ -201,7 +190,7 @@ fn differential_input_subtracts_its_two_nodes() {
     c.bv("1", "out", "0", "Laplace(V(a,b), 2/(1+s*1.591549431e-9))");
     c.r("l", "out", "0", 1e6);
     c.raw_spice(".ac lin 1 1000 1000");
-    let Some(raw) = run(&netlist(&ngspice(), &c).unwrap()) else { return };
+    let raw = run(&netlist(&ngspice(), &c).unwrap());
     let (mag, _) = ac(&raw, "out", 0);
     assert!((mag - 1.5).abs() < 1e-5, "|H| = {mag}");
 }
@@ -217,7 +206,7 @@ fn current_output_keeps_the_spice_b_source_sign_convention() {
     c.raw_spice(".ac lin 1 1000 1000");
     let deck = netlist(&ngspice(), &c).unwrap();
     assert!(deck.contains("%id(out 0)"), "{deck}");
-    let Some(raw) = run(&deck) else { return };
+    let raw = run(&deck);
     let (mag, phase) = ac(&raw, "out", 0);
     assert!((mag - 1.0).abs() < 1e-5, "|H| = {mag}");
     assert!((phase.abs() - 180.0).abs() < 1e-3, "arg H = {phase} deg (expected +/-180)");
@@ -235,7 +224,7 @@ fn constant_transfer_function_becomes_a_plain_vcvs() {
     let deck = netlist(&ngspice(), &c).unwrap();
     assert!(!deck.contains("s_xfer"), "{deck}");
     assert!(deck.contains("EB1 out 0 in 0 2.5"), "{deck}");
-    let Some(raw) = run(&deck) else { return };
+    let raw = run(&deck);
     assert!((raw.real_data[index_of(&raw, "out")][0] - 5.0).abs() < 1e-9);
 }
 
@@ -247,7 +236,7 @@ fn transient_step_response_follows_the_exponential() {
     c.bv("1", "out", "0", format!("Laplace(V(in), 1/(1+s*{tau}))"));
     c.r("l", "out", "0", 1e6);
     c.raw_spice(".tran 100n 1m");
-    let Some(raw) = run(&netlist(&ngspice(), &c).unwrap()) else { return };
+    let raw = run(&netlist(&ngspice(), &c).unwrap());
     let time = &raw.real_data[index_of(&raw, "time")];
     let out = &raw.real_data[index_of(&raw, "out")];
     for (t, v) in time.iter().zip(out).filter(|(t, _)| **t > 1e-5) {
@@ -272,7 +261,7 @@ fn dc_through_a_laplace_block_reads_zero_not_the_dc_gain() {
     c.bv("1", "out", "0", "Laplace(V(in), 3/(1+s*1.591549431e-6))");
     c.r("l", "out", "0", 1e6);
     c.raw_spice(".op");
-    let Some(raw) = run(&netlist(&ngspice(), &c).unwrap()) else { return };
+    let raw = run(&netlist(&ngspice(), &c).unwrap());
     let out = raw.real_data[index_of(&raw, "out")][0];
     assert_eq!(out, 0.0, "s_xfer started contributing at DC — revisit the ceiling note");
 }
@@ -329,9 +318,7 @@ fn the_run_pipeline_emits_and_runs_the_translated_source() {
     ir.testbench = Some(Testbench {
         analyses: vec![Analysis::Ac { variation: "lin".into(), points: 1, start: 1000.0, stop: 1000.0 }],
         ..Default::default() });
-    if !ngspice_available() {
-        return;
-    }
+    require_ngspice();
     let raw = spicerack::simulation::run(&ir, Some("ngspice")).expect("Laplace deck must run");
     let (mag, phase) = ac(&raw, "out", 0);
     assert!((mag - std::f64::consts::FRAC_1_SQRT_2).abs() < 1e-4, "|H| = {mag}");

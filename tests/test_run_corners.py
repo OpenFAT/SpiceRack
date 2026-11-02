@@ -2,14 +2,13 @@
 
 Run with: maturin develop && pytest tests/test_run_corners.py
 """
-import shutil
 
 import pytest
 
-ps = pytest.importorskip("spicerack")
+import spicerack as ps
 from spicerack.testbenches import CornerCase, pdk_corners, run_corners  # noqa: E402
 
-pytestmark = pytest.mark.skipif(not shutil.which("ngspice"), reason="ngspice not installed")
+pytestmark = pytest.mark.needs("ngspice")
 
 # Two "process" sections: the bottom resistor is 1k or 3k.
 LIB = """\
