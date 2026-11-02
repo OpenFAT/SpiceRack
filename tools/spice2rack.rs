@@ -88,7 +88,11 @@ impl Py {
             Component::MutualInductor { name, inductor1, inductor2, coupling } => {
                 self.line(format!("{obj}.K(name={}, inductor1={}, inductor2={}, coupling={})", n(name), n(inductor1), n(inductor2), py_num(*coupling)))
             }
-            Component::VoltageSource { name, np, nm, value, ac_magnitude, ac_phase, waveform } | Component::CurrentSource { name, np, nm, value, ac_magnitude, ac_phase, waveform } => {
+            Component::VoltageSource { name, np, nm, value, ac_magnitude, ac_phase, waveform, .. } | Component::CurrentSource { name, np, nm, value, ac_magnitude, ac_phase, waveform } => {
+                let port = match c {
+                    Component::VoltageSource { port: Some(p), .. } => format!(", portnum={}, z0={}", p.num, py_num(p.z0)),
+                    _ => String::new(),
+                };
                 let current = matches!(c, Component::CurrentSource { .. });
                 let (letter, kind) = if current { ("I", "Current") } else { ("V", "Voltage") };
                 let ac = match (ac_magnitude, ac_phase) {
@@ -100,9 +104,10 @@ impl Py {
                 let head = format!("name={}, positive={}, negative={}", n(name), n(np), n(nm));
                 match (waveform, dc) {
                     (None, _) => match py_value(value) {
-                        Some(v) => self.line(format!("{obj}.{letter}({head}, value={v}{ac})")),
+                        Some(v) => self.line(format!("{obj}.{letter}({head}, value={v}{ac}{port})")),
                         None => self.gap(obj, "raw element value", &raw),
                     },
+                    (Some(_), _) if !port.is_empty() => self.gap(obj, "RF port on a waveform source", &raw),
                     (Some(wf), dc) => {
                         let w = |x: &IrNum| py_value(&x.into()).unwrap_or_default();
                         let (stem, args) = match wf {

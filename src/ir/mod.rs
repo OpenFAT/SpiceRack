@@ -220,7 +220,13 @@ pub enum Component {
     Capacitor { name: String, n1: String, n2: String, value: IrValue, #[serde(default)] model: Option<String>, params: Vec<(String, String)> },
     Inductor { name: String, n1: String, n2: String, value: IrValue, #[serde(default)] model: Option<String>, params: Vec<(String, String)> },
     MutualInductor { name: String, inductor1: String, inductor2: String, coupling: f64 },
-    VoltageSource { name: String, np: String, nm: String, value: IrValue, #[serde(default)] ac_magnitude: Option<f64>, #[serde(default)] ac_phase: Option<f64>, waveform: Option<IrWaveform> },
+    /// `port`: an RF port for `.sp` (ngspice `portnum n z0 x`, manual
+    /// §4.1.11), which puts `z0` in series with the source in every analysis.
+    VoltageSource {
+        name: String, np: String, nm: String, value: IrValue,
+        #[serde(default)] ac_magnitude: Option<f64>, #[serde(default)] ac_phase: Option<f64>, waveform: Option<IrWaveform>,
+        #[serde(default, skip_serializing_if = "Option::is_none")] port: Option<RfPort>,
+    },
     CurrentSource { name: String, np: String, nm: String, value: IrValue, #[serde(default)] ac_magnitude: Option<f64>, #[serde(default)] ac_phase: Option<f64>, waveform: Option<IrWaveform> },
     BehavioralVoltage { name: String, np: String, nm: String, expression: String },
     BehavioralCurrent { name: String, np: String, nm: String, expression: String },
@@ -328,6 +334,15 @@ impl Component {
             RawSpice { .. } => None,
         }
     }
+}
+
+/// A voltage source's RF port (ngspice manual §4.1.11): its number among
+/// the deck's ports, which count from 1 with no repeat, and its reference
+/// impedance in ohms (ngspice's default is 50).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct RfPort {
+    pub num: u32,
+    pub z0: f64,
 }
 
 // ── Value and waveform types ──
@@ -579,7 +594,16 @@ pub enum Analysis {
     Sensitivity { output: String, ac: Option<FreqSweep> },
     PoleZero { node1: String, node2: String, node3: String, node4: String, tf_type: String, pz_type: String },
     Distortion { #[serde(flatten)] sweep: FreqSweep, f2overf1: Option<f64> },
-    Pss { fundamental: f64, stabilization: f64, observe_node: String, points_per_period: u32, harmonics: u32 },
+    /// `sc_iter` (shooting iterations, ngspice's default 50), `steady_coeff`
+    /// (the convergence weight, default 1e-3) and `uic` are ngspice's
+    /// `.pss … sciter steadycoeff <uic>` (manual §11.3.12); JSON leaves them
+    /// out when unset.
+    Pss {
+        fundamental: f64, stabilization: f64, observe_node: String, points_per_period: u32, harmonics: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")] sc_iter: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")] steady_coeff: Option<f64>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")] uic: bool,
+    },
     HarmonicBalance { frequencies: Vec<f64>, harmonics: Vec<u32> },
     SPar { #[serde(flatten)] sweep: FreqSweep },
     Stability { probe: String, #[serde(flatten)] sweep: FreqSweep },
@@ -1068,6 +1092,23 @@ mod tests {
         assert_eq!(serde_json::to_string(&set).unwrap(), r#"{"type":"Pwl","values":[[0.0,0.0],[0.001,"vdd"]],"repeat":0.0,"delay":"td"}"#);
     }
 
+    /// A `.pss` and a V source written before the shooting controls and RF
+    /// ports existed load with them unset and write back byte for byte.
+    #[test]
+    fn pss_and_source_json_without_the_new_fields_round_trip_byte_for_byte() {
+        let pss = r#"{"type":"Pss","fundamental":1000000000.0,"stabilization":1e-7,"observe_node":"out","points_per_period":128,"harmonics":10}"#;
+        let a: Analysis = serde_json::from_str(pss).unwrap();
+        assert!(matches!(a, Analysis::Pss { sc_iter: None, steady_coeff: None, uic: false, .. }));
+        assert_eq!(serde_json::to_string(&a).unwrap(), pss);
+        let v = r#"{"type":"VoltageSource","name":"1","np":"in","nm":"0","value":{"type":"Numeric","value":0.0},"ac_magnitude":1.0,"ac_phase":null,"waveform":null}"#;
+        let c: Component = serde_json::from_str(v).unwrap();
+        assert!(matches!(c, Component::VoltageSource { port: None, .. }));
+        assert_eq!(serde_json::to_string(&c).unwrap(), v);
+        let Component::VoltageSource { name, np, nm, value, ac_magnitude, ac_phase, waveform, .. } = c else { unreachable!() };
+        let rf = Component::VoltageSource { name, np, nm, value, ac_magnitude, ac_phase, waveform, port: Some(RfPort { num: 1, z0: 50.0 }) };
+        assert!(serde_json::to_string(&rf).unwrap().ends_with(r#""waveform":null,"port":{"num":1,"z0":50.0}}"#));
+    }
+
     /// TRRANDOM's type is its deck number in JSON; one ngspice does not
     /// define fails the load.
     #[test]
@@ -1110,7 +1151,7 @@ mod tests {
             Component::Capacitor { name: "1".into(), n1: "a".into(), n2: "b".into(), value: IrValue::Expression { expr: "cap_val".into() }, model: None, params: vec![] },
             Component::Inductor { name: "1".into(), n1: "a".into(), n2: "b".into(), value: IrValue::Raw { text: "10u".into() }, model: None, params: vec![] },
             Component::MutualInductor { name: "1".into(), inductor1: "L1".into(), inductor2: "L2".into(), coupling: 0.95 },
-            Component::VoltageSource { name: "1".into(), np: "a".into(), nm: "b".into(), value: IrValue::Numeric { value: 5.0 }, ac_magnitude: None, ac_phase: None, waveform: None },
+            Component::VoltageSource { name: "1".into(), np: "a".into(), nm: "b".into(), value: IrValue::Numeric { value: 5.0 }, ac_magnitude: None, ac_phase: None, waveform: None, port: None },
             Component::CurrentSource { name: "1".into(), np: "a".into(), nm: "b".into(), value: IrValue::Numeric { value: 1e-3 }, ac_magnitude: None, ac_phase: None, waveform: Some(IrWaveform::Pulse { initial: 0.0.into(), pulsed: 1e-3.into(), delay: 0.0.into(), rise_time: 1e-9.into(), fall_time: 1e-9.into(), pulse_width: 5e-6.into(), period: 10e-6.into() }) },
             Component::BehavioralVoltage { name: "1".into(), np: "a".into(), nm: "b".into(), expression: "V(x)*2+1".into() },
             Component::BehavioralCurrent { name: "1".into(), np: "a".into(), nm: "b".into(), expression: "I(V1)*10".into() },
@@ -1141,7 +1182,7 @@ mod tests {
             IrWaveform::TrNoise { na: x(), nt: 1e-9.into(), nalpha: 1.0.into(), namp: 1e-3.into(), rtsam: 0.0.into(), rtscapt: 0.0.into(), rtsemt: 0.0.into() },
             IrWaveform::TrRandom { kind: RandomKind::Exponential, ts: 1e-6.into(), td: 0.0.into(), p1: x(), p2: 0.5.into() },
         ];
-        let sources = waveforms.into_iter().map(|w| Component::VoltageSource { name: "w".into(), np: "a".into(), nm: "0".into(), value: w.at_zero(), ac_magnitude: Some(1.0), ac_phase: None, waveform: Some(w) });
+        let sources = waveforms.into_iter().map(|w| Component::VoltageSource { name: "w".into(), np: "a".into(), nm: "0".into(), value: w.at_zero(), ac_magnitude: Some(1.0), ac_phase: None, waveform: Some(w), port: None });
         let all_components: Vec<Component> = all_components.into_iter().chain(sources).collect();
 
         // The JSON tags each variant by name: every component, waveform and value.
@@ -1181,7 +1222,7 @@ mod tests {
             Analysis::Sensitivity { output: "V(out)".into(), ac: Some(FreqSweep { variation: Sweep::Dec, points: 10, start: 1.0, stop: 1e6 }) },
             Analysis::PoleZero { node1: "in".into(), node2: "0".into(), node3: "out".into(), node4: "0".into(), tf_type: "vol".into(), pz_type: "pz".into() },
             Analysis::Distortion { sweep: FreqSweep { variation: Sweep::Dec, points: 10, start: 1.0, stop: 1e6 }, f2overf1: Some(0.9) },
-            Analysis::Pss { fundamental: 1e6, stabilization: 100e-6, observe_node: "out".into(), points_per_period: 100, harmonics: 10 },
+            Analysis::Pss { fundamental: 1e6, stabilization: 100e-6, observe_node: "out".into(), points_per_period: 100, harmonics: 10, sc_iter: None, steady_coeff: None, uic: false },
             Analysis::HarmonicBalance { frequencies: vec![1e6, 2e6], harmonics: vec![5, 3] },
             Analysis::SPar { sweep: FreqSweep { variation: Sweep::Lin, points: 201, start: 1e6, stop: 10e9 } },
             Analysis::Stability { probe: "iprobe".into(), sweep: FreqSweep { variation: Sweep::Dec, points: 100, start: 1.0, stop: 1e9 } },
@@ -1238,7 +1279,7 @@ mod tests {
             "noise"
         );
         assert_eq!(
-            Analysis::Pss { fundamental: 1e6, stabilization: 10e-6, observe_node: "out".into(), points_per_period: 100, harmonics: 10 }.kind_str(),
+            Analysis::Pss { fundamental: 1e6, stabilization: 10e-6, observe_node: "out".into(), points_per_period: 100, harmonics: 10, sc_iter: None, steady_coeff: None, uic: false }.kind_str(),
             "pss"
         );
         assert_eq!(
@@ -1266,6 +1307,7 @@ mod tests {
             value: IrValue::Numeric { value: 0.0 },
             ac_magnitude: Some(1.0), ac_phase: Some(45.0),
             waveform: None,
+            port: None,
         };
         let json = serde_json::to_string(&v_with_ac).unwrap();
         assert!(json.contains("\"ac_magnitude\":1.0"), "json has ac_magnitude: {}", json);
@@ -1280,6 +1322,7 @@ mod tests {
             value: IrValue::Numeric { value: 3.3 },
             ac_magnitude: None, ac_phase: None,
             waveform: None,
+            port: None,
         };
         let json_no_ac = serde_json::to_string(&v_no_ac).unwrap();
         let rt_no_ac: Component = serde_json::from_str(&json_no_ac).unwrap();

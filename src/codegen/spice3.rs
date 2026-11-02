@@ -719,11 +719,21 @@ pub(crate) fn component(out: &mut String, d: Dialect, x: bool, comp: &Component)
         Component::MutualInductor { name, inductor1, inductor2, coupling } => {
             w!(out, "K{} L{} L{} {}", name, inductor1, inductor2, dec(d, x, *coupling))
         }
-        Component::VoltageSource { name, np, nm, value: v, ac_magnitude, ac_phase, waveform: wf }
+        Component::VoltageSource { name, np, nm, value: v, ac_magnitude, ac_phase, waveform: wf, .. }
         | Component::CurrentSource { name, np, nm, value: v, ac_magnitude, ac_phase, waveform: wf } => {
             let letter = if matches!(comp, Component::VoltageSource { .. }) { 'V' } else { 'I' };
             if let Some(wf) = wf {
                 refuse_wave(d, letter, name, wf)?;
+            }
+            let port = match comp {
+                Component::VoltageSource { port, .. } => port.as_ref(),
+                _ => None,
+            };
+            // ngspice and ESPice only (manual §4.1.11; ESPice reference,
+            // `portnum n z0 Z`); HSPICE's is a `P` element, and dropping the
+            // port would lose its series Z0.
+            if port.is_some() && !ngspice(d) {
+                return Err(CodeGenError::UnsupportedComponent { backend: d.name().into(), component: format!("V{name}: RF port") });
             }
             w!(out, "{}{} {} {} {}", letter, name, np, nm, value(d, x, v));
             if let Some(mag) = ac_magnitude {
@@ -731,6 +741,9 @@ pub(crate) fn component(out: &mut String, d: Dialect, x: bool, comp: &Component)
                 if let Some(phase) = ac_phase {
                     w!(out, " {}", dec(d, x, *phase));
                 }
+            }
+            if let Some(p) = port {
+                w!(out, " portnum {} z0 {}", p.num, dec(d, x, p.z0));
             }
             if let Some(wf) = wf {
                 out.push(' ');
@@ -926,8 +939,17 @@ fn analysis(d: Dialect, x: bool, a: &Analysis) -> Result<String, CodeGenError> {
         }
         // ponytail: Rust `{}` numbers, byte-for-byte what the retired string
         // path sent ngspice for these two cards.
-        Analysis::Pss { fundamental, stabilization, observe_node, points_per_period, harmonics } if ng => {
-            format!(".pss {} {} {} {} {}", fundamental, stabilization, observe_node, points_per_period, harmonics)
+        Analysis::Pss { fundamental, stabilization, observe_node, points_per_period, harmonics, sc_iter, steady_coeff, uic } if ng => {
+            let mut s = format!(".pss {} {} {} {} {}", fundamental, stabilization, observe_node, points_per_period, harmonics);
+            // SCITER and STEADYCOEFF are positional (manual §11.3.12): one
+            // given, or `uic`, writes both, the other at ngspice's default.
+            if sc_iter.is_some() || steady_coeff.is_some() || *uic {
+                w!(s, " {} {}", sc_iter.unwrap_or(50), steady_coeff.unwrap_or(1e-3));
+            }
+            if *uic {
+                s.push_str(" uic");
+            }
+            s
         }
         Analysis::SPar { sweep: FreqSweep { variation, points, start, stop } } if ng => {
             format!(".sp {} {} {} {}", variation.name(), points, start, stop)
@@ -962,6 +984,7 @@ mod tests {
                         ac_magnitude: None,
                         ac_phase: None,
                         waveform: None,
+                        port: None,
                     },
                     Component::Resistor {
                         name: "1".into(),
@@ -1042,6 +1065,7 @@ mod tests {
                         ac_magnitude: None,
                         ac_phase: None,
                         waveform: None,
+                        port: None,
                     },
                 ],
                 models: vec![
@@ -1080,6 +1104,7 @@ mod tests {
                         ac_magnitude: None,
                         ac_phase: None,
                         waveform: None,
+                        port: None,
                     },
                 ],
                 instances: vec![
@@ -1153,6 +1178,7 @@ mod tests {
                             damping: 0.0.into(),
                             phase: 0.0.into(),
                         }),
+                        port: None,
                     },
                     Component::VoltageSource {
                         name: "pulse".into(),
@@ -1170,6 +1196,7 @@ mod tests {
                             pulse_width: 5e-7.into(),
                             period: 1e-6.into(),
                         }),
+                        port: None,
                     },
                     Component::VoltageSource {
                         name: "pwl".into(),
@@ -1183,6 +1210,7 @@ mod tests {
                             repeat: None,
                             delay: None,
                         }),
+                        port: None,
                     },
                 ], ..Default::default() }, ..Default::default() };
 
@@ -1653,6 +1681,7 @@ mod tests {
             value: IrValue::Numeric { value: 0.0 },
             ac_magnitude: Some(1.0), ac_phase: None,
             waveform: None,
+            port: None,
         };
         let s = crate::codegen::card(&v_ac, cg).unwrap();
         assert_eq!(s, "Vin inp 0 0 AC 1", "ac mag only: {}", s);
@@ -1663,6 +1692,7 @@ mod tests {
             value: IrValue::Numeric { value: 0.0 },
             ac_magnitude: Some(1.0), ac_phase: Some(45.0),
             waveform: None,
+            port: None,
         };
         let s = crate::codegen::card(&v_ac_phase, cg).unwrap();
         assert_eq!(s, "Vin inp 0 0 AC 1 45", "ac mag+phase: {}", s);
@@ -1673,6 +1703,7 @@ mod tests {
             value: IrValue::Numeric { value: 3.3 },
             ac_magnitude: None, ac_phase: None,
             waveform: None,
+            port: None,
         };
         let s = crate::codegen::card(&v_dc, cg).unwrap();
         assert_eq!(s, "Vdd vdd 0 3.3", "dc only: {}", s);
@@ -1708,6 +1739,7 @@ mod tests {
                         value: IrValue::Numeric { value: 1.8 },
                         ac_magnitude: None, ac_phase: None,
                         waveform: None,
+                        port: None,
                     },
                 ],
                 analyses: vec![Analysis::Op], ..Default::default() }),
@@ -1816,6 +1848,7 @@ mod tests {
         let pss = Analysis::Pss {
             fundamental: 1e9, stabilization: 1e-7, observe_node: "v(out)".into(),
             points_per_period: 128, harmonics: 10,
+            sc_iter: None, steady_coeff: None, uic: false,
         };
         let sp = Analysis::SPar { sweep: FreqSweep { variation: Sweep::Dec, points: 10, start: 1e6, stop: 1e10 } };
         assert_eq!(analysis(Dialect::Ngspice, false, &pss).unwrap(), ".pss 1000000000 0.0000001 v(out) 128 10");

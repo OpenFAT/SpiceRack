@@ -307,6 +307,7 @@ fn spectre_vsource_waveforms_match_documented_parameters() {
             name: "1".into(), np: "1".into(), nm: "0".into(),
             value: IrValue::Numeric { value: 0.0 },
             ac_magnitude: mag, ac_phase: ph, waveform: wf,
+            port: None,
         })
     };
 
@@ -379,6 +380,7 @@ fn spectre_refuses_constructs_without_a_documented_spelling() {
                 amplitude: 1.0.into(), offset: 0.5.into(), modulating_freq: 1e3.into(),
                 carrier_freq: 1e6.into(), delay: 0.0.into(),
             }),
+            port: None,
         },
     ];
 
@@ -499,6 +501,7 @@ fn spectre_rf_large_signal_analyses_match_documented_parameters() {
         analysis(Analysis::Pss {
             fundamental: 1e9, stabilization: 1e-7,
             observe_node: "out".into(), points_per_period: 128, harmonics: 10,
+            sc_iter: None, steady_coeff: None, uic: false,
         }),
         "pss1 (out 0) pss fund=1G tstab=100n harms=10",
     );

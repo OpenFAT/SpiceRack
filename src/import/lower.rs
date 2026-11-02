@@ -687,7 +687,7 @@ impl Cx<'_> {
                     value = w.at_zero();
                 }
                 match tag {
-                    Tag::V => Component::VoltageSource { name, np, nm, value, ac_magnitude, ac_phase, waveform: wf },
+                    Tag::V => Component::VoltageSource { name, np, nm, value, ac_magnitude, ac_phase, waveform: wf, port: None },
                     _ => Component::CurrentSource { name, np, nm, value, ac_magnitude, ac_phase, waveform: wf },
                 }
             }
@@ -1054,7 +1054,7 @@ impl Cx<'_> {
                 let value = self.get(&p, "dc").map_or(IrValue::Numeric { value: 0.0 }, |v| self.value(v));
                 let (ac_magnitude, ac_phase) = (num("mag"), num("phase"));
                 if master == "vsource" {
-                    Component::VoltageSource { name: self.strip(&name, 'v'), np, nm, value, ac_magnitude, ac_phase, waveform }
+                    Component::VoltageSource { name: self.strip(&name, 'v'), np, nm, value, ac_magnitude, ac_phase, waveform, port: None }
                 } else {
                     Component::CurrentSource { name: self.strip(&name, 'i'), np, nm, value, ac_magnitude, ac_phase, waveform }
                 }

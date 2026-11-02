@@ -532,6 +532,27 @@ class TestWaveformSources:
         with pytest.raises(Exception, match="PWL"):
             tb.netlist("ltspice")
 
+    def test_rf_ports_and_s_param_on_ngspice(self):
+        # ngspice manual 4.1.11: `portnum n z0 x`. A matched T pad for K = 2 in
+        # 50 ohm (arms 50/3, shunt 200/3) has |S11| = 0 and |S21| = 1/K = 0.5.
+        c = ps().Circuit("pad")
+        c.V("1", "in", c.gnd, 0.0, ac=1.0, portnum=1)
+        c.V("2", "out", c.gnd, 0.0, ac=1.0, portnum=2, z0=50.0)
+        c.R("1", "in", "mid", 50 / 3)
+        c.R("2", "mid", "out", 50 / 3)
+        c.R("3", "mid", c.gnd, 200 / 3)
+        assert "V1 in 0 0 AC 1 portnum 1 z0 50" in str(c)
+        sp = c.simulator(simulator="ngspice").s_param("lin", 3, 1e3, 3e3)
+        assert all(abs(m) < 1e-9 for m in sp.magnitude("S_1_1"))
+        assert all(abs(m - 0.5) < 1e-9 for m in sp.magnitude("S_2_1"))
+        dut = ps().Subcircuit("d")
+        dut.R("1", "a", "0", 50.0)
+        tb = ps().Testbench(dut)
+        tb.V("p", "a", "0", 0.0, ac=1.0, portnum=1, z0=75.0)
+        assert "Vp a 0 0 AC 1 portnum 1 z0 75" in tb.netlist("ngspice")
+        with pytest.raises(Exception, match="RF port"):
+            tb.netlist("ltspice")
+
     def test_trnoise_and_trrandom_sources(self):
         # ngspice manual 4.1.7/4.1.8. Both add to the DC value (ngspice 45
         # holds `3 TRRANDOM(.. 3)` at 6 V), so the default DC is 0. ngspice only.

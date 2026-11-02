@@ -675,7 +675,10 @@ pub(crate) fn emit_component(out: &mut String, comp: &Component, n: Names) -> Re
         // instance parameter #1, `mag`/`phase` are the small-signal
         // parameters #39/#40 (p.685).
         // `[CMP]` p.380 `i1 (in 0) isource dc=0 type=pulse delay=10n ...`
-        Component::VoltageSource { name, np, nm, value, ac_magnitude, ac_phase, waveform }
+        // An RF port is Spectre's `port` instance, whose mapping from
+        // ngspice's `portnum`/`z0` is unverified: refused, not dropped.
+        Component::VoltageSource { name, port: Some(_), .. } => return Err(unsupported_component(&format!("V{name}: RF port"))),
+        Component::VoltageSource { name, np, nm, value, ac_magnitude, ac_phase, waveform, port: None }
         | Component::CurrentSource { name, np, nm, value, ac_magnitude, ac_phase, waveform } => {
             let (l, master) = if matches!(comp, Component::VoltageSource { .. }) { ('v', "vsource") } else { ('i', "isource") };
             let wave = waveform.as_ref().map(emit_waveform_params).transpose()?;
@@ -934,7 +937,11 @@ fn emit_analysis(analysis: &Analysis, keep_case: bool) -> Result<String, CodeGen
         // `probe` parameter (the previous version emitted both); for an
         // autonomous circuit the observed node goes in the terminal list.
         // `points_per_period` has no documented pss parameter and is
-        // dropped.
+        // dropped. ngspice's shooting controls (`sciter`, `steadycoeff`,
+        // `uic`) have no mapped Spectre parameter and are refused.
+        Analysis::Pss { sc_iter, steady_coeff, uic, .. } if sc_iter.is_some() || steady_coeff.is_some() || *uic => {
+            return Err(unsupported_analysis("pss sciter/steadycoeff/uic (ngspice shooting controls)"));
+        }
         Analysis::Pss { fundamental, stabilization, observe_node, harmonics, .. } => {
             let terms = if observe_node.is_empty() {
                 String::new()
@@ -1184,7 +1191,7 @@ mod tests {
             Component::Inductor { name: s("1"), n1: s("a"), n2: s("b"), value: v(1e-6), model: None, params: vec![] },
             Component::Inductor { name: s("2"), n1: s("a"), n2: s("b"), value: v(1e-6), model: None, params: vec![] },
             Component::MutualInductor { name: s("1"), inductor1: s("1"), inductor2: s("2"), coupling: 0.9 },
-            Component::VoltageSource { name: s("1"), np: s("a"), nm: s("0"), value: v(1.0), ac_magnitude: None, ac_phase: None, waveform: None },
+            Component::VoltageSource { name: s("1"), np: s("a"), nm: s("0"), value: v(1.0), ac_magnitude: None, ac_phase: None, waveform: None, port: None },
             Component::CurrentSource { name: s("1"), np: s("a"), nm: s("0"), value: v(1.0), ac_magnitude: None, ac_phase: None, waveform: None },
             Component::Vcvs { name: s("1"), np: s("a"), nm: s("b"), ncp: s("c"), ncm: s("d"), gain: 2.0 },
             Component::Vccs { name: s("1"), np: s("a"), nm: s("b"), ncp: s("c"), ncm: s("d"), transconductance: 2.0 },
@@ -1232,6 +1239,7 @@ mod tests {
                         ac_magnitude: None,
                         ac_phase: None,
                         waveform: None,
+                        port: None,
                     },
                     Component::Resistor {
                         name: "1".into(),
@@ -1302,6 +1310,7 @@ mod tests {
                 damping: 0.0.into(),
                 phase: 0.0.into(),
             }),
+            port: None,
         };
 
         let pulse_comp = Component::VoltageSource {
@@ -1320,6 +1329,7 @@ mod tests {
                 pulse_width: 5e-7.into(),
                 period: 1e-6.into(),
             }),
+            port: None,
         };
 
         let sin_str = emit_component(&sin_comp).unwrap();
@@ -1361,6 +1371,7 @@ mod tests {
             observe_node: "out".into(),
             points_per_period: 128,
             harmonics: 10,
+            sc_iter: None, steady_coeff: None, uic: false,
         };
         let pss_str = emit_analysis(&pss, false).unwrap();
         assert!(pss_str.contains("pss1 (out 0) pss"), "pss: {}", pss_str);
@@ -1501,6 +1512,7 @@ mod tests {
             value: IrValue::Numeric { value: 0.0 },
             ac_magnitude: Some(1.0), ac_phase: Some(45.0),
             waveform: None,
+            port: None,
         };
         let s = emit_component(&v).unwrap();
         assert!(s.contains("mag=1"), "spectre ac mag: {}", s);
@@ -1511,6 +1523,7 @@ mod tests {
             value: IrValue::Numeric { value: 3.3 },
             ac_magnitude: None, ac_phase: None,
             waveform: None,
+            port: None,
         };
         let s = emit_component(&v_no_ac).unwrap();
         assert!(!s.contains("mag="), "no mag without ac: {}", s);

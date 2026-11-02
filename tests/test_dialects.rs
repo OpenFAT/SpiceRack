@@ -47,6 +47,7 @@ fn circuit(analyses: Vec<Analysis>) -> CircuitIR {
             ac_magnitude: Some(1.0),
             ac_phase: None,
             waveform: None,
+            port: None,
         },
         Component::Resistor {
             name: "1".into(),

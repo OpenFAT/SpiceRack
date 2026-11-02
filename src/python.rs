@@ -208,7 +208,7 @@ fn source(
     if current {
         Component::CurrentSource { name, np, nm, value, ac_magnitude, ac_phase, waveform }
     } else {
-        Component::VoltageSource { name, np, nm, value, ac_magnitude, ac_phase, waveform }
+        Component::VoltageSource { name, np, nm, value, ac_magnitude, ac_phase, waveform, port: None }
     }
 }
 
@@ -599,14 +599,16 @@ impl PySimulator {
         Ok(PyDistortionAnalysis { inner: Results::from_raw(self.run(a)?) })
     }
 
-    #[pyo3(signature = (fundamental_frequency, stabilization_time, observe_node, points_per_period=128, harmonics=10))]
+    /// `sc_iter`, `steady_coeff`, `uic`: ngspice's shooting controls
+    /// (`sciter`, `steadycoeff`, `uic`; defaults 50 and 1e-3 when unset).
+    #[pyo3(signature = (fundamental_frequency, stabilization_time, observe_node, points_per_period=128, harmonics=10, sc_iter=None, steady_coeff=None, uic=false))]
     fn pss(
         &self, fundamental_frequency: f64, stabilization_time: f64, observe_node: &str,
-        points_per_period: u32, harmonics: u32,
+        points_per_period: u32, harmonics: u32, sc_iter: Option<u32>, steady_coeff: Option<f64>, uic: bool,
     ) -> PyResult<PyPssAnalysis> {
         let a = Analysis::Pss {
             fundamental: fundamental_frequency, stabilization: stabilization_time,
-            observe_node: observe_node.into(), points_per_period, harmonics,
+            observe_node: observe_node.into(), points_per_period, harmonics, sc_iter, steady_coeff, uic,
         };
         Ok(PyPssAnalysis { inner: Results::from_raw(self.run(a)?) })
     }
@@ -1223,9 +1225,15 @@ impl PySubcircuit {
         self.push(Component::MutualInductor { name: name.into(), inductor1: inductor1.into(), inductor2: inductor2.into(), coupling });
     }
 
-    #[pyo3(signature = (name, positive, negative, value, *, ac=None, ac_phase=None))]
-    fn V(&mut self, name: &str, positive: &str, negative: &str, value: PyValueArg, ac: Option<f64>, ac_phase: Option<f64>) {
+    /// `portnum` makes the source RF port `portnum` (from 1) for
+    /// `s_param`, with `z0` ohms in series in every analysis (ngspice's
+    /// `portnum n z0 x`; ngspice and ESPice only).
+    #[pyo3(signature = (name, positive, negative, value, *, ac=None, ac_phase=None, portnum=None, z0=50.0))]
+    fn V(&mut self, name: &str, positive: &str, negative: &str, value: PyValueArg, ac: Option<f64>, ac_phase: Option<f64>, portnum: Option<u32>, z0: f64) {
         self.src(false, name, positive, negative, value.ir(), ac, ac_phase, None);
+        if let Some(Component::VoltageSource { port, .. }) = self.inner.components.last_mut() {
+            *port = portnum.map(|num| ir::RfPort { num, z0 });
+        }
     }
 
     #[pyo3(signature = (name, positive, negative, value, *, ac=None, ac_phase=None))]
@@ -1547,9 +1555,13 @@ impl PyTestbench {
 
     // ── Stimulus ──
 
-    #[pyo3(signature = (name, positive, negative, value, *, ac=None, ac_phase=None))]
-    fn V(mut slf: PyRefMut<'_, Self>, name: &str, positive: &str, negative: &str, value: PyValueArg, ac: Option<f64>, ac_phase: Option<f64>) {
-        slf.as_super().stim(source(false, name, positive.into(), negative.into(), value.ir(), ac, ac_phase, None));
+    #[pyo3(signature = (name, positive, negative, value, *, ac=None, ac_phase=None, portnum=None, z0=50.0))]
+    fn V(mut slf: PyRefMut<'_, Self>, name: &str, positive: &str, negative: &str, value: PyValueArg, ac: Option<f64>, ac_phase: Option<f64>, portnum: Option<u32>, z0: f64) {
+        let mut v = source(false, name, positive.into(), negative.into(), value.ir(), ac, ac_phase, None);
+        if let Component::VoltageSource { port, .. } = &mut v {
+            *port = portnum.map(|num| ir::RfPort { num, z0 });
+        }
+        slf.as_super().stim(v);
     }
 
     #[pyo3(signature = (name, positive, negative, value, *, ac=None, ac_phase=None))]

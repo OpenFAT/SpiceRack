@@ -886,7 +886,10 @@ fn emit_component(out: &mut String, comp: &Component, low: bool) -> Result<(), C
             "k{} () {} k={} ind1=\"l{}\" ind2=\"l{}\"",
             q(name), auto(Need::Builtin("mutual")), num(*coupling), q(inductor1), q(inductor2),
         ),
-        Component::VoltageSource { name, np, nm, value, ac_magnitude, ac_phase, waveform }
+        // VACASK's `acsp` ports are not ngspice's `portnum` (ir-gaps §2):
+        // refused, not dropped.
+        Component::VoltageSource { name, port: Some(_), .. } => return Err(unsupported_comp(format!("v{}: RF port", q(name)))),
+        Component::VoltageSource { name, np, nm, value, ac_magnitude, ac_phase, waveform, port: None }
         | Component::CurrentSource { name, np, nm, value, ac_magnitude, ac_phase, waveform } => {
             let (l, m) = if matches!(comp, Component::VoltageSource { .. }) { ('v', "vsource") } else { ('i', "isource") };
             let wave = match waveform {
@@ -1033,7 +1036,7 @@ mod tests {
             Component::Inductor { name: s("1"), n1: s("a"), n2: s("b"), value: v(1e-6), model: None, params: vec![] },
             Component::Inductor { name: s("2"), n1: s("a"), n2: s("b"), value: v(1e-6), model: None, params: vec![] },
             Component::MutualInductor { name: s("1"), inductor1: s("1"), inductor2: s("2"), coupling: 0.9 },
-            Component::VoltageSource { name: s("1"), np: s("a"), nm: s("0"), value: v(1.0), ac_magnitude: None, ac_phase: None, waveform: None },
+            Component::VoltageSource { name: s("1"), np: s("a"), nm: s("0"), value: v(1.0), ac_magnitude: None, ac_phase: None, waveform: None, port: None },
             Component::CurrentSource { name: s("1"), np: s("a"), nm: s("0"), value: v(1.0), ac_magnitude: None, ac_phase: None, waveform: None },
             Component::Vcvs { name: s("1"), np: s("a"), nm: s("b"), ncp: s("c"), ncm: s("d"), gain: 2.0 },
             Component::Vccs { name: s("1"), np: s("a"), nm: s("b"), ncp: s("c"), ncm: s("d"), transconductance: 2.0 },
@@ -1147,6 +1150,7 @@ mod tests {
             name: "1".into(), np: "a".into(), nm: "0".into(),
             value: IrValue::Numeric { value: 0.0 }, ac_magnitude: None, ac_phase: None,
             waveform: Some(IrWaveform::Pwl { values: vec![((0.0).into(), (0.0).into()), ((1e-3).into(), (1.0).into())], repeat: None, delay: None }),
+            port: None,
         };
         let err = emit_component(&mut String::new(), &c, true).unwrap_err();
         assert!(err.to_string().to_lowercase().contains("pwl"), "{}", err);

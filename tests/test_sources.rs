@@ -25,7 +25,7 @@ fn source(current: bool, wf: IrWaveform) -> Component {
     if current {
         Component::CurrentSource { name, np, nm, value, ac_magnitude, ac_phase, waveform: Some(wf) }
     } else {
-        Component::VoltageSource { name, np, nm, value, ac_magnitude, ac_phase, waveform: Some(wf) }
+        Component::VoltageSource { name, np, nm, value, ac_magnitude, ac_phase, waveform: Some(wf), port: None }
     }
 }
 

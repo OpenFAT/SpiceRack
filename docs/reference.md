@@ -24,7 +24,7 @@ nodes are positional; everything after `*` is keyword-only.
 | `R` | `(name, positive, negative, value, *, raw_spice=None, **params)` |
 | `C`, `L` | `(name, positive, negative, value, **params)` |
 | `K` | `(name, inductor1, inductor2, *, coupling)` |
-| `V`, `I` | `(name, positive, negative, value, *, ac=None, ac_phase=None)` |
+| `V`, `I` | `(name, positive, negative, value, *, ac=None, ac_phase=None)`; `V` also takes `portnum=None, z0=50.0`: an RF port for `s_param`, with `z0` in series in every analysis (ngspice and ESPice only) |
 | `BV`, `BI` | `(name, positive, negative, *, expression)` |
 | `E` | `(name, positive, negative, *, control_positive, control_negative, voltage_gain)` |
 | `G` | `(name, positive, negative, *, control_positive, control_negative, transconductance)` |
@@ -108,7 +108,7 @@ Waveform sources, each a `...VoltageSource` and a `...CurrentSource`, also on
 | `dc_sensitivity(var)`, `ac_sensitivity(var, ...)` | `SensitivityAnalysis` |
 | `polezero(node1, node2, node3, node4, tf_type, pz_type)` | `PoleZeroAnalysis` (`pz["pole(1)"]`) |
 | `distortion(variation="dec", points=10, start_frequency=100.0, stop_frequency=1e8, f2overf1=None)` | `DistortionAnalysis` |
-| `pss(fundamental_frequency, stabilization_time, observe_node, points_per_period=128, harmonics=10)` | `PssAnalysis` |
+| `pss(fundamental_frequency, stabilization_time, observe_node, points_per_period=128, harmonics=10, sc_iter=None, steady_coeff=None, uic=False)` | `PssAnalysis`; the last three are ngspice's `sciter`, `steadycoeff`, `uic` |
 | `s_param(variation="dec", number_of_points=10, start_frequency=1e6, stop_frequency=1e10)` | `SParamAnalysis` |
 | `harmonic_balance(fundamental_frequencies, num_harmonics=None)` | `HarmonicBalanceAnalysis` |
 | `stability(probe, variation="dec", number_of_points=10, start_frequency=1.0, stop_frequency=1e10)` | `StabilityAnalysis` |

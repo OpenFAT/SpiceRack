@@ -27,7 +27,7 @@ provenance, never by re-deriving it the way codegen does.
 
 | File | Oracle |
 |---|---|
-| `test_ngspice_analyses.rs` | real ngspice; each analysis asserts a closed-form number |
+| `test_ngspice_analyses.rs` | real ngspice; each analysis asserts a closed-form number (`.sp`: a matched T pad). `.pss`: ngspice-45 has none, so its card against the ngspice manual example (§11.3.12) |
 | `test_espice_analyses.rs` | real ESPice; the same closed forms as the ngspice suite |
 | `test_laplace_ngspice.rs` | real ngspice 44.2; closed-form Laplace responses |
 | `test_sources.rs` | real ngspice (and ESPice) against the waveform closed forms: PWL `r=`/`td=`; TRNOISE/TRRANDOM against their distribution, five standard errors at N = 4000; each dialect without a form refuses |
