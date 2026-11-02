@@ -273,6 +273,48 @@ impl Component {
         }
     }
 
+    /// The `k=v` parameters of a device card (R, C, L, D, Q, M, J, Z); empty
+    /// for every other component.
+    pub fn params(&self) -> &[(String, String)] {
+        use Component::*;
+        match self {
+            Resistor { params, .. } | Capacitor { params, .. } | Inductor { params, .. } | Diode { params, .. }
+            | Bjt { params, .. } | Mosfet { params, .. } | Jfet { params, .. } | Mesfet { params, .. } => params,
+            _ => &[],
+        }
+    }
+
+    /// Every expression the component carries, for passes over expression
+    /// text (`^` checks, case folding): the parameter values, a waveform's
+    /// expression parameters, an expression value, a behavioural source's
+    /// expression. Numbers and names are not included.
+    pub fn exprs(&self) -> Vec<&str> {
+        use Component::*;
+        let (value, waveform) = match self {
+            Resistor { value, .. } | Capacitor { value, .. } | Inductor { value, .. } => (Some(value), None),
+            VoltageSource { value, waveform, .. } | CurrentSource { value, waveform, .. } => (Some(value), waveform.as_ref()),
+            BehavioralVoltage { expression, .. } | BehavioralCurrent { expression, .. } => return vec![expression],
+            _ => (None, None),
+        };
+        let expr = value.and_then(|v| match v { IrValue::Expression { expr } => Some(expr.as_str()), _ => None });
+        self.params().iter().map(|(_, v)| v.as_str()).chain(waveform.into_iter().flat_map(IrWaveform::exprs_ref)).chain(expr).collect()
+    }
+
+    /// [`Self::exprs`], mutable.
+    pub fn exprs_mut(&mut self) -> Vec<&mut String> {
+        use Component::*;
+        let (value, params, waveform): (_, &mut [(String, String)], _) = match self {
+            Resistor { value, params, .. } | Capacitor { value, params, .. } | Inductor { value, params, .. } => (Some(value), params, None),
+            VoltageSource { value, waveform, .. } | CurrentSource { value, waveform, .. } => (Some(value), &mut [], waveform.as_mut()),
+            BehavioralVoltage { expression, .. } | BehavioralCurrent { expression, .. } => return vec![expression],
+            Diode { params, .. } | Bjt { params, .. } | Mosfet { params, .. } | Jfet { params, .. } | Mesfet { params, .. } => (None, params, None),
+            _ => (None, &mut [], None),
+        };
+        let expr = value.and_then(|v| match v { IrValue::Expression { expr } => Some(expr), _ => None });
+        let nums = waveform.into_iter().flat_map(IrWaveform::nums_mut).filter_map(|n| match n { IrNum::Expr(e) => Some(e), IrNum::Num(_) => None });
+        params.iter_mut().map(|(_, v)| v).chain(nums).chain(expr).collect()
+    }
+
     /// Instance name without its SPICE letter; `None` for a raw line.
     pub fn name(&self) -> Option<&str> {
         use Component::*;
@@ -596,6 +638,27 @@ pub enum IssueSeverity {
 // ── CircuitIR methods ──
 
 impl CircuitIR {
+    /// Calls `f` on every identifier, for renaming: definition names (the
+    /// top's is a title and is skipped), ports, model names, instance names,
+    /// the subcircuits they call and their port mappings, every
+    /// [`Component::names_mut`] in the bodies and the stimulus, and the
+    /// globals. Expressions, saves and analyses are not visited.
+    pub fn names_mut(&mut self, mut f: impl FnMut(&mut String)) {
+        self.subcircuit_defs.iter_mut().for_each(|sc| f(&mut sc.name));
+        for sc in std::iter::once(&mut self.top).chain(&mut self.subcircuit_defs) {
+            sc.ports.iter_mut().for_each(|p| f(&mut p.name));
+            sc.models.iter_mut().for_each(|m| f(&mut m.name));
+            for i in &mut sc.instances {
+                f(&mut i.name);
+                f(&mut i.subcircuit);
+                i.port_mapping.iter_mut().for_each(&mut f);
+            }
+            sc.components.iter_mut().flat_map(Component::names_mut).for_each(&mut f);
+        }
+        self.testbench.iter_mut().flat_map(|tb| &mut tb.stimulus).flat_map(Component::names_mut).for_each(&mut f);
+        self.globals.iter_mut().for_each(f);
+    }
+
     /// Compute feature flags by walking the IR
     pub fn compute_features(&self) -> FeatureFlags {
         let mut flags = FeatureFlags::default();
@@ -846,6 +909,9 @@ mod tests {
                 Component::Resistor { value, .. } | Component::Capacitor { value, .. } | Component::Inductor { value, .. } => assert_tagged(value),
                 _ => {}
             }
+            // The two expression walkers visit the same fields.
+            let mut m = c.clone();
+            assert_eq!(c.exprs(), m.exprs_mut().into_iter().map(|s| s.as_str()).collect::<Vec<_>>(), "{c:?}");
         }
         let ir = CircuitIR {
             top: Subcircuit {

@@ -33,7 +33,7 @@
 
 use std::collections::BTreeSet;
 use crate::ir::*;
-use super::{model_refuse, CodeGenError};
+use super::{bare_node, model_refuse, CodeGenError};
 
 
 /// A device module the deck needs before it can be elaborated.
@@ -453,7 +453,7 @@ fn analysis_block(idx: usize, a: &Analysis, native: bool) -> Result<Vec<String>,
             out.push(format!(
                 "analysis {} noise out=\"{}\" in=\"{}\" {}",
                 name,
-                strip_wrapper(output),
+                bare_node(output).to_ascii_lowercase(),
                 source.to_ascii_lowercase(),
                 freq_sweep(variation, *points, *start, *stop)?,
             ));
@@ -462,7 +462,7 @@ fn analysis_block(idx: usize, a: &Analysis, native: bool) -> Result<Vec<String>,
         // VACASK's `dcxf` reports the transfer function from EVERY source
         // to `out` in one plot, so the input source is implicit.
         Analysis::Tf { output, .. } => {
-            out.push(format!("analysis {} dcxf out=\"{}\"", name, strip_wrapper(output)));
+            out.push(format!("analysis {} dcxf out=\"{}\"", name, bare_node(output).to_ascii_lowercase()));
         }
 
         other => {
@@ -537,17 +537,6 @@ fn model_params(params: &[(String, String)], lead: Vec<String>) -> String {
     if body.is_empty() { String::new() } else { format!(" ({})", body.join(" ")) }
 }
 
-/// `V(out)` / `v(out)` / `i(v1)` -> `out` / `v1`. VACASK names a node by it
-fn strip_wrapper(s: &str) -> String {
-    let t = s.trim().to_ascii_lowercase();
-    for p in ["v(", "i("] {
-        if let Some(inner) = t.strip_prefix(p).and_then(|r| r.strip_suffix(')')) {
-            return inner.trim().to_string();
-        }
-    }
-    t
-}
-
 /// VACASK identifiers cannot carry punctuation.
 fn sanitize(s: &str) -> String {
     s.chars()
@@ -578,56 +567,16 @@ fn prepared(ir: &CircuitIR) -> CircuitIR {
                 *v = v.to_ascii_lowercase();
             }
         };
-        let tb_comps = ir.testbench.iter_mut().flat_map(|tb| tb.stimulus.iter_mut());
-        let blocks = std::iter::once(&mut ir.top).chain(ir.subcircuit_defs.iter_mut());
-        for sc in blocks {
+        for sc in std::iter::once(&mut ir.top).chain(&mut ir.subcircuit_defs) {
             sc.parameters.iter_mut().filter_map(|p| p.default.as_mut()).for_each(low);
             sc.models.iter_mut().flat_map(|m| m.parameters.iter_mut()).for_each(|(_, v)| low(v));
             sc.instances.iter_mut().flat_map(|i| i.parameters.iter_mut()).for_each(|(_, v)| low(v));
-            for c in &mut sc.components {
-                lower_values(c, &low);
-            }
+            sc.components.iter_mut().flat_map(Component::exprs_mut).for_each(low);
         }
-        for c in tb_comps {
-            lower_values(c, &low);
-        }
+        ir.testbench.iter_mut().flat_map(|tb| &mut tb.stimulus).flat_map(Component::exprs_mut).for_each(low);
     }
-    let q = |s: &mut String| *s = quote(s);
-    ir.subcircuit_defs.iter_mut().for_each(|sc| q(&mut sc.name));
-    for sc in std::iter::once(&mut ir.top).chain(ir.subcircuit_defs.iter_mut()) {
-        sc.ports.iter_mut().for_each(|p| q(&mut p.name));
-        sc.models.iter_mut().for_each(|m| q(&mut m.name));
-        for i in &mut sc.instances {
-            q(&mut i.name);
-            q(&mut i.subcircuit);
-            i.port_mapping.iter_mut().for_each(q);
-        }
-        sc.components.iter_mut().for_each(|c| c.names_mut().into_iter().for_each(q));
-    }
-    ir.testbench.iter_mut().flat_map(|tb| tb.stimulus.iter_mut()).for_each(|c| c.names_mut().into_iter().for_each(q));
-    ir.globals.iter_mut().for_each(q);
+    ir.names_mut(|s| *s = quote(s));
     ir
-}
-
-/// A component's value and parameter texts through `low`.
-fn lower_values(c: &mut Component, low: &impl Fn(&mut String)) {
-    use Component::*;
-    match c {
-        Resistor { value, params, .. } | Capacitor { value, params, .. } | Inductor { value, params, .. } => {
-            if let IrValue::Expression { expr } = value {
-                low(expr);
-            }
-            params.iter_mut().for_each(|(_, v)| low(v));
-        }
-        VoltageSource { value, waveform, .. } | CurrentSource { value, waveform, .. } => {
-            if let IrValue::Expression { expr } = value {
-                low(expr);
-            }
-            waveform.iter_mut().flat_map(|w| w.nums_mut()).for_each(|n| if let IrNum::Expr(e) = n { low(e) });
-        }
-        Diode { params, .. } | Bjt { params, .. } | Mosfet { params, .. } | Jfet { params, .. } | Mesfet { params, .. } => params.iter_mut().for_each(|(_, v)| low(v)),
-        _ => {}
-    }
 }
 
 pub(super) fn netlist(ir: &CircuitIR) -> Result<String, CodeGenError> {
