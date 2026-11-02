@@ -11,11 +11,8 @@ import pytest
 
 
 def lint():
-    try:
-        from spicerack import lint
-        return lint
-    except ImportError:
-        pytest.skip("spicerack not built")
+    from spicerack import lint  # unsupported fails, never skips: an unbuilt extension is an error
+    return lint
 
 
 # ══════════════════════════════════════════════════════════════════════════════

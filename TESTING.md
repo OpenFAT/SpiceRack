@@ -31,8 +31,8 @@ provenance, never by re-deriving it the way codegen does.
 | `test_espice_analyses.rs` | real ESPice; the same closed forms as the ngspice suite |
 | `test_laplace_ngspice.rs` | real ngspice 44.2; closed-form Laplace responses |
 | `test_vacask_runs.rs` | real VACASK: the emitted deck parses and writes a raw file with the expected numbers |
-| `test_dialects.rs` | one circuit in every dialect, read back by ESPice (`--tokenizer=<d>`), same numbers |
-| `test_import_suite.rs` | spice-bench decks (`SPICE_BENCH`): parse, JSON round trip, re-emitted as ngspice, every plot and `.meas` reproduced |
+| `test_dialects.rs` | one circuit in every dialect, read back by ESPice (`--tokenizer=<d>`), same numbers; the dialects it cannot do yet are named in `ESPICE_REFUSES` |
+| `test_import_suite.rs` | spice-bench decks (`SPICE_BENCH`, a pinned nix fetch): parse, JSON round trip, re-emitted as ngspice, every plot and `.meas` reproduced by real ngspice; decks ngspice itself cannot run are named in `tests/fixtures/spice_bench_known_failures.txt`, decks past the CPU budget in `spice_bench_slow.txt`. Parse/emit fixpoint over the ngspice, HSPICE, Xyce, VACASK and LTspice corpora (`*_CORPUS`, pinned in `flake.nix`) |
 | `test_spectre_golden.rs` | goldens; Spectre is licence-gated, so the text is checked against the Spectre reference manual |
 | `test_ltspice_dialect.rs` | emitted text against the LTspice help; no LTspice binary, so unverified by execution |
 | `test_backends.rs`, `test_unit.rs` | spec examples |
@@ -50,6 +50,17 @@ provenance, never by re-deriving it the way codegen does.
 
 ## Known gaps
 
+`nix develop .#testing` provides every simulator and corpus the tests read
+(ngspice, VACASK, ESPice built from source, the spice-bench suite and the
+corpora); outside it those tests fail, they never skip.
+
 - LTspice and Spectre are not installed anywhere SpiceRack is tested, so their
   decks are checked against the manuals only.
-- There is no nightly tier.
+- There is no nightly tier. The spice-bench round trip runs in the merge
+  tier: 2,586 CPU seconds, 5 min 25 s wall on a 20-thread machine.
+- No public Spectre corpus is pinned (ESPice's `spectre_fixtures` are gone
+  upstream), so `spectre_corpus_fixpoint` is a known failure
+  (`#[should_panic]`).
+- ESPice reads back only the HSPICE deck in `test_dialects.rs`: the ngspice
+  and ESPice decks spell Laplace as an XSPICE `s_xfer`, which ESPice cannot
+  read, and codegen refuses the B source for Spectre.

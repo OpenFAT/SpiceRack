@@ -1,27 +1,18 @@
 """VACASK from Python: the deck a Testbench emits, and the numbers it returns.
 
-The netlist assertions run anywhere. The simulation tests skip when `vacask` is
-not on PATH, so CI without the binary still passes.
+The netlist assertions run anywhere. The simulation tests need `vacask` on PATH
+(`nix develop .#testing`) and fail without it.
 
 Run: maturin develop && pytest tests/test_vacask_backend.py -v
 """
 import math
-import shutil
 
 import pytest
 
 
 def ps():
-    try:
-        import spicerack
-        return spicerack
-    except ImportError:
-        pytest.skip("spicerack not built")
-
-
-def needs_vacask():
-    if shutil.which("vacask") is None:
-        pytest.skip("vacask not on PATH")
+    import spicerack  # unsupported fails, never skips: an unbuilt extension is an error
+    return spicerack
 
 
 def divider(mod, rtop=1e3, rbot=1e3):
@@ -110,9 +101,9 @@ class TestNetlist:
 # ── Real simulations ──
 
 
+@pytest.mark.needs("vacask")
 class TestRun:
     def test_operating_point(self):
-        needs_vacask()
         mod = ps()
         tb = bench(mod, divider(mod))
         tb.V(name="dd", positive="vdd", negative="0", value=3.0)
@@ -120,7 +111,6 @@ class TestRun:
         assert op["out"] == pytest.approx(1.5, rel=1e-9)
 
     def test_ac_corner_of_an_rc(self):
-        needs_vacask()
         mod = ps()
         sc = mod.Subcircuit("rc", ["vin", "out"])
         sc.R(name="1", positive="vin", negative="out", value=1e3)
@@ -137,7 +127,6 @@ class TestRun:
         assert freq[i] == pytest.approx(f3db, rel=2e-2)
 
     def test_transient_step_response(self):
-        needs_vacask()
         mod = ps()
         sc = mod.Subcircuit("rc", ["vin", "out"])
         sc.R(name="1", positive="vin", negative="out", value=1e3)

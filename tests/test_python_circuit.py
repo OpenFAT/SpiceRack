@@ -7,12 +7,8 @@ import pytest
 
 
 def import_spicerack():
-    """Import spicerack, skip if not built yet."""
-    try:
-        import spicerack
-        return spicerack
-    except ImportError:
-        pytest.skip("spicerack not built — run 'maturin develop' first")
+    import spicerack  # unsupported fails, never skips: an unbuilt extension is an error
+    return spicerack
 
 
 # ── Circuit Building ──

@@ -6,7 +6,8 @@
 //! reads neither. The HSPICE card forms follow ESPice's
 //! `tests/frontend/grammar/hspice*.peg` and `tests/conformance/tests/netlist/hspice`.
 //!
-//! The ESPice runs skip when `espice` is not on PATH (`$ESPICE` overrides).
+//! The ESPice runs need `espice` on PATH (`$ESPICE` overrides): unsupported
+//! fails, never skips, so outside `nix develop .#testing` they fail.
 
 use spicerack::codegen::{netlist, Dialect};
 use spicerack::ir::*;
@@ -189,13 +190,15 @@ fn option_flags() {
 
 // ── ESPice as the reader ──
 
-fn espice() -> Option<String> {
+fn espice() -> String {
     let bin = std::env::var("ESPICE").unwrap_or_else(|_| "espice".into());
     let ok = std::process::Command::new(&bin).arg("--version").output().map(|o| o.status.success()).unwrap_or(false);
-    ok.then_some(bin)
+    assert!(ok, "`{bin} --version` failed: run the tests in `nix develop .#testing`, which puts espice on PATH");
+    bin
 }
 
-fn op_point(bin: &str, deck: &str, tokenizer: &str) -> spicerack::result::RawData {
+/// The operating point ESPice reads from `deck`, or why it refused it.
+fn op_point(bin: &str, deck: &str, tokenizer: &str) -> Result<spicerack::result::RawData, String> {
     let dir = tempfile::TempDir::new().unwrap();
     let (path, raw) = (dir.path().join("deck.sp"), dir.path().join("out.raw"));
     std::fs::write(&path, deck).unwrap();
@@ -207,13 +210,14 @@ fn op_point(bin: &str, deck: &str, tokenizer: &str) -> spicerack::result::RawDat
         .arg("--format=binary")
         .output()
         .unwrap();
-    assert!(
-        out.status.success(),
-        "espice --tokenizer={tokenizer} refused the deck:\n{}\n{}\n{deck}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr),
-    );
-    spicerack::rawfile::parse_raw(&std::fs::read(&raw).unwrap()).unwrap()
+    if !out.status.success() {
+        return Err(format!(
+            "espice --tokenizer={tokenizer} refused the deck:\n{}\n{}\n{deck}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr),
+        ));
+    }
+    Ok(spicerack::rawfile::parse_raw(&std::fs::read(&raw).unwrap()).unwrap())
 }
 
 fn node(raw: &spicerack::result::RawData, name: &str) -> f64 {
@@ -226,12 +230,18 @@ fn node(raw: &spicerack::result::RawData, name: &str) -> f64 {
     raw.real_data[i][0]
 }
 
+/// Known failures: the dialects whose deck is not written or not read, with
+/// the reason. A listed dialect that reads back fails the test until its
+/// line goes.
+const ESPICE_REFUSES: &[(Dialect, &str)] = &[
+    (Dialect::Ngspice, "ESPice has no XSPICE code models; ngspice spells the Laplace block as an `s_xfer` A element"),
+    (Dialect::Espice, "codegen bug: the ESPice deck spells the Laplace block as an XSPICE `s_xfer` A element, which ESPice cannot read"),
+    (Dialect::Spectre, "codegen refuses a B source for Spectre (`v(mid)` has no safe Spectre spelling)"),
+];
+
 #[test]
 fn espice_reads_each_dialect_to_the_same_op() {
-    let Some(bin) = espice() else {
-        eprintln!("espice not on PATH — skipping");
-        return;
-    };
+    let bin = espice();
     let ir = circuit(vec![Analysis::Op]);
     let gens = [
         (Dialect::Ngspice, "ngspice"),
@@ -239,14 +249,30 @@ fn espice_reads_each_dialect_to_the_same_op() {
         (Dialect::Espice, "ngspice"),
         (Dialect::Spectre, "spectre"),
     ];
+    let mut refused = Vec::new();
     for (g, tokenizer) in gens {
-        let deck = netlist(&ir, g).unwrap();
-        let raw = op_point(&bin, &deck, tokenizer);
+        let deck = match netlist(&ir, g) {
+            Ok(deck) => deck,
+            Err(e) => {
+                refused.push((g, format!("codegen refused: {e}")));
+                continue;
+            }
+        };
+        let raw = match op_point(&bin, &deck, tokenizer) {
+            Ok(raw) => raw,
+            Err(why) => {
+                refused.push((g, why));
+                continue;
+            }
+        };
         for (name, want) in [("mid", 0.5), ("b", 2.0), ("lp", 1.0)] {
             let got = node(&raw, name);
             assert!((got - want).abs() < 1e-6, "{:?}: v({name}) = {got}, want {want}\n{deck}", g);
         }
     }
+    let got: Vec<Dialect> = refused.iter().map(|(d, _)| *d).collect();
+    let known: Vec<Dialect> = ESPICE_REFUSES.iter().map(|(d, _)| *d).collect();
+    assert_eq!(got, known, "ESPICE_REFUSES is out of date:\n{refused:#?}");
 }
 
 /// `^` is power in ngspice but XOR in LTspice. An expression imported from

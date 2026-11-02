@@ -7,11 +7,8 @@ import pytest
 
 
 def import_units():
-    try:
-        from spicerack import unit
-        return unit
-    except ImportError:
-        pytest.skip("spicerack not built — run 'maturin develop' first")
+    from spicerack import unit  # unsupported fails, never skips: an unbuilt extension is an error
+    return unit
 
 
 class TestUnitMatmul:

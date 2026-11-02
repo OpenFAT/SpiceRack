@@ -3,13 +3,15 @@
 //! trip, keep its analysis and `.meas` cards, and, re-emitted as ngspice,
 //! reproduce every plot at every point and every `.meas` result.
 //!
-//!   external/spice-bench/fetch.sh DIR
-//!   SPICE_BENCH=DIR cargo test --no-default-features --release --test test_import_suite -- --nocapture
+//!   nix develop .#testing -c cargo test --no-default-features --release --test test_import_suite -- --nocapture
 //!
-//! Skipped without `$SPICE_BENCH` or ngspice. A deck ngspice cannot finish in
-//! `$SPICE_BENCH_TIMEOUT` CPU seconds (default 120) as written is skipped: the
-//! suite READMEs list the ones ngspice-45 cannot run. Every dialect is also
-//! emitted, and the decks each backend refuses are counted, not failed.
+//! `nix develop .#testing` sets `$SPICE_BENCH` and the `$*_CORPUS` variables;
+//! without them, or without ngspice, the tests fail. A deck ngspice cannot
+//! finish in `$SPICE_BENCH_TIMEOUT` CPU seconds (default 120) as written, or
+//! cannot run at all, is a named known failure in
+//! `tests/fixtures/spice_bench_known_failures.txt`: the suite READMEs list the
+//! ones ngspice-45 cannot run. Every dialect is also emitted, and the decks
+//! each backend refuses are counted, not failed.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -56,13 +58,15 @@ struct Run {
     measures: Vec<(String, f64)>,
 }
 
-/// Runs `deck` (text) with ngspice from `dir` so relative includes resolve,
-/// with the random seed pinned.
+/// Runs `deck` (text) with ngspice from `dir` so relative includes resolve
+/// (ngspice falls back to the working directory), with the random seed
+/// pinned. The deck itself goes to the temp dir: `dir` is read-only in the
+/// nix store.
 /// `-r` turns `.meas` off in batch mode ("No .measure possible in batch mode
 /// (-b) with -r rawfile set!"), so a deck with `.meas` runs twice.
 /// `Err` carries why; `Ok(None)` is a timeout.
 fn ngspice(dir: &Path, deck: &str, secs: u64) -> Result<Option<Run>, String> {
-    let file = tempfile::Builder::new().suffix(".sp").tempfile_in(dir).map_err(|e| e.to_string())?;
+    let file = tempfile::Builder::new().suffix(".sp").tempfile().map_err(|e| e.to_string())?;
     // A pinned seed: models with `agauss` mismatch (gf180) draw a fresh
     // value every run otherwise, so the same deck disagrees with itself.
     let (title, body) = deck.split_once('\n').unwrap_or((deck, ""));
@@ -81,9 +85,13 @@ fn ngspice(dir: &Path, deck: &str, secs: u64) -> Result<Option<Run>, String> {
         }
         c.arg(file.path()).current_dir(dir).output().map_err(|e| e.to_string())
     };
-    // `timeout` exits 124 itself, or 128 + the signal that killed ngspice:
-    // SIGXCPU (24) at the CPU limit, SIGKILL (9) past it.
-    let timed_out = |o: &std::process::Output| matches!(o.status.code(), Some(124 | 137 | 152));
+    // `timeout` exits 124 itself; when the CPU limit kills ngspice (SIGXCPU,
+    // or SIGKILL at the hard limit) it re-raises that signal on itself, so
+    // there is no exit code. 137 and 152 are the same deaths through a shell.
+    let timed_out = |o: &std::process::Output| {
+        use std::os::unix::process::ExitStatusExt;
+        matches!(o.status.code(), Some(124 | 137 | 152)) || matches!(o.status.signal(), Some(9 | 24))
+    };
     let out = run(true)?;
     if timed_out(&out) {
         return Ok(None);
@@ -329,10 +337,7 @@ fn fixpoint(ir: &CircuitIR, d: Dialect) -> Result<String, String> {
 /// Every deck under `$<var>` whose path passes `keep` is a fixpoint in `d`.
 /// No simulator.
 fn corpus_fixpoint(var: &str, d: Dialect, ext: &str, keep: fn(&str) -> bool) {
-    let Ok(root) = std::env::var(var) else {
-        eprintln!("{var} not set — skipping");
-        return;
-    };
+    let root = std::env::var(var).unwrap_or_else(|_| panic!("{var} not set: run the tests in `nix develop .#testing`, which sets it"));
     let mut all = Vec::new();
     files(Path::new(&root), ext, &mut all);
     all.retain(|p| keep(&p.to_string_lossy()));
@@ -383,9 +388,14 @@ fn xyce_corpus_fixpoint() {
     corpus_fixpoint("XYCE_CORPUS", Dialect::Xyce, "cir", |_| true);
 }
 
-/// Spectre decks (`$SPECTRE_CORPUS`, e.g. ESPice's
-/// `tests/frontend/spectre_fixtures`; `err_*` decks are deliberately invalid).
+/// Spectre decks (`$SPECTRE_CORPUS`; `err_*` decks are deliberately invalid).
+///
+/// Known failure: ESPice's `tests/frontend/spectre_fixtures`, the corpus this
+/// read, is gone from its public history and no other public Spectre corpus
+/// is pinned, so `.#testing` leaves the variable unset. Point it at a corpus
+/// and the test passes, which fails until this marker goes.
 #[test]
+#[should_panic(expected = "SPECTRE_CORPUS not set")]
 fn spectre_corpus_fixpoint() {
     corpus_fixpoint("SPECTRE_CORPUS", Dialect::Spectre, "scs", |p| !p.contains("/err_"));
 }
@@ -404,11 +414,13 @@ fn ltspice_corpus_fixpoint() {
 
 enum Outcome {
     Pass,
+    /// Every check but the simulation passed: the deck is in [`SLOW`].
+    Slow,
     Skip(String),
     Fail(String),
 }
 
-fn check(deck: &Path, secs: u64, refused: &std::sync::Mutex<std::collections::BTreeMap<String, usize>>) -> Outcome {
+fn check(deck: &Path, secs: u64, simulate: bool, refused: &std::sync::Mutex<std::collections::BTreeMap<String, usize>>) -> Outcome {
     let src = match std::fs::read(deck) {
         Ok(b) => spicerack::import::decode(&b),
         Err(e) => return Outcome::Fail(e.to_string()),
@@ -435,6 +447,9 @@ fn check(deck: &Path, secs: u64, refused: &std::sync::Mutex<std::collections::BT
     let (before, after) = (analyses(&src), analyses(&converted));
     if before != after {
         return Outcome::Fail(format!("analyses {before:?} became {after:?}"));
+    }
+    if !simulate {
+        return Outcome::Slow;
     }
     let dir = deck.parent().unwrap();
     let original = match ngspice(dir, &src, secs) {
@@ -467,22 +482,34 @@ fn check(deck: &Path, secs: u64, refused: &std::sync::Mutex<std::collections::BT
     }
 }
 
+/// The decks ngspice cannot run as written, one `<path under $SPICE_BENCH>
+/// <reason>` per line.
+const KNOWN_FAILURES: &str = include_str!("fixtures/spice_bench_known_failures.txt");
+
+/// The decks ngspice cannot finish in the CPU budget, same format. Whether a
+/// deck crosses a time budget depends on the machine, so these are
+/// quarantined by name: every check but the simulation runs.
+const SLOW: &str = include_str!("fixtures/spice_bench_slow.txt");
+
+/// The deck paths of a known-failure list.
+fn names(list: &str) -> Vec<&str> {
+    list.lines().filter_map(|l| l.split_whitespace().next().filter(|w| !w.starts_with('#'))).collect()
+}
+
 #[test]
 fn spice_bench_round_trip() {
-    let Ok(root) = std::env::var("SPICE_BENCH") else {
-        eprintln!("SPICE_BENCH not set — skipping");
-        return;
-    };
-    if Command::new("ngspice").arg("--version").output().is_err() {
-        eprintln!("ngspice not on PATH — skipping");
-        return;
-    }
+    let root = std::env::var("SPICE_BENCH").unwrap_or_else(|_| panic!("SPICE_BENCH not set: run the tests in `nix develop .#testing`, which sets it"));
+    assert!(Command::new("ngspice").arg("--version").output().is_ok(), "ngspice not on PATH: run the tests in `nix develop .#testing`");
     let secs = std::env::var("SPICE_BENCH_TIMEOUT").ok().and_then(|s| s.parse().ok()).unwrap_or(120);
     let mut all = Vec::new();
     decks(Path::new(&root), &mut all);
     // Largest first: a big deck started last would set the wall clock alone.
     all.sort_by_key(|p| std::cmp::Reverse(std::fs::metadata(p).map_or(0, |m| m.len())));
     assert!(!all.is_empty(), "no *.sp under {root}");
+    let rel = |deck: &Path| deck.strip_prefix(&root).unwrap_or(deck).to_string_lossy().into_owned();
+    let (slow, known) = (names(SLOW), names(KNOWN_FAILURES));
+    let stale: Vec<&str> = slow.iter().chain(&known).copied().filter(|n| !all.iter().any(|d| rel(d) == *n)).collect();
+    assert!(stale.is_empty(), "listed decks missing from the suite: {stale:#?}");
 
     let refused = std::sync::Mutex::new(std::collections::BTreeMap::new());
     let next = std::sync::atomic::AtomicUsize::new(0);
@@ -494,7 +521,7 @@ fn spice_bench_round_trip() {
                 let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 let Some(deck) = all.get(i) else { break };
                 let t = std::time::Instant::now();
-                let o = check(deck, secs, &refused);
+                let o = check(deck, secs, !slow.contains(&rel(deck).as_str()), &refused);
                 if t.elapsed().as_secs() > 60 {
                     eprintln!("slow {}: {:.0?}", deck.display(), t.elapsed());
                 }
@@ -505,19 +532,29 @@ fn spice_bench_round_trip() {
 
     let mut results = results.into_inner().unwrap();
     results.sort_by(|a, b| a.0.cmp(&b.0));
-    let (mut pass, mut skip, mut fail) = (0, 0, Vec::new());
+    let (mut pass, mut quarantined, mut skipped, mut fail) = (0, 0, Vec::new(), Vec::new());
     for (deck, o) in &results {
-        let rel = deck.strip_prefix(&root).unwrap_or(deck).display();
+        let rel = rel(deck);
         match o {
             Outcome::Pass => pass += 1,
+            Outcome::Slow => quarantined += 1,
             Outcome::Skip(why) => {
-                skip += 1;
                 eprintln!("skip {rel}: {why}");
+                skipped.push(rel);
             }
             Outcome::Fail(why) => fail.push(format!("{rel}: {why}")),
         }
     }
-    eprintln!("\n{} decks: {pass} pass, {skip} skip, {} fail", results.len(), fail.len());
+    eprintln!("\n{} decks: {pass} pass, {quarantined} slow, {} skip, {} fail", results.len(), skipped.len(), fail.len());
     eprintln!("decks each backend could not express: {:?}", refused.into_inner().unwrap());
+    // A skip is a named known failure: the deck's line in KNOWN_FAILURES
+    // (or SLOW, for a timeout). The name lists must match: an unlisted skip
+    // and a listed deck that ran both fail, until the list is edited.
+    let unlisted: Vec<&String> = skipped.iter().filter(|d| !known.contains(&d.as_str())).collect();
+    let ran: Vec<&&str> = known.iter().filter(|k| !skipped.iter().any(|d| d == *k)).collect();
     assert!(fail.is_empty(), "round trip failed:\n{}", fail.join("\n"));
+    assert!(
+        unlisted.is_empty() && ran.is_empty(),
+        "known failures out of date (tests/fixtures/spice_bench_known_failures.txt, or spice_bench_slow.txt for a timeout):\nskipped, not listed: {unlisted:#?}\nlisted, not skipped: {ran:#?}"
+    );
 }

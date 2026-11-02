@@ -4,7 +4,8 @@
 //! only evidence that counts, so nothing is asserted against the generated text
 //! that is not also asserted against the numbers VACASK returns.
 //!
-//! Skips when `vacask` is not on PATH so CI without it still passes.
+//! Unsupported fails, never skips: without `vacask` on PATH every run fails;
+//! run the tests in `nix develop .#testing`.
 
 use spicerack::backend::{netlist as emit, Dialect};
 use spicerack::ir::*;
@@ -18,15 +19,12 @@ fn have_vacask() -> bool {
         .unwrap_or(false)
 }
 
-/// Emit the deck and run it. `None` means "no binary, skip".
-fn run(ir: &CircuitIR) -> Option<RawData> {
+/// Emit the deck and run it.
+fn run(ir: &CircuitIR) -> RawData {
     let netlist = emit(ir, Dialect::Vacask).expect("emit vacask deck");
-    if !have_vacask() {
-        eprintln!("skipping: vacask not on PATH");
-        return None;
-    }
+    assert!(have_vacask(), "vacask not on PATH: run the tests in `nix develop .#testing`");
     match Dialect::Vacask.run(&netlist) {
-        Ok(raw) => Some(raw),
+        Ok(raw) => raw,
         Err(e) => panic!("vacask rejected the generated deck: {}\n--- deck ---\n{}", e, netlist),
     }
 }
@@ -118,7 +116,7 @@ fn rc_ir(analyses: Vec<Analysis>) -> CircuitIR {
 
 #[test]
 fn op_solves_a_resistive_divider() {
-    let Some(raw) = run(&rc_ir(vec![Analysis::Op])) else { return };
+    let raw = run(&rc_ir(vec![Analysis::Op]));
     // 3 V across 1k+1k: out = 1.5 V, i(vdd) = -1.5 mA (VACASK's branch flow
     // points into the source's positive terminal).
     close(col(&raw, "out")[0], 1.5, 1e-9);
@@ -131,7 +129,7 @@ fn dc_sweeps_a_source_on_spices_own_grid() {
     let ir = rc_ir(vec![Analysis::Dc {
         sweeps: vec![DcSweep { source: "Vdd".into(), start: 0.0, stop: 10.0, step: 0.5 }],
     }]);
-    let Some(raw) = run(&ir) else { return };
+    let raw = run(&ir);
     let sweep = col(&raw, "vsweep");
     // 0..10 by 0.5 is 21 SPICE samples, not 21 intervals.
     assert_eq!(sweep.len(), 21, "sweep grid: {:?}", sweep);
@@ -150,7 +148,7 @@ fn dc_sweep_stops_before_passing_the_endpoint() {
     let ir = rc_ir(vec![Analysis::Dc {
         sweeps: vec![DcSweep { source: "Vdd".into(), start: 0.0, stop: 1.1, step: 0.2 }],
     }]);
-    let Some(raw) = run(&ir) else { return };
+    let raw = run(&ir);
     let sweep = col(&raw, "vsweep");
     assert_eq!(sweep.len(), 6, "{:?}", sweep);
     close(sweep[5], 1.0, 1e-12);
@@ -171,7 +169,7 @@ fn two_source_dc_runs_inner_sweep_fastest() {
     tb.stimulus = vec![vsrc("a", "a", "0", 0.0), vsrc("b", "c", "0", 0.0)];
     top.components.push(r("3", "c", "0", 1000.0));
     let ir = CircuitIR { top, testbench: Some(tb), ..Default::default() };
-    let Some(raw) = run(&ir) else { return };
+    let raw = run(&ir);
     // 3 outer x 3 inner = 9 points, inner fastest.
     let a = col(&raw, "a");
     assert_eq!(a.len(), 9, "{:?}", a);
@@ -197,7 +195,7 @@ fn ac_finds_the_rc_corner() {
         ac_magnitude: Some(1.0), ac_phase: Some(0.0), waveform: None,
     }];
     let ir = CircuitIR { top, testbench: Some(tb), ..Default::default() };
-    let Some(raw) = run(&ir) else { return };
+    let raw = run(&ir);
     assert!(raw.is_complex, "AC must come back as a complex plot");
 
     let f = col(&raw, "frequency");
@@ -227,7 +225,7 @@ fn ac_phase_on_a_source_is_honoured() {
         ac_magnitude: Some(2.0), ac_phase: Some(90.0), waveform: None,
     }];
     let ir = CircuitIR { top, testbench: Some(tb), ..Default::default() };
-    let Some(raw) = run(&ir) else { return };
+    let raw = run(&ir);
     let v = cplx(&raw, "vin");
     close(v[0].norm(), 2.0, 1e-9);
     close(v[0].arg().to_degrees(), 90.0, 1e-6);
@@ -250,7 +248,7 @@ fn tran_follows_the_rc_step_response() {
         }),
     }];
     let ir = CircuitIR { top, testbench: Some(tb), ..Default::default() };
-    let Some(raw) = run(&ir) else { return };
+    let raw = run(&ir);
     let t = col(&raw, "time");
     let out = col(&raw, "out");
     // 1 - exp(-1) = 0.6321 at one time constant.
@@ -272,7 +270,7 @@ fn tran_emits_maxstep_so_the_grid_is_spices() {
     let ir = CircuitIR { top, testbench: Some(tb), ..Default::default() };
     let netlist = emit(&ir, Dialect::Vacask).unwrap();
     assert!(netlist.contains("maxstep="), "{}", netlist);
-    let Some(raw) = run(&ir) else { return };
+    let raw = run(&ir);
     let t = col(&raw, "time");
     // 10 ms / 100 us = 100 intervals; without maxstep VACASK returns far fewer.
     assert!(t.len() >= 100, "only {} points — maxstep is not being honoured", t.len());
@@ -298,7 +296,7 @@ fn noise_matches_a_resistors_thermal_floor() {
     }];
     tb.temperature = Some(27.0);
     let ir = CircuitIR { top, testbench: Some(tb), ..Default::default() };
-    let Some(raw) = run(&ir) else { return };
+    let raw = run(&ir);
 
     let onoise = col(&raw, "onoise");
     // Two 1k resistors in parallel (500 ohm) seen from `out`: 4kT*500.
@@ -315,7 +313,7 @@ fn dc_transfer_function_runs() {
     // VACASK's `dcxf` reports the transfer function from EVERY source to `out`
     // in one plot, so SPICE's input-source argument is implicit.
     let ir = rc_ir(vec![Analysis::Tf { output: "V(out)".into(), source: "Vdd".into() }]);
-    let Some(raw) = run(&ir) else { return };
+    let raw = run(&ir);
     close(col(&raw, "tf(vdd)")[0], 0.5, 1e-9);
     close(col(&raw, "zin(vdd)")[0], 2000.0, 1e-9);
 }
@@ -343,7 +341,7 @@ fn a_diode_runs_under_the_spice_device_set() {
     let netlist = emit(&ir, Dialect::Vacask).unwrap();
     assert!(netlist.contains("load \"spice/diode.osdi\""), "{}", netlist);
     assert!(netlist.contains("model dmod sp_diode"), "{}", netlist);
-    let Some(raw) = run(&ir) else { return };
+    let raw = run(&ir);
     // 1 V through 1k into a diode: a forward drop somewhere in the 0.4-0.8 V
     // band, and the rest across the resistor.
     let va = col(&raw, "a")[0];
@@ -370,7 +368,7 @@ fn a_bjt_runs_and_carries_its_polarity() {
     let ir = CircuitIR { top, testbench: Some(tb), ..Default::default() };
     let netlist = emit(&ir, Dialect::Vacask).unwrap();
     assert!(netlist.contains("model qn sp_bjt (type=1"), "{}", netlist);
-    let Some(raw) = run(&ir) else { return };
+    let raw = run(&ir);
     let vbe = col(&raw, "base")[0];
     assert!((0.5..0.9).contains(&vbe), "Vbe {} V is not a forward-biased NPN", vbe);
     // With beta=100 the stage is on, so the collector is pulled well below Vcc.
@@ -402,7 +400,7 @@ fn a_level_1_mosfet_runs() {
     assert!(netlist.contains("load \"spice/mos1.osdi\""), "{}", netlist);
     assert!(netlist.contains("model nm sp_mos1 (type=1"), "{}", netlist);
     assert!(netlist.contains("w=10u l=1u"), "{}", netlist);
-    let Some(raw) = run(&ir) else { return };
+    let raw = run(&ir);
     let vd = col(&raw, "drain")[0];
     assert!(vd < 5.0 && vd > 0.0, "drain {} V is not a conducting NMOS", vd);
 }
@@ -426,7 +424,7 @@ fn a_jfet_runs() {
     let ir = CircuitIR { top, testbench: Some(tb), ..Default::default() };
     let netlist = emit(&ir, Dialect::Vacask).unwrap();
     assert!(netlist.contains("load \"spice/jfet1.osdi\""), "{}", netlist);
-    let Some(raw) = run(&ir) else { return };
+    let raw = run(&ir);
     assert!(col(&raw, "drain")[0] < 5.0);
 }
 
@@ -449,7 +447,7 @@ fn an_inductor_and_its_mutual_coupling_run() {
     let ir = CircuitIR { top, testbench: Some(tb), ..Default::default() };
     let netlist = emit(&ir, Dialect::Vacask).unwrap();
     assert!(netlist.contains("k1 () mutual k=9.9e-1 ind1=\"l1\" ind2=\"l2\""), "{}", netlist);
-    let Some(raw) = run(&ir) else { return };
+    let raw = run(&ir);
     // Turns ratio sqrt(4m/1m) = 2, so the secondary rises above the primary.
     let p = cplx(&raw, "p");
     let s = cplx(&raw, "s");
@@ -474,7 +472,7 @@ fn controlled_sources_run() {
     let mut tb = empty_tb(vec![Analysis::Op]);
     tb.stimulus = vec![vsrc("1", "in", "0", 2.0)];
     let ir = CircuitIR { top, testbench: Some(tb), ..Default::default() };
-    let Some(raw) = run(&ir) else { return };
+    let raw = run(&ir);
     close(col(&raw, "e")[0], 4.0, 1e-9);            // VCVS: 2 V * 2
     close(col(&raw, "g")[0], 2.0 * 2e-3 * 1e3, 1e-9); // VCCS: 2 V * 2 mS * 1k
     // i(V1) = -2 mA, so the CCCS drives -2 * -2 mA = 4 mA into 1k.
@@ -509,7 +507,7 @@ fn subcircuits_and_their_instances_run() {
     tb.stimulus = vec![vsrc("dd", "vdd", "0", 4.0)];
     let ir = CircuitIR {
         top, testbench: Some(tb), subcircuit_defs: vec![divider], ..Default::default() };
-    let Some(raw) = run(&ir) else { return };
+    let raw = run(&ir);
     // 4 V * 3k/(1k+3k) = 3 V.
     close(col(&raw, "mid")[0], 3.0, 1e-9);
 }
@@ -530,7 +528,7 @@ fn step_params_sweep_a_netlist_variable() {
         param: "rtop".into(), start: 1000.0, stop: 3000.0, step: 1000.0, sweep_type: None,
     }];
     let ir = CircuitIR { top, testbench: Some(tb), ..Default::default() };
-    let Some(raw) = run(&ir) else { return };
+    let raw = run(&ir);
     let out = col(&raw, "out");
     assert_eq!(out.len(), 3, "{:?}", out);
     close(out[0], 2.0 * 1000.0 / 2000.0, 1e-9);
@@ -550,7 +548,7 @@ fn initial_conditions_reach_the_analysis() {
     let ir = CircuitIR { top, testbench: Some(tb), ..Default::default() };
     let netlist = emit(&ir, Dialect::Vacask).unwrap();
     assert!(netlist.contains("ic=[\"out\"; 5e-1]"), "{}", netlist);
-    let Some(raw) = run(&ir) else { return };
+    let raw = run(&ir);
     close(col(&raw, "out")[0], 0.5, 1e-9);
 }
 
@@ -562,7 +560,7 @@ fn every_analysis_writes_its_own_raw_file_and_the_last_one_is_read_back() {
         Analysis::Op,
         Analysis::Transient { step: 1e-4, stop: 1e-3, start: None, max_step: Some(1e-4), uic: false },
     ]);
-    let Some(raw) = run(&ir) else { return };
+    let raw = run(&ir);
     assert!(raw.plot_name.to_lowercase().contains("transient"), "got plot '{}'", raw.plot_name);
     assert!(col(&raw, "time").len() > 1);
 }
@@ -641,7 +639,7 @@ fn a_sine_source_runs_with_delay_and_damping() {
         }),
     }];
     let ir = CircuitIR { top, testbench: Some(tb), ..Default::default() };
-    let Some(raw) = run(&ir) else { return };
+    let raw = run(&ir);
     let t = col(&raw, "time");
     let v = col(&raw, "vin");
     // A quarter period into a 1 kHz sine: offset + amplitude.
@@ -666,7 +664,7 @@ fn a_pulse_train_runs() {
         }),
     }];
     let ir = CircuitIR { top, testbench: Some(tb), ..Default::default() };
-    let Some(raw) = run(&ir) else { return };
+    let raw = run(&ir);
     let t = col(&raw, "time");
     let v = col(&raw, "vin");
     let at = |want: f64| {

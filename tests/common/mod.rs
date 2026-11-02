@@ -3,21 +3,19 @@
 //! backend. Each test runs a real deck through `Dialect::run` and asserts a
 //! closed-form number, not merely that the process exited 0.
 //!
-//! A backend not on PATH is skipped: `run` returns `None`.
+//! Unsupported fails, never skips: a backend not on PATH fails every test;
+//! run them in `nix develop .#testing`.
 
 use spicerack::backend::Dialect;
 use spicerack::measure_parse::parse_measures;
 use spicerack::result::{MeasureResult, RawData};
 
-/// Runs `deck` on `d`, or `None` when its simulator is not on PATH.
-pub fn run(d: Dialect, deck: &str) -> Option<RawData> {
+/// Runs `deck` on `d`.
+pub fn run(d: Dialect, deck: &str) -> RawData {
     let program = d.name();
     let found = std::process::Command::new(program).arg("--version").output().is_ok_and(|o| o.status.success());
-    if !found {
-        eprintln!("{program} not on PATH — skipping");
-        return None;
-    }
-    Some(d.run(deck).unwrap_or_else(|e| panic!("deck failed: {e}\n{deck}")))
+    assert!(found, "{program} not on PATH: run the tests in `nix develop .#testing`");
+    d.run(deck).unwrap_or_else(|e| panic!("deck failed: {e}\n{deck}"))
 }
 
 /// `Dialect::run` only captures stdout; `simulation::run` is what normally
@@ -57,7 +55,7 @@ macro_rules! analysis_suite {
         use common::{close, column, index_of, scalar};
         use spicerack::result::{MeasureResult, RawData};
 
-        fn run(deck: &str) -> Option<RawData> {
+        fn run(deck: &str) -> RawData {
             common::run($d, deck)
         }
 
@@ -70,9 +68,7 @@ macro_rules! analysis_suite {
         #[test]
         fn op_returns_the_exact_divider_ratio() {
             // 10 V across two equal 10k resistors -> 5 V.
-            let Some(raw) = run("* op\nV1 in 0 10\nR1 in out 10k\nR2 out 0 10k\n.op\n.end\n") else {
-                return;
-            };
+            let raw = run("* op\nV1 in 0 10\nR1 in out 10k\nR2 out 0 10k\n.op\n.end\n");
             assert_eq!(raw.plot_name, "Operating Point");
             assert!(close(scalar(&raw, "out"), 5.0, 1e-9), "{}", scalar(&raw, "out"));
         }
@@ -81,9 +77,7 @@ macro_rules! analysis_suite {
 
         #[test]
         fn dc_sweep_tracks_the_divider_across_every_point() {
-            let Some(raw) = run("* dc\nV1 in 0 0\nR1 in out 10k\nR2 out 0 10k\n.dc V1 0 10 1\n.end\n") else {
-                return;
-            };
+            let raw = run("* dc\nV1 in 0 0\nR1 in out 10k\nR2 out 0 10k\n.dc V1 0 10 1\n.end\n");
             assert_eq!(raw.plot_name, "DC transfer characteristic");
             let sweep = column(&raw, "v-sweep");
             let out = column(&raw, "out");
@@ -97,9 +91,7 @@ macro_rules! analysis_suite {
         /// This is the migration path the codegen's `.step` error points at.
         #[test]
         fn dc_temp_is_a_working_temperature_sweep() {
-            let Some(raw) = run("* dc temp\nV1 in 0 1\nR1 in out 1k\nR2 out 0 1k TC1=0.01\n.dc temp 0 100 25\n.end\n") else {
-                return;
-            };
+            let raw = run("* dc temp\nV1 in 0 1\nR1 in out 1k\nR2 out 0 1k TC1=0.01\n.dc temp 0 100 25\n.end\n");
             assert_eq!(column(&raw, "out").len(), 5, "0,25,50,75,100");
         }
 
@@ -108,9 +100,7 @@ macro_rules! analysis_suite {
         #[test]
         fn ac_hits_minus_3db_exactly_at_the_rc_corner() {
             // R = 1k, C = 159.1549431 nF -> f_c = 1/(2*pi*R*C) = 1000.000 Hz.
-            let Some(raw) = run("* ac\nV1 in 0 0 AC 1\nR1 in out 1k\nC1 out 0 159.1549431n\n.ac lin 1 1000 1000\n.end\n") else {
-                return;
-            };
+            let raw = run("* ac\nV1 in 0 0 AC 1\nR1 in out 1k\nC1 out 0 159.1549431n\n.ac lin 1 1000 1000\n.end\n");
             assert!(raw.is_complex, "AC results must be complex");
             let h = raw.complex_data[index_of(&raw, "out")][0];
             let db = 20.0 * h.norm().log10();
@@ -125,9 +115,7 @@ macro_rules! analysis_suite {
         #[test]
         fn tran_charges_an_rc_to_one_minus_one_over_e_after_one_tau() {
             // tau = 1k * 1u = 1 ms; V(tau) = 1 - exp(-1) = 0.6321.
-            let Some(raw) = run("* tran\nV1 in 0 PULSE(0 1 0 1n 1n 1 2)\nR1 in out 1k\nC1 out 0 1u\n.tran 1u 1m\n.end\n") else {
-                return;
-            };
+            let raw = run("* tran\nV1 in 0 PULSE(0 1 0 1n 1n 1 2)\nR1 in out 1k\nC1 out 0 1u\n.tran 1u 1m\n.end\n");
             assert_eq!(raw.plot_name, "Transient Analysis");
             let out = column(&raw, "out");
             let last = *out.last().unwrap();
@@ -139,9 +127,7 @@ macro_rules! analysis_suite {
 
         #[test]
         fn tf_reports_gain_and_both_impedances() {
-            let Some(raw) = run("* tf\nV1 in 0 10\nR1 in out 10k\nR2 out 0 10k\n.tf V(out) V1\n.end\n") else {
-                return;
-            };
+            let raw = run("* tf\nV1 in 0 10\nR1 in out 10k\nR2 out 0 10k\n.tf V(out) V1\n.end\n");
             assert_eq!(raw.plot_name, "Transfer Function");
             assert!(close(scalar(&raw, "transfer_function"), 0.5, 1e-9));
             // Thevenin at `out` is 10k || 10k = 5k; input impedance is 10k + 10k.
@@ -154,9 +140,7 @@ macro_rules! analysis_suite {
         #[test]
         fn sens_reports_dvout_dr_with_the_right_sign_and_size() {
             // V(out) = 10 * R2/(R1+R2). d/dR1 = -10*R2/(R1+R2)^2 = -2.5e-4 V/ohm.
-            let Some(raw) = run("* sens\nV1 in 0 10\nR1 in out 10k\nR2 out 0 10k\n.sens V(out)\n.end\n") else {
-                return;
-            };
+            let raw = run("* sens\nV1 in 0 10\nR1 in out 10k\nR2 out 0 10k\n.sens V(out)\n.end\n");
             assert_eq!(raw.plot_name, "Sensitivity Analysis");
             let r1 = scalar(&raw, "r1");
             assert!(close(r1, -2.5e-4, 1e-6), "dV(out)/dR1 = {r1}");
@@ -170,18 +154,16 @@ macro_rules! analysis_suite {
         /// the codegen can emit have to survive the `.control` rewrite.
         #[test]
         fn measure_works_on_dc_ac_and_tran() {
-            let Some(dc) = run("* meas dc\nV1 in 0 0\nR1 in out 10k\nR2 out 0 10k\n.meas dc vhalf FIND V(out) AT=10\n.dc V1 0 10 1\n.end\n") else {
-                return;
-            };
+            let dc = run("* meas dc\nV1 in 0 0\nR1 in out 10k\nR2 out 0 10k\n.meas dc vhalf FIND V(out) AT=10\n.dc V1 0 10 1\n.end\n");
             let dc_m = measures(&dc);
             assert!(close(dc_m[0].value, 5.0, 1e-9), "{:?}", dc_m);
 
-            let ac = run("* meas ac\nV1 in 0 0 AC 1\nR1 in out 1k\nC1 out 0 159.1549431n\n.meas ac g FIND vdb(out) AT=1000\n.ac dec 100 100 10k\n.end\n").unwrap();
+            let ac = run("* meas ac\nV1 in 0 0 AC 1\nR1 in out 1k\nC1 out 0 159.1549431n\n.meas ac g FIND vdb(out) AT=1000\n.ac dec 100 100 10k\n.end\n");
             let ac_m = measures(&ac);
             let g = ac_m.iter().find(|m| m.name == "g").expect("g");
             assert!((g.value + 3.0103).abs() < 1e-3, "corner gain {}", g.value);
 
-            let tran = run("* meas tran\nV1 in 0 PULSE(0 1 0 1n 1n 1 2)\nR1 in out 1k\nC1 out 0 1u\n.meas tran vend FIND V(out) AT=1m\n.tran 1u 1m\n.end\n").unwrap();
+            let tran = run("* meas tran\nV1 in 0 PULSE(0 1 0 1n 1n 1 2)\nR1 in out 1k\nC1 out 0 1u\n.meas tran vend FIND V(out) AT=1m\n.tran 1u 1m\n.end\n");
             let tran_m = measures(&tran);
             let v = tran_m.iter().find(|m| m.name == "vend").expect("vend");
             let expected = 1.0 - (-1.0f64).exp();

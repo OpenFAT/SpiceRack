@@ -3,16 +3,15 @@
 Run with: maturin develop && pytest tests/test_characterize.py
 """
 import math
-import shutil
 
 import pytest
 
-ps = pytest.importorskip("spicerack")
+import spicerack as ps
 from spicerack.testbenches import (  # noqa: E402
     bisect_boundary, delay_table, hold_time, input_capacitance, setup_time)
 from spicerack.testbenches.analysis import _interp_at  # noqa: E402
 
-needs_ngspice = pytest.mark.skipif(not shutil.which("ngspice"), reason="ngspice not installed")
+needs_ngspice = pytest.mark.needs("ngspice")
 
 TAU = 1e-9  # 1 kOhm x 1 pF
 
