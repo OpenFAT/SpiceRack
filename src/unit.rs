@@ -24,6 +24,27 @@ pub const SPICE_SCALES: &[(&str, f64)] = &[
     ("u", 1e-6), ("n", 1e-9), ("p", 1e-12), ("f", 1e-15), ("a", 1e-18),
 ];
 
+/// The SPICE number at the start of `t`: an unsigned mantissa (digits and
+/// `.`, plus an exponent when a digit or sign follows the `e`: a bare `1e` is
+/// not one), then a [`SPICE_SCALES`] suffix in any case. Returns the value,
+/// scaled by a decimal shift so `108f` is exactly 1.08e-13; the mantissa's
+/// length in bytes; and the scale as matched, lowercase (`""` for none).
+/// Letters after the scale (`Hz` in `1kHz`) are the caller's. `None` when no
+/// mantissa parses. Not ngspice's own arithmetic: that is [`ngspice_value`].
+pub fn parse_spice_number(t: &str) -> Option<(f64, usize, &'static str)> {
+    let b = t.as_bytes();
+    let mut end = b.iter().take_while(|c| c.is_ascii_digit() || **c == b'.').count();
+    if matches!(b.get(end), Some(b'e' | b'E')) && b.get(end + 1).is_some_and(|c| c.is_ascii_digit() || matches!(c, b'+' | b'-')) {
+        end += 2 + b[end + 2..].iter().take_while(|c| c.is_ascii_digit()).count();
+    }
+    let mantissa: f64 = t[..end].parse().ok()?;
+    let rest = &t[end..];
+    let (suffix, mult) = SPICE_SCALES.iter().copied()
+        .find(|(s, _)| rest.get(..s.len()).is_some_and(|p| p.eq_ignore_ascii_case(s)))
+        .unwrap_or(("", 1.0));
+    Some((scale(mantissa, mult), end, suffix))
+}
+
 /// The value ngspice gives a number token: `INPevaluate` (ngspice
 /// src/spicelib/parser/inpeval.c), digit for digit. The digits make an
 /// integer mantissa, then one `pow(10, e)` scales it, rounded as ngspice
@@ -269,5 +290,17 @@ mod ngspice_numbers {
         }
         assert_eq!(ngspice_spelling(1000.0), "1k");
         assert_eq!(ngspice_value(&ngspice_spelling(0.7)), Some(0.7));
+    }
+
+    #[test]
+    fn spice_number_prefix() {
+        assert_eq!(parse_spice_number("108f"), Some((1.08e-13, 3, "f")));
+        assert_eq!(parse_spice_number("1MEGohm"), Some((1e6, 1, "meg")));
+        assert_eq!(parse_spice_number("1kHz"), Some((1e3, 1, "k")));
+        assert_eq!(parse_spice_number("2mil"), Some((50.8e-6, 1, "mil")));
+        assert_eq!(parse_spice_number("1e-4*s"), Some((1e-4, 4, "")));
+        assert_eq!(parse_spice_number("1e"), Some((1.0, 1, "")), "a bare e is no exponent");
+        assert_eq!(parse_spice_number("-1"), None, "the sign is the caller's");
+        assert_eq!(parse_spice_number("."), None);
     }
 }

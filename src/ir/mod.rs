@@ -47,6 +47,18 @@ impl Dialect {
     pub fn family(self) -> Dialect {
         if self == Dialect::Espice { Dialect::Ngspice } else { self }
     }
+
+    /// Backend names kept as aliases of a dialect's own name, so scripts
+    /// that name the old shared-library backends still run.
+    pub const ALIASES: [(&'static str, Dialect); 3] =
+        [("ngspice-subprocess", Dialect::Ngspice), ("ngspice-shared", Dialect::Ngspice), ("vacask-shared", Dialect::Vacask)];
+
+    /// The dialect a backend name selects: its [`Self::name`] or one of
+    /// [`Self::ALIASES`], spelled exactly (unlike `FromStr`, case matters).
+    pub fn from_backend_name(s: &str) -> Option<Dialect> {
+        let alias = Self::ALIASES.iter().find(|a| a.0 == s).map(|a| a.1);
+        alias.or_else(|| Self::ALL.into_iter().find(|d| d.name() == s))
+    }
 }
 
 impl std::str::FromStr for Dialect {
@@ -261,6 +273,48 @@ impl Component {
         }
     }
 
+    /// The `k=v` parameters of a device card (R, C, L, D, Q, M, J, Z); empty
+    /// for every other component.
+    pub fn params(&self) -> &[(String, String)] {
+        use Component::*;
+        match self {
+            Resistor { params, .. } | Capacitor { params, .. } | Inductor { params, .. } | Diode { params, .. }
+            | Bjt { params, .. } | Mosfet { params, .. } | Jfet { params, .. } | Mesfet { params, .. } => params,
+            _ => &[],
+        }
+    }
+
+    /// Every expression the component carries, for passes over expression
+    /// text (`^` checks, case folding): the parameter values, a waveform's
+    /// expression parameters, an expression value, a behavioural source's
+    /// expression. Numbers and names are not included.
+    pub fn exprs(&self) -> Vec<&str> {
+        use Component::*;
+        let (value, waveform) = match self {
+            Resistor { value, .. } | Capacitor { value, .. } | Inductor { value, .. } => (Some(value), None),
+            VoltageSource { value, waveform, .. } | CurrentSource { value, waveform, .. } => (Some(value), waveform.as_ref()),
+            BehavioralVoltage { expression, .. } | BehavioralCurrent { expression, .. } => return vec![expression],
+            _ => (None, None),
+        };
+        let expr = value.and_then(|v| match v { IrValue::Expression { expr } => Some(expr.as_str()), _ => None });
+        self.params().iter().map(|(_, v)| v.as_str()).chain(waveform.into_iter().flat_map(IrWaveform::exprs_ref)).chain(expr).collect()
+    }
+
+    /// [`Self::exprs`], mutable.
+    pub fn exprs_mut(&mut self) -> Vec<&mut String> {
+        use Component::*;
+        let (value, params, waveform): (_, &mut [(String, String)], _) = match self {
+            Resistor { value, params, .. } | Capacitor { value, params, .. } | Inductor { value, params, .. } => (Some(value), params, None),
+            VoltageSource { value, waveform, .. } | CurrentSource { value, waveform, .. } => (Some(value), &mut [], waveform.as_mut()),
+            BehavioralVoltage { expression, .. } | BehavioralCurrent { expression, .. } => return vec![expression],
+            Diode { params, .. } | Bjt { params, .. } | Mosfet { params, .. } | Jfet { params, .. } | Mesfet { params, .. } => (None, params, None),
+            _ => (None, &mut [], None),
+        };
+        let expr = value.and_then(|v| match v { IrValue::Expression { expr } => Some(expr), _ => None });
+        let nums = waveform.into_iter().flat_map(IrWaveform::nums_mut).filter_map(|n| match n { IrNum::Expr(e) => Some(e), IrNum::Num(_) => None });
+        params.iter_mut().map(|(_, v)| v).chain(nums).chain(expr).collect()
+    }
+
     /// Instance name without its SPICE letter; `None` for a raw line.
     pub fn name(&self) -> Option<&str> {
         use Component::*;
@@ -340,8 +394,21 @@ pub enum IrWaveform {
 }
 
 impl IrWaveform {
-    /// Every parameter, for passes over the expressions (`^` checks,
-    /// renaming).
+    /// Every parameter, in field order.
+    pub fn nums(&self) -> Vec<&IrNum> {
+        use IrWaveform::*;
+        match self {
+            Sin { offset, amplitude, frequency, delay, damping, phase } => vec![offset, amplitude, frequency, delay, damping, phase],
+            Pulse { initial, pulsed, delay, rise_time, fall_time, pulse_width, period } => vec![initial, pulsed, delay, rise_time, fall_time, pulse_width, period],
+            Pwl { values } => values.iter().flat_map(|(t, v)| [t, v]).collect(),
+            Exp { initial, pulsed, rise_delay, rise_tau, fall_delay, fall_tau } => vec![initial, pulsed, rise_delay, rise_tau, fall_delay, fall_tau],
+            Sffm { offset, amplitude, carrier_freq, modulation_index, signal_freq } => vec![offset, amplitude, carrier_freq, modulation_index, signal_freq],
+            Am { amplitude, offset, modulating_freq, carrier_freq, delay } => vec![amplitude, offset, modulating_freq, carrier_freq, delay],
+        }
+    }
+
+    /// [`Self::nums`], mutable: for passes over the expressions (renaming,
+    /// case folding).
     pub fn nums_mut(&mut self) -> Vec<&mut IrNum> {
         use IrWaveform::*;
         match self {
@@ -356,16 +423,7 @@ impl IrWaveform {
 
     /// The expression parameters.
     pub fn exprs_ref(&self) -> Vec<&str> {
-        use IrWaveform::*;
-        let all: Vec<&IrNum> = match self {
-            Sin { offset, amplitude, frequency, delay, damping, phase } => vec![offset, amplitude, frequency, delay, damping, phase],
-            Pulse { initial, pulsed, delay, rise_time, fall_time, pulse_width, period } => vec![initial, pulsed, delay, rise_time, fall_time, pulse_width, period],
-            Pwl { values } => values.iter().flat_map(|(t, v)| [t, v]).collect(),
-            Exp { initial, pulsed, rise_delay, rise_tau, fall_delay, fall_tau } => vec![initial, pulsed, rise_delay, rise_tau, fall_delay, fall_tau],
-            Sffm { offset, amplitude, carrier_freq, modulation_index, signal_freq } => vec![offset, amplitude, carrier_freq, modulation_index, signal_freq],
-            Am { amplitude, offset, modulating_freq, carrier_freq, delay } => vec![amplitude, offset, modulating_freq, carrier_freq, delay],
-        };
-        all.into_iter().filter_map(|n| match n {
+        self.nums().into_iter().filter_map(|n| match n {
             IrNum::Expr(e) => Some(e.as_str()),
             IrNum::Num(_) => None,
         }).collect()
@@ -386,10 +444,11 @@ impl IrWaveform {
 
 // ── Testbench ──
 
-/// Testbench -- wraps a DUT with stimulus + analysis
+/// Testbench -- wraps a DUT with stimulus + analysis. The DUT is
+/// [`CircuitIR::top`]; JSON written before 0.1.3 also carries a `dut` name,
+/// which is ignored.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Testbench {
-    pub dut: String,
     pub stimulus: Vec<Component>,
     pub analyses: Vec<Analysis>,
     pub options: SimOptions,
@@ -523,7 +582,7 @@ pub struct ModelLibrary {
 // ── Feature flags ──
 
 /// What a deck needs from its simulator, one bit per feature
-/// (`backend::BackendKind::capabilities` is the same mask, what it can do).
+/// (`Dialect::capabilities`, in `backend`, is the same mask: what a simulator does).
 pub mod feature {
     pub const XSPICE: u8 = 1 << 0;
     pub const OSDI: u8 = 1 << 1;
@@ -579,6 +638,27 @@ pub enum IssueSeverity {
 // ── CircuitIR methods ──
 
 impl CircuitIR {
+    /// Calls `f` on every identifier, for renaming: definition names (the
+    /// top's is a title and is skipped), ports, model names, instance names,
+    /// the subcircuits they call and their port mappings, every
+    /// [`Component::names_mut`] in the bodies and the stimulus, and the
+    /// globals. Expressions, saves and analyses are not visited.
+    pub fn names_mut(&mut self, mut f: impl FnMut(&mut String)) {
+        self.subcircuit_defs.iter_mut().for_each(|sc| f(&mut sc.name));
+        for sc in std::iter::once(&mut self.top).chain(&mut self.subcircuit_defs) {
+            sc.ports.iter_mut().for_each(|p| f(&mut p.name));
+            sc.models.iter_mut().for_each(|m| f(&mut m.name));
+            for i in &mut sc.instances {
+                f(&mut i.name);
+                f(&mut i.subcircuit);
+                i.port_mapping.iter_mut().for_each(&mut f);
+            }
+            sc.components.iter_mut().flat_map(Component::names_mut).for_each(&mut f);
+        }
+        self.testbench.iter_mut().flat_map(|tb| &mut tb.stimulus).flat_map(Component::names_mut).for_each(&mut f);
+        self.globals.iter_mut().for_each(f);
+    }
+
     /// Compute feature flags by walking the IR
     pub fn compute_features(&self) -> FeatureFlags {
         let mut flags = FeatureFlags::default();
@@ -643,7 +723,7 @@ impl CircuitIR {
         let features = self.compute_features();
         let mut issues = Vec::new();
 
-        let kind = match crate::backend::BackendKind::from_str(backend) {
+        let kind = match crate::backend::parse(backend) {
             Some(k) => k,
             None => {
                 issues.push(Issue {
@@ -661,7 +741,7 @@ impl CircuitIR {
         }
 
         if features.element_count > 10_000
-            && (backend == "ngspice" || backend == "ngspice-subprocess") {
+            && kind == Dialect::Ngspice {
                 issues.push(Issue {
                     severity: IssueSeverity::Warning,
                     message: format!(
@@ -679,37 +759,25 @@ impl CircuitIR {
 mod tests {
     use super::*;
 
+    /// A deck whose top is `top`, with no testbench.
+    fn deck(top: Subcircuit) -> CircuitIR {
+        CircuitIR { top, ..Default::default() }
+    }
+
+    fn resistor() -> Component {
+        Component::Resistor { name: "1".into(), n1: "out".into(), n2: "0".into(), value: IrValue::Numeric { value: 1000.0 }, model: None, params: vec![] }
+    }
+
+    /// The JSON `"type"` tag of `x` is its variant's name.
+    fn assert_tagged<T: Serialize + std::fmt::Debug>(x: &T) {
+        let name = format!("{x:?}");
+        assert_eq!(serde_json::to_value(x).unwrap()["type"], name.split([' ', '{']).next().unwrap(), "{name}");
+    }
+
     #[test]
     fn test_compute_features_xspice() {
-        let ir = CircuitIR { 
-            top: Subcircuit {
-                name: "xspice_test".into(),
-                ports: Vec::new(),
-                parameters: Vec::new(),
-                components: vec![
-                    Component::Xspice {
-                        name: "1".into(),
-                        connections: vec!["in".into(), "out".into()],
-                        model: "d_and".into(),
-                    },
-                    Component::Resistor {
-                        name: "1".into(),
-                        n1: "out".into(),
-                        n2: "0".into(),
-                        value: IrValue::Numeric { value: 1000.0 },
-                        model: None, params: Vec::new(),
-                    },
-                ],
-                instances: Vec::new(),
-                models: Vec::new(),
-                raw_spice: Vec::new(),
-                includes: Vec::new(),
-                libs: Vec::new(),
-                osdi_loads: Vec::new(), ..Default::default() },
-            subcircuit_defs: Vec::new(),
-            model_libraries: Vec::new(), ..Default::default() };
-
-        let features = ir.compute_features();
+        let xspice = Component::Xspice { name: "1".into(), connections: vec!["in".into(), "out".into()], model: "d_and".into() };
+        let features = deck(Subcircuit { components: vec![xspice, resistor()], ..Default::default() }).compute_features();
         assert!(features.has(feature::XSPICE));
         assert!(!features.has(feature::OSDI));
         assert!(!features.has(feature::MEASURES));
@@ -719,29 +787,8 @@ mod tests {
 
     #[test]
     fn test_compute_features_osdi_and_laplace() {
-        let ir = CircuitIR { 
-            top: Subcircuit {
-                name: "osdi_test".into(),
-                ports: Vec::new(),
-                parameters: Vec::new(),
-                components: vec![
-                    Component::BehavioralVoltage {
-                        name: "1".into(),
-                        np: "out".into(),
-                        nm: "0".into(),
-                        expression: "laplace(V(in), {1/(1+s*1e-6)})".into(),
-                    },
-                ],
-                instances: Vec::new(),
-                models: Vec::new(),
-                raw_spice: Vec::new(),
-                includes: Vec::new(),
-                libs: Vec::new(),
-                osdi_loads: vec!["model.osdi".into()], ..Default::default() },
-            subcircuit_defs: Vec::new(),
-            model_libraries: Vec::new(), ..Default::default() };
-
-        let features = ir.compute_features();
+        let b = Component::BehavioralVoltage { name: "1".into(), np: "out".into(), nm: "0".into(), expression: "laplace(V(in), {1/(1+s*1e-6)})".into() };
+        let features = deck(Subcircuit { components: vec![b], osdi_loads: vec!["model.osdi".into()], ..Default::default() }).compute_features();
         assert!(!features.has(feature::XSPICE));
         assert!(features.has(feature::OSDI));
         assert!(features.has(feature::LAPLACE));
@@ -750,59 +797,15 @@ mod tests {
 
     #[test]
     fn test_compute_features_control_blocks() {
-        let ir = CircuitIR { 
-            top: Subcircuit {
-                name: "ctrl_test".into(),
-                ports: Vec::new(),
-                parameters: Vec::new(),
-                components: Vec::new(),
-                instances: Vec::new(),
-                models: Vec::new(),
-                raw_spice: vec![".control".into(), "run".into(), ".endc".into()],
-                includes: Vec::new(),
-                libs: Vec::new(),
-                osdi_loads: Vec::new(), ..Default::default() },
-            subcircuit_defs: Vec::new(),
-            model_libraries: Vec::new(), ..Default::default() };
-
-        let features = ir.compute_features();
-        assert!(features.has(feature::CONTROL_BLOCKS));
+        let raw_spice = vec![".control".into(), "run".into(), ".endc".into()];
+        assert!(deck(Subcircuit { raw_spice, ..Default::default() }).compute_features().has(feature::CONTROL_BLOCKS));
     }
 
     #[test]
     fn test_compute_features_measures_and_step() {
-        let ir = CircuitIR { 
-            top: Subcircuit {
-                name: "meas_test".into(),
-                ports: Vec::new(),
-                parameters: Vec::new(),
-                components: Vec::new(),
-                instances: Vec::new(),
-                models: Vec::new(),
-                raw_spice: Vec::new(),
-                includes: Vec::new(),
-                libs: Vec::new(),
-                osdi_loads: Vec::new(), ..Default::default() },
-            testbench: Some(Testbench {
-                dut: "meas_test".into(),
-                stimulus: Vec::new(),
-                analyses: Vec::new(),
-                saves: Vec::new(),
-                measures: vec!["tran v_max MAX V(out)".into()],
-                initial_conditions: Vec::new(),
-                node_sets: Vec::new(),
-                step_params: vec![StepParam {
-                    param: "R1".into(),
-                    start: 100.0,
-                    stop: 10000.0,
-                    step: 100.0,
-                    sweep_type: None,
-                }],
-                extra_lines: Vec::new(), ..Default::default() }),
-            subcircuit_defs: Vec::new(),
-            model_libraries: Vec::new(), ..Default::default() };
-
-        let features = ir.compute_features();
+        let step = StepParam { param: "R1".into(), start: 100.0, stop: 10000.0, step: 100.0, sweep_type: None };
+        let tb = Testbench { measures: vec!["tran v_max MAX V(out)".into()], step_params: vec![step], ..Default::default() };
+        let features = CircuitIR { testbench: Some(tb), ..Default::default() }.compute_features();
         assert!(features.has(feature::MEASURES));
         assert!(features.has(feature::STEP_PARAMS));
     }
@@ -810,26 +813,9 @@ mod tests {
     #[cfg(feature = "backend")]
     #[test]
     fn test_check_backend_osdi_against_ltspice() {
-        let ir = CircuitIR { 
-            top: Subcircuit {
-                name: "osdi_check".into(),
-                ports: Vec::new(),
-                parameters: Vec::new(),
-                components: Vec::new(),
-                instances: Vec::new(),
-                models: Vec::new(),
-                raw_spice: Vec::new(),
-                includes: Vec::new(),
-                libs: Vec::new(),
-                osdi_loads: vec!["model.osdi".into()], ..Default::default() },
-            subcircuit_defs: Vec::new(),
-            model_libraries: Vec::new(), ..Default::default() };
-
+        let ir = deck(Subcircuit { osdi_loads: vec!["model.osdi".into()], ..Default::default() });
         let issues = ir.check_backend("ltspice");
-        assert!(issues.iter().any(|i| {
-            i.severity == IssueSeverity::Error && i.message.contains("OSDI")
-        }));
-
+        assert!(issues.iter().any(|i| i.severity == IssueSeverity::Error && i.message.contains("OSDI")));
         // Spectre supports OSDI
         assert!(ir.check_backend("spectre").is_empty());
     }
@@ -837,27 +823,7 @@ mod tests {
     #[cfg(feature = "backend")]
     #[test]
     fn test_check_backend_no_issues_for_clean_circuit() {
-        let ir = CircuitIR { 
-            top: Subcircuit {
-                name: "clean".into(),
-                ports: Vec::new(),
-                parameters: Vec::new(),
-                components: vec![Component::Resistor {
-                    name: "1".into(),
-                    n1: "in".into(),
-                    n2: "out".into(),
-                    value: IrValue::Numeric { value: 1000.0 },
-                    model: None, params: Vec::new(),
-                }],
-                instances: Vec::new(),
-                models: Vec::new(),
-                raw_spice: Vec::new(),
-                includes: Vec::new(),
-                libs: Vec::new(),
-                osdi_loads: Vec::new(), ..Default::default() },
-            subcircuit_defs: Vec::new(),
-            model_libraries: Vec::new(), ..Default::default() };
-
+        let ir = deck(Subcircuit { components: vec![resistor()], ..Default::default() });
         for backend in &["ngspice", "ltspice", "vacask", "spectre"] {
             assert!(ir.check_backend(backend).is_empty(), "Expected no issues for {}", backend);
         }
@@ -878,6 +844,18 @@ mod tests {
             Analysis::Op => {}
             other => panic!("Expected Op analysis, got {:?}", other),
         }
+    }
+
+    /// A testbench written before 0.1.3 names its DUT in `dut`; the field is
+    /// gone, and such JSON still loads (no `deny_unknown_fields`).
+    #[test]
+    fn testbench_json_with_dut_still_loads() {
+        let old = r#"{"dut":"top","stimulus":[],"analyses":[{"type":"Op"}],"options":{"portable":[],"backend_specific":{}},
+            "saves":[],"measures":[],"temperature":null,"nominal_temperature":null,"initial_conditions":[],
+            "node_sets":[],"step_params":[],"extra_lines":[]}"#;
+        let tb: Testbench = serde_json::from_str(old).unwrap();
+        assert_eq!(tb.analyses, vec![Analysis::Op]);
+        assert!(!serde_json::to_string(&tb).unwrap().contains("dut"));
     }
 
     #[test]
@@ -905,13 +883,35 @@ mod tests {
             Component::ISwitch { name: "1".into(), np: "a".into(), nm: "b".into(), vcontrol: "Vs".into(), model: "CSW".into() },
             Component::TLine { name: "1".into(), inp: "i1".into(), inm: "i2".into(), outp: "o1".into(), outm: "o2".into(), z0: 50.0, td: 1e-9 },
             Component::Xspice { name: "1".into(), connections: vec!["[din]".into(), "[dout]".into()], model: "d_buf".into() },
+            Component::Poly { name: "1".into(), letter: 'E', np: "a".into(), nm: "b".into(), controls: vec!["c".into(), "d".into()], coeffs: vec![0.0, 2.0] },
             Component::RawSpice { line: ".probe V(out)".into() },
         ];
+        let x = || IrNum::Expr("vdd/2".into());
+        let waveforms = [
+            IrWaveform::Sin { offset: x(), amplitude: 1.0.into(), frequency: 1e3.into(), delay: 0.0.into(), damping: 0.0.into(), phase: 90.0.into() },
+            IrWaveform::Pulse { initial: 0.0.into(), pulsed: x(), delay: 0.0.into(), rise_time: 1e-9.into(), fall_time: 1e-9.into(), pulse_width: 5e-6.into(), period: 10e-6.into() },
+            IrWaveform::Pwl { values: vec![(0.0.into(), 0.0.into()), (1e-6.into(), x())] },
+            IrWaveform::Exp { initial: 0.0.into(), pulsed: 1.0.into(), rise_delay: x(), rise_tau: 1e-9.into(), fall_delay: 1e-6.into(), fall_tau: 1e-9.into() },
+            IrWaveform::Sffm { offset: 0.0.into(), amplitude: 1.0.into(), carrier_freq: 1e6.into(), modulation_index: x(), signal_freq: 1e3.into() },
+            IrWaveform::Am { amplitude: 1.0.into(), offset: 0.0.into(), modulating_freq: 1e3.into(), carrier_freq: 1e6.into(), delay: x() },
+        ];
+        let sources = waveforms.into_iter().map(|w| Component::VoltageSource { name: "w".into(), np: "a".into(), nm: "0".into(), value: w.at_zero(), ac_magnitude: Some(1.0), ac_phase: None, waveform: Some(w) });
+        let all_components: Vec<Component> = all_components.into_iter().chain(sources).collect();
 
-        // The JSON tags each variant by name.
+        // The JSON tags each variant by name: every component, waveform and value.
         for c in &all_components {
-            let name = format!("{c:?}");
-            assert_eq!(serde_json::to_value(c).unwrap()["type"], name.split([' ', '{']).next().unwrap());
+            assert_tagged(c);
+            match c {
+                Component::VoltageSource { value, waveform, .. } | Component::CurrentSource { value, waveform, .. } => {
+                    assert_tagged(value);
+                    waveform.iter().for_each(assert_tagged);
+                }
+                Component::Resistor { value, .. } | Component::Capacitor { value, .. } | Component::Inductor { value, .. } => assert_tagged(value),
+                _ => {}
+            }
+            // The two expression walkers visit the same fields.
+            let mut m = c.clone();
+            assert_eq!(c.exprs(), m.exprs_mut().into_iter().map(|s| s.as_str()).collect::<Vec<_>>(), "{c:?}");
         }
         let ir = CircuitIR {
             top: Subcircuit {
@@ -949,16 +949,12 @@ mod tests {
             Analysis::SpectrePstb { pss_fundamental: 1e6, pss_stabilization: 100e-6, pss_harmonics: 10, probe: "iprobe".into(), variation: "dec".into(), points: 100, start: 1.0, stop: 1e9 },
         ];
 
-        for a in &analyses {
-            let name = format!("{a:?}");
-            assert_eq!(serde_json::to_value(a).unwrap()["type"], name.split([' ', '{']).next().unwrap());
-        }
+        analyses.iter().for_each(assert_tagged);
         let ir = CircuitIR {
-            top: Subcircuit {
-                name: "analysis_test".into(), ..Default::default() },
-            testbench: Some(Testbench {
-                dut: "analysis_test".into(),
-                analyses, ..Default::default() }), ..Default::default() };
+            top: Subcircuit { name: "analysis_test".into(), ..Default::default() },
+            testbench: Some(Testbench { analyses, ..Default::default() }),
+            ..Default::default()
+        };
 
         let json = serde_json::to_string_pretty(&ir).unwrap();
         let ir2: CircuitIR = serde_json::from_str(&json).unwrap();

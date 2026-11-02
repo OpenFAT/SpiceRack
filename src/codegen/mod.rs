@@ -27,27 +27,6 @@ fn caret_means_power(d: Dialect) -> bool {
     !matches!(d, Dialect::Ltspice | Dialect::Xyce | Dialect::Vacask)
 }
 
-/// Every expression in `c` that can carry a `^`: its value and its params.
-fn component_exprs(c: &Component) -> Vec<&str> {
-    use Component::*;
-    match c {
-        Resistor { value, params, .. } | Capacitor { value, params, .. } | Inductor { value, params, .. } => {
-            let mut v: Vec<&str> = params.iter().map(|(_, val)| val.as_str()).collect();
-            if let IrValue::Expression { expr } = value { v.push(expr); }
-            v
-        }
-        VoltageSource { value, waveform, .. } | CurrentSource { value, waveform, .. } => {
-            let mut v: Vec<&str> = waveform.iter().flat_map(|w| w.exprs_ref()).collect();
-            if let IrValue::Expression { expr } = value { v.push(expr); }
-            v
-        }
-        BehavioralVoltage { expression, .. } | BehavioralCurrent { expression, .. } => vec![expression],
-        Diode { params, .. } | Bjt { params, .. } | Mosfet { params, .. } | Jfet { params, .. } | Mesfet { params, .. } =>
-            params.iter().map(|(_, val)| val.as_str()).collect(),
-        _ => vec![],
-    }
-}
-
 /// `^` read as power and `^` read as XOR are different expressions wearing
 /// the same character; carrying one into the other dialect would silently
 /// change what the deck computes. Refuse instead of guessing.
@@ -61,10 +40,10 @@ fn check_caret_meaning(ir: &CircuitIR, d: Dialect) -> Result<(), CodeGenError> {
         exprs.extend(sc.parameters.iter().filter_map(|p| p.default.as_deref()));
         exprs.extend(sc.models.iter().flat_map(|m| m.parameters.iter().map(|(_, v)| v.as_str())));
         exprs.extend(sc.instances.iter().flat_map(|i| i.parameters.iter().map(|(_, v)| v.as_str())));
-        exprs.extend(sc.components.iter().flat_map(component_exprs));
+        exprs.extend(sc.components.iter().flat_map(Component::exprs));
     }
     if let Some(tb) = &ir.testbench {
-        exprs.extend(tb.stimulus.iter().flat_map(component_exprs));
+        exprs.extend(tb.stimulus.iter().flat_map(Component::exprs));
     }
     if let Some(bad) = exprs.into_iter().find(|e| e.contains('^')) {
         return Err(CodeGenError::Other(format!(
@@ -146,10 +125,20 @@ pub fn format_spice_number(v: f64) -> String {
     format!("{v:e}")
 }
 
-/// ` k=v k=v` — instance parameters in SPICE and Spectre alike.
-/// An empty value is a flag (`off`, VDMOS `pchan`), written bare.
-fn params(params: &[(String, String)]) -> String {
-    params.iter().map(|(k, v)| if v.is_empty() { format!(" {k}") } else { format!(" {k}={v}") }).collect()
+/// A SPICE signal (`V(out)`, `i(v1)`) as the bare node or device name;
+/// other text trimmed. Spectre and VACASK name nodes bare: `[REF]` p.502
+/// `nodeset 7=0 out=1`, p.524 `sens (q1:betadc 2 Out) ...`.
+fn bare_node(s: &str) -> &str {
+    let t = s.trim();
+    let inner = ["V(", "v(", "I(", "i("].into_iter().find_map(|p| t.strip_prefix(p)).and_then(|r| r.strip_suffix(')'));
+    inner.map_or(t, str::trim)
+}
+
+/// ` k=v k=v` — instance parameters in SPICE and Spectre alike, each value
+/// through `respell`. An empty value is a flag (`off`, VDMOS `pchan`),
+/// written bare (Spectre refuses flags before it gets here).
+fn params(params: &[(String, String)], respell: fn(&str) -> String) -> String {
+    params.iter().map(|(k, v)| if v.is_empty() { format!(" {k}") } else { format!(" {k}={}", respell(v)) }).collect()
 }
 
 /// Spectre and VACASK have no valueless parameter: refuse a flag rather than
@@ -161,13 +150,7 @@ fn refuse_flags(ir: &CircuitIR, backend: &str) -> Result<(), CodeGenError> {
             return Err(CodeGenError::UnsupportedComponent { backend: backend.into(), component: format!("model {m}: flag '{k}' has no {backend} spelling") });
         }
         for c in &sc.components {
-            let ps = match c {
-                Component::Resistor { params, .. } | Component::Capacitor { params, .. } | Component::Inductor { params, .. }
-                | Component::Diode { params, .. } | Component::Bjt { params, .. } | Component::Mosfet { params, .. }
-                | Component::Jfet { params, .. } | Component::Mesfet { params, .. } => params,
-                _ => continue,
-            };
-            if let Some((k, _)) = ps.iter().find(|(_, v)| v.is_empty()) {
+            if let Some((k, _)) = c.params().iter().find(|(_, v)| v.is_empty()) {
                 return Err(CodeGenError::UnsupportedComponent { backend: backend.into(), component: format!("{}: flag '{k}' has no {backend} spelling", c.name().unwrap_or("device")) });
             }
         }
@@ -175,11 +158,12 @@ fn refuse_flags(ir: &CircuitIR, backend: &str) -> Result<(), CodeGenError> {
     Ok(())
 }
 
-/// ` a=1 b` — parameter declarations (SPICE `PARAMS:`, Spectre `parameters`).
-fn param_defs(defs: &[ParamDef]) -> String {
+/// ` a=1 b` — parameter declarations (SPICE `PARAMS:`, Spectre `parameters`),
+/// defaults through `respell` (a SPICE `1meg` reads as milli in Spectre).
+fn param_defs(defs: &[ParamDef], respell: fn(&str) -> String) -> String {
     defs.iter()
         .map(|p| match &p.default {
-            Some(d) => format!(" {}={}", p.name, d),
+            Some(d) => format!(" {}={}", p.name, respell(d)),
             None => format!(" {}", p.name),
         })
         .collect()

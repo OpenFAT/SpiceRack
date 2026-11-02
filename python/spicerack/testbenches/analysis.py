@@ -266,10 +266,6 @@ class YieldSummary:
         return sum(run.passed for run in self.runs)
 
     @property
-    def failed(self) -> int:
-        return self.total - self.passed
-
-    @property
     def pass_rate(self) -> float:
         return self.passed / self.total if self.total else 0.0
 

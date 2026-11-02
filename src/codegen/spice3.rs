@@ -162,8 +162,7 @@ fn model(d: Dialect, m: &ModelDef) -> String {
     };
     let mut s = format!(".model {} {}", m.name, m.kind);
     if !m.parameters.is_empty() {
-        let ps: Vec<String> = m.parameters.iter().map(|(k, v)| if v.is_empty() { k.clone() } else { format!("{k}={v}") }).collect();
-        s.push_str(&format!(" ({})", ps.join(" ")));
+        s.push_str(&format!(" ({})", params(&m.parameters, str::to_string).trim_start()));
     }
     s
 }
@@ -173,7 +172,7 @@ fn instance(inst: &Instance) -> String {
     for port in &inst.port_mapping {
         s.push_str(&format!(" {}", port));
     }
-    format!("{s} {}{}", inst.subcircuit, params(&inst.parameters))
+    format!("{s} {}{}", inst.subcircuit, params(&inst.parameters, str::to_string))
 }
 
 /// Components, instances, raw text — the part of a block after its models.
@@ -216,7 +215,7 @@ fn subcircuit(d: Dialect, x: bool, sc: &Subcircuit) -> Result<String, CodeGenErr
     if !sc.parameters.is_empty() && d != Dialect::Hspice {
         header.push_str(" PARAMS:");
     }
-    header.push_str(&param_defs(&sc.parameters));
+    header.push_str(&param_defs(&sc.parameters, str::to_string));
     let mut lines = vec![header];
     file_cards(d, sc, &mut lines)?;
     lines.extend(sc.models.iter().map(|m| model(d, m)));
@@ -505,7 +504,7 @@ pub(crate) fn component(d: Dialect, x: bool, comp: &Component) -> Result<String,
             if model.is_some() && d == Dialect::Ltspice {
                 return Err(CodeGenError::UnsupportedComponent { backend: "ltspice".into(), component: format!("{letter}{name}: model reference") });
             }
-            format!("{letter}{} {} {}{}{}", name, n1, n2, rclvalue(d, x, v, model), params(p))
+            format!("{letter}{} {} {}{}{}", name, n1, n2, rclvalue(d, x, v, model), params(p, str::to_string))
         }
         Component::MutualInductor { name, inductor1, inductor2, coupling } => {
             format!("K{} L{} L{} {}", name, inductor1, inductor2, dec(d, x, *coupling))
@@ -563,16 +562,16 @@ pub(crate) fn component(d: Dialect, x: bool, comp: &Component) -> Result<String,
         Component::Ccvs { name, np, nm, vsense, transresistance } => {
             format!("H{} {} {} {} {}", name, np, nm, vsense, dec(d, x, *transresistance))
         }
-        Component::Diode { name, np, nm, model, params: p } => format!("D{} {} {} {}{}", name, np, nm, model, params(p)),
+        Component::Diode { name, np, nm, model, params: p } => format!("D{} {} {} {}{}", name, np, nm, model, params(p, str::to_string)),
         Component::Bjt { name, nc, nb, ne, extra_nodes, model, params: p } => {
-            format!("Q{} {} {} {}{} {}{}", name, nc, nb, ne, extra_nodes.iter().map(|n| format!(" {n}")).collect::<String>(), model, params(p))
+            format!("Q{} {} {} {}{} {}{}", name, nc, nb, ne, extra_nodes.iter().map(|n| format!(" {n}")).collect::<String>(), model, params(p, str::to_string))
         }
         Component::Mosfet { name, nd, ng, ns, nb, extra_nodes, model, params: p } => {
             let rest: String = nb.iter().chain(extra_nodes).map(|n| format!(" {n}")).collect();
-            format!("M{} {} {} {}{rest} {}{}", name, nd, ng, ns, model, params(p))
+            format!("M{} {} {} {}{rest} {}{}", name, nd, ng, ns, model, params(p, str::to_string))
         }
-        Component::Jfet { name, nd, ng, ns, model, params: p } => format!("J{} {} {} {} {}{}", name, nd, ng, ns, model, params(p)),
-        Component::Mesfet { name, nd, ng, ns, model, params: p } => format!("Z{} {} {} {} {}{}", name, nd, ng, ns, model, params(p)),
+        Component::Jfet { name, nd, ng, ns, model, params: p } => format!("J{} {} {} {} {}{}", name, nd, ng, ns, model, params(p, str::to_string)),
+        Component::Mesfet { name, nd, ng, ns, model, params: p } => format!("Z{} {} {} {} {}{}", name, nd, ng, ns, model, params(p, str::to_string)),
         Component::VSwitch { name, np, nm, ncp, ncm, model } => format!("S{} {} {} {} {} {}", name, np, nm, ncp, ncm, model),
         Component::ISwitch { name, np, nm, vcontrol, model } => format!("W{} {} {} {} {}", name, np, nm, vcontrol, model),
         Component::TLine { name, inp, inm, outp, outm, z0, td } => {
@@ -762,7 +761,6 @@ mod tests {
                     },
                 ], ..Default::default() },
             testbench: Some(Testbench {
-                dut: "Voltage Divider".into(),
                 analyses: vec![Analysis::Op], ..Default::default() }), ..Default::default() }
     }
 
@@ -834,7 +832,6 @@ mod tests {
                     },
                 ], ..Default::default() },
             testbench: Some(Testbench {
-                dut: "CMOS Inverter".into(),
                 analyses: vec![
                     Analysis::Dc { sweeps: vec![DcSweep { source: "Vdd".into(), start: 0.0, stop: 3.3, step: 0.01 }] },
                 ],
@@ -1148,7 +1145,6 @@ mod tests {
                     },
                 ], ..Default::default() },
             testbench: Some(Testbench {
-                dut: "Step Test".into(),
                 analyses: vec![Analysis::Op],
                 step_params: vec![StepParam {
                     param: "rval".into(),
@@ -1210,7 +1206,6 @@ mod tests {
             top: Subcircuit {
                 name: "pdk_test".into(), ..Default::default() },
             testbench: Some(Testbench {
-                dut: "pdk_test".into(),
                 analyses: vec![Analysis::Op], ..Default::default() }),
             model_libraries: vec![ModelLibrary {
                 name: "sky130".into(),
@@ -1287,7 +1282,6 @@ mod tests {
             top: Subcircuit {
                 name: "ng_save".into(), ..Default::default() },
             testbench: Some(Testbench {
-                dut: "ng_save".into(),
                 analyses: vec![Analysis::Op],
                 saves: vec!["V(a)".into()], ..Default::default() }), ..Default::default() };
 
@@ -1386,7 +1380,7 @@ mod tests {
                     subcircuit: "cs_amp".into(),
                     port_mapping: vec!["vdd".into(), "vin".into(), "vout".into()], ..Default::default() }], ..Default::default() },
             testbench: Some(Testbench {
-                dut: "cs_amp_tb".into(), stimulus: vec![
+                stimulus: vec![
                     Component::VoltageSource {
                         name: "dd".into(), np: "vdd".into(), nm: "0".into(),
                         value: IrValue::Numeric { value: 1.8 },
@@ -1451,7 +1445,6 @@ mod tests {
             top: Subcircuit {
                 name: "gf180_test".into(), ..Default::default() },
             testbench: Some(Testbench {
-                dut: "gf180_test".into(),
                 analyses: vec![Analysis::Op], ..Default::default() }),
             model_libraries: vec![ModelLibrary {
                 name: "gf180".into(),

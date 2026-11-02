@@ -33,7 +33,7 @@
 
 use std::collections::BTreeSet;
 use crate::ir::*;
-use super::{model_refuse, CodeGenError};
+use super::{bare_node, model_refuse, CodeGenError};
 
 
 /// A device module the deck needs before it can be elaborated.
@@ -77,47 +77,22 @@ fn num(v: f64) -> String {
     if v == 0.0 { "0".to_string() } else { format!("{:e}", v) }
 }
 
-/// Parse a SPICE number-with-suffix. Returns `(value, vacask_spelling)`.
+/// A whole token that is one signed SPICE number-with-suffix, as `(value,
+/// vacask_spelling)`. A trailing unit (`5V`, `1ohm`) is ignored, as SPICE
+/// ignores it.
 pub(super) fn parse_spice_num(t: &str) -> Option<(f64, String)> {
-    let b = t.as_bytes();
-    let mut end = 0;
-    while end < b.len() {
-        let c = b[end] as char;
-        if c.is_ascii_digit() || c == '.' || c == '+' || c == '-' {
-            end += 1;
-            continue;
-        }
-        // An exponent's `e` belongs to the number, but only when a sign or a
-        // digit follows it: a bare `1e` is still "1 exa".
-        if (c == 'e' || c == 'E')
-            && end + 1 < b.len()
-            && ((b[end + 1] as char).is_ascii_digit() || b[end + 1] == b'+' || b[end + 1] == b'-')
-        {
-            end += 1;
-            continue;
-        }
-        break;
-    }
-    let mantissa: f64 = t[..end].parse().ok()?;
-    let suffix = t[end..].to_ascii_lowercase();
+    let body = t.strip_prefix(['+', '-']).unwrap_or(t);
+    let (v, len, scale) = crate::unit::parse_spice_number(body)?;
+    let lead = t.len() - body.len() + len; // sign and mantissa
     // A scale and a unit, nothing else: `1k*(1+x)` is an expression, and
     // reading it as `1k` would drop the rest.
-    if !suffix.chars().all(|c| c.is_ascii_alphabetic()) {
+    if !t[lead..].bytes().all(|c| c.is_ascii_alphabetic()) {
         return None;
     }
-    for (spice, mult) in crate::unit::SPICE_SCALES {
-        // VACASK spells tera and giga in capitals (`t` is not a scale there).
-        let vacask = match *spice { "t" => "T", "g" => "G", s => s };
-        if suffix.starts_with(spice) {
-            // A decimal shift, not a multiply: `108f` is 1.08e-13 exactly.
-            return Some((crate::unit::scale(mantissa, *mult), format!("{}{}", &t[..end], vacask)));
-        }
-    }
-    // A trailing unit with no scale letter (`5V`, `1ohm`) is ignored by SPICE.
-    if suffix.chars().all(|c| c.is_ascii_alphabetic()) {
-        return Some((mantissa, t[..end].to_string()));
-    }
-    None
+    // VACASK spells tera and giga in capitals (`t` is not a scale there).
+    let vacask = match scale { "t" => "T", "g" => "G", s => s };
+    let sign = if t.starts_with('-') { -1.0 } else { 1.0 };
+    Some((sign * v, format!("{}{vacask}", &t[..lead])))
 }
 
 /// A value written as text: a number gets re-spelled in VACASK's suffixes,
@@ -478,7 +453,7 @@ fn analysis_block(idx: usize, a: &Analysis, native: bool) -> Result<Vec<String>,
             out.push(format!(
                 "analysis {} noise out=\"{}\" in=\"{}\" {}",
                 name,
-                strip_wrapper(output),
+                bare_node(output).to_ascii_lowercase(),
                 source.to_ascii_lowercase(),
                 freq_sweep(variation, *points, *start, *stop)?,
             ));
@@ -487,7 +462,7 @@ fn analysis_block(idx: usize, a: &Analysis, native: bool) -> Result<Vec<String>,
         // VACASK's `dcxf` reports the transfer function from EVERY source
         // to `out` in one plot, so the input source is implicit.
         Analysis::Tf { output, .. } => {
-            out.push(format!("analysis {} dcxf out=\"{}\"", name, strip_wrapper(output)));
+            out.push(format!("analysis {} dcxf out=\"{}\"", name, bare_node(output).to_ascii_lowercase()));
         }
 
         other => {
@@ -562,17 +537,6 @@ fn model_params(params: &[(String, String)], lead: Vec<String>) -> String {
     if body.is_empty() { String::new() } else { format!(" ({})", body.join(" ")) }
 }
 
-/// `V(out)` / `v(out)` / `i(v1)` -> `out` / `v1`. VACASK names a node by it
-fn strip_wrapper(s: &str) -> String {
-    let t = s.trim().to_ascii_lowercase();
-    for p in ["v(", "i("] {
-        if let Some(inner) = t.strip_prefix(p).and_then(|r| r.strip_suffix(')')) {
-            return inner.trim().to_string();
-        }
-    }
-    t
-}
-
 /// VACASK identifiers cannot carry punctuation.
 fn sanitize(s: &str) -> String {
     s.chars()
@@ -603,56 +567,16 @@ fn prepared(ir: &CircuitIR) -> CircuitIR {
                 *v = v.to_ascii_lowercase();
             }
         };
-        let tb_comps = ir.testbench.iter_mut().flat_map(|tb| tb.stimulus.iter_mut());
-        let blocks = std::iter::once(&mut ir.top).chain(ir.subcircuit_defs.iter_mut());
-        for sc in blocks {
+        for sc in std::iter::once(&mut ir.top).chain(&mut ir.subcircuit_defs) {
             sc.parameters.iter_mut().filter_map(|p| p.default.as_mut()).for_each(low);
             sc.models.iter_mut().flat_map(|m| m.parameters.iter_mut()).for_each(|(_, v)| low(v));
             sc.instances.iter_mut().flat_map(|i| i.parameters.iter_mut()).for_each(|(_, v)| low(v));
-            for c in &mut sc.components {
-                lower_values(c, &low);
-            }
+            sc.components.iter_mut().flat_map(Component::exprs_mut).for_each(low);
         }
-        for c in tb_comps {
-            lower_values(c, &low);
-        }
+        ir.testbench.iter_mut().flat_map(|tb| &mut tb.stimulus).flat_map(Component::exprs_mut).for_each(low);
     }
-    let q = |s: &mut String| *s = quote(s);
-    ir.subcircuit_defs.iter_mut().for_each(|sc| q(&mut sc.name));
-    for sc in std::iter::once(&mut ir.top).chain(ir.subcircuit_defs.iter_mut()) {
-        sc.ports.iter_mut().for_each(|p| q(&mut p.name));
-        sc.models.iter_mut().for_each(|m| q(&mut m.name));
-        for i in &mut sc.instances {
-            q(&mut i.name);
-            q(&mut i.subcircuit);
-            i.port_mapping.iter_mut().for_each(q);
-        }
-        sc.components.iter_mut().for_each(|c| c.names_mut().into_iter().for_each(q));
-    }
-    ir.testbench.iter_mut().flat_map(|tb| tb.stimulus.iter_mut()).for_each(|c| c.names_mut().into_iter().for_each(q));
-    ir.globals.iter_mut().for_each(q);
+    ir.names_mut(|s| *s = quote(s));
     ir
-}
-
-/// A component's value and parameter texts through `low`.
-fn lower_values(c: &mut Component, low: &impl Fn(&mut String)) {
-    use Component::*;
-    match c {
-        Resistor { value, params, .. } | Capacitor { value, params, .. } | Inductor { value, params, .. } => {
-            if let IrValue::Expression { expr } = value {
-                low(expr);
-            }
-            params.iter_mut().for_each(|(_, v)| low(v));
-        }
-        VoltageSource { value, waveform, .. } | CurrentSource { value, waveform, .. } => {
-            if let IrValue::Expression { expr } = value {
-                low(expr);
-            }
-            waveform.iter_mut().flat_map(|w| w.nums_mut()).for_each(|n| if let IrNum::Expr(e) = n { low(e) });
-        }
-        Diode { params, .. } | Bjt { params, .. } | Mosfet { params, .. } | Jfet { params, .. } | Mesfet { params, .. } => params.iter_mut().for_each(|(_, v)| low(v)),
-        _ => {}
-    }
 }
 
 pub(super) fn netlist(ir: &CircuitIR) -> Result<String, CodeGenError> {
@@ -1101,7 +1025,7 @@ mod tests {
 
     fn tb(analyses: Vec<Analysis>) -> Testbench {
         Testbench {
-            dut: "t".into(), analyses, ..Default::default() }
+            analyses, ..Default::default() }
     }
 
     #[test]

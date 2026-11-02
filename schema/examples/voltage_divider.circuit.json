@@ -37,7 +37,6 @@
     "osdi_loads": []
   },
   "testbench": {
-    "dut": "Voltage Divider",
     "stimulus": [],
     "analyses": [
       { "type": "Op" }

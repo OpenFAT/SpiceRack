@@ -391,36 +391,13 @@ fn lex(src: &str) -> Result<Vec<Tok>, String> {
     Ok(out)
 }
 
+/// The number and its scale suffix at `b[start]`; letters after the scale
+/// are the next token.
 fn lex_number(b: &[char], start: usize) -> Result<(Tok, usize), String> {
-    let mut i = start;
-    while i < b.len() && (b[i].is_ascii_digit() || b[i] == '.') {
-        i += 1;
-    }
-    // An exponent's `e` belongs to the number only when a digit or sign
-    // follows; a bare `1e` is "1 exa" in SPICE, and `1e-4*s` must not swallow
-    // the `*`.
-    if i < b.len()
-        && (b[i] == 'e' || b[i] == 'E')
-        && i + 1 < b.len()
-        && (b[i + 1].is_ascii_digit() || b[i + 1] == '+' || b[i + 1] == '-')
-    {
-        i += 2;
-        while i < b.len() && b[i].is_ascii_digit() {
-            i += 1;
-        }
-    }
-    let text: String = b[start..i].iter().collect();
-    let mantissa: f64 = text
-        .parse()
-        .map_err(|_| format!("cannot read number `{text}` in H(s)"))?;
-    // Scale suffix, longest match first.
-    let tail: String = b[i..].iter().collect::<String>().to_ascii_lowercase();
-    for (suffix, mult) in crate::unit::SPICE_SCALES {
-        if tail.starts_with(suffix) {
-            return Ok((Tok::Num(mantissa * mult), i + suffix.len()));
-        }
-    }
-    Ok((Tok::Num(mantissa), i))
+    // The number is ASCII, so its byte length is its char count.
+    let text: String = b[start..].iter().take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '+' | '-')).collect();
+    let (v, len, scale) = crate::unit::parse_spice_number(&text).ok_or_else(|| format!("cannot read number `{text}` in H(s)"))?;
+    Ok((Tok::Num(v), start + len + scale.len()))
 }
 
 struct Parser<'a> {

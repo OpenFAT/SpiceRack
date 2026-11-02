@@ -32,7 +32,7 @@
 
 use super::format_spice_number;
 use crate::ir::*;
-use super::{model_refuse, CodeGenError};
+use super::{bare_node, model_refuse, param_defs, CodeGenError};
 
 /// A SPICE number in a parameter value, spelled without its scale factor:
 /// Spectre reads `M` as mega where SPICE reads milli (`IKF=30M` is 30e-3),
@@ -47,21 +47,6 @@ fn spectre_value(v: &str) -> String {
     }
 }
 
-/// ` k=v k=v`, numbers respelled for Spectre.
-/// ` a=1 b`: parameter declarations, defaults respelled as `emit_params`
-/// does (a SPICE `1meg` default would read as milli in Spectre).
-fn param_defs(defs: &[ParamDef]) -> String {
-    defs.iter()
-        .map(|p| match &p.default {
-            Some(d) => format!(" {}={}", p.name, spectre_value(d)),
-            None => format!(" {}", p.name),
-        })
-        .collect()
-}
-
-fn emit_params(params: &[(String, String)]) -> String {
-    params.iter().map(|(k, v)| format!(" {k}={}", spectre_value(v))).collect()
-}
 
 
 /// Format a number for the Spectre native language.
@@ -85,39 +70,14 @@ fn spectre_num(v: f64) -> String {
     }
 }
 
-thread_local! {
-    // Set by `netlist()` for the duration of one deck: whether the IR being
-    // written is Spectre-origin (keep instance-name case) or SPICE-origin
-    // (fold it, since SPICE identifiers are case-insensitive). Defaults to
-    // folding, which is what every direct `emit_*` unit test expects.
-    static KEEP_CASE: std::cell::Cell<bool> = std::cell::Cell::new(false);
-}
-
 /// Reference to another instance in the deck (probe, swept device, ...).
 ///
 /// `[KUN]` B.2: "The language becomes case-sensitive". A SPICE-origin IR's
 /// names are case-insensitive (`Vin`, `R1`), so every instance this file
 /// emits is lowercased and references to them must match; a Spectre-origin
-/// IR already carries the exact case Spectre used and keeps it.
-fn inst_ref(name: &str) -> String {
-    if KEEP_CASE.with(|c| c.get()) { name.to_string() } else { name.to_lowercase() }
-}
-
-/// Strip a SPICE `V(x)` / `I(x)` wrapper down to the bare name.
-///
-/// Spectre names nodes bare — `[REF]` p.502 `nodeset 7=0 out=1`, p.524
-/// `sens (q1:betadc 2 Out) ...`. `V(out)` is not a Spectre node reference.
-fn bare_node(s: &str) -> &str {
-    let t = s.trim();
-    let rest = t
-        .strip_prefix("V(")
-        .or_else(|| t.strip_prefix("v("))
-        .or_else(|| t.strip_prefix("I("))
-        .or_else(|| t.strip_prefix("i("));
-    match rest.and_then(|r| r.strip_suffix(')')) {
-        Some(inner) => inner.trim(),
-        None => t,
-    }
+/// IR already carries the exact case Spectre used and keeps it: `keep_case`.
+fn inst_ref(name: &str, keep_case: bool) -> String {
+    if keep_case { name.to_string() } else { name.to_lowercase() }
 }
 
 fn unsupported_component(what: &str) -> CodeGenError {
@@ -279,10 +239,10 @@ fn emit_sweep_header(idx: usize, sp: &StepParam) -> Result<String, CodeGenError>
     ))
 }
 
-fn emit_analysis_block(analyses: &[Analysis], step_params: &[StepParam]) -> Result<Vec<String>, CodeGenError> {
+fn emit_analysis_block(analyses: &[Analysis], step_params: &[StepParam], keep_case: bool) -> Result<Vec<String>, CodeGenError> {
     let mut block = Vec::new();
     for analysis in analyses {
-        block.push(emit_analysis(analysis)?);
+        block.push(emit_analysis(analysis, keep_case)?);
     }
 
     for (idx, sp) in step_params.iter().enumerate().rev() {
@@ -366,7 +326,7 @@ fn emit_model(m: &ModelDef) -> Result<String, CodeGenError> {
         Some(_) => m.parameters.iter().filter(|(k, _)| !k.eq_ignore_ascii_case("level")).map(|(k, v)| (k.to_ascii_lowercase(), v.clone())).collect(),
         None => m.parameters.clone(),
     };
-    s.push_str(&emit_params(&kept));
+    s.push_str(&super::params(&kept, spectre_value));
     Ok(s)
 }
 
@@ -384,7 +344,7 @@ fn emit_instance(inst: &Instance) -> String {
         s.push_str(port);
     }
     s.push_str(&format!(") {}", inst.subcircuit));
-    s.push_str(&emit_params(&inst.parameters));
+    s.push_str(&super::params(&inst.parameters, spectre_value));
     s
 }
 
@@ -394,7 +354,7 @@ fn emit_subcircuit_body(sc: &Subcircuit) -> Result<String, CodeGenError> {
     // `[REF]` p.506: `parameters <param=value> [param=value]...`, and p.535
     // shows it as the first line of a subckt body.
     if !sc.parameters.is_empty() {
-        lines.push(format!("parameters{}", param_defs(&sc.parameters)));
+        lines.push(format!("parameters{}", param_defs(&sc.parameters, spectre_value)));
     }
 
     for m in &sc.models {
@@ -455,41 +415,31 @@ fn escape(name: &str) -> String {
 /// `ir` with every node, instance, model and subcircuit name escaped.
 fn escaped(ir: &CircuitIR) -> CircuitIR {
     let mut ir = ir.clone();
-    let esc = |s: &mut String| *s = escape(s);
     // `[KUN]` B.2: Spectre is case-sensitive. A SPICE-origin IR's device
     // identifiers are case-blind (an F card may sense `Vin` as `vin`), so
     // every instance/device name and reference to one is folded to
     // lowercase to stay consistent with `inst_ref`/emission below; a
     // Spectre-origin IR already carries the exact case Spectre used.
-    let keep_case = ir.raw_dialect == Some(Dialect::Spectre);
-    let fold = |s: &mut String| if !keep_case { *s = s.to_lowercase() };
-    let fold_comp = |c: &mut Component| {
-        if let Some(n) = c.names_mut().into_iter().next() {
-            fold(n);
+    if ir.raw_dialect != Some(Dialect::Spectre) {
+        let fold = |s: &mut String| *s = s.to_lowercase();
+        let fold_comp = |c: &mut Component| {
+            if let Some(n) = c.names_mut().into_iter().next() {
+                fold(n);
+            }
+            match c {
+                Component::MutualInductor { inductor1, inductor2, .. } => { fold(inductor1); fold(inductor2); }
+                Component::Cccs { vsense, .. } | Component::Ccvs { vsense, .. } => fold(vsense),
+                Component::Poly { letter, controls, .. } if matches!(letter, 'F' | 'H') => controls.iter_mut().for_each(fold),
+                _ => {}
+            }
+        };
+        for sc in std::iter::once(&mut ir.top).chain(&mut ir.subcircuit_defs) {
+            sc.instances.iter_mut().for_each(|i| fold(&mut i.name));
+            sc.components.iter_mut().for_each(fold_comp);
         }
-        match c {
-            Component::MutualInductor { inductor1, inductor2, .. } => { fold(inductor1); fold(inductor2); }
-            Component::Cccs { vsense, .. } | Component::Ccvs { vsense, .. } => fold(vsense),
-            Component::Poly { letter, controls, .. } if matches!(letter, 'F' | 'H') => controls.iter_mut().for_each(fold),
-            _ => {}
-        }
-    };
-    let tb_comps = ir.testbench.iter_mut().flat_map(|tb| tb.stimulus.iter_mut());
-    // The top's name is the title comment; definitions are identifiers.
-    ir.subcircuit_defs.iter_mut().for_each(|sc| esc(&mut sc.name));
-    for sc in std::iter::once(&mut ir.top).chain(ir.subcircuit_defs.iter_mut()) {
-        sc.ports.iter_mut().for_each(|p| esc(&mut p.name));
-        sc.models.iter_mut().for_each(|m| esc(&mut m.name));
-        for i in &mut sc.instances {
-            fold(&mut i.name);
-            esc(&mut i.name);
-            esc(&mut i.subcircuit);
-            i.port_mapping.iter_mut().for_each(esc);
-        }
-        sc.components.iter_mut().for_each(|c| { fold_comp(c); c.names_mut().into_iter().for_each(esc); });
+        ir.testbench.iter_mut().flat_map(|tb| &mut tb.stimulus).for_each(fold_comp);
     }
-    tb_comps.for_each(|c| { fold_comp(c); c.names_mut().into_iter().for_each(esc); });
-    ir.globals.iter_mut().for_each(esc);
+    ir.names_mut(|s| *s = escape(s));
     // A signal (`v(x)`, `i(x)`, bare `x`) keeps its wrapper; the name inside
     // is escaped.
     let signal = |s: &mut String| {
@@ -508,7 +458,7 @@ fn escaped(ir: &CircuitIR) -> CircuitIR {
 
 pub(super) fn netlist(ir: &CircuitIR) -> Result<String, CodeGenError> {
     super::refuse_raw_spice(ir, "spectre")?;
-    KEEP_CASE.with(|c| c.set(ir.raw_dialect == Some(Dialect::Spectre)));
+    let keep_case = ir.raw_dialect == Some(Dialect::Spectre);
     let ir = &escaped(ir);
     let mut lines = Vec::new();
 
@@ -565,7 +515,7 @@ pub(super) fn netlist(ir: &CircuitIR) -> Result<String, CodeGenError> {
 
     // `[REF]` p.506: `parameters p1=1 p2=2`.
     if !ir.top.parameters.is_empty() {
-        lines.push(format!("parameters{}", param_defs(&ir.top.parameters)));
+        lines.push(format!("parameters{}", param_defs(&ir.top.parameters, spectre_value)));
     }
 
     for m in &ir.top.models {
@@ -624,7 +574,7 @@ pub(super) fn netlist(ir: &CircuitIR) -> Result<String, CodeGenError> {
             let t = save.trim();
             let current = t.strip_prefix("i(").or_else(|| t.strip_prefix("I(")).and_then(|r| r.strip_suffix(')'));
             lines.push(match current {
-                Some(dev) => format!("save {}:p", inst_ref(dev.trim())),
+                Some(dev) => format!("save {}:p", inst_ref(dev.trim(), keep_case)),
                 None => format!("save {}", bare_node(save)),
             });
         }
@@ -639,7 +589,7 @@ pub(super) fn netlist(ir: &CircuitIR) -> Result<String, CodeGenError> {
 
         lines.push(String::new());
 
-        lines.extend(emit_analysis_block(&tb.analyses, &tb.step_params)?);
+        lines.extend(emit_analysis_block(&tb.analyses, &tb.step_params, keep_case)?);
     }
 
     Ok(lines.join("\n"))
@@ -668,21 +618,21 @@ pub(crate) fn emit_component(comp: &Component) -> Result<String, CodeGenError> {
         Component::Resistor { name, n1, n2, value, model, params } => {
             model_refuse("spectre", name, model)?;
             let mut s = format!("r{} ({} {}) resistor r={}", name, n1, n2, emit_value(value));
-            s.push_str(&emit_params(params));
+            s.push_str(&super::params(params, spectre_value));
             s
         }
         // `[CMP]` p.283 `c2 (1 0) capacitor c=2.5u tc1=1e-8`
         Component::Capacitor { name, n1, n2, value, model, params } => {
             model_refuse("spectre", name, model)?;
             let mut s = format!("c{} ({} {}) capacitor c={}", name, n1, n2, emit_value(value));
-            s.push_str(&emit_params(params));
+            s.push_str(&super::params(params, spectre_value));
             s
         }
         // `[CMP]` p.372 `l33 (0 net29) inductor l=10e-9 r=1 m=1`
         Component::Inductor { name, n1, n2, value, model, params } => {
             model_refuse("spectre", name, model)?;
             let mut s = format!("l{} ({} {}) inductor l={}", name, n1, n2, emit_value(value));
-            s.push_str(&emit_params(params));
+            s.push_str(&super::params(params, spectre_value));
             s
         }
         // `[CMP]` p.577 `ml1 mutual_inductor coupling=1 ind1=l1 ind2=l2`
@@ -766,20 +716,20 @@ pub(crate) fn emit_component(comp: &Component) -> Result<String, CodeGenError> {
         // `d0 (dp dn) pdiode l=3e-4 w=2.5e-4 area=1`
         Component::Diode { name, np, nm, model, params } => {
             let mut s = format!("d{} ({} {}) {}", name, np, nm, model);
-            s.push_str(&emit_params(params));
+            s.push_str(&super::params(params, spectre_value));
             s
         }
         // `[CMP]` bjt models: `Name c b e [s] ModelName parameter=value ...`
         Component::Bjt { name, nc, nb, ne, extra_nodes, model, params } => {
             let extra: String = extra_nodes.iter().map(|n| format!(" {n}")).collect();
             let mut s = format!("q{} ({} {} {}{extra}) {}", name, nc, nb, ne, model);
-            s.push_str(&emit_params(params));
+            s.push_str(&super::params(params, spectre_value));
             s
         }
         // `[CMP]` mos models: `Name d g s b ModelName parameter=value ...`
         Component::Mosfet { name, nd, ng, ns, nb: Some(nb), extra_nodes, model, params } if extra_nodes.is_empty() => {
             let mut s = format!("m{} ({} {} {} {}) {}", name, nd, ng, ns, nb, model);
-            s.push_str(&emit_params(params));
+            s.push_str(&super::params(params, spectre_value));
             s
         }
         Component::Mosfet { .. } => {
@@ -788,12 +738,12 @@ pub(crate) fn emit_component(comp: &Component) -> Result<String, CodeGenError> {
         // `[CMP]` jfet: `Name d g s ModelName parameter=value ...`
         Component::Jfet { name, nd, ng, ns, model, params } => {
             let mut s = format!("j{} ({} {} {}) {}", name, nd, ng, ns, model);
-            s.push_str(&emit_params(params));
+            s.push_str(&super::params(params, spectre_value));
             s
         }
         Component::Mesfet { name, nd, ng, ns, model, params } => {
             let mut s = format!("z{} ({} {} {}) {}", name, nd, ng, ns, model);
-            s.push_str(&emit_params(params));
+            s.push_str(&super::params(params, spectre_value));
             s
         }
         // Spectre's voltage-controlled switch is `relay`, `[CMP]` p.625:
@@ -836,7 +786,7 @@ pub(crate) fn emit_component(comp: &Component) -> Result<String, CodeGenError> {
     Ok(s)
 }
 
-fn emit_analysis(analysis: &Analysis) -> Result<String, CodeGenError> {
+fn emit_analysis(analysis: &Analysis, keep_case: bool) -> Result<String, CodeGenError> {
     let s = match analysis {
         // `[REF]` p.20143 verbatim: `dc1 dc`. A `dc` with no sweep
         // parameter is the operating point.
@@ -917,7 +867,7 @@ fn emit_analysis(analysis: &Analysis) -> Result<String, CodeGenError> {
                 spectre_num(*start),
                 spectre_num(*stop),
                 sweep_points(variation, *points)?,
-                inst_ref(source),
+                inst_ref(source, keep_case),
             )
         }
 
@@ -1003,7 +953,7 @@ fn emit_analysis(analysis: &Analysis) -> Result<String, CodeGenError> {
                 spectre_num(*start),
                 spectre_num(*stop),
                 sweep_points(variation, *points)?,
-                inst_ref(probe),
+                inst_ref(probe, keep_case),
             )
         }
 
@@ -1128,7 +1078,7 @@ fn emit_analysis(analysis: &Analysis) -> Result<String, CodeGenError> {
                 spectre_num(*start),
                 spectre_num(*stop),
                 sweep_points(variation, *points)?,
-                inst_ref(probe),
+                inst_ref(probe, keep_case),
             )
         }
 
@@ -1213,7 +1163,6 @@ mod tests {
                     },
                 ], ..Default::default() },
             testbench: Some(Testbench {
-                dut: "Voltage Divider".into(),
                 analyses: vec![Analysis::Op], ..Default::default() }), ..Default::default() }
     }
 
@@ -1301,22 +1250,22 @@ mod tests {
     #[test]
     fn test_spectre_all_analyses() {
 
-        assert_eq!(emit_analysis(&Analysis::Op).unwrap(), "op1 dc");
+        assert_eq!(emit_analysis(&Analysis::Op, false).unwrap(), "op1 dc");
 
         let dc = Analysis::Dc {
             sweeps: vec![DcSweep { source: "Vsrc".into(), start: 0.0, stop: 5.0, step: 0.1 }],
         };
-        let dc_str = emit_analysis(&dc).unwrap();
+        let dc_str = emit_analysis(&dc, false).unwrap();
         assert!(dc_str.contains("dc1 dc"), "dc: {}", dc_str);
         assert!(dc_str.contains("dev=vsrc param=dc"), "dc selector: {}", dc_str);
 
         let ac = Analysis::Ac { variation: "dec".into(), points: 100, start: 1.0, stop: 1e9 };
-        let ac_str = emit_analysis(&ac).unwrap();
+        let ac_str = emit_analysis(&ac, false).unwrap();
         assert!(ac_str.contains("ac1 ac"), "ac: {}", ac_str);
         assert!(ac_str.contains("dec=100"), "ac dec: {}", ac_str);
 
         let tran = Analysis::Transient { step: 1e-9, stop: 1e-6, start: None, max_step: None, uic: false };
-        let tran_str = emit_analysis(&tran).unwrap();
+        let tran_str = emit_analysis(&tran, false).unwrap();
         assert!(tran_str.contains("tran1 tran"), "tran: {}", tran_str);
         assert!(tran_str.contains("step=1n"), "tran step: {}", tran_str);
 
@@ -1327,7 +1276,7 @@ mod tests {
             points_per_period: 128,
             harmonics: 10,
         };
-        let pss_str = emit_analysis(&pss).unwrap();
+        let pss_str = emit_analysis(&pss, false).unwrap();
         assert!(pss_str.contains("pss1 (out 0) pss"), "pss: {}", pss_str);
         assert!(pss_str.contains("fund=1M"), "pss fund: {}", pss_str);
         assert!(!pss_str.contains("ppv="), "pss must not invent ppv: {}", pss_str);

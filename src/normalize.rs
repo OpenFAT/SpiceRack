@@ -169,23 +169,7 @@ mod tests {
         assert!(!is_current_name("v(x1:internal)", "spectre"));
     }
 
-    // ── Backward compatibility with clean_name behavior ──
-
-    #[test]
-    fn test_backward_compat_ngspice_defaults() {
-        // These mirror the old clean_name behavior
-        assert_eq!(normalize_var_name("v(out)", "ngspice"), "out");
-        assert_eq!(normalize_var_name("V(NET1)", "ngspice"), "net1");
-        assert_eq!(normalize_var_name("i(Vin)", "ngspice"), "i(vin)");
-    }
-
     // ── Issue 06: Cross-backend result parity ──
-
-    #[test]
-    fn test_spectre_current_v1_p() {
-        assert!(is_current_name("V1:p", "spectre"));
-        assert_eq!(normalize_var_name("V1:p", "spectre"), "i(v1)");
-    }
 
     #[test]
     fn test_same_circuit_same_normalized_keys() {

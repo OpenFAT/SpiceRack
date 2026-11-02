@@ -97,7 +97,8 @@ waveform.
 
 Backend-specific, `CircuitSimulator` only: `spectre_sweep`, `spectre_montecarlo`,
 `spectre_pac`, `spectre_pnoise`, `spectre_pstb`, `spectre_pxf`, `network_params`.
-`Testbench` has the `add_*` builder forms of the sampling and sweep variants.
+`Testbench` queues the sweep and Monte Carlo forms with `add_spectre_sweep` and
+`add_spectre_monte_carlo`.
 
 ## Results
 

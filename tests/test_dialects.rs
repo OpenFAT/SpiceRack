@@ -18,7 +18,6 @@ fn sub(name: &str) -> Subcircuit {
 
 fn tb(analyses: Vec<Analysis>) -> Testbench {
     Testbench {
-        dut: "dialects".into(),
         analyses, ..Default::default() }
 }
 

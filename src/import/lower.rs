@@ -33,7 +33,7 @@ struct Cx<'a> {
 
 pub(super) fn deck(t: &Tree, src: &str, name: &str, d: Dialect, lang: &Lang) -> (CircuitIR, Report) {
     let models = (0..t.rows.len()).filter(|&i| tag(t, i) == Tag::Model).filter_map(|i| t.children(Some(i)).next()).map(|n| t.text(n).to_string()).collect();
-    let mut cx = Cx { t, src, d, lang, models, report: Report::default(), tb: testbench(name), globals: vec![], functions: vec![], defs: vec![], kinds: HashMap::new(), subckts: vec![] };
+    let mut cx = Cx { t, src, d, lang, models, report: Report::default(), tb: Testbench::default(), globals: vec![], functions: vec![], defs: vec![], kinds: HashMap::new(), subckts: vec![] };
     if matches!(d, Dialect::Spectre | Dialect::Vacask) {
         (cx.kinds, cx.subckts) = cx.declarations();
     }
@@ -83,10 +83,6 @@ fn tag(t: &Tree, i: usize) -> Tag {
 
 fn sub(name: &str) -> Subcircuit {
     Subcircuit { name: name.into(), ..Default::default() }
-}
-
-fn testbench(dut: &str) -> Testbench {
-    Testbench { dut: dut.into(), ..Default::default() }
 }
 
 /// `{expr}`-style delimiters off a body the grammar kept whole.
