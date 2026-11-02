@@ -32,6 +32,7 @@ One line per change, written by hand, citing its pull request. Every number is m
 - python: `CircuitSimulator.spectre_monte_carlo`, the spelling `Testbench.add_spectre_monte_carlo` uses; `spectre_montecarlo` stays as an alias that warns `DeprecationWarning` (#?).
 - skills: the backend names list `vacask-shared`; a test checks the skill names every name the module accepts (#?).
 - codegen, backend, simulation: an ngspice deck with a `.meas` or `.four` runs every analysis from its `.control` block, in card order, and the backend writes every plot of the run (`set appendwrite`, one `write` per plot in `$plots`); before, only the first ac/tran/dc ran there and the other analyses' plots never reached the raw file. `Dialect::run_all` and `simulation::run_all` return every plot; `run` still returns the first. Real ngspice on `.op` + `.tran` + `.meas`: v(out) = 1 V to 1e-12, v(a) is the 1 kHz sine to 1e-9, `vmax` within 5e-6 of 1 (#?).
+- backend: VACASK `run_all` returns every analysis's plot, reading each declared analysis's raw file in deck order (it read only the last one), and a declared analysis that wrote no raw file is an error naming it; `Dialect::run` on a VACASK deck is now the first analysis's plot, as on every other backend. Real VACASK on op + dc + tran of a divider: out = 1.5 V, the swept 0, 0.5, 1 V and 1.5 V at t = 1 ms, each to 1e-9 (#?).
 
 ## 0.1.2 (2026-10-31)
 

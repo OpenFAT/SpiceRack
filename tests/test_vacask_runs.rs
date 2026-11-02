@@ -559,16 +559,30 @@ fn initial_conditions_reach_the_analysis() {
 }
 
 #[test]
-fn every_analysis_writes_its_own_raw_file_and_the_last_one_is_read_back() {
-    // VACASK names one raw file per analysis; the backend must pick
-    // deterministically rather than taking whatever read_dir hands over.
+fn run_all_returns_every_analysis_in_deck_order() {
+    // VACASK writes one raw file per analysis; run_all reads each, in the
+    // order the deck declares them. Oracle: the divider's closed forms,
+    // out = vdd/2 in every analysis (1.5 V at the 3 V rail).
     let ir = rc_ir(vec![
         Analysis::Op,
+        Analysis::Dc { sweeps: vec![DcSweep { source: "Vdd".into(), start: 0.0, stop: 2.0, step: 1.0 }] },
         Analysis::Transient { step: 1e-4, stop: 1e-3, start: None, max_step: Some(1e-4), uic: false },
     ]);
-    let raw = run(&ir);
-    assert!(raw.plot_name.to_lowercase().contains("transient"), "got plot '{}'", raw.plot_name);
-    assert!(col(&raw, "time").len() > 1);
+    let netlist = emit(&ir, Dialect::Vacask).expect("emit vacask deck");
+    assert!(have_vacask(), "vacask not on PATH: run the tests in `nix develop .#testing`");
+    let plots = Dialect::Vacask.run_all(&netlist).unwrap_or_else(|e| panic!("{e}\n{netlist}"));
+    assert_eq!(plots.len(), 3, "{:?}", plots.iter().map(|p| &p.plot_name).collect::<Vec<_>>());
+    close(col(&plots[0], "out")[0], 1.5, 1e-9);
+    assert_eq!(col(&plots[1], "vsweep"), vec![0.0, 1.0, 2.0]);
+    for (v, want) in col(&plots[1], "out").into_iter().zip([0.0, 0.5, 1.0]) {
+        assert!((v - want).abs() <= 1e-9, "dc out {v}, want {want}");
+    }
+    let time = col(&plots[2], "time");
+    close(*time.last().unwrap(), 1e-3, 1e-9);
+    assert!(col(&plots[2], "out").iter().all(|v| (v - 1.5).abs() <= 1e-9));
+    // `run` is the first analysis's plot, as for every backend.
+    assert_eq!(run(&ir).plot_name, plots[0].plot_name);
+    assert_eq!(col(&run(&ir), "out").len(), 1);
 }
 
 // ── Refusals: things VACASK genuinely cannot do ──

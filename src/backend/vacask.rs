@@ -1,4 +1,4 @@
-//! VACASK: run `vacask` on a native deck, read back the per-analysis `.raw`.
+//! VACASK: run `vacask` on a native deck, read back every per-analysis `.raw`.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -14,28 +14,41 @@ pub(super) fn run(netlist: &str) -> Result<Vec<RawData>, BackendError> {
     // -se/-sp: a deck may carry `embed`/`postprocess` steps, which write
     // files and shell out to Python. Neither produces a raw file.
     let stdout = exec(Command::new("vacask").args(["-se", "-sp"]).arg(&sim).current_dir(dir.path()), "vacask", None)?;
-    // A failed analysis can exit 0 with nothing written, so the raw file is
-    // the real success test.
-    match raw_file_for(dir.path(), netlist) {
-        Some(raw) => read_results(&raw, stdout),
-        None => Err(BackendError::SimulationError(format!("vacask produced no .raw output\nstdout: {}", super::tail(&stdout)))),
+    // A failed analysis can exit 0 with nothing written, so each analysis's
+    // raw file is the real success test.
+    let files = raw_files_for(dir.path(), netlist).map_err(|missing| {
+        BackendError::SimulationError(format!("vacask wrote no {missing}\nstdout: {}", super::tail(&stdout)))
+    })?;
+    let mut plots = Vec::with_capacity(files.len());
+    for raw in &files {
+        plots.extend(read_results(raw, stdout.clone())?);
     }
+    assert!(plots.len() >= files.len(), "every raw file read holds at least one plot");
+    Ok(plots)
 }
 
 /// Analysis names declared by a deck, in order: `analysis <name> <kind> ...`.
-fn analysis_names(netlist: &str) -> impl DoubleEndedIterator<Item = &str> {
+fn analysis_names(netlist: &str) -> impl Iterator<Item = &str> {
     netlist.lines().filter_map(|l| {
         let mut w = l.split_whitespace();
         (w.next()? == "analysis").then(|| w.next())?
     })
 }
 
-/// VACASK writes one raw file per analysis, named after it. Take the last
-/// declared analysis that produced one — the one the caller asked for in the
-/// single-analysis path — else the last `.raw` in name order.
-fn raw_file_for(dir: &Path, netlist: &str) -> Option<PathBuf> {
-    analysis_names(netlist).rev().map(|n| dir.join(format!("{n}.raw"))).find(|p| p.is_file())
-        .or_else(|| sorted_files(dir).into_iter().rfind(|p| p.extension().is_some_and(|e| e == "raw")))
+/// VACASK writes one raw file per analysis, named after it: each declared
+/// analysis's, in deck order; for a deck that declares none this can see,
+/// every `.raw` in name order. `Err` names the first declared analysis's
+/// file that is missing, or `.raw` when nothing was written.
+fn raw_files_for(dir: &Path, netlist: &str) -> Result<Vec<PathBuf>, String> {
+    let declared: Vec<PathBuf> = analysis_names(netlist).map(|n| dir.join(format!("{n}.raw"))).collect();
+    if let Some(missing) = declared.iter().find(|p| !p.is_file()) {
+        return Err(missing.file_name().map_or_else(String::new, |f| f.to_string_lossy().into_owned()));
+    }
+    if !declared.is_empty() {
+        return Ok(declared);
+    }
+    let all: Vec<PathBuf> = sorted_files(dir).into_iter().filter(|p| p.extension().is_some_and(|e| e == "raw")).collect();
+    if all.is_empty() { Err(".raw".into()) } else { Ok(all) }
 }
 
 /// Rewrite relative `load "x"` / `include "x"` paths that exist under the
@@ -71,12 +84,16 @@ mod tests {
     }
 
     #[test]
-    fn raw_file_is_the_last_declared_analysis() {
+    fn raw_files_are_every_declared_analysis_in_deck_order() {
         let dir = tempfile::TempDir::new().unwrap();
-        std::fs::write(dir.path().join("op1.raw"), "").unwrap();
-        std::fs::write(dir.path().join("zz.raw"), "").unwrap();
-        let deck = "analysis op1 op\nanalysis tr1 tran\n";
-        assert_eq!(raw_file_for(dir.path(), deck).unwrap().file_name().unwrap(), "op1.raw");
-        assert_eq!(raw_file_for(dir.path(), "").unwrap().file_name().unwrap(), "zz.raw");
+        let names = |r: Vec<PathBuf>| r.iter().map(|p| p.file_name().unwrap().to_string_lossy().into_owned()).collect::<Vec<_>>();
+        for f in ["tr1.raw", "op1.raw", "zz.raw"] {
+            std::fs::write(dir.path().join(f), "").unwrap();
+        }
+        assert_eq!(names(raw_files_for(dir.path(), "analysis tr1 tran\nanalysis op1 op\n").unwrap()), ["tr1.raw", "op1.raw"]);
+        assert_eq!(names(raw_files_for(dir.path(), "").unwrap()), ["op1.raw", "tr1.raw", "zz.raw"]);
+        assert_eq!(raw_files_for(dir.path(), "analysis op1 op\nanalysis ac1 ac\n"), Err("ac1.raw".into()));
+        let empty = tempfile::TempDir::new().unwrap();
+        assert_eq!(raw_files_for(empty.path(), ""), Err(".raw".into()));
     }
 }
