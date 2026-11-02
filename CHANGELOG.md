@@ -5,10 +5,16 @@ One line per change, written by hand, citing its pull request. Every number is m
 ## Unreleased
 
 - `TESTING.md` (tiers and oracles), this changelog, and `tools/check_style.py` vendored.
+- ir: Testbench.dut removed; old JSON carrying it still loads (#13).
+- python: YieldSummary.failed and the add_spectre_montecarlo alias removed; use add_spectre_monte_carlo (#13).
+- backend: Dialect replaces BackendKind (backend::parse, backend::RUNNABLE, Dialect::run); backend aliases in one table, lint treats vacask-shared as VACASK (#13).
+- codegen: Laplace H(s) constants scaled exactly by a decimal shift (#13).
+- internal: one walker each for identifiers, expressions and parameters; one table for the 24 waveform-source methods; one analysis suite for ngspice and ESPice (#13).
 - nix: `.#testing` builds ESPice from source (OpenFAT/ESPice `5f0b8fd`) and pins the spice-bench suite (6,050 decks) and the Xyce, LTspice, HSPICE and VACASK corpora by content hash (#14).
 - tests: a missing simulator, corpus or unbuilt extension fails instead of skipping; 12 ESPice Python tests and 15 Rust tests that skipped in CI now run (#14).
 - ci: a nightly tier (`nightly.yaml`) runs the import suite over the corpora, behind the `corpus` feature; the merge tier leaves it out (20 min of a 4-vCPU runner) (#14).
 - tests: spice-bench decks ngspice-45 cannot run are named known failures (469 listed, 28 quarantined past the CPU budget); a CPU-limit kill is now reported as a timeout (#14).
+- backend: `select` routes on the `Analysis` itself, not a kind string; one predicate (`runs`) for selection and `check_backend`, with a compile-time check that every feature bit has its issue row (audit 30, 41, 42).
 
 ## 0.1.2 (2026-10-31)
 

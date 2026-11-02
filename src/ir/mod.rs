@@ -591,7 +591,12 @@ pub mod feature {
     pub const CONTROL_BLOCKS: u8 = 1 << 4;
     pub const LAPLACE: u8 = 1 << 5;
     pub const VERILOG_COSIM: u8 = 1 << 6;
+    /// Every bit above.
+    pub const ALL: u8 = XSPICE | OSDI | MEASURES | STEP_PARAMS | CONTROL_BLOCKS | LAPLACE | VERILOG_COSIM;
 }
+
+// Seven features, one distinct bit each, inside the `u8`.
+const _: () = assert!(feature::ALL.count_ones() == 7);
 
 /// Feature flags computed from IR
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -619,6 +624,20 @@ const MISSING: &[(u8, IssueSeverity, &str)] = &[
     (feature::LAPLACE, IssueSeverity::Warning, "Backend '{}' does not support Laplace-domain B-sources"),
     (feature::VERILOG_COSIM, IssueSeverity::Error, "Backend '{}' does not support Verilog co-simulation"),
 ];
+
+// Exactly one `MISSING` row per feature bit, so a backend `select` refuses
+// for a feature always has the issue `check_backend` names for it.
+#[cfg(feature = "backend")]
+const _: () = {
+    let (mut seen, mut i) = (0u8, 0);
+    while i < MISSING.len() {
+        assert!(seen & MISSING[i].0 == 0, "a feature has two MISSING rows");
+        assert!(MISSING[i].0.count_ones() == 1, "a MISSING row names one feature");
+        seen |= MISSING[i].0;
+        i += 1;
+    }
+    assert!(seen == feature::ALL, "a feature has no MISSING row");
+};
 
 // ── Compatibility checking ──
 
@@ -818,6 +837,33 @@ mod tests {
         assert!(issues.iter().any(|i| i.severity == IssueSeverity::Error && i.message.contains("OSDI")));
         // Spectre supports OSDI
         assert!(ir.check_backend("spectre").is_empty());
+    }
+
+    /// For every feature bit, a deck that needs it: `check_backend` and the
+    /// `select` predicate (`backend::runs`) agree on every runnable dialect.
+    #[cfg(feature = "backend")]
+    #[test]
+    fn check_backend_and_select_agree_on_every_feature() {
+        let bench = |tb: Testbench| CircuitIR { testbench: Some(tb), ..Default::default() };
+        let laplace = Component::BehavioralVoltage { name: "1".into(), np: "out".into(), nm: "0".into(), expression: "laplace(V(in), {1/(1+s*1e-6)})".into() };
+        let cosim = VerilogBlock { source: "m.v".into(), mode: VerilogMode::Simulate, instance_name: "u1".into(), connections: BTreeMap::new(), pdk: None, liberty: None, spice_models: None };
+        let decks = [
+            (feature::XSPICE, deck(Subcircuit { components: vec![Component::Xspice { name: "1".into(), connections: vec!["a".into()], model: "m".into() }], ..Default::default() })),
+            (feature::OSDI, deck(Subcircuit { osdi_loads: vec!["m.osdi".into()], ..Default::default() })),
+            (feature::MEASURES, bench(Testbench { measures: vec!["tran x max v(a)".into()], ..Default::default() })),
+            (feature::STEP_PARAMS, bench(Testbench { step_params: vec![StepParam { param: "r".into(), start: 1.0, stop: 2.0, step: 1.0, sweep_type: None }], ..Default::default() })),
+            (feature::CONTROL_BLOCKS, deck(Subcircuit { raw_spice: vec![".control".into(), ".endc".into()], ..Default::default() })),
+            (feature::LAPLACE, deck(Subcircuit { components: vec![laplace], ..Default::default() })),
+            (feature::VERILOG_COSIM, deck(Subcircuit { verilog_blocks: vec![cosim], ..Default::default() })),
+        ];
+        assert_eq!(decks.iter().fold(0, |m, (f, _)| m | f), feature::ALL, "one deck per feature");
+        for (f, ir) in &decks {
+            assert_eq!(ir.compute_features().needs, *f, "deck for bit {f:#04b}");
+            for d in crate::backend::RUNNABLE {
+                let issues = ir.check_backend(d.name());
+                assert_eq!(issues.is_empty(), crate::backend::runs(d, *f), "{} on bit {f:#04b}: {issues:?}", d.name());
+            }
+        }
     }
 
     #[cfg(feature = "backend")]

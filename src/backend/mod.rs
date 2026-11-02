@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 
-use crate::ir::FeatureFlags;
+use crate::ir::{Analysis, FeatureFlags};
 use crate::rawfile;
 use crate::result::RawData;
 
@@ -63,30 +63,36 @@ const SPECTRE_CAPS: u8 = OSDI | MEASURES | STEP_PARAMS | VERILOG_COSIM;
 // point as a separate plot in one raw file, which parse_raw does not split.
 const ESPICE_CAPS: u8 = OSDI | MEASURES;
 
-/// Analysis kinds (`ir::Analysis::kind_str`) → dialects that run them, in
-/// preference order, and the workaround to suggest without one. A kind not
-/// listed runs on every dialect in [`RUNNABLE`].
-const ROUTES: &[(&[&str], &[Dialect], &str)] = {
+/// The dialects that run `a`, in preference order, and the workaround to
+/// suggest without one. A universal analysis runs on every [`RUNNABLE`].
+fn route(a: &Analysis) -> (&'static [Dialect], &'static str) {
     use Dialect::*;
-    &[
-        (&["pz"], &[Ngspice], ".ac() + post-process for poles/zeros"),
-        (&["disto"], &[Ngspice], ".transient() + FFT post-processing"),
-        (&["tf"], &[Ngspice, Ltspice, Vacask, Spectre, Espice], ".dc() with small-signal sweep"),
-        (&["sens"], &[Ngspice, Spectre, Espice], "N/A"),
-        (&["sens_ac"], &[Ngspice, Spectre], "N/A"),
-        (&["hb"], &[Vacask, Spectre], "long .tran() + discard startup + FFT"),
-        (&["sp"], &[Vacask, Spectre, Ngspice], "N/A"),
-        (&["stb"], &[Vacask, Spectre], ".ac() + Middlebrook method"),
-        (&["pss"], &[Spectre, Ngspice], "long .tran() + discard startup"),
-        (&["trannoise"], &[Vacask], ".tran() with trnoise sources"),
-        (&["pac", "pnoise", "pxf", "pstb"], &[Spectre], "N/A"),
-    ]
-};
-fn route(analysis: &str) -> (&'static [Dialect], &'static str) {
-    ROUTES
-        .iter()
-        .find(|(kinds, _, _)| kinds.contains(&analysis))
-        .map_or((&RUNNABLE, "N/A"), |&(_, d, alt)| (d, alt))
+    match a {
+        // `tf` runs everywhere, so its old ".dc() with small-signal sweep"
+        // workaround could never be shown.
+        Analysis::Op | Analysis::Dc { .. } | Analysis::Ac { .. } | Analysis::Transient { .. } | Analysis::Noise { .. }
+        | Analysis::Tf { .. } | Analysis::Fourier { .. } | Analysis::SpectreSweep { .. } | Analysis::SpectreMonteCarlo { .. } => {
+            (&RUNNABLE, "N/A")
+        }
+        Analysis::PoleZero { .. } => (&[Ngspice], ".ac() + post-process for poles/zeros"),
+        Analysis::Distortion { .. } => (&[Ngspice], ".transient() + FFT post-processing"),
+        Analysis::Sensitivity { ac: None, .. } => (&[Ngspice, Spectre, Espice], "N/A"),
+        Analysis::Sensitivity { ac: Some(_), .. } => (&[Ngspice, Spectre], "N/A"),
+        Analysis::HarmonicBalance { .. } => (&[Vacask, Spectre], "long .tran() + discard startup + FFT"),
+        Analysis::SPar { .. } => (&[Vacask, Spectre, Ngspice], "N/A"),
+        Analysis::Stability { .. } => (&[Vacask, Spectre], ".ac() + Middlebrook method"),
+        Analysis::Pss { .. } => (&[Spectre, Ngspice], "long .tran() + discard startup"),
+        Analysis::TransientNoise { .. } => (&[Vacask], ".tran() with trnoise sources"),
+        Analysis::SpectrePac { .. } | Analysis::SpectrePnoise { .. } | Analysis::SpectrePxf { .. } | Analysis::SpectrePstb { .. } => {
+            (&[Spectre], "N/A")
+        }
+    }
+}
+
+/// True when `d`'s simulator has every feature in `needs` (`ir::feature`
+/// bits); `CircuitIR::check_backend` reports each bit this finds missing.
+pub(crate) fn runs(d: Dialect, needs: u8) -> bool {
+    needs & !d.capabilities() == 0
 }
 
 /// A user-facing backend name (a [`RUNNABLE`] dialect's name or one of
@@ -143,11 +149,12 @@ pub fn available() -> &'static [Dialect] {
     })
 }
 
-/// Pick the backend for one analysis kind. An explicit name (argument, else
+/// Pick the backend for `analysis`. An explicit name (argument, else
 /// `$SPICERACK_BACKEND`) wins if it can run the analysis; otherwise the first
-/// installed backend, in `ROUTES` order, that supports the circuit's features.
-pub fn select(analysis: &str, override_backend: Option<&str>, features: &FeatureFlags) -> Result<Dialect, BackendError> {
+/// installed backend, in `route` order, that supports the circuit's features.
+pub fn select(analysis: &Analysis, override_backend: Option<&str>, features: &FeatureFlags) -> Result<Dialect, BackendError> {
     let (dialects, alternative) = route(analysis);
+    let analysis = analysis.kind_str();
     let env = std::env::var("SPICERACK_BACKEND").ok().filter(|s| !s.is_empty());
     if let Some(name) = override_backend.or(env.as_deref()) {
         let kind = parse(name).ok_or_else(|| BackendError::SimulationError(format!("Unknown backend: {name}")))?;
@@ -162,7 +169,7 @@ pub fn select(analysis: &str, override_backend: Option<&str>, features: &Feature
         return Err(BackendError::NoBackend);
     }
     for d in dialects {
-        if let Some(&k) = available.iter().find(|k| *k == d && features.needs & !k.capabilities() == 0) {
+        if let Some(&k) = available.iter().find(|&&k| k == *d && runs(k, features.needs)) {
             return Ok(k);
         }
     }
@@ -262,7 +269,6 @@ mod tests {
 
     #[test]
     fn capability_table_filters_by_feature() {
-        let runs = |k: Dialect, needs: u8| needs & !k.capabilities() == 0;
         assert!(runs(Dialect::Ngspice, XSPICE));
         assert!(!runs(Dialect::Vacask, XSPICE));
         assert!(!runs(Dialect::Spectre, XSPICE));
@@ -275,25 +281,34 @@ mod tests {
         assert!(runs(Dialect::Ngspice, 0));
     }
 
+    fn pz() -> Analysis {
+        Analysis::PoleZero { node1: "a".into(), node2: "0".into(), node3: "b".into(), node4: "0".into(), tf_type: "vol".into(), pz_type: "pz".into() }
+    }
+
     #[test]
-    fn routes_are_data() {
+    fn routes_match_the_analysis() {
         use Dialect::*;
-        assert_eq!(route("pz").0, &[Ngspice]);
-        assert_eq!(route("hb").0, &[Vacask, Spectre]);
-        assert_eq!(route("trannoise").0, &[Vacask]);
-        assert_eq!(route("pnoise").0, &[Spectre]);
-        assert_eq!(route("tran").0, RUNNABLE);
-        assert_eq!(route("tran").0.last(), Some(&Espice), "espice is never preferred first");
+        let tran = Analysis::Transient { step: 1e-9, stop: 1e-6, start: None, max_step: None, uic: false };
+        let sens = |ac| Analysis::Sensitivity { output: "v(b)".into(), ac };
+        let ac = crate::ir::AcSweepParams { variation: "dec".into(), points: 10, start: 1.0, stop: 1e6 };
+        assert_eq!(route(&pz()).0, &[Ngspice]);
+        assert_eq!(route(&Analysis::HarmonicBalance { frequencies: vec![1e6], harmonics: vec![5] }).0, &[Vacask, Spectre]);
+        assert_eq!(route(&Analysis::TransientNoise { step: 1e-9, stop: 1e-6 }).0, &[Vacask]);
+        assert_eq!(route(&sens(None)).0, &[Ngspice, Spectre, Espice]);
+        assert_eq!(route(&sens(Some(ac))).0, &[Ngspice, Spectre]);
+        assert_eq!(route(&tran).0, RUNNABLE);
+        assert_eq!(route(&tran).0.last(), Some(&Espice), "espice is never preferred first");
     }
 
     #[test]
     fn explicit_backend_must_run_the_analysis() {
         let none = FeatureFlags::default();
-        assert_eq!(select("pz", Some("ngspice"), &none).unwrap(), Dialect::Ngspice);
-        assert_eq!(select("dc", Some("vacask-shared"), &none).unwrap(), Dialect::Vacask);
-        assert!(matches!(select("pz", Some("ltspice"), &none), Err(BackendError::UnsupportedAnalysis { .. })));
-        assert!(matches!(select("hb", Some("ngspice"), &none), Err(BackendError::UnsupportedAnalysis { .. })));
-        assert!(select("op", Some("xyce"), &none).is_err());
+        let hb = Analysis::HarmonicBalance { frequencies: vec![1e6], harmonics: vec![5] };
+        assert_eq!(select(&pz(), Some("ngspice"), &none).unwrap(), Dialect::Ngspice);
+        assert_eq!(select(&Analysis::Dc { sweeps: vec![] }, Some("vacask-shared"), &none).unwrap(), Dialect::Vacask);
+        assert!(matches!(select(&pz(), Some("ltspice"), &none), Err(BackendError::UnsupportedAnalysis { analysis, .. }) if analysis == "pz"));
+        assert!(matches!(select(&hb, Some("ngspice"), &none), Err(BackendError::UnsupportedAnalysis { .. })));
+        assert!(select(&Analysis::Op, Some("xyce"), &none).is_err());
     }
 
     #[test]
