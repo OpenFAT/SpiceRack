@@ -1213,7 +1213,6 @@ mod tests {
                     },
                 ], ..Default::default() },
             testbench: Some(Testbench {
-                dut: "Voltage Divider".into(),
                 analyses: vec![Analysis::Op], ..Default::default() }), ..Default::default() }
     }
 

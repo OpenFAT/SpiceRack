@@ -1481,8 +1481,7 @@ struct PyTestbench {}
 impl PyTestbench {
     #[new]
     fn new(dut: &PySubcircuit) -> (Self, PySimulator) {
-        let tb = ir::Testbench { dut: dut.inner.name.clone(), ..Default::default() };
-        let ir = CircuitIR { top: dut.inner.clone(), testbench: Some(tb), ..Default::default() };
+        let ir = CircuitIR { top: dut.inner.clone(), testbench: Some(Default::default()), ..Default::default() };
         (Self {}, PySimulator { ir, backend: None, save_currents: false })
     }
 

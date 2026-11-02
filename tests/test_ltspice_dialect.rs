@@ -35,27 +35,22 @@ impl Cg {
     }
 
     fn emit_step_param(&self, sp: &StepParam) -> Result<String, CodeGenError> {
-        self.body(None, Testbench { step_params: vec![sp.clone()], ..tb() })
+        self.body(None, Testbench { step_params: vec![sp.clone()], ..Default::default() })
     }
 
     /// The last line: ngspice puts `.save all` ahead of a noise card.
     fn emit_analysis(&self, a: &Analysis) -> Result<String, CodeGenError> {
-        let b = self.body(None, Testbench { analyses: vec![a.clone()], ..tb() })?;
+        let b = self.body(None, Testbench { analyses: vec![a.clone()], ..Default::default() })?;
         Ok(b.lines().last().unwrap().to_string())
     }
 
     fn emit_component(&self, c: &Component) -> Result<String, CodeGenError> {
-        self.body(Some(c), tb())
+        self.body(Some(c), Testbench::default())
     }
 
     fn emit_options(&self, o: &SimOptions) -> Result<String, CodeGenError> {
-        self.body(None, Testbench { options: o.clone(), ..tb() })
+        self.body(None, Testbench { options: o.clone(), ..Default::default() })
     }
-}
-
-fn tb() -> Testbench {
-    Testbench {
-        dut: "t".into(), ..Default::default() }
 }
 
 // ── .step ──
@@ -169,7 +164,6 @@ fn noise_tb(saves: Vec<String>) -> CircuitIR {
                 model: None, params: vec![],
             }], ..Default::default() },
         testbench: Some(Testbench {
-            dut: "nz".into(),
             analyses: vec![Analysis::Noise {
                 output: "out".into(),
                 reference: "0".into(),

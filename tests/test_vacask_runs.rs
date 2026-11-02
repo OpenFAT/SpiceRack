@@ -79,7 +79,7 @@ fn empty_sub(name: &str) -> Subcircuit {
 
 fn empty_tb(analyses: Vec<Analysis>) -> Testbench {
     Testbench {
-        dut: "tb".into(), analyses, ..Default::default() }
+        analyses, ..Default::default() }
 }
 
 fn r(name: &str, n1: &str, n2: &str, v: f64) -> Component {

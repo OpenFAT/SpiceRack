@@ -762,7 +762,6 @@ mod tests {
                     },
                 ], ..Default::default() },
             testbench: Some(Testbench {
-                dut: "Voltage Divider".into(),
                 analyses: vec![Analysis::Op], ..Default::default() }), ..Default::default() }
     }
 
@@ -834,7 +833,6 @@ mod tests {
                     },
                 ], ..Default::default() },
             testbench: Some(Testbench {
-                dut: "CMOS Inverter".into(),
                 analyses: vec![
                     Analysis::Dc { sweeps: vec![DcSweep { source: "Vdd".into(), start: 0.0, stop: 3.3, step: 0.01 }] },
                 ],
@@ -1148,7 +1146,6 @@ mod tests {
                     },
                 ], ..Default::default() },
             testbench: Some(Testbench {
-                dut: "Step Test".into(),
                 analyses: vec![Analysis::Op],
                 step_params: vec![StepParam {
                     param: "rval".into(),
@@ -1210,7 +1207,6 @@ mod tests {
             top: Subcircuit {
                 name: "pdk_test".into(), ..Default::default() },
             testbench: Some(Testbench {
-                dut: "pdk_test".into(),
                 analyses: vec![Analysis::Op], ..Default::default() }),
             model_libraries: vec![ModelLibrary {
                 name: "sky130".into(),
@@ -1287,7 +1283,6 @@ mod tests {
             top: Subcircuit {
                 name: "ng_save".into(), ..Default::default() },
             testbench: Some(Testbench {
-                dut: "ng_save".into(),
                 analyses: vec![Analysis::Op],
                 saves: vec!["V(a)".into()], ..Default::default() }), ..Default::default() };
 
@@ -1386,7 +1381,7 @@ mod tests {
                     subcircuit: "cs_amp".into(),
                     port_mapping: vec!["vdd".into(), "vin".into(), "vout".into()], ..Default::default() }], ..Default::default() },
             testbench: Some(Testbench {
-                dut: "cs_amp_tb".into(), stimulus: vec![
+                stimulus: vec![
                     Component::VoltageSource {
                         name: "dd".into(), np: "vdd".into(), nm: "0".into(),
                         value: IrValue::Numeric { value: 1.8 },
@@ -1451,7 +1446,6 @@ mod tests {
             top: Subcircuit {
                 name: "gf180_test".into(), ..Default::default() },
             testbench: Some(Testbench {
-                dut: "gf180_test".into(),
                 analyses: vec![Analysis::Op], ..Default::default() }),
             model_libraries: vec![ModelLibrary {
                 name: "gf180".into(),

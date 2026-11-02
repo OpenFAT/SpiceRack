@@ -49,7 +49,7 @@ fn empty_top(name: &str) -> Subcircuit {
 
 fn empty_tb() -> Testbench {
     Testbench {
-        dut: "top".into(), ..Default::default() }
+        ..Default::default() }
 }
 
 fn ir_with(top: Subcircuit, tb: Option<Testbench>) -> CircuitIR {

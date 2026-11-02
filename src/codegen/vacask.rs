@@ -1101,7 +1101,7 @@ mod tests {
 
     fn tb(analyses: Vec<Analysis>) -> Testbench {
         Testbench {
-            dut: "t".into(), analyses, ..Default::default() }
+            analyses, ..Default::default() }
     }
 
     #[test]
