@@ -33,6 +33,11 @@
         openvaf = import ./nix/openvaf.nix { inherit pkgs; };
         vacask = import ./nix/vacask.nix { inherit pkgs; openvafPkg = openvaf; };
         spiceBench = import ./nix/spice-bench.nix { inherit pkgs conformance; };
+        pdks = import ./nix/pdks.nix { inherit pkgs; };
+        # src/veriloga.rs runs `openvaf`; the reloaded fork installs `openvaf-r`.
+        openvafAlias = pkgs.runCommand "openvaf-alias" { } ''
+          mkdir -p $out/bin && ln -s ${openvaf}/bin/openvaf-r $out/bin/openvaf
+        '';
         # Read-only deck corpora for tests/test_import_suite.rs's fixpoints.
         xyceRegression = pkgs.fetchFromGitHub {
           owner = "Xyce";
@@ -107,6 +112,7 @@
           packages = [
             pkgs.ngspice
             openvaf
+            openvafAlias
             vacask
             espice.packages.${system}.espice
           ];
@@ -119,44 +125,8 @@
           VACASK_CORPUS = vacask.src;
           LTSPICE_CORPUS = spiceDatasets;
 
-          shellHook = ''
-            # ── openvaf-r -> openvaf alias ──
-            if command -v openvaf-r &>/dev/null && ! command -v openvaf &>/dev/null; then
-              alias openvaf=openvaf-r
-              mkdir -p "''${XDG_CACHE_HOME:-$HOME/.cache}/spicerack-bin"
-              ln -sf "$(command -v openvaf-r)" "''${XDG_CACHE_HOME:-$HOME/.cache}/spicerack-bin/openvaf"
-              export PATH="''${XDG_CACHE_HOME:-$HOME/.cache}/spicerack-bin:$PATH"
-            fi
-
-            # ── CIEL PDK manager ──
-            export PDK_ROOT="''${CIEL_HOME:-$HOME/.ciel}"
-            CIEL_VENV="''${XDG_CACHE_HOME:-$HOME/.cache}/spicerack-ciel-venv"
-            if [ ! -f "$CIEL_VENV/bin/ciel" ]; then
-              echo "Installing ciel PDK manager..."
-              python3 -m venv "$CIEL_VENV" 2>/dev/null
-              "$CIEL_VENV/bin/pip" install --quiet ciel 2>/dev/null || true
-            fi
-            export PATH="$CIEL_VENV/bin:$PATH"
-            echo "  ciel: $(ciel --version 2>/dev/null || echo 'not installed')"
-            echo "  PDK_ROOT: $PDK_ROOT"
-
-            # ── Auto-fetch PDKs if missing ──
-            PDK_VERSION="$(ciel ls-remote --pdk-family sky130 2>/dev/null | head -1)"
-            if [ -n "$PDK_VERSION" ]; then
-              if [ ! -d "$PDK_ROOT/sky130A" ]; then
-                echo "Fetching sky130 PDK..."
-                ciel fetch --pdk-family sky130 "$PDK_VERSION" 2>/dev/null \
-                  && ciel enable --pdk-family sky130 "$PDK_VERSION" 2>/dev/null \
-                  || echo "  sky130 fetch failed"
-              fi
-              if [ ! -d "$PDK_ROOT/gf180mcuD" ]; then
-                echo "Fetching gf180mcu PDK..."
-                ciel fetch --pdk-family gf180mcu "$PDK_VERSION" 2>/dev/null \
-                  && ciel enable --pdk-family gf180mcu "$PDK_VERSION" 2>/dev/null \
-                  || echo "  gf180mcu fetch failed"
-              fi
-            fi
-          '';
+          # examples 20 and 21: sky130 and gf180mcu, a ciel-layout PDK_ROOT.
+          PDK_ROOT = pdks;
         };
 
         # `nix develop .#docs -c mkdocs build`: the documentation site from docs/.
