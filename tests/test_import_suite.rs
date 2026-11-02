@@ -3,7 +3,10 @@
 //! trip, keep its analysis and `.meas` cards, and, re-emitted as ngspice,
 //! reproduce every plot at every point and every `.meas` result.
 //!
-//!   nix develop .#testing -c cargo test --no-default-features --release --test test_import_suite -- --nocapture
+//!   nix develop .#testing -c cargo test --no-default-features --features corpus --release --test test_import_suite -- --nocapture
+//!
+//! The nightly tier (`.github/workflows/nightly.yaml`); the merge tier does
+//! not build it (`required-features = ["corpus"]` in Cargo.toml).
 //!
 //! `nix develop .#testing` sets `$SPICE_BENCH` and the `$*_CORPUS` variables;
 //! without them, or without ngspice, the tests fail. A deck ngspice cannot

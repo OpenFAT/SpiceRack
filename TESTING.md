@@ -11,7 +11,7 @@ trusts. The rules behind it are in `AGENTS.md` (Testing).
 | merge | both suites in the testing shell | `nix develop .#testing -c cargo test`, then `maturin develop && python3 -m pytest` in a `--system-site-packages` venv | `.github/workflows/test.yaml`, every PR and every push to `main` |
 | docs | the site builds strictly; every Python example in it runs | `nix develop .#docs -c mkdocs build --strict`; `tests/test_docs.py` | `.github/workflows/docs.yaml`; pytest |
 | release | tag matches `Cargo.toml` and `pyproject.toml`, wheels for every target, sdist | `tools/bump_version.py`, then the release workflow | `.github/workflows/tags.yaml`, `publish.yaml` |
-| nightly | none yet | | |
+| nightly | the spice-bench and corpus import suite (`--features corpus`) | `nix develop .#testing -c cargo test --no-default-features --features corpus --release --test test_import_suite` | `.github/workflows/nightly.yaml`, 03:17 UTC daily and on demand |
 
 `tools/check_style.py` is vendored from the `code-style` skill
 (https://github.com/OmarSiwy/NixOSConfig/tree/main/skills, sha256 `55f417592f6e7ec3…`).
@@ -56,8 +56,9 @@ corpora); outside it those tests fail, they never skip.
 
 - LTspice and Spectre are not installed anywhere SpiceRack is tested, so their
   decks are checked against the manuals only.
-- There is no nightly tier. The spice-bench round trip runs in the merge
-  tier: 2,586 CPU seconds, 5 min 25 s wall on a 20-thread machine.
+- The spice-bench round trip runs only in the nightly tier: 2,586 CPU seconds
+  (5 min 25 s wall on a 20-thread machine, 20 min on a 4-vCPU CI runner), past
+  the merge budget. A change to `src/import` should run it locally before merging.
 - No public Spectre corpus is pinned (ESPice's `spectre_fixtures` are gone
   upstream), so `spectre_corpus_fixpoint` is a known failure
   (`#[should_panic]`).
