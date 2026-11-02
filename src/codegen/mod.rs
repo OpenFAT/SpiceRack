@@ -1,10 +1,21 @@
 //! `CircuitIR` -> netlist text, one dialect per simulator.
 
+/// `write!` into a `String`: every writer here appends to the one deck
+/// buffer instead of formatting a `String` per card and copying it.
+macro_rules! w {
+    ($out:expr, $($fmt:tt)*) => {{
+        use std::fmt::Write as _;
+        $out.write_fmt(format_args!($($fmt)*)).expect("writing to a String cannot fail")
+    }};
+}
+
 pub mod laplace;
 pub(crate) mod spice3;
 mod spectre;
 mod vacask;
 pub mod xschem;
+
+use std::borrow::Cow;
 
 use crate::ir::*;
 
@@ -75,7 +86,11 @@ pub fn netlist(ir: &CircuitIR, d: Dialect) -> Result<String, CodeGenError> {
 /// HSPICE, ESPice): what `netlist` writes for it.
 pub fn card(comp: &Component, d: Dialect) -> Result<String, CodeGenError> {
     match d {
-        Dialect::Ngspice | Dialect::Ltspice | Dialect::Espice | Dialect::Hspice => spice3::component(d, false, comp),
+        Dialect::Ngspice | Dialect::Ltspice | Dialect::Espice | Dialect::Hspice => {
+            let mut s = String::new();
+            spice3::component(&mut s, d, false, comp)?;
+            Ok(s)
+        }
         _ => Err(CodeGenError::Other(format!("card: {d:?} has no single-card writer"))),
     }
 }
@@ -137,8 +152,25 @@ fn bare_node(s: &str) -> &str {
 /// ` k=v k=v` — instance parameters in SPICE and Spectre alike, each value
 /// through `respell`. An empty value is a flag (`off`, VDMOS `pchan`),
 /// written bare (Spectre refuses flags before it gets here).
-fn params(params: &[(String, String)], respell: fn(&str) -> String) -> String {
-    params.iter().map(|(k, v)| if v.is_empty() { format!(" {k}") } else { format!(" {k}={}", respell(v)) }).collect()
+fn params(params: &[(String, String)], respell: fn(&str) -> Cow<'_, str>) -> Params<'_> {
+    Params(params, respell)
+}
+
+/// A value respelled as itself, for [`params`] and [`param_defs`].
+fn verbatim(v: &str) -> Cow<'_, str> {
+    Cow::Borrowed(v)
+}
+
+/// [`params`], written straight into the deck by its `Display`.
+struct Params<'a>(&'a [(String, String)], fn(&str) -> Cow<'_, str>);
+
+impl std::fmt::Display for Params<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (k, v) in self.0 {
+            if v.is_empty() { write!(f, " {k}")? } else { write!(f, " {k}={}", (self.1)(v))? }
+        }
+        Ok(())
+    }
 }
 
 /// Spectre and VACASK have no valueless parameter: refuse a flag rather than
@@ -159,14 +191,15 @@ fn refuse_flags(ir: &CircuitIR, backend: &str) -> Result<(), CodeGenError> {
 }
 
 /// ` a=1 b` — parameter declarations (SPICE `PARAMS:`, Spectre `parameters`),
-/// defaults through `respell` (a SPICE `1meg` reads as milli in Spectre).
-fn param_defs(defs: &[ParamDef], respell: fn(&str) -> String) -> String {
-    defs.iter()
-        .map(|p| match &p.default {
-            Some(d) => format!(" {}={}", p.name, respell(d)),
-            None => format!(" {}", p.name),
-        })
-        .collect()
+/// defaults through `respell` (a SPICE `1meg` reads as milli in Spectre),
+/// written onto `out`.
+fn param_defs(out: &mut String, defs: &[ParamDef], respell: fn(&str) -> Cow<'_, str>) {
+    for p in defs {
+        match &p.default {
+            Some(d) => w!(out, " {}={}", p.name, respell(d)),
+            None => w!(out, " {}", p.name),
+        }
+    }
 }
 
 /// `key=value` pairs of an options card: portable names through `map`, then

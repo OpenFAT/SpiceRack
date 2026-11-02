@@ -28,7 +28,7 @@
 
 use std::collections::BTreeMap;
 
-use super::{CodeGenError, Dialect, spectre, spice3};
+use super::{CodeGenError, Dialect, spectre};
 use crate::ir::*;
 
 /// Element lines packed in one buffer: line `i` is `text[ends[i - 1]..ends[i]]`. A
@@ -688,13 +688,16 @@ impl Writer<'_, '_> {
             return;
         }
         let line = match d {
-            Dialect::Spectre => spectre::emit_component(c),
+            Dialect::Spectre => {
+                let mut s = String::new();
+                spectre::emit_component(&mut s, c, spectre::Names::VERBATIM).map(|()| s)
+            }
             Dialect::Verilog => Err(CodeGenError::UnsupportedComponent {
                 backend: "verilog".into(),
                 component: format!("{c:?}"),
             }),
-            Dialect::Hspice | Dialect::Ltspice => spice3::component(d, false, c),
-            _ => spice3::component(Dialect::Ngspice, false, c),
+            Dialect::Hspice | Dialect::Ltspice => super::card(c, d),
+            _ => super::card(c, Dialect::Ngspice),
         };
         match line {
             Ok(l) => out.push_str(&l),

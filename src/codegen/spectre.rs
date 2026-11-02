@@ -32,18 +32,21 @@
 
 use super::format_spice_number;
 use crate::ir::*;
+use std::borrow::Cow;
+use std::fmt::Write as _;
+
 use super::{bare_node, model_refuse, param_defs, CodeGenError};
 
 /// A SPICE number in a parameter value, spelled without its scale factor:
 /// Spectre reads `M` as mega where SPICE reads milli (`IKF=30M` is 30e-3),
 /// so `30M` must reach Spectre as `0.03`. Anything else (an expression, a
 /// name) passes unchanged.
-fn spectre_value(v: &str) -> String {
+fn spectre_value(v: &str) -> Cow<'_, str> {
     // The value, written in Spectre's own suffixes: VACASK's spelling of
     // mega is `meg`, which Spectre reads as milli with a unit tail.
     match super::vacask::parse_spice_num(v.trim()) {
-        Some((x, _)) => spectre_num(x),
-        None => v.to_string(),
+        Some((x, _)) => spectre_num(x).into(),
+        None => v.into(),
     }
 }
 
@@ -94,11 +97,11 @@ fn unsupported_analysis(what: &str) -> CodeGenError {
     }
 }
 
-fn emit_value(v: &IrValue) -> String {
+fn emit_value(v: &IrValue) -> Cow<'_, str> {
     match v {
-        IrValue::Numeric { value } => spectre_num(*value),
-        IrValue::Expression { expr } => expr.clone(),
-        IrValue::Raw { text } => text.clone(),
+        IrValue::Numeric { value } => spectre_num(*value).into(),
+        IrValue::Expression { expr } => expr.into(),
+        IrValue::Raw { text } => text.into(),
     }
 }
 
@@ -123,7 +126,7 @@ fn sweep_points(variation: Sweep, points: u32) -> Result<String, CodeGenError> {
 /// selected with `type=`, whose documented values are exactly
 /// `dc, pulse, pwl, sine, exp`.
 fn emit_waveform_params(wf: &IrWaveform) -> Result<String, CodeGenError> {
-    let sn = |x: &IrNum| emit_value(&x.into());
+    let sn = |x: &IrNum| emit_value(&x.into()).into_owned();
     let s = match wf {
         // `[CMP]` p.684: sinedc, ampl, freq, sinephase, damp — and the
         // delay is the *general* waveform parameter `delay` (p.683 #4),
@@ -134,13 +137,13 @@ fn emit_waveform_params(wf: &IrWaveform) -> Result<String, CodeGenError> {
                 sn(offset), sn(amplitude), sn(frequency),
             );
             if *delay != 0.0 {
-                s.push_str(&format!(" delay={}", sn(delay)));
+                w!(s, " delay={}", sn(delay));
             }
             if *damping != 0.0 {
-                s.push_str(&format!(" damp={}", sn(damping)));
+                w!(s, " damp={}", sn(damping));
             }
             if *phase != 0.0 {
-                s.push_str(&format!(" sinephase={}", sn(phase)));
+                w!(s, " sinephase={}", sn(phase));
             }
             s
         }
@@ -163,7 +166,7 @@ fn emit_waveform_params(wf: &IrWaveform) -> Result<String, CodeGenError> {
                 if i > 0 {
                     s.push(' ');
                 }
-                s.push_str(&format!("{} {}", sn(t), sn(v)));
+                w!(s, "{} {}", sn(t), sn(v));
             }
             s.push(']');
             s
@@ -288,7 +291,7 @@ fn emit_measure(meas: &str) -> String {
 const SPICE_MODEL_TYPES: &[&str] = &["nmos", "pmos", "npn", "pnp", "d", "njf", "pjf", "nmf", "pmf", "r", "c", "l", "sw", "csw", "vdmos", "ltra", "txl", "cpl", "urc"];
 
 /// The Spectre master for `m` (`None`: write `m.kind` as it is) and its `type=`.
-fn spectre_master(m: &ModelDef) -> Result<(Option<&'static str>, Option<&'static str>), CodeGenError> {
+fn spectre_master(m: &ModelDef, n: Names) -> Result<(Option<&'static str>, Option<&'static str>), CodeGenError> {
     let level = m.parameters.iter().find(|(k, _)| k.eq_ignore_ascii_case("level")).and_then(|(_, v)| super::vacask::parse_spice_num(v.trim())).map_or(1, |(l, _)| l as u32);
     let kind = m.kind.to_ascii_lowercase();
     let mos = |l: u32| match l {
@@ -309,67 +312,68 @@ fn spectre_master(m: &ModelDef) -> Result<(Option<&'static str>, Option<&'static
         k if !SPICE_MODEL_TYPES.contains(&k) => return Ok((None, None)),
         _ => None,
     };
-    found.map(|(m, t)| (Some(m), t)).ok_or_else(|| unsupported_component(&format!("model {} ({} level {level}): no Spectre master mapped", m.name, m.kind)))
+    found.map(|(m, t)| (Some(m), t)).ok_or_else(|| unsupported_component(&format!("model {} ({} level {level}): no Spectre master mapped", n.n(&m.name), m.kind)))
 }
 
-fn emit_model(m: &ModelDef) -> Result<String, CodeGenError> {
-    let (master, ty) = spectre_master(m)?;
-    let mut s = format!("model {} {}", m.name, master.unwrap_or(&m.kind));
+fn emit_model(out: &mut String, m: &ModelDef, n: Names) -> Result<(), CodeGenError> {
+    let (master, ty) = spectre_master(m, n)?;
+    w!(out, "model {} {}", n.n(&m.name), master.unwrap_or(&m.kind));
     if let Some(t) = ty {
-        s.push_str(&format!(" type={t}"));
+        w!(out, " type={t}");
     }
     // A mapped SPICE model: LEVEL chose the master, which takes no `level`,
     // and Spectre's names are lowercase. A Spectre master's card is kept.
-    let kept: Vec<(String, String)> = match master {
-        Some(_) => m.parameters.iter().filter(|(k, _)| !k.eq_ignore_ascii_case("level")).map(|(k, v)| (k.to_ascii_lowercase(), v.clone())).collect(),
-        None => m.parameters.clone(),
-    };
-    s.push_str(&super::params(&kept, spectre_value));
-    Ok(s)
+    match master {
+        Some(_) => {
+            for (k, v) in m.parameters.iter().filter(|(k, _)| !k.eq_ignore_ascii_case("level")) {
+                let k = k.to_ascii_lowercase();
+                if v.is_empty() { w!(out, " {k}") } else { w!(out, " {k}={}", spectre_value(v)) }
+            }
+        }
+        None => w!(out, "{}", super::params(&m.parameters, spectre_value)),
+    }
+    Ok(())
 }
 
 /// `[REF]` p.535: `Coax1 pin nin out gnd coax zin=75 zout=150 len=35m`
 /// (instance name, node list, subcircuit master, parameters). Parentheses
 /// around the node list are accepted and used throughout `[CMP]`.
-fn emit_instance(inst: &Instance) -> String {
-    // `inst.name` already carries the right case: `escaped()` folds it for
-    // a SPICE-origin IR and leaves a Spectre-origin IR's case alone.
-    let mut s = format!("x{} (", inst.name);
+fn emit_instance(out: &mut String, inst: &Instance, n: Names) {
+    w!(out, "x{} (", n.d(&inst.name));
     for (i, port) in inst.port_mapping.iter().enumerate() {
-        if i > 0 {
-            s.push(' ');
-        }
-        s.push_str(port);
+        w!(out, "{}{}", if i == 0 { "" } else { " " }, n.n(port));
     }
-    s.push_str(&format!(") {}", inst.subcircuit));
-    s.push_str(&super::params(&inst.parameters, spectre_value));
-    s
+    w!(out, ") {}{}", n.n(&inst.subcircuit), super::params(&inst.parameters, spectre_value));
 }
 
-fn emit_subcircuit_body(sc: &Subcircuit) -> Result<String, CodeGenError> {
-    let mut lines = Vec::new();
-
+/// The body of a `subckt`, one line each.
+fn emit_subcircuit_body(out: &mut String, sc: &Subcircuit, n: Names) -> Result<(), CodeGenError> {
     // `[REF]` p.506: `parameters <param=value> [param=value]...`, and p.535
     // shows it as the first line of a subckt body.
     if !sc.parameters.is_empty() {
-        lines.push(format!("parameters{}", param_defs(&sc.parameters, spectre_value)));
+        out.push_str("parameters");
+        param_defs(out, &sc.parameters, spectre_value);
+        out.push('\n');
     }
 
     for m in &sc.models {
-        lines.push(emit_model(m)?);
+        emit_model(out, m, n)?;
+        out.push('\n');
     }
 
     for e in sc.elements() {
-        lines.push(match e {
-            Element::Component(c) => emit_component(c)?,
-            Element::Instance(i) => emit_instance(i),
-        });
+        match e {
+            Element::Component(c) => emit_component(out, c, n)?,
+            Element::Instance(i) => emit_instance(out, i, n),
+        }
+        out.push('\n');
     }
     // Spectre text kept verbatim on import (`refuse_raw_spice` has checked
     // that it is Spectre's).
-    lines.extend(sc.raw_spice.iter().cloned());
-
-    Ok(lines.join("\n"))
+    for l in &sc.raw_spice {
+        w!(out, "{l}\n");
+    }
+    Ok(())
 }
 
 /// Map portable option names onto `options` statement parameters.
@@ -390,82 +394,82 @@ fn map_option_name(canonical: &str) -> &str {
     }
 }
 
-/// A name in Spectre's spelling: any byte outside `[A-Za-z0-9_!]` gets a `\`
-/// (UG p.62). SPICE names carry `:` `/` `#` `[ ]` `.` `-` freely
-/// (post-layout `xssram/X1/M1:DRN`, KiCad `Net-_R1-Pad2_`).
-fn escape(name: &str) -> String {
-    let mut out = String::with_capacity(name.len());
-    // A name that starts with a digit is read as digits only (`spectre.peg`
-    // Node), so one needing escapes escapes its first digit too: `\15\+`.
-    let needs = name.chars().any(|c| !(c.is_ascii_alphanumeric() || c == '_' || c == '!'));
-    if needs && name.starts_with(|c: char| c.is_ascii_digit()) {
-        out.push('\\');
-    }
-    for c in name.chars() {
-        if !(c.is_ascii_alphanumeric() || c == '_' || c == '!') {
-            out.push('\\');
-        }
-        out.push(c);
-    }
-    out
+/// How the IR's identifiers reach the deck. `[KUN]` B.2: Spectre is
+/// case-sensitive, and a SPICE-origin IR's device identifiers are
+/// case-blind (an F card may sense `Vin` as `vin`), so every instance and
+/// device name, and each reference to one, is folded to lowercase (`fold`)
+/// to stay consistent with `inst_ref`; a Spectre-origin IR keeps its case.
+/// Every identifier is then [`Name`]-escaped. Applied as each is written, so
+/// `netlist` renames nothing in a copy of the IR.
+#[derive(Clone, Copy)]
+pub(crate) struct Names {
+    fold: bool,
+    escape: bool,
 }
 
-/// `ir` with every node, instance, model and subcircuit name escaped.
-fn escaped(ir: &CircuitIR) -> CircuitIR {
-    let mut ir = ir.clone();
-    // `[KUN]` B.2: Spectre is case-sensitive. A SPICE-origin IR's device
-    // identifiers are case-blind (an F card may sense `Vin` as `vin`), so
-    // every instance/device name and reference to one is folded to
-    // lowercase to stay consistent with `inst_ref`/emission below; a
-    // Spectre-origin IR already carries the exact case Spectre used.
-    if ir.raw_dialect != Some(Dialect::Spectre) {
-        let fold = |s: &mut String| *s = s.to_lowercase();
-        let fold_comp = |c: &mut Component| {
-            if let Some(n) = c.names_mut().into_iter().next() {
-                fold(n);
-            }
-            match c {
-                Component::MutualInductor { inductor1, inductor2, .. } => { fold(inductor1); fold(inductor2); }
-                Component::Cccs { vsense, .. } | Component::Ccvs { vsense, .. } => fold(vsense),
-                Component::Poly { letter, controls, .. } if matches!(letter, 'F' | 'H') => controls.iter_mut().for_each(fold),
-                _ => {}
-            }
-        };
-        for sc in std::iter::once(&mut ir.top).chain(&mut ir.subcircuit_defs) {
-            sc.instances.iter_mut().for_each(|i| fold(&mut i.name));
-            sc.components.iter_mut().for_each(fold_comp);
+impl Names {
+    /// Identifiers written exactly as the IR holds them (the xschem layout).
+    pub(crate) const VERBATIM: Names = Names { fold: false, escape: false };
+
+    /// A node, model or subcircuit name.
+    fn n(self, s: &str) -> Name<'_> {
+        Name(s, false, self)
+    }
+
+    /// A device or instance name, or a reference to one.
+    fn d(self, s: &str) -> Name<'_> {
+        Name(s, self.fold, self)
+    }
+}
+
+/// An identifier in Spectre's spelling, lowercased first when `.1`: any byte
+/// outside `[A-Za-z0-9_!]` gets a `\` (UG p.62). SPICE names carry `:` `/`
+/// `#` `[ ]` `.` `-` freely (post-layout `xssram/X1/M1:DRN`, KiCad
+/// `Net-_R1-Pad2_`).
+struct Name<'a>(&'a str, bool, Names);
+
+impl std::fmt::Display for Name<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let lower = self.1 && !self.0.bytes().all(|b| b.is_ascii() && !b.is_ascii_uppercase());
+        let name: Cow<str> = if lower { self.0.to_lowercase().into() } else { self.0.into() };
+        if !self.2.escape {
+            return f.write_str(&name);
         }
-        ir.testbench.iter_mut().flat_map(|tb| &mut tb.stimulus).for_each(fold_comp);
+        let plain = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '!';
+        // A name that starts with a digit is read as digits only (`spectre.peg`
+        // Node), so one needing escapes escapes its first digit too: `\15\+`.
+        if !name.chars().all(plain) && name.starts_with(|c: char| c.is_ascii_digit()) {
+            f.write_char('\\')?;
+        }
+        for c in name.chars() {
+            if !plain(c) {
+                f.write_char('\\')?;
+            }
+            f.write_char(c)?;
+        }
+        Ok(())
     }
-    ir.names_mut(|s| *s = escape(s));
-    // A signal (`v(x)`, `i(x)`, bare `x`) keeps its wrapper; the name inside
-    // is escaped.
-    let signal = |s: &mut String| {
-        let t = s.trim().to_string();
-        *s = match t.split_once('(').filter(|(w, r)| matches!(*w, "v" | "V" | "i" | "I") && r.ends_with(')')) {
-            Some((w, r)) => format!("{w}({})", escape(&r[..r.len() - 1])),
-            None => escape(&t),
-        };
-    };
-    if let Some(tb) = &mut ir.testbench {
-        tb.initial_conditions.iter_mut().chain(tb.node_sets.iter_mut()).for_each(|(n, _)| signal(n));
-        tb.saves.iter_mut().for_each(signal);
+}
+
+/// A signal (`v(x)`, `i(x)`, bare `x`) with the name inside its wrapper
+/// escaped.
+fn signal(s: &str, n: Names) -> String {
+    let t = s.trim();
+    match t.split_once('(').filter(|(w, r)| matches!(*w, "v" | "V" | "i" | "I") && r.ends_with(')')) {
+        Some((w, r)) => format!("{w}({})", n.n(&r[..r.len() - 1])),
+        None => n.n(t).to_string(),
     }
-    ir
 }
 
 pub(super) fn netlist(ir: &CircuitIR) -> Result<String, CodeGenError> {
     super::refuse_raw_spice(ir, "spectre")?;
     let keep_case = ir.raw_dialect == Some(Dialect::Spectre);
-    let ir = &escaped(ir);
-    let mut lines = Vec::new();
+    let n = Names { fold: !keep_case, escape: true };
+    let mut out = String::new();
 
     // `[KUN]` B.2: `//` is a Spectre comment; "all Spectre netlists must
     // begin with a lang=spectre statement".
-    lines.push(format!("// {}", ir.top.name));
-    lines.push(String::new());
-    lines.push("simulator lang=spectre".into());
-    lines.push(String::new());
+    w!(out, "// {}\n\nsimulator lang=spectre\n\n", ir.top.name);
     // `real f(real x) { return x*2; }` (R5 pp.870-871). A body reading a
     // node or a current has no Spectre function form.
     for f in &ir.functions {
@@ -474,199 +478,208 @@ pub(super) fn netlist(ir: &CircuitIR) -> Result<String, CodeGenError> {
             return Err(unsupported_component(&format!(".func {}: a body over v()/i() has no Spectre function form", f.name)));
         }
         let args: Vec<String> = f.args.iter().map(|a| format!("real {a}")).collect();
-        lines.push(format!("real {}({}) {{\n    return {};\n}}", f.name, args.join(", "), f.body));
+        w!(out, "real {}({}) {{\n    return {};\n}}\n", f.name, args.join(", "), f.body);
     }
     // `global 0 a b`: Spectre takes the first global as ground (R5 p.871).
     if !ir.globals.is_empty() {
-        lines.push(format!("global 0 {}", ir.globals.join(" ")));
+        out.push_str("global 0");
+        for g in &ir.globals {
+            w!(out, " {}", n.n(g));
+        }
+        out.push('\n');
     }
 
     // `[CMP]` p.888 / `[REF]` p.541: `ahdl_include "VerilogAfile.va"`.
     for path in &ir.top.osdi_loads {
-        lines.push(format!("ahdl_include \"{}\"", path));
+        w!(out, "ahdl_include \"{}\"\n", path);
     }
 
     // `[REF]` p.494: `include "filename"`.
     for inc in &ir.top.includes {
-        lines.push(format!("include \"{}\"", inc));
+        w!(out, "include \"{}\"\n", inc);
     }
 
     // `[REF]` p.493: `include "file" section=sectionName` — the documented
     // way to pick a PDK corner out of a `library`/`section` file (p.498).
     for (path, section) in &ir.top.libs {
-        lines.push(format!("include \"{}\" section={}", path, section));
+        w!(out, "include \"{}\" section={}\n", path, section);
     }
 
     for lib in &ir.model_libraries {
         for setup in &lib.setup_includes {
-            lines.push(format!("include \"{}\"", setup));
+            w!(out, "include \"{}\"\n", setup);
         }
         let path = lib.backend_paths
             .get("spectre")
             .unwrap_or(&lib.path);
         if let Some(ref corner) = lib.corner {
-            lines.push(format!("include \"{}\" section={}", path, corner));
+            w!(out, "include \"{}\" section={}\n", path, corner);
         } else {
-            lines.push(format!("include \"{}\"", path));
+            w!(out, "include \"{}\"\n", path);
         }
     }
 
     // `[REF]` p.506: `parameters p1=1 p2=2`.
     if !ir.top.parameters.is_empty() {
-        lines.push(format!("parameters{}", param_defs(&ir.top.parameters, spectre_value)));
+        out.push_str("parameters");
+        param_defs(&mut out, &ir.top.parameters, spectre_value);
+        out.push('\n');
     }
 
     for m in &ir.top.models {
-        lines.push(emit_model(m)?);
+        emit_model(&mut out, m, n)?;
+        out.push('\n');
     }
 
     for sc in &ir.subcircuit_defs {
-        lines.push(String::new());
-        lines.push(emit_subcircuit(sc)?);
+        out.push('\n');
+        emit_subcircuit(&mut out, sc, n)?;
+        out.push('\n');
     }
 
-    lines.push(String::new());
+    out.push('\n');
 
     for e in ir.top.elements() {
-        lines.push(match e {
-            Element::Component(c) => emit_component(c)?,
-            Element::Instance(i) => emit_instance(i),
-        });
+        match e {
+            Element::Component(c) => emit_component(&mut out, c, n)?,
+            Element::Instance(i) => emit_instance(&mut out, i, n),
+        }
+        out.push('\n');
     }
-    lines.extend(ir.top.raw_spice.iter().cloned());
+    for l in &ir.top.raw_spice {
+        w!(out, "{l}\n");
+    }
 
     if let Some(ref tb) = ir.testbench {
         for comp in &tb.stimulus {
-            lines.push(emit_component(comp)?);
+            emit_component(&mut out, comp, n)?;
+            out.push('\n');
         }
 
         let opts = emit_options(&tb.options)?;
         if !opts.is_empty() {
-            lines.push(opts);
+            w!(out, "{opts}\n");
         }
 
         // `[REF]` p.236 verbatim: `myopt options temp=27`; temp is options
         // parameter #6 and tnom #7 (p.187-188).
         if let Some(temp) = tb.temperature {
-            lines.push(format!("mytemp options temp={}", spectre_num(temp)));
+            w!(out, "mytemp options temp={}\n", spectre_num(temp));
         }
         if let Some(tnom) = tb.nominal_temperature {
-            lines.push(format!("mytnom options tnom={}", spectre_num(tnom)));
+            w!(out, "mytnom options tnom={}\n", spectre_num(tnom));
         }
 
         // `[REF]` p.490: `ic 7=0 out=1 OpAmp1.comp=5 L1:1=1.0u`.
         for (node, val) in &tb.initial_conditions {
-            lines.push(format!("ic {}={}", bare_node(node), spectre_num(*val)));
+            w!(out, "ic {}={}\n", bare_node(&signal(node, n)), spectre_num(*val));
         }
 
         // `[REF]` p.502: `nodeset 7=0 out=1 OpAmp1.comp=5 L1:1=1.0u`.
         for (node, val) in &tb.node_sets {
-            lines.push(format!("nodeset {}={}", bare_node(node), spectre_num(*val)));
+            w!(out, "nodeset {}={}\n", bare_node(&signal(node, n)), spectre_num(*val));
         }
 
         // `[REF]` p.517-518: `save 7 out OpAmp1.comp M1:currents ...` —
         // bare signal names, not `V(...)`.
         for save in &tb.saves {
+            let save = signal(save, n);
             // `i(V1)` is the source's current: its terminal, under the
             // lowercased name the instance is written with.
             let t = save.trim();
             let current = t.strip_prefix("i(").or_else(|| t.strip_prefix("I(")).and_then(|r| r.strip_suffix(')'));
-            lines.push(match current {
-                Some(dev) => format!("save {}:p", inst_ref(dev.trim(), keep_case)),
-                None => format!("save {}", bare_node(save)),
-            });
+            match current {
+                Some(dev) => w!(out, "save {}:p\n", inst_ref(dev.trim(), keep_case)),
+                None => w!(out, "save {}\n", bare_node(&save)),
+            }
         }
 
         for meas in &tb.measures {
-            lines.push(emit_measure(meas));
+            w!(out, "{}\n", emit_measure(meas));
         }
 
         for line in &tb.extra_lines {
-            lines.push(line.clone());
+            w!(out, "{line}\n");
         }
 
-        lines.push(String::new());
+        out.push('\n');
 
-        lines.extend(emit_analysis_block(&tb.analyses, &tb.step_params, keep_case)?);
+        for l in emit_analysis_block(&tb.analyses, &tb.step_params, keep_case)? {
+            w!(out, "{l}\n");
+        }
     }
 
-    Ok(lines.join("\n"))
+    // Lines were each written with their end; the deck has none after the last.
+    out.pop();
+    Ok(out)
 }
 
 /// `[REF]` p.533-535: `[inline] subckt <Name> (<node1> ... <nodeN>)` ...
 /// `ends <Name>`, verbatim example `subckt coax (i1 o1 i2 o2)` / `ends coax`.
-fn emit_subcircuit(sc: &Subcircuit) -> Result<String, CodeGenError> {
-    let mut header = format!("subckt {} (", sc.name);
+/// Written with no line end after `ends`.
+fn emit_subcircuit(out: &mut String, sc: &Subcircuit, n: Names) -> Result<(), CodeGenError> {
+    w!(out, "subckt {} (", n.n(&sc.name));
     for (i, port) in sc.ports.iter().enumerate() {
-        if i > 0 {
-            header.push(' ');
-        }
-        header.push_str(&port.name);
+        w!(out, "{}{}", if i == 0 { "" } else { " " }, n.n(&port.name));
     }
-    header.push(')');
-
-    let body = emit_subcircuit_body(sc)?;
-
-    Ok(format!("{}\n{}\nends {}", header, body, sc.name))
+    out.push_str(")\n");
+    let start = out.len();
+    emit_subcircuit_body(out, sc, n)?;
+    if out.len() == start {
+        out.push('\n');
+    }
+    w!(out, "ends {}", n.n(&sc.name));
+    Ok(())
 }
 
-pub(crate) fn emit_component(comp: &Component) -> Result<String, CodeGenError> {
-    let s = match comp {
+/// `comp`'s instance statement, written onto `out` with no line end; its
+/// identifiers spelled by `n`. Nothing is written when it errs.
+pub(crate) fn emit_component(out: &mut String, comp: &Component, n: Names) -> Result<(), CodeGenError> {
+    let ps = |p| super::params(p, spectre_value);
+    match comp {
         // `[CMP]` p.628 `r1 (1 2) resistor r=1.2K m=2`
         Component::Resistor { name, n1, n2, value, model, params } => {
-            model_refuse("spectre", name, model)?;
-            let mut s = format!("r{} ({} {}) resistor r={}", name, n1, n2, emit_value(value));
-            s.push_str(&super::params(params, spectre_value));
-            s
+            if model.is_some() {
+                model_refuse("spectre", &n.d(name).to_string(), model)?;
+            }
+            w!(out, "r{} ({} {}) resistor r={}{}", n.d(name), n.n(n1), n.n(n2), emit_value(value), ps(params));
         }
         // `[CMP]` p.283 `c2 (1 0) capacitor c=2.5u tc1=1e-8`
         Component::Capacitor { name, n1, n2, value, model, params } => {
-            model_refuse("spectre", name, model)?;
-            let mut s = format!("c{} ({} {}) capacitor c={}", name, n1, n2, emit_value(value));
-            s.push_str(&super::params(params, spectre_value));
-            s
+            if model.is_some() {
+                model_refuse("spectre", &n.d(name).to_string(), model)?;
+            }
+            w!(out, "c{} ({} {}) capacitor c={}{}", n.d(name), n.n(n1), n.n(n2), emit_value(value), ps(params));
         }
         // `[CMP]` p.372 `l33 (0 net29) inductor l=10e-9 r=1 m=1`
         Component::Inductor { name, n1, n2, value, model, params } => {
-            model_refuse("spectre", name, model)?;
-            let mut s = format!("l{} ({} {}) inductor l={}", name, n1, n2, emit_value(value));
-            s.push_str(&super::params(params, spectre_value));
-            s
+            if model.is_some() {
+                model_refuse("spectre", &n.d(name).to_string(), model)?;
+            }
+            w!(out, "l{} ({} {}) inductor l={}{}", n.d(name), n.n(n1), n.n(n2), emit_value(value), ps(params));
         }
         // `[CMP]` p.577 `ml1 mutual_inductor coupling=1 ind1=l1 ind2=l2`
         Component::MutualInductor { name, inductor1, inductor2, coupling } => {
-            format!("k{} mutual_inductor coupling={} ind1=l{} ind2=l{}",
-                name, coupling, inductor1, inductor2)
+            w!(out, "k{} mutual_inductor coupling={} ind1=l{} ind2=l{}", n.d(name), coupling, n.d(inductor1), n.d(inductor2));
         }
         // `[CMP]` p.683 `Name p n vsource parameter=value ...`; `dc` is
         // instance parameter #1, `mag`/`phase` are the small-signal
         // parameters #39/#40 (p.685).
-        Component::VoltageSource { name, np, nm, value, ac_magnitude, ac_phase, waveform } => {
-            let mut s = format!("v{} ({} {}) vsource dc={}", name, np, nm, emit_value(value));
-            if let Some(mag) = ac_magnitude {
-                s.push_str(&format!(" mag={}", spectre_num(*mag)));
-                if let Some(phase) = ac_phase {
-                    s.push_str(&format!(" phase={}", spectre_num(*phase)));
-                }
-            }
-            if let Some(wf) = waveform {
-                s.push_str(&format!(" {}", emit_waveform_params(wf)?));
-            }
-            s
-        }
         // `[CMP]` p.380 `i1 (in 0) isource dc=0 type=pulse delay=10n ...`
-        Component::CurrentSource { name, np, nm, value, ac_magnitude, ac_phase, waveform } => {
-            let mut s = format!("i{} ({} {}) isource dc={}", name, np, nm, emit_value(value));
+        Component::VoltageSource { name, np, nm, value, ac_magnitude, ac_phase, waveform }
+        | Component::CurrentSource { name, np, nm, value, ac_magnitude, ac_phase, waveform } => {
+            let (l, master) = if matches!(comp, Component::VoltageSource { .. }) { ('v', "vsource") } else { ('i', "isource") };
+            let wave = waveform.as_ref().map(emit_waveform_params).transpose()?;
+            w!(out, "{l}{} ({} {}) {master} dc={}", n.d(name), n.n(np), n.n(nm), emit_value(value));
             if let Some(mag) = ac_magnitude {
-                s.push_str(&format!(" mag={}", spectre_num(*mag)));
+                w!(out, " mag={}", spectre_num(*mag));
                 if let Some(phase) = ac_phase {
-                    s.push_str(&format!(" phase={}", spectre_num(*phase)));
+                    w!(out, " phase={}", spectre_num(*phase));
                 }
             }
-            if let Some(wf) = waveform {
-                s.push_str(&format!(" {}", emit_waveform_params(wf)?));
+            if let Some(wave) = wave {
+                w!(out, " {wave}");
             }
-            s
         }
         // Spectre's bsource does exist (`[CMP]` p.856:
         // `name (node1 node2) bsource v=generic_expr`) but its expression
@@ -683,66 +696,73 @@ pub(crate) fn emit_component(comp: &Component) -> Result<String, CodeGenError> {
         }
         // `[CMP]` p.680 `e1 (out1 0 pos neg) vcvs gain=10`
         Component::Vcvs { name, np, nm, ncp, ncm, gain } => {
-            format!("e{} ({} {} {} {}) vcvs gain={}", name, np, nm, ncp, ncm, gain)
+            w!(out, "e{} ({} {} {} {}) vcvs gain={}", n.d(name), n.n(np), n.n(nm), n.n(ncp), n.n(ncm), gain)
         }
         // `[CMP]` p.678 `Name sink src ps ns ... vccs`, parameter `gm`
         Component::Vccs { name, np, nm, ncp, ncm, transconductance } => {
-            format!("g{} ({} {} {} {}) vccs gm={}", name, np, nm, ncp, ncm, transconductance)
+            w!(out, "g{} ({} {} {} {}) vccs gm={}", n.d(name), n.n(np), n.n(nm), n.n(ncp), n.n(ncm), transconductance)
         }
         // `[CMP]` p.286 `vcs (pos gnd) cccs gain=2.5 probe=v1`
         Component::Cccs { name, np, nm, vsense, gain } => {
-            format!("f{} ({} {}) cccs probe={} gain={}", name, np, nm, vsense, gain)
+            w!(out, "f{} ({} {}) cccs probe={} gain={}", n.d(name), n.n(np), n.n(nm), n.d(vsense), gain)
         }
         // R5 pp.590-616: `pvcvs`/`pvccs` take the controlling pairs as
         // terminals, `pcccs`/`pccvs` the sensing sources as `probes`; both
         // read `coeffs` in SPICE's term order. (Not run here: no Spectre.)
         Component::Poly { name, letter, np, nm, controls, coeffs } => {
-            let k: Vec<String> = coeffs.iter().map(|c| spectre_num(*c)).collect();
             let master = match letter { 'E' => "pvcvs", 'G' => "pvccs", 'F' => "pcccs", _ => "pccvs" };
+            // Controlling nodes are terminals; sensing sources are probes.
+            let nodes = matches!(letter, 'E' | 'G');
             let l = letter.to_ascii_lowercase();
-            if matches!(letter, 'E' | 'G') {
-                format!("{l}{} ({np} {nm} {}) {master} coeffs=[{}]", name, controls.join(" "), k.join(" "))
+            if nodes {
+                w!(out, "{l}{} ({} {} ", n.d(name), n.n(np), n.n(nm));
             } else {
-                format!("{l}{} ({np} {nm}) {master} probes=[{}] coeffs=[{}]", name, controls.join(" "), k.join(" "))
+                w!(out, "{l}{} ({} {}) {master} probes=[", n.d(name), n.n(np), n.n(nm));
             }
+            for (i, c) in controls.iter().enumerate() {
+                let c = if nodes { n.n(c) } else { n.d(c) };
+                w!(out, "{}{c}", if i == 0 { "" } else { " " });
+            }
+            if nodes {
+                w!(out, ") {master} coeffs=[");
+            } else {
+                out.push_str("] coeffs=[");
+            }
+            for (i, c) in coeffs.iter().enumerate() {
+                w!(out, "{}{}", if i == 0 { "" } else { " " }, spectre_num(*c));
+            }
+            out.push(']');
         }
         // `[CMP]` p.288 `vvs (pos gnd) ccvs rm=1 probe=v1`
         Component::Ccvs { name, np, nm, vsense, transresistance } => {
-            format!("h{} ({} {}) ccvs probe={} rm={}", name, np, nm, vsense, transresistance)
+            w!(out, "h{} ({} {}) ccvs probe={} rm={}", n.d(name), n.n(np), n.n(nm), n.d(vsense), transresistance)
         }
         // `[CMP]` p.302 `Name a c ModelName parameter=value ...`,
         // `d0 (dp dn) pdiode l=3e-4 w=2.5e-4 area=1`
         Component::Diode { name, np, nm, model, params } => {
-            let mut s = format!("d{} ({} {}) {}", name, np, nm, model);
-            s.push_str(&super::params(params, spectre_value));
-            s
+            w!(out, "d{} ({} {}) {}{}", n.d(name), n.n(np), n.n(nm), n.n(model), ps(params))
         }
         // `[CMP]` bjt models: `Name c b e [s] ModelName parameter=value ...`
         Component::Bjt { name, nc, nb, ne, extra_nodes, model, params } => {
-            let extra: String = extra_nodes.iter().map(|n| format!(" {n}")).collect();
-            let mut s = format!("q{} ({} {} {}{extra}) {}", name, nc, nb, ne, model);
-            s.push_str(&super::params(params, spectre_value));
-            s
+            w!(out, "q{} ({} {} {}", n.d(name), n.n(nc), n.n(nb), n.n(ne));
+            for x in extra_nodes {
+                w!(out, " {}", n.n(x));
+            }
+            w!(out, ") {}{}", n.n(model), ps(params));
         }
         // `[CMP]` mos models: `Name d g s b ModelName parameter=value ...`
         Component::Mosfet { name, nd, ng, ns, nb: Some(nb), extra_nodes, model, params } if extra_nodes.is_empty() => {
-            let mut s = format!("m{} ({} {} {} {}) {}", name, nd, ng, ns, nb, model);
-            s.push_str(&super::params(params, spectre_value));
-            s
+            w!(out, "m{} ({} {} {} {}) {}{}", n.d(name), n.n(nd), n.n(ng), n.n(ns), n.n(nb), n.n(model), ps(params))
         }
         Component::Mosfet { .. } => {
             return Err(unsupported_component("MOSFET without a bulk node or with extra nodes (VDMOS, SOI): no mapped Spectre terminal list"));
         }
         // `[CMP]` jfet: `Name d g s ModelName parameter=value ...`
         Component::Jfet { name, nd, ng, ns, model, params } => {
-            let mut s = format!("j{} ({} {} {}) {}", name, nd, ng, ns, model);
-            s.push_str(&super::params(params, spectre_value));
-            s
+            w!(out, "j{} ({} {} {}) {}{}", n.d(name), n.n(nd), n.n(ng), n.n(ns), n.n(model), ps(params))
         }
         Component::Mesfet { name, nd, ng, ns, model, params } => {
-            let mut s = format!("z{} ({} {} {}) {}", name, nd, ng, ns, model);
-            s.push_str(&super::params(params, spectre_value));
-            s
+            w!(out, "z{} ({} {} {}) {}{}", n.d(name), n.n(nd), n.n(ng), n.n(ns), n.n(model), ps(params))
         }
         // Spectre's voltage-controlled switch is `relay`, `[CMP]` p.625:
         // `Name 1 2 ps ns ModelName parameter=value ...` /
@@ -751,7 +771,7 @@ pub(crate) fn emit_component(comp: &Component) -> Result<String, CodeGenError> {
         // `model <name> relay ...`; a SPICE `.model <name> sw` carried
         // through the IR names a primitive Spectre does not have.
         Component::VSwitch { name, np, nm, ncp, ncm, model } => {
-            format!("s{} ({} {} {} {}) {}", name, np, nm, ncp, ncm, model)
+            w!(out, "s{} ({} {} {} {}) {}", n.d(name), n.n(np), n.n(nm), n.n(ncp), n.n(ncm), n.n(model))
         }
         // `relay` is voltage controlled only; `switch` (`[CMP]` p.643) is a
         // multi-throw switch whose position only changes between analyses.
@@ -765,7 +785,7 @@ pub(crate) fn emit_component(comp: &Component) -> Result<String, CodeGenError> {
         // `[CMP]` p.644-645 `t1 (1 0 2 0) tline z0=100`, instance params
         // `z0` (#1) and `td` (#2).
         Component::TLine { name, inp, inm, outp, outm, z0, td } => {
-            format!("t{} ({} {} {} {}) tline z0={} td={}", name, inp, inm, outp, outm, z0, td)
+            w!(out, "t{} ({} {} {} {}) tline z0={} td={}", n.d(name), n.n(inp), n.n(inm), n.n(outp), n.n(outm), z0, td)
         }
         Component::Xspice { .. } => {
             return Err(unsupported_component(
@@ -780,8 +800,8 @@ pub(crate) fn emit_component(comp: &Component) -> Result<String, CodeGenError> {
                 line.trim()
             )));
         }
-    };
-    Ok(s)
+    }
+    Ok(())
 }
 
 fn emit_analysis(analysis: &Analysis, keep_case: bool) -> Result<String, CodeGenError> {
@@ -839,10 +859,10 @@ fn emit_analysis(analysis: &Analysis, keep_case: bool) -> Result<String, CodeGen
                 spectre_num(*stop),
             );
             if let Some(st) = start {
-                s.push_str(&format!(" start={}", spectre_num(*st)));
+                w!(s, " start={}", spectre_num(*st));
             }
             if let Some(ms) = max_step {
-                s.push_str(&format!(" maxstep={}", spectre_num(*ms)));
+                w!(s, " maxstep={}", spectre_num(*ms));
             }
             // SPICE `uic`: start from the initial conditions, no DC solve.
             if *uic {
@@ -1130,6 +1150,65 @@ fn dc_sweep_selector(source: &str) -> String {
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+
+    /// One component's statement, names as given.
+    fn emit_component(c: &Component) -> Result<String, CodeGenError> {
+        let mut s = String::new();
+        super::emit_component(&mut s, c, Names::VERBATIM).map(|()| s)
+    }
+
+    /// One subcircuit block, names as given.
+    fn emit_subcircuit(sc: &Subcircuit) -> Result<String, CodeGenError> {
+        let mut s = String::new();
+        super::emit_subcircuit(&mut s, sc, Names::VERBATIM).map(|()| s)
+    }
+
+    /// Every identifier field reaches the deck escaped (UG p.62): each `/`
+    /// put into a name is written `\/`, wherever the name is written.
+    #[test]
+    fn every_identifier_field_is_escaped() {
+        let s = |x: &str| x.to_string();
+        let v = |x: f64| IrValue::Numeric { value: x };
+        let comps = vec![
+            Component::Resistor { name: s("1"), n1: s("a"), n2: s("b"), value: v(1e3), model: None, params: vec![] },
+            Component::Capacitor { name: s("1"), n1: s("a"), n2: s("b"), value: v(1e-9), model: None, params: vec![] },
+            Component::Inductor { name: s("1"), n1: s("a"), n2: s("b"), value: v(1e-6), model: None, params: vec![] },
+            Component::Inductor { name: s("2"), n1: s("a"), n2: s("b"), value: v(1e-6), model: None, params: vec![] },
+            Component::MutualInductor { name: s("1"), inductor1: s("1"), inductor2: s("2"), coupling: 0.9 },
+            Component::VoltageSource { name: s("1"), np: s("a"), nm: s("0"), value: v(1.0), ac_magnitude: None, ac_phase: None, waveform: None },
+            Component::CurrentSource { name: s("1"), np: s("a"), nm: s("0"), value: v(1.0), ac_magnitude: None, ac_phase: None, waveform: None },
+            Component::Vcvs { name: s("1"), np: s("a"), nm: s("b"), ncp: s("c"), ncm: s("d"), gain: 2.0 },
+            Component::Vccs { name: s("1"), np: s("a"), nm: s("b"), ncp: s("c"), ncm: s("d"), transconductance: 2.0 },
+            Component::Cccs { name: s("1"), np: s("a"), nm: s("b"), vsense: s("V1"), gain: 2.0 },
+            Component::Ccvs { name: s("1"), np: s("a"), nm: s("b"), vsense: s("V1"), transresistance: 2.0 },
+            Component::Poly { name: s("2"), letter: 'E', np: s("a"), nm: s("b"), controls: vec![s("c"), s("d")], coeffs: vec![0.0, 1.0] },
+            Component::Poly { name: s("2"), letter: 'F', np: s("a"), nm: s("b"), controls: vec![s("V1")], coeffs: vec![0.0, 1.0] },
+            Component::Diode { name: s("1"), np: s("a"), nm: s("b"), model: s("dm"), params: vec![] },
+            Component::Bjt { name: s("1"), nc: s("a"), nb: s("b"), ne: s("c"), extra_nodes: vec![s("d")], model: s("qm"), params: vec![] },
+            Component::Mosfet { name: s("1"), nd: s("a"), ng: s("b"), ns: s("c"), nb: Some(s("d")), extra_nodes: vec![], model: s("mm"), params: vec![] },
+            Component::Jfet { name: s("1"), nd: s("a"), ng: s("b"), ns: s("c"), model: s("jm"), params: vec![] },
+            Component::Mesfet { name: s("1"), nd: s("a"), ng: s("b"), ns: s("c"), model: s("zm"), params: vec![] },
+            Component::VSwitch { name: s("1"), np: s("a"), nm: s("b"), ncp: s("c"), ncm: s("d"), model: s("sm") },
+            Component::TLine { name: s("1"), inp: s("a"), inm: s("b"), outp: s("c"), outm: s("d"), z0: 50.0, td: 1e-9 },
+        ];
+        let dm = ModelDef { name: s("dm"), kind: s("d"), parameters: vec![] };
+        let cell = Subcircuit { name: s("cell"), ports: vec![Port { name: s("p"), direction: PortDirection::InOut }], components: comps[..1].to_vec(), models: vec![dm.clone()], ..Default::default() };
+        let x1 = Instance { name: s("1"), subcircuit: s("cell"), port_mapping: vec![s("a")], ..Default::default() };
+        let top = Subcircuit { name: s("t"), components: comps, instances: vec![x1], models: vec![dm], ..Default::default() };
+        let tb = Testbench { analyses: vec![Analysis::Op], saves: vec![s("v(a/x)"), s("a/x")], initial_conditions: vec![(s("a/x"), 1.0)], ..Default::default() };
+        let mut ir = CircuitIR { top, subcircuit_defs: vec![cell], testbench: Some(tb), globals: vec![s("g")], ..Default::default() };
+        ir.names_mut(|n| if n != "0" { n.push_str("/x") });
+        let deck = netlist(&ir).unwrap();
+        for line in deck.lines().skip(1) {
+            let b = line.as_bytes();
+            assert!((0..b.len()).all(|j| b[j] != b'/' || (j > 0 && b[j - 1] == b'\\')), "unescaped `/` in `{line}`");
+        }
+        // A sampled field of each kind, folded and escaped.
+        // A name starting with a digit escapes the digit too: `\1\/x`.
+        for want in ["r\\1\\/x (a\\/x b\\/x)", "ind1=l\\1\\/x", "probe=v1\\/x", "probes=[v1\\/x]", "x\\1\\/x (a\\/x) cell\\/x", "subckt cell\\/x (p\\/x)", "ends cell\\/x", "model dm\\/x diode", "global 0 g\\/x", "ic a\\/x=1", "save a\\/x"] {
+            assert!(deck.contains(want), "no `{want}` in\n{deck}");
+        }
+    }
 
     fn sample_resistor_divider() -> CircuitIR {
         CircuitIR {
