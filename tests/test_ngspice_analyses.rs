@@ -343,3 +343,32 @@ fn this_ngspice_has_no_pss() {
     // Line 5 is the `.pss` card ("unimplemented dot command '.pss'").
     assert!(err.contains("Error on line 5"), "{err}");
 }
+
+// ── ngbehavior ──
+
+// ngspice's own "Compatibility modes selected" note is the oracle that the
+// mode reached it before the deck was parsed.
+#[test]
+fn ngbehavior_line_sets_the_mode_before_the_deck_is_read() {
+    let raw = run("* m\n*spicerack ngbehavior=hsa\nV1 a 0 1\nR1 a 0 1k\n.op\n.end\n");
+    let note = "Compatibility modes selected: hs a";
+    assert!(raw.stdout.contains(note), "{}", raw.stdout);
+    assert!(close(scalar(&raw, "a"), 1.0, 1e-12));
+}
+
+#[test]
+fn ngbehavior_ngspice_does_not_know_is_an_error() {
+    let deck = "* m\n*spicerack ngbehavior=xyz\nV1 a 0 1\nR1 a 0 1k\n.op\n.end\n";
+    let err = Dialect::Ngspice.run(deck).unwrap_err();
+    assert!(err.to_string().contains("ngbehavior=xyz"), "{err}");
+}
+
+/// The `.control` path (several analyses, `run_all`) gets the mode too.
+#[test]
+fn ngbehavior_reaches_a_control_block_run() {
+    let deck = "* m\n*spicerack ngbehavior=hsa\nV1 a 0 1\nR1 a 0 1k\n.control\nop\ndc V1 0 2 1\n.endc\n.end\n";
+    let plots = Dialect::Ngspice.run_all(deck).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(plots.len(), 2, "op and dc plots");
+    assert!(plots[0].stdout.contains("Compatibility modes selected: hs a"), "{}", plots[0].stdout);
+    assert!(close(scalar(&plots[0], "a"), 1.0, 1e-12));
+}

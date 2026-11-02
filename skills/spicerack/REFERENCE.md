@@ -78,6 +78,10 @@ injection, propagation delay and pedestal all track them.
 `Testbench`: `extra_line(text)`, `options(**kw)`, `temperature`, `nominal_temperature`,
 `initial_condition(**nodes)`, `node_set(**nodes)`, `save(*signals)`, `use_pdk(...)`,
 `add_subcircuit(sub)`. `tb.temperature` / `tb.nominal_temperature` are write-only.
+`tb.ngbehavior = "hsa"` (read/write, `None` clears) is ngspice's compatibility mode,
+passed as `ngspice -D ngbehavior=hsa`; lowercase letters only (`ValueError` otherwise),
+a mode ngspice does not know fails the run, other backends ignore it. ngspice always
+runs with `-n`: no `./.spiceinit` or `~/.spiceinit` reaches a run.
 
 ## Analyses
 

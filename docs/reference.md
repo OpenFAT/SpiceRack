@@ -94,7 +94,8 @@ Waveform sources, each a `...VoltageSource` and a `...CurrentSource`, also on
 `options(**kw)`, `save(*vectors)`, `measure(*parts)`, `initial_condition(**v)`,
 `node_set(**v)`, `step(param, start, stop, step)`,
 `step_sweep(param, start, stop, n, kind)`; attributes `temperature`,
-`nominal_temperature`, and `save_currents` (`CircuitSimulator`).
+`nominal_temperature`, `ngbehavior` (ngspice's compatibility mode, e.g.
+`"hsa"`; other simulators ignore it), and `save_currents` (`CircuitSimulator`).
 
 ## Analyses (`Testbench`, `CircuitSimulator`)
 

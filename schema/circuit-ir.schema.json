@@ -1415,6 +1415,13 @@
           "items": {
             "$ref": "#/$defs/PrintCard"
           }
+        },
+        "ngbehavior": {
+          "description": "ngspice compatibility mode in lowercase letters (\"hsa\"), passed as `ngspice -D ngbehavior=<mode>`; other dialects ignore it. Absent or null: none.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "additionalProperties": false

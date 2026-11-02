@@ -5,7 +5,7 @@ use std::path::Path;
 use std::process::Command;
 
 use super::{exec, read_results, scratch, BackendError};
-use crate::codegen::spice3::{is_four, is_meas, runs_in_control};
+use crate::codegen::spice3::{is_four, is_meas, runs_in_control, NGBEHAVIOR};
 use crate::result::RawData;
 
 /// Run a deck through `ngspice -b` and read back every plot of its rawfile.
@@ -16,10 +16,17 @@ use crate::result::RawData;
 /// shape, and a hand-written one may be). This is run mechanics (where the
 /// rawfile goes), not dialect translation.
 ///
+/// ngspice runs with `-n`, so neither `./.spiceinit` nor `~/.spiceinit` is
+/// read: the result depends on the deck alone. A deck's [`NGBEHAVIOR`] line
+/// becomes `-D ngbehavior=<mode>`, the one way to set the mode before the
+/// deck is parsed without a file.
+///
 /// # Errors
 /// `SimulationError` for a deck with a `.meas` or `.four` card and no
 /// `.control` block that runs its analysis: under `-r`, ngspice would drop
-/// those results and exit 0.
+/// those results and exit 0. `SimulationError` when ngspice reports no
+/// compatibility mode for a mode the deck asked for (ngspice itself only
+/// notes it and reads the deck as plain ngspice).
 pub(super) fn run(netlist: &str) -> Result<Vec<RawData>, BackendError> {
     if !runs_in_control(netlist.lines()) && let Some(card) = netlist.lines().find(|l| is_meas(l) || is_four(l)) {
         return Err(BackendError::SimulationError(format!(
@@ -32,7 +39,11 @@ pub(super) fn run(netlist: &str) -> Result<Vec<RawData>, BackendError> {
     let (dir, cir) = scratch(netlist, "deck.cir")?;
     let raw_path = dir.path().join("out.raw");
     let mut cmd = Command::new("ngspice");
-    cmd.arg("-b");
+    cmd.args(["-b", "-n"]);
+    let mode = ngbehavior(netlist);
+    if let Some(mode) = mode {
+        cmd.arg("-D").arg(format!("ngbehavior={mode}"));
+    }
     match append_write_block(netlist, &raw_path) {
         Some(deck) => std::fs::write(&cir, deck)?,
         None => {
@@ -40,7 +51,22 @@ pub(super) fn run(netlist: &str) -> Result<Vec<RawData>, BackendError> {
         }
     }
     let stdout = exec(cmd.arg(&cir), "ngspice", None)?;
+    if let Some(mode) = mode
+        && stdout.contains("No compatibility mode selected")
+    {
+        return Err(BackendError::SimulationError(format!(
+            "ngspice did not accept ngbehavior={mode}: it reports no compatibility mode selected"
+        )));
+    }
     read_results(&raw_path, stdout)
+}
+
+/// The compatibility mode on the deck's [`NGBEHAVIOR`] line, if it has one.
+fn ngbehavior(netlist: &str) -> Option<&str> {
+    netlist
+        .lines()
+        .find_map(|l| l.strip_prefix(NGBEHAVIOR))
+        .map(str::trim)
 }
 
 /// Give a `.control` deck somewhere to put its results.
@@ -107,6 +133,33 @@ mod deck_tests {
     fn leaves_a_control_deck_that_already_writes_alone() {
         let deck = "* t\n.control\nop\nWRITE mine.raw\n.endc\n.end\n";
         assert!(append_write_block(deck, Path::new(RAW)).is_none());
+    }
+
+    #[test]
+    fn ngbehavior_reaches_the_ngspice_run_and_no_other_dialect() {
+        use crate::codegen::{Dialect, netlist};
+        use crate::ir::{Analysis, CircuitIR, Testbench};
+        // One analysis, and two with a measure: the plain and the `.control` deck shapes.
+        let bench = |analyses, measures| CircuitIR {
+            testbench: Some(Testbench {
+                analyses,
+                measures,
+                ngbehavior: Some("hsa".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let tran = Analysis::Transient { step: 1e-6, stop: 1e-3, start: None, max_step: None, uic: false };
+        for ir in [bench(vec![Analysis::Op], vec![]), bench(vec![Analysis::Op, tran], vec!["tran m max v(a)".into()])] {
+            let deck = netlist(&ir, Dialect::Ngspice).unwrap();
+            assert_eq!(super::ngbehavior(&deck), Some("hsa"), "{deck}");
+            for d in [Dialect::Espice, Dialect::Ltspice, Dialect::Hspice] {
+                let deck = netlist(&ir, d).unwrap();
+                assert_eq!(super::ngbehavior(&deck), None, "{}: {deck}", d.name());
+            }
+        }
+        let plain = netlist(&CircuitIR::default(), Dialect::Ngspice).unwrap();
+        assert_eq!(super::ngbehavior(&plain), None, "{plain}");
     }
 
     #[test]
