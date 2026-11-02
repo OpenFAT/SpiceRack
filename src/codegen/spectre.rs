@@ -669,7 +669,7 @@ pub(crate) fn emit_component(out: &mut String, comp: &Component, n: Names) -> Re
         }
         // `[CMP]` p.577 `ml1 mutual_inductor coupling=1 ind1=l1 ind2=l2`
         Component::MutualInductor { name, inductor1, inductor2, coupling } => {
-            w!(out, "k{} mutual_inductor coupling={} ind1=l{} ind2=l{}", n.d(name), coupling, n.d(inductor1), n.d(inductor2));
+            w!(out, "k{} mutual_inductor coupling={} ind1=l{} ind2=l{}", n.d(name), spectre_num(*coupling), n.d(inductor1), n.d(inductor2));
         }
         // `[CMP]` p.683 `Name p n vsource parameter=value ...`; `dc` is
         // instance parameter #1, `mag`/`phase` are the small-signal
@@ -708,15 +708,15 @@ pub(crate) fn emit_component(out: &mut String, comp: &Component, n: Names) -> Re
         }
         // `[CMP]` p.680 `e1 (out1 0 pos neg) vcvs gain=10`
         Component::Vcvs { name, np, nm, ncp, ncm, gain } => {
-            w!(out, "e{} ({} {} {} {}) vcvs gain={}", n.d(name), n.n(np), n.n(nm), n.n(ncp), n.n(ncm), gain)
+            w!(out, "e{} ({} {} {} {}) vcvs gain={}", n.d(name), n.n(np), n.n(nm), n.n(ncp), n.n(ncm), spectre_num(*gain))
         }
         // `[CMP]` p.678 `Name sink src ps ns ... vccs`, parameter `gm`
         Component::Vccs { name, np, nm, ncp, ncm, transconductance } => {
-            w!(out, "g{} ({} {} {} {}) vccs gm={}", n.d(name), n.n(np), n.n(nm), n.n(ncp), n.n(ncm), transconductance)
+            w!(out, "g{} ({} {} {} {}) vccs gm={}", n.d(name), n.n(np), n.n(nm), n.n(ncp), n.n(ncm), spectre_num(*transconductance))
         }
         // `[CMP]` p.286 `vcs (pos gnd) cccs gain=2.5 probe=v1`
         Component::Cccs { name, np, nm, vsense, gain } => {
-            w!(out, "f{} ({} {}) cccs probe={} gain={}", n.d(name), n.n(np), n.n(nm), n.d(vsense), gain)
+            w!(out, "f{} ({} {}) cccs probe={} gain={}", n.d(name), n.n(np), n.n(nm), n.d(vsense), spectre_num(*gain))
         }
         // R5 pp.590-616: `pvcvs`/`pvccs` take the controlling pairs as
         // terminals, `pcccs`/`pccvs` the sensing sources as `probes`; both
@@ -747,7 +747,7 @@ pub(crate) fn emit_component(out: &mut String, comp: &Component, n: Names) -> Re
         }
         // `[CMP]` p.288 `vvs (pos gnd) ccvs rm=1 probe=v1`
         Component::Ccvs { name, np, nm, vsense, transresistance } => {
-            w!(out, "h{} ({} {}) ccvs probe={} rm={}", n.d(name), n.n(np), n.n(nm), n.d(vsense), transresistance)
+            w!(out, "h{} ({} {}) ccvs probe={} rm={}", n.d(name), n.n(np), n.n(nm), n.d(vsense), spectre_num(*transresistance))
         }
         // `[CMP]` p.302 `Name a c ModelName parameter=value ...`,
         // `d0 (dp dn) pdiode l=3e-4 w=2.5e-4 area=1`
@@ -797,7 +797,7 @@ pub(crate) fn emit_component(out: &mut String, comp: &Component, n: Names) -> Re
         // `[CMP]` p.644-645 `t1 (1 0 2 0) tline z0=100`, instance params
         // `z0` (#1) and `td` (#2).
         Component::TLine { name, inp, inm, outp, outm, z0, td } => {
-            w!(out, "t{} ({} {} {} {}) tline z0={} td={}", n.d(name), n.n(inp), n.n(inm), n.n(outp), n.n(outm), z0, td)
+            w!(out, "t{} ({} {} {} {}) tline z0={} td={}", n.d(name), n.n(inp), n.n(inm), n.n(outp), n.n(outm), spectre_num(*z0), spectre_num(*td))
         }
         Component::Xspice { .. } => {
             return Err(unsupported_component(

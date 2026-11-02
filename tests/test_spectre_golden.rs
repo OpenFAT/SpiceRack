@@ -282,8 +282,16 @@ fn spectre_primitives_match_documented_instance_forms() {
             name: "1".into(), inp: "1".into(), inm: "0".into(),
             outp: "2".into(), outm: "0".into(), z0: 100.0, td: 1e-9,
         }),
-        "t1 (1 0 2 0) tline z0=100 td=0.000000001",
+        "t1 (1 0 2 0) tline z0=100 td=1n",
     );
+    // Every number goes through the one Spectre formatter: scale suffixes,
+    // with Spectre's capital M for mega (`[KUN]` B.2).
+    assert_eq!(component(Component::Vcvs { name: "2".into(), np: "a".into(), nm: "0".into(), ncp: "b".into(), ncm: "0".into(), gain: 2e6 }), "e2 (a 0 b 0) vcvs gain=2M");
+    assert_eq!(component(Component::Vccs { name: "2".into(), np: "a".into(), nm: "0".into(), ncp: "b".into(), ncm: "0".into(), transconductance: 1e-3 }), "g2 (a 0 b 0) vccs gm=1m");
+    assert_eq!(component(Component::Cccs { name: "2".into(), np: "a".into(), nm: "0".into(), vsense: "V1".into(), gain: 1e-6 }), "f2 (a 0) cccs probe=v1 gain=1u");
+    assert_eq!(component(Component::Ccvs { name: "2".into(), np: "a".into(), nm: "0".into(), vsense: "V1".into(), transresistance: 1e3 }), "h2 (a 0) ccvs probe=v1 rm=1k");
+    assert_eq!(component(Component::MutualInductor { name: "2".into(), inductor1: "1".into(), inductor2: "2".into(), coupling: 1e-3 }), "k2 mutual_inductor coupling=1m ind1=l1 ind2=l2");
+    assert_eq!(component(Component::TLine { name: "2".into(), inp: "1".into(), inm: "0".into(), outp: "2".into(), outm: "0".into(), z0: 1e6, td: 2.5e-12 }), "t2 (1 0 2 0) tline z0=1M td=2.5p");
     assert_eq!(
         component(Component::VSwitch {
             name: "1".into(), np: "1".into(), nm: "2".into(),
