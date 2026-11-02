@@ -1762,11 +1762,6 @@ impl PyTestbench {
         slf.as_super().tb().analyses.push(a);
     }
 
-    #[pyo3(signature = (num_iterations, inner_analysis, inner_type, seed=None))]
-    fn add_spectre_montecarlo(slf: PyRefMut<'_, Self>, num_iterations: u32, inner_analysis: &str, inner_type: &str, seed: Option<u64>) {
-        Self::add_spectre_monte_carlo(slf, num_iterations, inner_analysis, inner_type, seed);
-    }
-
     // ── Serialization ──
 
     fn to_json(slf: PyRef<'_, Self>) -> PyResult<String> {
