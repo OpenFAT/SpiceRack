@@ -54,6 +54,24 @@ def test_half_power_is_not_three_db():
     assert HALF_POWER_DB != 3.0
 
 
+def test_ac_gain_db_reads_the_closed_form_rc_response():
+    """The package exports the AC extractors the skill documents.
+
+    A 1k/1u lowpass driven by 1 V AC has |H| = -10 log10(1 + (f/fc)^2) dB.
+    At 100 points per decade, log-interpolating a curve whose second
+    derivative peaks near 23 dB/decade^2 errs by at most h^2/8 * 23 =
+    3e-4 dB (h = 0.01 decade): tolerance 1e-3 dB.
+    """
+    from spicerack.testbenches import ac_gain_db
+
+    tb = ps.Testbench(_rc_dut())
+    tb.V(name="in", positive="vin", negative="0", value=0.0, ac=1.0)
+    ac = tb.ac(variation="dec", number_of_points=100, start_frequency=1, stop_frequency=1e5)
+    for f in (0.1 * FC, FC, 10 * FC):
+        want = -10 * math.log10(1 + (f / FC) ** 2)
+        assert ac_gain_db(ac, "vout", f) == pytest.approx(want, abs=1e-3), f
+
+
 def test_bandwidth_converges_to_analytic_corner():
     """Error must shrink with sweep density -- otherwise it is a definition bug."""
     errors = []

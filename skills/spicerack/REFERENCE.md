@@ -104,7 +104,7 @@ Spectre `inner_type` (`dc`, `ac`, `tran`, `noise`, `xf`, `sp`, `stb`, `pss`, ...
 harmonics are unreachable. For THD, compute a Goertzel over the transient
 waveform.
 
-Backend-specific, `CircuitSimulator` only: `spectre_sweep`, `spectre_montecarlo`,
+Backend-specific, `CircuitSimulator` only: `spectre_sweep`, `spectre_monte_carlo` (`spectre_montecarlo` warns, deprecated),
 `spectre_pac`, `spectre_pnoise`, `spectre_pstb`, `spectre_pxf`, `network_params`.
 `Testbench` queues the sweep and Monte Carlo forms with `add_spectre_sweep` and
 `add_spectre_monte_carlo`.

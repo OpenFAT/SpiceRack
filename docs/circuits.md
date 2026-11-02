@@ -37,7 +37,7 @@ print(op["vout"])   # 5.0
 print(c)            # the netlist
 ```
 
-Ground is `dut.gnd` (node `"0"`). In a `Testbench`, write `"0"`.
+Ground is `dut.gnd` (node `"0"`). In a `Testbench`, write `"0"` or `"gnd"` (any case), which a `Testbench`, like a `Circuit`, reads as `0`.
 
 ## Values and units
 

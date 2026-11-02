@@ -672,8 +672,17 @@ impl PySimulator {
 
     /// Spectre Monte Carlo wrapping an inner analysis.
     #[pyo3(signature = (num_iterations, inner_analysis, inner_type="ac", seed=None))]
-    fn spectre_montecarlo(&self, num_iterations: u32, inner_analysis: &str, inner_type: &str, seed: Option<u64>) -> PyResult<PyRawData> {
+    fn spectre_monte_carlo(&self, num_iterations: u32, inner_analysis: &str, inner_type: &str, seed: Option<u64>) -> PyResult<PyRawData> {
         Ok(PyRawData { inner: self.run_spectre(card::spectre_monte_carlo(num_iterations, inner_analysis, inner_type, seed)?)? })
+    }
+
+    /// Deprecated: [`Self::spectre_monte_carlo`], the spelling
+    /// `Testbench.add_spectre_monte_carlo` uses. Warns `DeprecationWarning`.
+    #[pyo3(signature = (num_iterations, inner_analysis, inner_type="ac", seed=None))]
+    fn spectre_montecarlo(&self, py: Python<'_>, num_iterations: u32, inner_analysis: &str, inner_type: &str, seed: Option<u64>) -> PyResult<PyRawData> {
+        let category = py.get_type::<pyo3::exceptions::PyDeprecationWarning>();
+        PyErr::warn(py, &category, c"spectre_montecarlo is deprecated; use spectre_monte_carlo", 1)?;
+        self.spectre_monte_carlo(num_iterations, inner_analysis, inner_type, seed)
     }
 
     /// SpectreRF Periodic AC (PAC) analysis with automatic PSS prerequisite.
@@ -1140,9 +1149,14 @@ struct PySubcircuit {
     ground_alias: bool,
 }
 
+/// A node name at the top level: `gnd` (any case) is the global ground `0`.
+fn top_net(n: &str) -> String {
+    if n.eq_ignore_ascii_case("gnd") { "0".into() } else { n.into() }
+}
+
 impl PySubcircuit {
     fn net(&self, n: &str) -> String {
-        if self.ground_alias && n.eq_ignore_ascii_case("gnd") { "0".into() } else { n.into() }
+        if self.ground_alias { top_net(n) } else { n.into() }
     }
 
     fn push(&mut self, c: Component) {
@@ -1533,7 +1547,7 @@ impl PyTestbench {
     /// methods call it.
     fn place_wave(mut slf: PyRefMut<'_, Self>, current: bool, name: &str, p: &str, n: &str, wf: IrWaveform,
                   dc: Option<f64>, ac: Option<f64>, ac_phase: Option<f64>) {
-        slf.as_super().stim(wave_source(current, name, p.into(), n.into(), wf, dc, ac, ac_phase));
+        slf.as_super().stim(wave_source(current, name, top_net(p), top_net(n), wf, dc, ac, ac_phase));
     }
 }
 
@@ -1562,7 +1576,7 @@ impl PyTestbench {
 
     #[pyo3(signature = (name, positive, negative, value, *, ac=None, ac_phase=None, portnum=None, z0=50.0))]
     fn V(mut slf: PyRefMut<'_, Self>, name: &str, positive: &str, negative: &str, value: PyValueArg, ac: Option<f64>, ac_phase: Option<f64>, portnum: Option<u32>, z0: f64) {
-        let mut v = source(false, name, positive.into(), negative.into(), value.ir(), ac, ac_phase, None);
+        let mut v = source(false, name, top_net(positive), top_net(negative), value.ir(), ac, ac_phase, None);
         if let Component::VoltageSource { port, .. } = &mut v {
             *port = portnum.map(|num| ir::RfPort { num, z0 });
         }
@@ -1571,17 +1585,17 @@ impl PyTestbench {
 
     #[pyo3(signature = (name, positive, negative, value, *, ac=None, ac_phase=None))]
     fn I(mut slf: PyRefMut<'_, Self>, name: &str, positive: &str, negative: &str, value: PyValueArg, ac: Option<f64>, ac_phase: Option<f64>) {
-        slf.as_super().stim(source(true, name, positive.into(), negative.into(), value.ir(), ac, ac_phase, None));
+        slf.as_super().stim(source(true, name, top_net(positive), top_net(negative), value.ir(), ac, ac_phase, None));
     }
 
     #[pyo3(signature = (name, positive, negative, value))]
     fn R(mut slf: PyRefMut<'_, Self>, name: &str, positive: &str, negative: &str, value: PyValueArg) {
-        slf.as_super().stim(Component::Resistor { name: name.into(), n1: positive.into(), n2: negative.into(), value: value.ir(), model: None, params: vec![] });
+        slf.as_super().stim(Component::Resistor { name: name.into(), n1: top_net(positive), n2: top_net(negative), value: value.ir(), model: None, params: vec![] });
     }
 
     #[pyo3(signature = (name, positive, negative, value))]
     fn C(mut slf: PyRefMut<'_, Self>, name: &str, positive: &str, negative: &str, value: PyValueArg) {
-        slf.as_super().stim(Component::Capacitor { name: name.into(), n1: positive.into(), n2: negative.into(), value: value.ir(), model: None, params: vec![] });
+        slf.as_super().stim(Component::Capacitor { name: name.into(), n1: top_net(positive), n2: top_net(negative), value: value.ir(), model: None, params: vec![] });
     }
 
     // ── Config ──

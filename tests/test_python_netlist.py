@@ -765,6 +765,22 @@ class TestGroundAliasing:
         )
         assert "R1 a 0" in str(c)
 
+    def test_testbench_stimulus_maps_gnd_like_circuit(self):
+        # A Testbench is a top level, so `gnd` is the global ground there
+        # too, on every stimulus method and both nodes.
+        dut = ps().Subcircuit("d")
+        dut.R("1", "a", "0", 1e3)
+        tb = ps().Testbench(dut)
+        tb.V("1", "a", "gnd", 1.0)
+        tb.I("1", "GND", "a", 1e-3)
+        tb.R("2", "a", "Gnd", 1e3)
+        tb.C("2", "gnd", "a", 1e-12)
+        tb.PulseVoltageSource("p", "b", "gnd")
+        n = tb.netlist("ngspice")
+        for card in ("V1 a 0 1", "I1 0 a 1m", "R2 a 0 1k", "C2 0 a 1p", "Vp b 0 0 PULSE("):
+            assert card in n, n
+        assert "gnd" not in n.lower(), n
+
     def test_circuit_gnd_property(self):
         c = ps().Circuit("t")
         c.R(

@@ -240,9 +240,18 @@ class TestAnalysisMethods:
         sim = self._sim()
         assert hasattr(sim, "spectre_sweep")
 
-    def test_spectre_montecarlo_exists(self):
+    def test_spectre_monte_carlo_is_the_name_and_montecarlo_a_deprecated_alias(self):
+        # `Testbench.add_spectre_monte_carlo` spells it with an underscore; the
+        # run method now does too. A bad inner type stops both before Spectre.
+        import warnings
         sim = self._sim()
-        assert hasattr(sim, "spectre_montecarlo")
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", DeprecationWarning)
+            with pytest.raises(ValueError, match="unknown Spectre analysis 'op'"):
+                sim.spectre_monte_carlo(4, "x1", "op")
+        with pytest.warns(DeprecationWarning, match="spectre_monte_carlo"):
+            with pytest.raises(ValueError, match="unknown Spectre analysis 'op'"):
+                sim.spectre_montecarlo(4, "x1", "op")
 
     def test_spectre_pac_exists(self):
         sim = self._sim()

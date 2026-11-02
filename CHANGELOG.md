@@ -27,6 +27,10 @@ One line per change, written by hand, citing its pull request. Every number is m
 - ir, codegen, python: `.pss` takes ngspice's `sc_iter`, `steady_coeff` and `uic` (Spectre refuses them), and a voltage source an RF `port` (`portnum n z0 x`; Python `V(..., portnum=, z0=)`, `pss(..., sc_iter=, steady_coeff=, uic=)`), written for ngspice and ESPice and refused elsewhere; JSON without them writes back byte for byte. Real ngspice runs `.sp` on a matched 6 dB T pad: S11 = S22 = 0, S21 = S12 = 0.5 to 1e-9. ngspice-45 here has no `.pss`, so its card is checked against the manual's example (ir-gaps §3 #9) (#?).
 - codegen: Spectre writes coupling, VCVS/CCCS gain, gm, rm and transmission-line z0/td through its one number formatter (`td=1n`, was `td=0.000000001`); the one golden that held the old spelling now holds the new, and no other golden changed (#?).
 - ir: `StepParam.sweep_type` is an `Option<Sweep>`, `PoleZero.tf_type`/`pz_type` are `PzTransfer`/`PzKind`, and `SpectreSweep`/`SpectreMonteCarlo.inner_type` is `SpectreAnalysis`: closed keyword sets parsed once where text enters (JSON load, the importer, the Python call, which raises `ValueError`), JSON byte-identical for every value the string fields held. A VACASK `.step` with a log sweep is refused, where it ran as a linear step (audit 40) (#?).
+- python: `Testbench` stimulus (`V`, `I`, `R`, `C`, every waveform source) reads node `gnd` as `0`, as `Circuit` does; it used to reach the deck as a floating node named `gnd` (#?).
+- python: `spicerack.testbenches` exports `ac_gain_db` and the other AC extractors the skill documents (`crossings`, `ac_passband_db`, `ac_bandwidth_hz`, `ac_unity_gain_hz`, `ac_phase_margin_deg`) (#?).
+- python: `CircuitSimulator.spectre_monte_carlo`, the spelling `Testbench.add_spectre_monte_carlo` uses; `spectre_montecarlo` stays as an alias that warns `DeprecationWarning` (#?).
+- skills: the backend names list `vacask-shared`; a test checks the skill names every name the module accepts (#?).
 
 ## 0.1.2 (2026-10-31)
 

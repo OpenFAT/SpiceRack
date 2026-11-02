@@ -114,7 +114,7 @@ Waveform sources, each a `...VoltageSource` and a `...CurrentSource`, also on
 | `stability(probe, variation="dec", number_of_points=10, start_frequency=1.0, stop_frequency=1e10)` | `StabilityAnalysis` |
 | `transient_noise(step_time, end_time)` | `TransientNoiseAnalysis` |
 | `network_params(output_current, input_source, z_in=50.0, z_out=50.0, ...)` | `SParamAnalysis` (LTspice `.net`) |
-| `spectre_sweep`, `spectre_montecarlo` | `RawData` (Spectre) |
+| `spectre_sweep`, `spectre_monte_carlo` | `RawData` (Spectre); `spectre_montecarlo` is a deprecated alias that warns |
 | `spectre_pac`, `spectre_pnoise`, `spectre_pxf`, `spectre_pstb` | periodic small-signal (Spectre) |
 
 `variation` is `"dec"`, `"oct"`, `"lin"` or `"log"` (Spectre only), in any
