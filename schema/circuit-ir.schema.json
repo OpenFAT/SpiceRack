@@ -1379,7 +1379,24 @@
           "items": {
             "type": "string"
           }
+        },
+        "prints": {
+          "description": ".print/.plot cards: what a SPICE run prints to stdout. Absent: none.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PrintCard"
+          }
         }
+      },
+      "additionalProperties": false
+    },
+    "PrintCard": {
+      "type": "object",
+      "description": "One .print card: the analysis (tran, dc, ...; empty if none named) and its output expressions.",
+      "required": ["analysis", "outputs"],
+      "properties": {
+        "analysis": { "type": "string" },
+        "outputs": { "type": "array", "items": { "type": "string" } }
       },
       "additionalProperties": false
     },
