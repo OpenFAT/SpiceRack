@@ -77,47 +77,22 @@ fn num(v: f64) -> String {
     if v == 0.0 { "0".to_string() } else { format!("{:e}", v) }
 }
 
-/// Parse a SPICE number-with-suffix. Returns `(value, vacask_spelling)`.
+/// A whole token that is one signed SPICE number-with-suffix, as `(value,
+/// vacask_spelling)`. A trailing unit (`5V`, `1ohm`) is ignored, as SPICE
+/// ignores it.
 pub(super) fn parse_spice_num(t: &str) -> Option<(f64, String)> {
-    let b = t.as_bytes();
-    let mut end = 0;
-    while end < b.len() {
-        let c = b[end] as char;
-        if c.is_ascii_digit() || c == '.' || c == '+' || c == '-' {
-            end += 1;
-            continue;
-        }
-        // An exponent's `e` belongs to the number, but only when a sign or a
-        // digit follows it: a bare `1e` is still "1 exa".
-        if (c == 'e' || c == 'E')
-            && end + 1 < b.len()
-            && ((b[end + 1] as char).is_ascii_digit() || b[end + 1] == b'+' || b[end + 1] == b'-')
-        {
-            end += 1;
-            continue;
-        }
-        break;
-    }
-    let mantissa: f64 = t[..end].parse().ok()?;
-    let suffix = t[end..].to_ascii_lowercase();
+    let body = t.strip_prefix(['+', '-']).unwrap_or(t);
+    let (v, len, scale) = crate::unit::parse_spice_number(body)?;
+    let lead = t.len() - body.len() + len; // sign and mantissa
     // A scale and a unit, nothing else: `1k*(1+x)` is an expression, and
     // reading it as `1k` would drop the rest.
-    if !suffix.chars().all(|c| c.is_ascii_alphabetic()) {
+    if !t[lead..].bytes().all(|c| c.is_ascii_alphabetic()) {
         return None;
     }
-    for (spice, mult) in crate::unit::SPICE_SCALES {
-        // VACASK spells tera and giga in capitals (`t` is not a scale there).
-        let vacask = match *spice { "t" => "T", "g" => "G", s => s };
-        if suffix.starts_with(spice) {
-            // A decimal shift, not a multiply: `108f` is 1.08e-13 exactly.
-            return Some((crate::unit::scale(mantissa, *mult), format!("{}{}", &t[..end], vacask)));
-        }
-    }
-    // A trailing unit with no scale letter (`5V`, `1ohm`) is ignored by SPICE.
-    if suffix.chars().all(|c| c.is_ascii_alphabetic()) {
-        return Some((mantissa, t[..end].to_string()));
-    }
-    None
+    // VACASK spells tera and giga in capitals (`t` is not a scale there).
+    let vacask = match scale { "t" => "T", "g" => "G", s => s };
+    let sign = if t.starts_with('-') { -1.0 } else { 1.0 };
+    Some((sign * v, format!("{}{vacask}", &t[..lead])))
 }
 
 /// A value written as text: a number gets re-spelled in VACASK's suffixes,
