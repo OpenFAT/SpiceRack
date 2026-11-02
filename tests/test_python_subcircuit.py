@@ -856,7 +856,10 @@ class TestTestbenchCreation:
         assert [a["type"] for a in data["testbench"]["analyses"]] == ["Op", "Ac"]
         netlist = tb.netlist("ngspice")
         assert ".op" in netlist
-        assert ".ac dec 10 1 1meg" in netlist
+        # With a `.meas`, ngspice runs the AC from a `.control` block (it
+        # refuses `.measure` under `-b -r`); other dialects keep the card.
+        assert ".control\nac dec 10 1 1meg\n.endc" in netlist
+        assert ".ac dec 10 1 1meg" in tb.netlist("ltspice")
         assert ".meas tran vmax MAX V(out)" in netlist
 
     def test_sweep_name_is_checked_when_the_analysis_is_built(self):

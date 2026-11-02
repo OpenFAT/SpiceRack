@@ -379,6 +379,56 @@ fn check_raw_dialect(d: Dialect, ir: &CircuitIR) -> Result<(), CodeGenError> {
     }
 }
 
+/// Control commands that start an analysis: a `.control` block issuing one
+/// owns the run. A block that runs nothing (the `pre_osdi` loads above) does
+/// not; ngspice accepts several blocks per deck (44.2).
+const RUN_COMMANDS: [&str; 5] = ["run", "op", "ac", "tran", "dc"];
+
+/// True if a `.control`/`.endc` block among `lines` issues a run command.
+pub(crate) fn runs_in_control<'a>(lines: impl IntoIterator<Item = &'a str>) -> bool {
+    let mut inside = false;
+    for line in lines {
+        let word = line.split_whitespace().next().unwrap_or("");
+        if word.eq_ignore_ascii_case(".control") {
+            inside = true;
+        } else if word.eq_ignore_ascii_case(".endc") {
+            inside = false;
+        } else if inside && RUN_COMMANDS.iter().any(|c| word.eq_ignore_ascii_case(c)) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Where an ngspice deck runs its analysis from a `.control` block: the
+/// index in `tb.analyses` of the analysis to move there, and the `fourier`
+/// command to follow it.
+///
+/// ngspice refuses `.measure` ("No .measure possible in batch mode (-b) with
+/// -r rawfile set!") and ignores `.four` (".fourier line ignored since
+/// rawfile was produced") under `-b -r`, so a deck with either runs its first
+/// `.ac`/`.tran`/`.dc` from a block, where `.four` has to be the `fourier`
+/// command (there is no `four` command). The backend appends the `write`: only
+/// it knows the rawfile's path. Only those three analyses: `.measure` takes
+/// no other one, and `write` keeps only the current plot, which for `noise`,
+/// `disto` and `pz` would drop the others. `None` when nothing needs a block,
+/// no such analysis exists, or a raw control block already runs the deck.
+fn control_run(x: bool, ir: &CircuitIR, tb: &Testbench) -> Option<(usize, Option<String>)> {
+    let raw = || ir.top.raw_spice.iter().chain(ir.subcircuit_defs.iter().flat_map(|s| &s.raw_spice)).chain(&tb.extra_lines).map(String::as_str);
+    let meas = |l: &str| l.split_whitespace().next().and_then(|w| w.get(..5)).is_some_and(|w| w.eq_ignore_ascii_case(".meas"));
+    let fourier = tb.analyses.iter().find_map(|a| match a {
+        Analysis::Fourier { fundamental, outputs, .. } if !outputs.is_empty() => {
+            Some(format!("fourier {} {}", num(Dialect::Ngspice, x, *fundamental), outputs.join(" ")))
+        }
+        _ => None,
+    });
+    if (tb.measures.is_empty() && !raw().any(meas) && fourier.is_none()) || runs_in_control(raw()) {
+        return None;
+    }
+    let at = tb.analyses.iter().position(|a| matches!(a, Analysis::Ac { .. } | Analysis::Transient { .. } | Analysis::Dc { .. }))?;
+    Some((at, fourier))
+}
+
 pub(super) fn netlist(d: Dialect, ir: &CircuitIR) -> Result<String, CodeGenError> {
     check_raw_dialect(d, ir)?;
     // Numbers read from an ngspice deck carry ngspice's arithmetic: written
@@ -486,8 +536,20 @@ pub(super) fn netlist(d: Dialect, ir: &CircuitIR) -> Result<String, CodeGenError
             lines.push(step_param(d, sp)?);
         }
         lines.extend(tb.extra_lines.iter().cloned());
-        for a in &tb.analyses {
-            lines.push(analysis(d, x, a)?);
+        let control = if d == Dialect::Ngspice { control_run(x, ir, tb) } else { None };
+        for (i, a) in tb.analyses.iter().enumerate() {
+            match &control {
+                Some((at, fourier)) if i == *at => {
+                    // `.tran 1u 1m` -> bare `tran 1u 1m` inside the block.
+                    lines.push(".control".into());
+                    lines.push(analysis(d, x, a)?.trim_start_matches('.').to_string());
+                    lines.extend(fourier.clone());
+                    lines.push(".endc".into());
+                }
+                // Left as a dot-card, `.four` runs the analysis a second time.
+                Some((_, Some(_))) if matches!(a, Analysis::Fourier { .. }) => {}
+                _ => lines.push(analysis(d, x, a)?),
+            }
         }
     }
 
@@ -1191,6 +1253,85 @@ mod tests {
         assert!(netlist.contains(".meas tran vmax MAX V(output)"), "measure: {}", netlist);
     }
 
+
+    // ── `.measure` / `.four` run from a `.control` block on ngspice ──
+
+    /// The divider with `analyses`, `measures` and raw testbench lines.
+    fn divider(analyses: Vec<Analysis>, measures: &[&str], extra: &[&str]) -> CircuitIR {
+        let mut ir = sample_resistor_divider();
+        let tb = ir.testbench.as_mut().unwrap();
+        tb.analyses = analyses;
+        tb.measures = measures.iter().map(|m| m.to_string()).collect();
+        tb.extra_lines = extra.iter().map(|m| m.to_string()).collect();
+        ir
+    }
+
+    fn ac() -> Analysis {
+        Analysis::Ac { sweep: FreqSweep { variation: Sweep::Dec, points: 10, start: 1.0, stop: 1e3 } }
+    }
+
+    fn tran() -> Analysis {
+        Analysis::Transient { step: 1e-6, stop: 1e-2, start: None, max_step: None, uic: false }
+    }
+
+    fn four(outputs: &[&str]) -> Analysis {
+        Analysis::Fourier { fundamental: 1e3, outputs: outputs.iter().map(|o| o.to_string()).collect(), num_harmonics: None }
+    }
+
+    #[test]
+    fn measures_move_the_first_ac_tran_or_dc_into_a_control_block() {
+        let ir = divider(vec![Analysis::Op, ac(), tran()], &["ac g find vdb(output) at=100"], &[]);
+        let deck = netlist(Dialect::Ngspice, &ir).unwrap();
+        assert!(deck.ends_with(".meas ac g find vdb(output) at=100\n.op\n.control\nac dec 10 1 1k\n.endc\n.tran 1u 10m\n.end"), "{deck}");
+        // ESPice and LTspice read `.measure` under their rawfile option.
+        for d in [Dialect::Espice, Dialect::Ltspice] {
+            assert!(!netlist(d, &ir).unwrap().contains(".control"), "{d:?}");
+        }
+    }
+
+    #[test]
+    fn a_raw_meas_line_counts_as_a_measure() {
+        let deck = netlist(Dialect::Ngspice, &divider(vec![tran()], &[], &[".MEASURE tran v1 find v(output) at=1m"])).unwrap();
+        assert!(deck.contains(".control\ntran 1u 10m\n.endc"), "{deck}");
+    }
+
+    #[test]
+    fn no_block_without_a_measure_or_fourier() {
+        let deck = netlist(Dialect::Ngspice, &divider(vec![ac()], &[], &[])).unwrap();
+        assert!(deck.ends_with(".ac dec 10 1 1k\n.end") && !deck.contains(".control"), "{deck}");
+    }
+
+    #[test]
+    fn noise_never_moves_into_a_block() {
+        // `write` would keep only "Integrated Noise" and drop the spectra.
+        let noise = Analysis::Noise {
+            output: "output".into(), reference: "0".into(), source: "Vin".into(),
+            sweep: FreqSweep { variation: Sweep::Dec, points: 10, start: 1.0, stop: 1e3 }, points_per_summary: None,
+        };
+        let deck = netlist(Dialect::Ngspice, &divider(vec![noise], &["tran x find v(output) at=1"], &[])).unwrap();
+        assert!(!deck.contains(".control"), "{deck}");
+    }
+
+    #[test]
+    fn defers_to_a_raw_control_block_that_runs() {
+        let deck = netlist(Dialect::Ngspice, &divider(vec![ac()], &["ac g find vdb(output) at=100"], &[".control", "run", ".endc"])).unwrap();
+        assert!(deck.contains(".control\nrun\n.endc\n.ac dec 10 1 1k"), "{deck}");
+        assert_eq!(deck.matches(".control").count(), 1, "{deck}");
+    }
+
+    #[test]
+    fn four_becomes_the_fourier_command_after_the_transient() {
+        let deck = netlist(Dialect::Ngspice, &divider(vec![tran(), four(&["v(output)"]), four(&["v(input)"])], &[], &[])).unwrap();
+        assert!(deck.ends_with(".control\ntran 1u 10m\nfourier 1k v(output)\n.endc\n.end"), "{deck}");
+    }
+
+    #[test]
+    fn four_without_a_transient_or_outputs_stays_a_card() {
+        let alone = netlist(Dialect::Ngspice, &divider(vec![four(&["v(output)"])], &[], &[])).unwrap();
+        assert!(alone.ends_with(".four 1k v(output)\n.end") && !alone.contains(".control"), "{alone}");
+        let bare = netlist(Dialect::Ngspice, &divider(vec![tran(), four(&[])], &[], &[])).unwrap();
+        assert!(bare.ends_with(".tran 1u 10m\n.four 1k\n.end"), "{bare}");
+    }
 
     // ── Issue 03: ModelLibrary per-backend path + corner ──
 
