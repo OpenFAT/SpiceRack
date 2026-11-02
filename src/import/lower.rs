@@ -596,7 +596,7 @@ impl Cx<'_> {
         Some(match self.tag(w) {
             Tag::Sin => IrWaveform::Sin { offset: g(0), amplitude: g(1), frequency: g(2), delay: g(3), damping: g(4), phase: g(5) },
             Tag::Pulse => IrWaveform::Pulse { initial: g(0), pulsed: g(1), delay: g(2), rise_time: g(3), fall_time: g(4), pulse_width: g(5), period: g(6) },
-            Tag::Pwl if a.len().is_multiple_of(2) => IrWaveform::Pwl { values: a.chunks(2).map(|p| (p[0].clone(), p[1].clone())).collect() },
+            Tag::Pwl if a.len().is_multiple_of(2) => IrWaveform::Pwl { values: a.chunks(2).map(|p| (p[0].clone(), p[1].clone())).collect(), repeat: None, delay: None },
             Tag::Exp => IrWaveform::Exp { initial: g(0), pulsed: g(1), rise_delay: g(2), rise_tau: g(3), fall_delay: g(4), fall_tau: g(5) },
             Tag::Sffm => IrWaveform::Sffm { offset: g(0), amplitude: g(1), carrier_freq: g(2), modulation_index: g(3), signal_freq: g(4) },
             Tag::Am => IrWaveform::Am { amplitude: g(0), offset: g(1), modulating_freq: g(2), carrier_freq: g(3), delay: g(4) },
@@ -998,7 +998,7 @@ impl Cx<'_> {
                 if !xs.len().is_multiple_of(2) {
                     return None;
                 }
-                IrWaveform::Pwl { values: xs.chunks(2).map(|c| (c[0].clone(), c[1].clone())).collect() }
+                IrWaveform::Pwl { values: xs.chunks(2).map(|c| (c[0].clone(), c[1].clone())).collect(), repeat: None, delay: None }
             }
             Some(_) => return None,
         }))

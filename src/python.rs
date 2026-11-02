@@ -1054,12 +1054,14 @@ macro_rules! pymethods_with_waves {
                 Ok(())
             }
 
-            #[pyo3(signature = (name, positive, negative, *, values, dc=None, ac=None, ac_phase=None))]
+            // `repeat_time`/`delay_time`: PySpice's names for ngspice's `r=`/`td=`.
+            #[pyo3(signature = (name, positive, negative, *, values, repeat_time=None, delay_time=None, dc=None, ac=None, ac_phase=None))]
             fn $pwl(
                 slf: PyRefMut<'_, Self>, name: &str, positive: &str, negative: &str,
-                values: Vec<(IrNum, IrNum)>, dc: Option<f64>, ac: Option<f64>, ac_phase: Option<f64>,
+                values: Vec<(IrNum, IrNum)>, repeat_time: Option<IrNum>, delay_time: Option<IrNum>, dc: Option<f64>, ac: Option<f64>, ac_phase: Option<f64>,
             ) -> PyResult<()> {
-                Self::place_wave(slf, $current, name, positive, negative, IrWaveform::Pwl { values }, dc, ac, ac_phase);
+                let wf = IrWaveform::Pwl { values, repeat: repeat_time, delay: delay_time };
+                Self::place_wave(slf, $current, name, positive, negative, wf, dc, ac, ac_phase);
                 Ok(())
             }
 

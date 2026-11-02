@@ -387,7 +387,17 @@ impl PartialEq<f64> for IrNum {
 pub enum IrWaveform {
     Sin { offset: IrNum, amplitude: IrNum, frequency: IrNum, delay: IrNum, damping: IrNum, phase: IrNum },
     Pulse { initial: IrNum, pulsed: IrNum, delay: IrNum, rise_time: IrNum, fall_time: IrNum, pulse_width: IrNum, period: IrNum },
-    Pwl { values: Vec<(IrNum, IrNum)> },
+    /// `repeat` is ngspice's `r=`: the time point the sequence repeats from,
+    /// forever (`0` repeats all of it; one of the times before the last).
+    /// `delay` is `td=`: the whole sequence shifted later. `None` is the
+    /// card without them (once, no delay), and JSON leaves it out.
+    Pwl {
+        values: Vec<(IrNum, IrNum)>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        repeat: Option<IrNum>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        delay: Option<IrNum>,
+    },
     Exp { initial: IrNum, pulsed: IrNum, rise_delay: IrNum, rise_tau: IrNum, fall_delay: IrNum, fall_tau: IrNum },
     Sffm { offset: IrNum, amplitude: IrNum, carrier_freq: IrNum, modulation_index: IrNum, signal_freq: IrNum },
     Am { amplitude: IrNum, offset: IrNum, modulating_freq: IrNum, carrier_freq: IrNum, delay: IrNum },
@@ -400,7 +410,7 @@ impl IrWaveform {
         match self {
             Sin { offset, amplitude, frequency, delay, damping, phase } => vec![offset, amplitude, frequency, delay, damping, phase],
             Pulse { initial, pulsed, delay, rise_time, fall_time, pulse_width, period } => vec![initial, pulsed, delay, rise_time, fall_time, pulse_width, period],
-            Pwl { values } => values.iter().flat_map(|(t, v)| [t, v]).collect(),
+            Pwl { values, repeat, delay } => values.iter().flat_map(|(t, v)| [t, v]).chain(repeat).chain(delay).collect(),
             Exp { initial, pulsed, rise_delay, rise_tau, fall_delay, fall_tau } => vec![initial, pulsed, rise_delay, rise_tau, fall_delay, fall_tau],
             Sffm { offset, amplitude, carrier_freq, modulation_index, signal_freq } => vec![offset, amplitude, carrier_freq, modulation_index, signal_freq],
             Am { amplitude, offset, modulating_freq, carrier_freq, delay } => vec![amplitude, offset, modulating_freq, carrier_freq, delay],
@@ -414,7 +424,7 @@ impl IrWaveform {
         match self {
             Sin { offset, amplitude, frequency, delay, damping, phase } => vec![offset, amplitude, frequency, delay, damping, phase],
             Pulse { initial, pulsed, delay, rise_time, fall_time, pulse_width, period } => vec![initial, pulsed, delay, rise_time, fall_time, pulse_width, period],
-            Pwl { values } => values.iter_mut().flat_map(|(t, v)| [t, v]).collect(),
+            Pwl { values, repeat, delay } => values.iter_mut().flat_map(|(t, v)| [t, v]).chain(repeat).chain(delay).collect(),
             Exp { initial, pulsed, rise_delay, rise_tau, fall_delay, fall_tau } => vec![initial, pulsed, rise_delay, rise_tau, fall_delay, fall_tau],
             Sffm { offset, amplitude, carrier_freq, modulation_index, signal_freq } => vec![offset, amplitude, carrier_freq, modulation_index, signal_freq],
             Am { amplitude, offset, modulating_freq, carrier_freq, delay } => vec![amplitude, offset, modulating_freq, carrier_freq, delay],
@@ -436,7 +446,7 @@ impl IrWaveform {
         match self {
             Sin { offset, .. } | Sffm { offset, .. } => offset.into(),
             Pulse { initial, .. } | Exp { initial, .. } => initial.into(),
-            Pwl { values } => values.first().map_or(IrValue::Numeric { value: 0.0 }, |p| (&p.1).into()),
+            Pwl { values, .. } => values.first().map_or(IrValue::Numeric { value: 0.0 }, |p| (&p.1).into()),
             Am { .. } => IrValue::Numeric { value: 0.0 },
         }
     }
@@ -975,6 +985,19 @@ mod tests {
         }
     }
 
+    /// A PWL written before `repeat`/`delay` existed loads with neither and
+    /// writes back byte for byte; a set one is written after the values.
+    #[test]
+    fn pwl_json_without_repeat_or_delay_round_trips_byte_for_byte() {
+        let old = r#"{"type":"Pwl","values":[[0.0,0.0],[0.001,"vdd"]]}"#;
+        let w: IrWaveform = serde_json::from_str(old).unwrap();
+        assert_eq!(w, IrWaveform::Pwl { values: vec![(0.0.into(), 0.0.into()), (0.001.into(), IrNum::Expr("vdd".into()))], repeat: None, delay: None });
+        assert_eq!(serde_json::to_string(&w).unwrap(), old);
+        let IrWaveform::Pwl { values, .. } = w else { unreachable!() };
+        let set = IrWaveform::Pwl { values, repeat: Some(0.0.into()), delay: Some(IrNum::Expr("td".into())) };
+        assert_eq!(serde_json::to_string(&set).unwrap(), r#"{"type":"Pwl","values":[[0.0,0.0],[0.001,"vdd"]],"repeat":0.0,"delay":"td"}"#);
+    }
+
     /// The sweep name is parsed where JSON is read: any case loads, and a
     /// name no simulator has fails the load instead of reaching a deck.
     #[test]
@@ -1029,7 +1052,7 @@ mod tests {
         let waveforms = [
             IrWaveform::Sin { offset: x(), amplitude: 1.0.into(), frequency: 1e3.into(), delay: 0.0.into(), damping: 0.0.into(), phase: 90.0.into() },
             IrWaveform::Pulse { initial: 0.0.into(), pulsed: x(), delay: 0.0.into(), rise_time: 1e-9.into(), fall_time: 1e-9.into(), pulse_width: 5e-6.into(), period: 10e-6.into() },
-            IrWaveform::Pwl { values: vec![(0.0.into(), 0.0.into()), (1e-6.into(), x())] },
+            IrWaveform::Pwl { values: vec![(0.0.into(), 0.0.into()), (1e-6.into(), x())], repeat: None, delay: None },
             IrWaveform::Exp { initial: 0.0.into(), pulsed: 1.0.into(), rise_delay: x(), rise_tau: 1e-9.into(), fall_delay: 1e-6.into(), fall_tau: 1e-9.into() },
             IrWaveform::Sffm { offset: 0.0.into(), amplitude: 1.0.into(), carrier_freq: 1e6.into(), modulation_index: x(), signal_freq: 1e3.into() },
             IrWaveform::Am { amplitude: 1.0.into(), offset: 0.0.into(), modulating_freq: 1e3.into(), carrier_freq: 1e6.into(), delay: x() },

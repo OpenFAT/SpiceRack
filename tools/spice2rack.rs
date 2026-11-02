@@ -109,9 +109,12 @@ impl Py {
                             IrWaveform::Pulse { initial, pulsed, delay, rise_time, fall_time, pulse_width, period } => ("Pulse", format!(
                                 "initial_value={}, pulsed_value={}, delay={}, pulse_width={}, period={}, rise_time={}, fall_time={}",
                                 w(initial), w(pulsed), w(delay), w(pulse_width), w(period), w(rise_time), w(fall_time))),
-                            IrWaveform::Pwl { values } => {
+                            IrWaveform::Pwl { values, repeat, delay } => {
                                 let pts: Vec<String> = values.iter().map(|(t, y)| format!("({}, {})", w(t), w(y))).collect();
-                                ("PieceWiseLinear", format!("values=[{}]", pts.join(", ")))
+                                let mut args = format!("values=[{}]", pts.join(", "));
+                                repeat.iter().for_each(|r| args += &format!(", repeat_time={}", w(r)));
+                                delay.iter().for_each(|d| args += &format!(", delay_time={}", w(d)));
+                                ("PieceWiseLinear", args)
                             }
                             IrWaveform::Sin { offset, amplitude, frequency, delay, damping, phase } => ("Sinusoidal", format!(
                                 "offset={}, amplitude={}, frequency={}, delay={}, damping_factor={}, phase={}",

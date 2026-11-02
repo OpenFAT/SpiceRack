@@ -61,6 +61,21 @@ fn rclvalue(out: &mut String, d: Dialect, x: bool, v: &IrValue, model: &Option<S
     }
 }
 
+/// Refuses a waveform `d` has no card for, before anything is written.
+/// PWL `r=`/`td=`: ngspice reads them on a V source only (manual §4.1.4;
+/// ngspice 45 answers an I source with "unknown parameter (r)"), ESPice on
+/// both; no other dialect here has been shown to repeat the same way.
+fn refuse_wave(d: Dialect, letter: char, name: &str, wf: &IrWaveform) -> Result<(), CodeGenError> {
+    let why = match wf {
+        IrWaveform::Pwl { repeat, delay, .. } if repeat.is_some() || delay.is_some() => match (d, letter) {
+            (Dialect::Espice, _) | (Dialect::Ngspice, 'V') => return Ok(()),
+            _ => "PWL r=/td= (repeat, delay)",
+        },
+        _ => return Ok(()),
+    };
+    Err(CodeGenError::UnsupportedComponent { backend: d.name().into(), component: format!("{letter}{name}: {why}") })
+}
+
 fn waveform(out: &mut String, d: Dialect, x: bool, wf: &IrWaveform) {
     let w = |n: &IrNum| match n {
         IrNum::Num(v) => dec(d, x, *v).into(),
@@ -73,12 +88,18 @@ fn waveform(out: &mut String, d: Dialect, x: bool, wf: &IrWaveform) {
         IrWaveform::Pulse { initial, pulsed, delay, rise_time, fall_time, pulse_width, period } => {
             w!(out, "PULSE({} {} {} {} {} {} {})", w(initial), w(pulsed), w(delay), w(rise_time), w(fall_time), w(pulse_width), w(period))
         }
-        IrWaveform::Pwl { values } => {
+        IrWaveform::Pwl { values, repeat, delay } => {
             out.push_str("PWL(");
             for (i, (t, v)) in values.iter().enumerate() {
                 w!(out, "{}{} {}", if i == 0 { "" } else { " " }, w(t), w(v));
             }
             out.push(')');
+            if let Some(r) = repeat {
+                w!(out, " r={}", w(r));
+            }
+            if let Some(td) = delay {
+                w!(out, " td={}", w(td));
+            }
         }
         IrWaveform::Exp { initial, pulsed, rise_delay, rise_tau, fall_delay, fall_tau } => {
             w!(out, "EXP({} {} {} {} {} {})", w(initial), w(pulsed), w(rise_delay), w(rise_tau), w(fall_delay), w(fall_tau))
@@ -685,6 +706,9 @@ pub(crate) fn component(out: &mut String, d: Dialect, x: bool, comp: &Component)
         Component::VoltageSource { name, np, nm, value: v, ac_magnitude, ac_phase, waveform: wf }
         | Component::CurrentSource { name, np, nm, value: v, ac_magnitude, ac_phase, waveform: wf } => {
             let letter = if matches!(comp, Component::VoltageSource { .. }) { 'V' } else { 'I' };
+            if let Some(wf) = wf {
+                refuse_wave(d, letter, name, wf)?;
+            }
             w!(out, "{}{} {} {} {}", letter, name, np, nm, value(d, x, v));
             if let Some(mag) = ac_magnitude {
                 w!(out, " AC {}", dec(d, x, *mag));
@@ -1140,6 +1164,8 @@ mod tests {
                         ac_phase: None,
                         waveform: Some(IrWaveform::Pwl {
                             values: vec![((0.0).into(), (0.0).into()), ((1e-6).into(), (3.3).into()), ((2e-6).into(), (0.0).into())],
+                            repeat: None,
+                            delay: None,
                         }),
                     },
                 ], ..Default::default() }, ..Default::default() };

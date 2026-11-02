@@ -53,7 +53,8 @@ tb.SinusoidalVoltageSource(name=, positive=, negative=, dc_offset=0, offset=0,
                            amplitude=1, frequency=1000, ac=, ac_phase=)   # no delay/damping/phase
 tb.PulseVoltageSource(name=, positive=, negative=, initial_value=0, pulsed_value=1,
                       pulse_width=50e-9, period=100e-9, rise_time=1e-9, fall_time=1e-9)  # no delay_time
-tb.PieceWiseLinearVoltageSource(name=, positive=, negative=, values=[(t, v), ...])
+tb.PieceWiseLinearVoltageSource(name=, positive=, negative=, values=[(t, v), ...],
+                               repeat_time=None, delay_time=None)  # ngspice r=/td=; ngspice + ESPice only
 ```
 Current variants replace `Voltage` with `Current`. `dc_offset` is the DC (operating-point)
 value; `offset` is the SIN offset. `PieceWiseLinearCurrentSource` exists on `Testbench`

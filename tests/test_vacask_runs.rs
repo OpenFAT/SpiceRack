@@ -587,7 +587,7 @@ fn refusals_are_errors_not_broken_decks() {
     top.components = vec![Component::VoltageSource {
         name: "1".into(), np: "a".into(), nm: "0".into(),
         value: IrValue::Numeric { value: 0.0 }, ac_magnitude: None, ac_phase: None,
-        waveform: Some(IrWaveform::Pwl { values: vec![((0.0).into(), (0.0).into()), ((1e-3).into(), (1.0).into())] }),
+        waveform: Some(IrWaveform::Pwl { values: vec![((0.0).into(), (0.0).into()), ((1e-3).into(), (1.0).into())], repeat: None, delay: None }),
     }];
     let ir = CircuitIR { top, ..Default::default() };
     assert!(refuses(&ir), "PWL must refuse");

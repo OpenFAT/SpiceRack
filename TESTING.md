@@ -30,6 +30,7 @@ provenance, never by re-deriving it the way codegen does.
 | `test_ngspice_analyses.rs` | real ngspice; each analysis asserts a closed-form number |
 | `test_espice_analyses.rs` | real ESPice; the same closed forms as the ngspice suite |
 | `test_laplace_ngspice.rs` | real ngspice 44.2; closed-form Laplace responses |
+| `test_sources.rs` | real ngspice (and ESPice) against the waveform closed forms: PWL `r=`/`td=`; each dialect without a form refuses |
 | `test_vacask_runs.rs` | real VACASK: the emitted deck parses and writes a raw file with the expected numbers |
 | `test_dialects.rs` | one circuit in every dialect, read back by ESPice (`--tokenizer=<d>`), same numbers; the dialects it cannot do yet are named in `ESPICE_REFUSES` |
 | `test_import_suite.rs` | spice-bench decks (`SPICE_BENCH`, a pinned nix fetch): parse, JSON round trip, re-emitted as ngspice, every plot and `.meas` reproduced by real ngspice; decks ngspice itself cannot run are named in `tests/fixtures/spice_bench_known_failures.txt`, decks past the CPU budget in `spice_bench_slow.txt`. Parse/emit fixpoint over the ngspice, HSPICE, Xyce, VACASK and LTspice corpora (`*_CORPUS`, pinned in `flake.nix`) |

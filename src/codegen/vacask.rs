@@ -1142,7 +1142,7 @@ mod tests {
         let c = Component::VoltageSource {
             name: "1".into(), np: "a".into(), nm: "0".into(),
             value: IrValue::Numeric { value: 0.0 }, ac_magnitude: None, ac_phase: None,
-            waveform: Some(IrWaveform::Pwl { values: vec![((0.0).into(), (0.0).into()), ((1e-3).into(), (1.0).into())] }),
+            waveform: Some(IrWaveform::Pwl { values: vec![((0.0).into(), (0.0).into()), ((1e-3).into(), (1.0).into())], repeat: None, delay: None }),
         };
         let err = emit_component(&mut String::new(), &c, true).unwrap_err();
         assert!(err.to_string().to_lowercase().contains("pwl"), "{}", err);

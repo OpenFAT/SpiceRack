@@ -49,7 +49,7 @@ Waveform sources, each a `...VoltageSource` and a `...CurrentSource`, also on
 | --- | --- |
 | `Sinusoidal` | `offset, amplitude, frequency, delay, damping_factor, phase` |
 | `Pulse` | `initial_value, pulsed_value, delay, pulse_width, period, rise_time, fall_time` |
-| `PieceWiseLinear` | `values=[(t, v), ...]` |
+| `PieceWiseLinear` | `values=[(t, v), ...], repeat_time, delay_time` (ngspice `r=`, `td=`: ngspice and ESPice only; ngspice on a voltage source only) |
 | `Exponential` | `initial_value, pulsed_value, rise_delay_time, rise_time_constant, fall_delay_time, fall_time_constant` |
 | `SingleFrequencyFM` | `offset, amplitude, carrier_frequency, modulation_index, signal_frequency` |
 | `AmplitudeModulated` | `offset, amplitude, modulating_frequency, carrier_frequency, signal_delay` |

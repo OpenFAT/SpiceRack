@@ -1126,6 +1126,14 @@
               "items": {
                 "$ref": "#/$defs/NumberPair"
               }
+            },
+            "repeat": {
+              "description": "ngspice r=: the time the sequence repeats from, forever. Absent: once.",
+              "type": ["number", "string"]
+            },
+            "delay": {
+              "description": "ngspice td=: the whole sequence delayed by this time. Absent: no delay.",
+              "type": ["number", "string"]
             }
           },
           "additionalProperties": false

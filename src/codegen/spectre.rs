@@ -160,7 +160,12 @@ fn emit_waveform_params(wf: &IrWaveform) -> Result<String, CodeGenError> {
         }
         // `[CMP]` p.683: `vpwl1 (1 0) vsource type=pwl
         //  wave=[1n 0 1.1n 2 1.5n 0.5 2n 3 5n 5]`
-        IrWaveform::Pwl { values } => {
+        // Spectre's `pwlperiod` repeats from time 0 only, unlike ngspice's
+        // `r=` from any point; refused rather than half-mapped.
+        IrWaveform::Pwl { repeat, delay, .. } if repeat.is_some() || delay.is_some() => {
+            return Err(unsupported_component("PWL r=/td= (repeat, delay)"));
+        }
+        IrWaveform::Pwl { values, .. } => {
             let mut s = String::from("type=pwl wave=[");
             for (i, (t, v)) in values.iter().enumerate() {
                 if i > 0 {

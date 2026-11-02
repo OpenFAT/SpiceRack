@@ -517,6 +517,21 @@ class TestWaveformSources:
         for card in (".tf v(out) Vin", ".sens v(out)", ".pz in 0 out 0 vol pz", ".disto dec 10 100 1meg"):
             assert card in n, n
 
+    def test_pwl_repeat_and_delay_reach_the_card(self):
+        # PySpice's repeat_time/delay_time are ngspice's r=/td= (manual 4.1.4),
+        # on the builders and on a Testbench; LTspice has no such card.
+        c = ps().Circuit("t")
+        c.PieceWiseLinearVoltageSource("w", "w", c.gnd, values=[(0, 0), (1e-3, 1), (2e-3, 0)],
+                                       repeat_time=0, delay_time=5e-4)
+        assert "Vw w 0 0 PWL(0 0 0.001 1 0.002 0) r=0 td=0.0005" in str(c)
+        dut = ps().Subcircuit("d")
+        dut.R("1", "w", "0", 1e3)
+        tb = ps().Testbench(dut)
+        tb.PieceWiseLinearVoltageSource("w", "w", "0", values=[(0, 0), (1e-3, 1)], repeat_time="tr")
+        assert "PWL(0 0 0.001 1) r={tr}" in tb.netlist("ngspice")
+        with pytest.raises(Exception, match="PWL"):
+            tb.netlist("ltspice")
+
     def test_pwl_voltage(self):
         c = ps().Circuit("t")
         c.PieceWiseLinearVoltageSource(

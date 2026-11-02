@@ -319,7 +319,7 @@ fn spectre_vsource_waveforms_match_documented_parameters() {
     );
 
     assert_eq!(
-        v(Some(IrWaveform::Pwl { values: vec![((1e-9).into(), (0.0).into()), ((1.5e-9).into(), (0.5).into())] }), None, None),
+        v(Some(IrWaveform::Pwl { values: vec![((1e-9).into(), (0.0).into()), ((1.5e-9).into(), (0.5).into())], repeat: None, delay: None }), None, None),
         "v1 (1 0) vsource dc=0 type=pwl wave=[1n 0 1.5n 500m]",
     );
 
