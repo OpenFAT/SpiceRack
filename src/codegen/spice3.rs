@@ -102,6 +102,8 @@ fn waveform(out: &mut String, d: Dialect, x: bool, wf: &IrWaveform) {
 ///
 /// * ngspice: the XSPICE `s_xfer` code model, two lines (instance +
 ///   `.model`). Verified numerically.
+/// * HSPICE and ESPice: `E/G … LAPLACE c+ c- num… / den…`. ESPice verified
+///   numerically (`tests/test_laplace_ngspice.rs`).
 /// * LTspice: `Laplace=` on an E/G source. **Unverified** — LTspice cannot
 ///   be run here. The expression is still parsed first, so what goes out is
 ///   a transfer function we understand rather than an opaque string.
@@ -136,8 +138,10 @@ fn laplace_source(
             laplace::horner(&den),
         ));
     }
-    // `E1 b 0 LAPLACE a 0 k0 k1 ... / d0 d1 ...`, ascending powers.
-    if d == Dialect::Hspice {
+    // `E1 b 0 LAPLACE a 0 k0 k1 ... / d0 d1 ...`, ascending powers. ESPice
+    // reads the same card in its ngspice tokenizer and has no XSPICE
+    // `s_xfer` (ESPice `docs/using/reference.md`, controlled sources).
+    if matches!(d, Dialect::Hspice | Dialect::Espice) {
         let asc = |c: &[f64]| laplace::coeff_array(&c.iter().rev().copied().collect::<Vec<_>>());
         return Ok(format!("{letter}B{name} {np} {nm} LAPLACE {ip} {im} {} / {}", asc(&num), asc(&den)));
     }

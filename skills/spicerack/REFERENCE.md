@@ -172,7 +172,7 @@ Declared in `src/backend/*.rs`; these gate automatic backend selection.
 | `.measure` | yes | yes | **no** | yes | yes |
 | `.step` params | **no** | yes | yes | yes | **no** |
 | control blocks | yes | no | no | no | no |
-| Laplace sources | yes | yes | no | no | no |
+| Laplace sources | yes | yes | no | no | yes |
 | Verilog co-sim | yes | no | no | yes | no |
 
 `ps.lint(netlist, backend=None)` takes the **netlist text**, not a `Circuit` —

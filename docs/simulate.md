@@ -114,7 +114,7 @@ sets the default for every run. A flat `Circuit` takes it as
 | XSPICE `A` elements, control blocks | yes | no | no | no | no |
 | `.meas` | yes | yes | no | yes | yes |
 | `.step` sweeps | no | yes | yes | yes | no |
-| Laplace sources | yes | yes | no | no | no |
+| Laplace sources | yes | yes | no | no | yes |
 | Digital Verilog | yes | no | no | yes | no |
 
 The same design runs on several simulators with a loop:

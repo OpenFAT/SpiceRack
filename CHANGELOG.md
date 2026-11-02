@@ -21,6 +21,8 @@ One line per change, written by hand, citing its pull request. Every number is m
 - codegen: ngspice, LTspice, HSPICE, Xyce, ESPice, Spectre and VACASK decks are written into one `String` (`write!`), cards and blocks appending to it instead of each building a `String` or a `Vec<String>` to join; Spectre escapes and VACASK quotes each name as it is written, so `netlist()` no longer clones the IR. Every deck the two test suites emit, in every dialect, and the same IRs with every name renamed to need escaping, are byte-identical before and after (9378 decks). 40000-element deck, release, best of 15: ngspice 28.2 to 17.6 ms, Spectre 63.7 to 44.7 ms, VACASK 49.5 to 26.1 ms (#15, audit 46, 47).
 - tests: the import suite runs a `.meas` deck once from a `.control` block ending in `write`, as the ngspice backend does, and counts analyses inside the block; its old `-r` reference turned `.meas` off, which stopped `.option autostop` decks at t = 0 (#15).
 
+- codegen, backend: an ESPice deck writes a Laplace source as ESPice's own `E/G … LAPLACE` card instead of an XSPICE `s_xfer` element ESPice cannot read, and ESPice is offered for Laplace decks; real `espice` reproduces the closed-form single-pole, Butterworth and current-output responses, and carries the DC gain into `.op` (#?).
+
 ## 0.1.2 (2026-10-31)
 
 - codegen: Verilog-A model parameters reach ngspice.

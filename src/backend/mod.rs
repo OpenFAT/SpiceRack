@@ -61,7 +61,8 @@ const VACASK_CAPS: u8 = OSDI | STEP_PARAMS;
 const SPECTRE_CAPS: u8 = OSDI | MEASURES | STEP_PARAMS | VERILOG_COSIM;
 // ESPice: Verilog-A via VerA `.hdl` (counts as osdi); `.step` lands every
 // point as a separate plot in one raw file, which parse_raw does not split.
-const ESPICE_CAPS: u8 = OSDI | MEASURES;
+// Laplace: its own `E/G … LAPLACE` card (codegen `spice3::laplace_source`).
+const ESPICE_CAPS: u8 = OSDI | MEASURES | LAPLACE;
 
 /// The dialects that run `a`, in preference order, and the workaround to
 /// suggest without one. A universal analysis runs on every [`RUNNABLE`].

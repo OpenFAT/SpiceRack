@@ -2,8 +2,8 @@
 //! End-to-end coverage of the analyses the ESPice backend exposes: the
 //! shared suite in `common/mod.rs`, run on `Dialect::Espice`.
 //!
-//! Skipped automatically when espice is not on PATH. Not covered: XSPICE,
-//! `.control` and Laplace (not ESPice features), `.disto`/`.pz`/`.noise`
+//! Skipped automatically when espice is not on PATH. Not covered: XSPICE and
+//! `.control` (not ESPice features; Laplace is in `test_laplace_ngspice.rs`), `.disto`/`.pz`/`.noise`
 //! (their result layouts are not mapped by this backend yet), `.four`
 //! (ESPice writes the table as a raw plot, not to stdout).
 
