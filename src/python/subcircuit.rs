@@ -257,7 +257,7 @@ impl PySubcircuit {
             k @ ("E" | "G" | "F" | "H") => k.chars().next().unwrap(),
             _ => return Err(PyValueError::new_err("POLY kind is E, G, F or H")),
         };
-        if matches!(letter, 'E' | 'G') && controls.len() % 2 != 0 {
+        if matches!(letter, 'E' | 'G') && !controls.len().is_multiple_of(2) {
             return Err(PyValueError::new_err("POLY E/G controls are node pairs"));
         }
         let controls = if matches!(letter, 'E' | 'G') { controls.iter().map(|c| self.net(c)).collect() } else { controls };
