@@ -11,7 +11,9 @@ ngspice reference, at the tolerances recorded there.
     python3 run.py t_s2_agauss.scs --raw DIR  # check an existing raw directory
 
 Prints one PASS/FAIL line per check and a JSON summary to send back. Needs
-`spectre` on PATH (it is called with `-format psfascii`).
+`spectre` on PATH (it is called with `-format psfascii`, on a copy of the deck
+with `savefamilyplots=yes` added to its `montecarlo`, so every iteration is kept:
+`mc1-001_dcmc.dc`, ...). Checked on Spectre 21.1.
 """
 
 import json
@@ -22,7 +24,10 @@ import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-PAIR = re.compile(r'^\s*"([^"]+)"\s+([-+0-9.eE]+)\s*$')
+# psfascii value rows: `"out" "V" 5.0e-01` (Spectre 21.1), or `"name" 5.0e-01`.
+PAIR = re.compile(r'^\s*"([^"]+)"\s+(?:"[^"]*"\s+)?([-+0-9.eE]+)\s*$')
+# One Monte Carlo iteration's results under savefamilyplots=yes: `mc1-001_dcmc.dc`.
+ITERATION = re.compile(r"^[^-_]+-\d+_")
 
 
 def values(path):
@@ -46,7 +51,7 @@ def collect(raw):
         for name in sorted(files):
             path = os.path.join(root, name)
             v = values(path)
-            if "dcmc" in name:
+            if ITERATION.match(name):
                 for k, xs in v.items():
                     runs.setdefault(k, []).extend(xs)
             elif name.startswith("op1"):
@@ -72,7 +77,13 @@ def main():
     want = json.load(open(os.path.join(HERE, "expected.json")))[os.path.basename(deck)]
     raw = sys.argv[sys.argv.index("--raw") + 1] if "--raw" in sys.argv else os.path.splitext(deck)[0] + ".raw"
     if "--raw" not in sys.argv:
-        subprocess.run(["spectre", "-format", "psfascii", "-raw", raw, os.path.join(HERE, deck)], check=True)
+        # Spectre keeps only the last iteration unless asked for every one (a run option,
+        # not part of the deck SpiceRack writes).
+        text = open(os.path.join(HERE, deck)).read()
+        text = re.sub(r"(\bmontecarlo\b[^{\n]*)\{", r"\1 savefamilyplots=yes {", text)
+        run_deck = os.path.splitext(raw)[0] + ".run.scs"
+        open(run_deck, "w").write(text)
+        subprocess.run(["spectre", "-format", "psfascii", "-raw", raw, run_deck], check=True)
     nominal, runs = collect(raw)
     summary = {"deck": deck, "nominal": nominal, "runs": {k: len(v) for k, v in runs.items()}}
     ok = True
