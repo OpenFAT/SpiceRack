@@ -173,6 +173,7 @@ impl Cx<'_> {
                     let v = self.ast.rhs(Node(a));
                     let ok = self.tag(a) == Tag::Assign
                         && self.tag(g) == Tag::Group
+                        && self.group_closed(g)
                         && self.ast.lhs(Node(g)) != NONE
                         && self.text(self.ast.lhs(Node(g))).eq_ignore_ascii_case("v")
                         && self.val_ok(v);
@@ -382,29 +383,98 @@ impl Cx<'_> {
     fn options_ok(&self, n: u32) -> bool {
         let items = self.fields(n);
         if self.d == Dialect::Xyce && self.xyce_pkg(n).is_some() {
-            return items[1..].iter().all(|&k| {
-                self.wordw(k)
-                    || self.tag(k) == Tag::Assign && self.val_ok_seq(self.ast.rhs(Node(k)))
-            });
+            return self.only_commas_between(n, items) && self.xyce_pairs(&items[1..]).is_some();
         }
-        items.iter().all(|&k| {
-            self.wordw(k)
-                || self.tag(k) == Tag::Assign
-                    && self.wordw(self.ast.lhs(Node(k)))
-                    && self.val_ok(self.ast.rhs(Node(k)))
-        })
+        self.only_commas_between(n, items)
+            && items.iter().all(|&k| {
+                self.wordw(k)
+                    || self.tag(k) == Tag::Assign
+                        && self.wordw(self.ast.lhs(Node(k)))
+                        && self.val_ok(self.ast.rhs(Node(k)))
+            })
     }
 
-    fn val_ok_seq(&self, v: u32) -> bool {
-        v != NONE
-            && match self.tag(v) {
-                Tag::Seq => self
-                    .ast
-                    .list(self.ast.lhs(Node(v)))
-                    .iter()
-                    .all(|&p| self.val_ok(p)),
-                _ => self.val_ok(v),
+    /// Whether the only tokens between the card's items (and after them)
+    /// are commas: spice.peg `oitem` reads no stray `( ) =`.
+    fn only_commas_between(&self, n: u32, items: &[u32]) -> bool {
+        let mut prev = self.main(n);
+        for &k in items.iter() {
+            if !(prev + 1..self.first(k)).all(|x| self.ttag(x) == T::Comma) {
+                return false;
             }
+            prev = self.last(k);
+        }
+        (prev + 1..=self.line_last(self.main(n))).all(|x| self.ttag(x) == T::Comma)
+    }
+
+    /// quirk: xyce.peg `xopt`: `Pair_x` (`k=v` or `k v`, the value run on
+    /// by comma-separated words or blank-separated numbers, `MVal_x`) or
+    /// `Flag_x` (a word or a brace): `(key, value text, its number)`.
+    fn xyce_pairs(&self, rest: &[u32]) -> Option<Vec<(String, String, Option<f64>)>> {
+        let mut out = Vec::new();
+        let mut i = 0;
+        let numberish = |k: u32| {
+            self.wordw(k)
+                && self
+                    .text(k)
+                    .starts_with(|c: char| c.is_ascii_digit() || "+-.".contains(c))
+        };
+        while i < rest.len() {
+            let k = rest[i];
+            let (key, v) = match self.tag(k) {
+                Tag::Assign if self.wordw(self.ast.lhs(Node(k))) => {
+                    (self.key(k), self.ast.rhs(Node(k)))
+                }
+                Tag::Word
+                    if rest
+                        .get(i + 1)
+                        .is_some_and(|&x| numberish(x) && !self.comma_between(k, x))
+                        && self
+                            .text(k)
+                            .starts_with(|c: char| c.is_ascii_alphabetic() || c == '_') =>
+                {
+                    i += 1;
+                    (self.text(k), rest[i])
+                }
+                Tag::Word | Tag::Delimited => {
+                    out.push((self.text(k), String::new(), None));
+                    i += 1;
+                    continue;
+                }
+                _ => return None,
+            };
+            if v == NONE
+                || !matches!(self.tag(v), Tag::Word | Tag::Str | Tag::Delimited)
+                    && self.nests_delimiter(v)
+            {
+                return None;
+            }
+            let mut text = self.text(v).trim().to_string();
+            let mut prev = v;
+            let mut more = false;
+            while let Some(&x) = rest.get(i + 1)
+                && self.wordw(x)
+                && (self.comma_between(prev, x) || numberish(x))
+            {
+                text.push_str(if self.comma_between(prev, x) {
+                    ","
+                } else {
+                    " "
+                });
+                text.push_str(&self.text(x));
+                (prev, more) = (x, true);
+                i += 1;
+            }
+            let num = if more { None } else { self.number(v) };
+            out.push((key, text, num));
+            i += 1;
+        }
+        Some(out)
+    }
+
+    /// Whether a comma stands between items `a` and `b`.
+    fn comma_between(&self, a: u32, b: u32) -> bool {
+        (self.last(a) + 1..self.first(b)).any(|k| self.ttag(k) == T::Comma)
     }
 
     /// xyce.peg `Pkg`: a first word that is no `key=`.
@@ -418,34 +488,22 @@ impl Cx<'_> {
         match (self.d, self.xyce_pkg(n)) {
             (Dialect::Xyce, Some(pkg)) => {
                 let pkg = self.text(pkg).to_ascii_lowercase();
-                let rest = &items[1..];
-                let p = self.params_of(rest, true);
-                if p.is_empty() {
-                    self.tb
-                        .options
+                let pairs = self.xyce_pairs(&items[1..]).expect("options_ok read it");
+                let specific = |tb: &mut Testbench, k: String, v: String| {
+                    tb.options
                         .backend_specific
                         .entry("xyce".into())
                         .or_default()
-                        .push((format!("{pkg}."), String::new()));
+                        .push((k, v));
+                };
+                if pairs.is_empty() {
+                    specific(&mut self.tb, format!("{pkg}."), String::new());
                 }
-                let nums: Vec<Option<f64>> = rest
-                    .iter()
-                    .map(|&k| match self.tag(k) {
-                        Tag::Assign => self.number(self.ast.rhs(Node(k))),
-                        _ => None,
-                    })
-                    .collect();
-                for ((k, v), x) in p.into_iter().zip(nums) {
+                for (k, v, x) in pairs {
                     match (pkg.as_str(), k.to_ascii_lowercase().as_str(), x) {
                         ("device", "temp", Some(x)) => self.tb.temperature = Some(x),
                         ("device", "tnom", Some(x)) => self.tb.nominal_temperature = Some(x),
-                        _ => self
-                            .tb
-                            .options
-                            .backend_specific
-                            .entry("xyce".into())
-                            .or_default()
-                            .push((format!("{pkg}.{}", k.to_ascii_lowercase()), v)),
+                        _ => specific(&mut self.tb, format!("{pkg}.{}", k.to_ascii_lowercase()), v),
                     }
                 }
             }
@@ -496,7 +554,11 @@ impl Cx<'_> {
         let [g, src, var, a, b, c, rest @ ..] = items else {
             return None;
         };
-        if rest.len() > 1 || self.tag(*g) != Tag::Group || !self.spaced(n, items) {
+        if rest.len() > 1
+            || self.tag(*g) != Tag::Group
+            || !self.group_closed(*g)
+            || !self.spaced(n, items)
+        {
             return None;
         }
         let gn = self.ast.lhs(Node(*g));
@@ -706,24 +768,54 @@ fn print_kind(rest: &str) -> (&str, &str) {
     ("", rest)
 }
 
-/// spice.peg `group <- word s? '(' … ')'` at `i`: its end.
+/// spice.peg `group <- word s? '(' s? (gfield (s? gfield)*)? s? ')'` at
+/// `i`: its end. A `gfield` is a group, a braced or quoted expression, a
+/// string, a word, `,` or `=`.
 fn group_end(b: &[u8], i: usize) -> Option<usize> {
     let wordchar = |c: u8| !b" \t\n,=()'\"{}[]".contains(&c);
-    let mut j = i;
-    while j < b.len() && (wordchar(b[j]) || b[j] == b'[' || b[j] == b']') {
-        j += 1;
-    }
+    let word_end = |mut j: usize| {
+        while j < b.len() && (wordchar(b[j]) || b[j] == b'[' || b[j] == b']') {
+            j += 1;
+        }
+        j
+    };
+    let blanks = |j: usize| {
+        j + b[j..]
+            .iter()
+            .take_while(|c| matches!(c, b' ' | b'\t'))
+            .count()
+    };
+    let mut j = word_end(i);
     if j == i {
         return None;
     }
-    j += b[j..]
-        .iter()
-        .take_while(|c| matches!(c, b' ' | b'\t'))
-        .count();
+    j = blanks(j);
     if b.get(j) != Some(&b'(') {
         return None;
     }
-    nested_end(b, j, b'(', b')')
+    j += 1;
+    loop {
+        j = blanks(j);
+        match *b.get(j)? {
+            b')' => return Some(j + 1),
+            b',' | b'=' => j += 1,
+            b'{' => j = nested_end(b, j, b'{', b'}')?,
+            q @ (b'\'' | b'"') => {
+                let k = b[j + 1..].iter().position(|&c| c == q || c == b'\n')?;
+                if b[j + 1 + k] != q {
+                    return None;
+                }
+                j += k + 2;
+            }
+            _ => {
+                let e = word_end(j);
+                if e == j {
+                    return None;
+                }
+                j = group_end(b, j).unwrap_or(e);
+            }
+        }
+    }
 }
 
 /// The end of the bracket run opened at `i` (one past its closer).

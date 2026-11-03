@@ -314,9 +314,20 @@ impl<'a> Cx<'a> {
         self.last(self.ast.lhs(n)) + 1
     }
 
+    /// The first token of item or expression `n` (a binary operator's
+    /// anchor is the operator).
+    fn first(&self, n: u32) -> u32 {
+        let a = self.ast;
+        let mut n = Node(n);
+        while matches!(a.tag(n), Tag::Binary | Tag::Ternary | Tag::Index) {
+            n = Node(a.lhs(n));
+        }
+        a.main_token(n)
+    }
+
     /// The text of item `n` as the line stage joined it.
     fn text(&self, n: u32) -> String {
-        self.span(self.main(n), self.last(n))
+        self.span(self.first(n), self.last(n))
     }
 
     /// Tokens `a..=b` as `import::logical` joined them: the source inside
@@ -441,7 +452,32 @@ impl<'a> Cx<'a> {
     /// dot card no rule reads is `Raw` when its word is a `rawkind` (or
     /// `.ends`/`.eom`), else `Unparsed` (and so are non-dot lines).
     fn refused(&self, n: u32) -> Kept {
-        let word = self.t.text(self.main(n)).to_ascii_lowercase();
+        // The dot word as spice.peg's `!namechar` reads it: the head token
+        // and the name bytes touching it (`.probe/csd` is no `.probe`).
+        let first = self.main(n);
+        let last = self.line_last(first);
+        let mut end = first;
+        while end < last
+            && self.t.end(end) == self.t.start(end + 1)
+            && !matches!(
+                self.ttag(end + 1),
+                T::Comma
+                    | T::Equal
+                    | T::EqualEqual
+                    | T::BangEqual
+                    | T::LessEqual
+                    | T::GreaterEqual
+                    | T::LParen
+                    | T::RParen
+                    | T::Quote
+                    | T::String
+                    | T::LBrace
+                    | T::RBrace
+            )
+        {
+            end += 1;
+        }
+        let word = self.span(first, end).to_ascii_lowercase();
         let Some(w) = word.strip_prefix('.') else {
             return Kept::Unparsed;
         };

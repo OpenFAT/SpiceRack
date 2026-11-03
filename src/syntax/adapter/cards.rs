@@ -25,6 +25,12 @@ use crate::syntax::token::Tag as T;
 impl Cx<'_> {
     /// A dot card at `scope` (`inside` a `.subckt`).
     pub(super) fn dot_card(&mut self, n: u32, here: &mut Subcircuit, scope: Scope, inside: bool) {
+        // quirk: the overlays' `dialect` rule (ltspice.peg `Raw_lt`,
+        // xyce.peg `Raw_xy`) is tried before the shared dot cards.
+        let word = self.head_word(n);
+        if self.dialect_raw(&word) {
+            return self.keep(n, here, Kept::Raw);
+        }
         let done = match self.tag(n) {
             Tag::Include => self.include(n, here),
             Tag::LibCall => self.lib_call(n, here),
@@ -96,6 +102,21 @@ impl Cx<'_> {
             return None;
         };
         if !self.is_word_item(*name) || !self.is_word_item(*kind) {
+            return None;
+        }
+        // spice.peg `mbody`: parentheses and commas separate, nothing else.
+        let mut prev = self.last(*kind);
+        for &k in rest {
+            if !(prev + 1..self.first(k))
+                .all(|x| matches!(self.ttag(x), T::Comma | T::LParen | T::RParen))
+            {
+                return None;
+            }
+            prev = self.last(k);
+        }
+        if !(prev + 1..=self.line_last(self.main(n)))
+            .all(|x| matches!(self.ttag(x), T::Comma | T::LParen | T::RParen))
+        {
             return None;
         }
         let xyce = self.d == Dialect::Xyce;
@@ -236,18 +257,31 @@ impl Cx<'_> {
     fn funcdef_ok(&self, a: u32) -> bool {
         let g = self.ast.lhs(Node(a));
         let v = self.ast.rhs(Node(a));
-        if self.tag(g) != Tag::Group || self.ast.lhs(Node(g)) == NONE || v == NONE {
-            return false;
-        }
-        if !self.group_items(g).iter().all(|&k| self.is_word_item(k)) {
+        if self.tag(g) != Tag::Group || !self.func_head_ok(g) || v == NONE {
             return false;
         }
         if self.tag(v) == Tag::Delimited {
             return self.expr_ok(v);
         }
-        let (a, b) = (self.main(v), self.last(v));
+        let (a, b) = (self.first(v), self.last(v));
         (a..b).all(|k| self.t.end(k) == self.t.start(k + 1))
             && (a..=b).all(|k| self.ttag(k) != T::Comma)
+    }
+
+    /// spice.peg `Key s? '(' s? (Arg (s? ',' s? Arg)*)? s? ')'`: a key and
+    /// keys, closed.
+    fn func_head_ok(&self, g: u32) -> bool {
+        let name = self.ast.lhs(Node(g));
+        let key = |k: u32| {
+            self.is_word_item(k)
+                && self
+                    .text(k)
+                    .starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
+        };
+        name != NONE
+            && key(name)
+            && self.group_closed(g)
+            && self.group_items(g).iter().all(|&k| key(k))
     }
 
     /// A function definition (lower/mod.rs `funcdef`) from its `name(args)`
@@ -330,7 +364,7 @@ impl Cx<'_> {
         self.d == Dialect::Ngspice
             && v != NONE
             && self.tag(v) == Tag::Binary
-            && self.ttag(self.main(v)) == T::LBrace
+            && self.ttag(self.first(v)) == T::LBrace
     }
 
     /// `.func name(args) [=] body` (spice.peg `Func`).
@@ -346,9 +380,7 @@ impl Cx<'_> {
             }
             _ => return Err(Kept::Unparsed),
         };
-        if self.ast.lhs(Node(g)) == NONE
-            || !self.group_items(g).iter().all(|&k| self.is_word_item(k))
-        {
+        if !self.func_head_ok(g) {
             return Err(Kept::Unparsed);
         }
         // The body: after `)` and an optional `=`, to the card's end or a
@@ -376,9 +408,21 @@ impl Cx<'_> {
         if end != last {
             return Err(Kept::Unparsed);
         }
-        let body = if self.ttag(start) == T::LBrace && self.brace_close_at(start) == Some(last) {
-            self.span(start + 1, last - 1).trim().to_string()
-        } else if self.ttag(start) == T::Quote && self.quote_whole(start, last) {
+        // spice.peg `Body`: an `expr` to the end, a braced body to the end,
+        // else the text.
+        let expr = items
+            .iter()
+            .copied()
+            .chain(
+                items
+                    .iter()
+                    .filter(|&&k| self.tag(k) == Tag::Assign)
+                    .map(|&k| self.ast.rhs(Node(k))),
+            )
+            .find(|&k| k != NONE && self.first(k) == start && self.last(k) == last);
+        let body = if expr.is_some_and(|e| self.expr_ok(e)) {
+            self.inner(expr.expect("checked")).trim().to_string()
+        } else if self.ttag(start) == T::LBrace && self.brace_close_at(start) == Some(last) {
             self.span(start + 1, last - 1).trim().to_string()
         } else {
             self.span(start, last).trim().to_string()
@@ -402,12 +446,5 @@ impl Cx<'_> {
             }
             depth == 0
         })
-    }
-
-    /// Whether `'…'` from `open` to `last` is one quoted expression.
-    fn quote_whole(&self, open: u32, last: u32) -> bool {
-        self.ttag(last) == T::Quote
-            && (open + 1..last).all(|k| self.ttag(k) != T::Quote)
-            && last > open + 1
     }
 }

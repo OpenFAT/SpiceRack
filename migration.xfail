@@ -7,3 +7,13 @@
 # stem under the input's golden directory). `golden diff --xfail` fails on
 # any difference not listed here, and on a listed line that is now identical
 # (XPASS): delete the line then. Every line is a reviewed, intended change.
+
+# Phase 2 (syntax::ast_to_ir): today's spice.peg `Str <- '"' (!'"' .)* '"'`
+# reads across a logical line's end, so a stray `"` in one card swallows the
+# next card into one raw line ("v2\" 2 0 1\nv3 3\" 0 1"); the tokenizer ends
+# a string at its line (Xyce RG §2.1.39), so the two cards stay two. A bug
+# of the old card grammar, not reproduced: phase 7 keeps the new reading.
+xyce/INVALID_CHARS/double_quote_fails_device_name.cir ir today's Str rule crosses a line end; the two cards stay two
+xyce/INVALID_CHARS/double_quote_fails_device_name.cir report today's Str rule crosses a line end; the raw count follows
+xyce/INVALID_CHARS/double_quote_fails_node_name.cir ir today's Str rule crosses a line end; the two cards stay two
+xyce/INVALID_CHARS/double_quote_fails_node_name.cir report today's Str rule crosses a line end; the raw count follows

@@ -50,8 +50,6 @@ impl Cx<'_> {
     pub(super) fn element(&mut self, n: u32, here: &mut Subcircuit) {
         let words = self.ast.rhs(Node(n));
         let master = self.ast.extra(words + 1);
-        let name_last = self.last(self.ast.extra(words));
-        let has_fields = name_last < self.line_last(self.main(n));
         if !self
             .t
             .text(self.main(n))
@@ -60,6 +58,7 @@ impl Cx<'_> {
             // quirk: spice.peg `element_any <- &[a-z] Name`.
             return self.unparsed(n, here);
         }
+        let has_fields = self.fields_ok(n);
         let got = if master == NONE {
             None
         } else if master & PRIMITIVE != 0 {
@@ -112,6 +111,78 @@ const ELEMENTS: [Element; 20] = [
 impl Cx<'_> {
     fn items(&self, n: u32) -> &[u32] {
         self.fields(n)
+    }
+
+    /// quirk: spice.peg `element_any <- &[a-z] Name (s? field)+`, the card's
+    /// end: every item after the name a `field` (a word, group, string,
+    /// readable expression, `k=v`, or one of `, ( ) =`).
+    fn fields_ok(&self, n: u32) -> bool {
+        let items = self.items(n);
+        let name = self.ast.extra(self.ast.rhs(Node(n)));
+        let last = self.line_last(self.main(n));
+        let mut covered = self.last(name) + 1;
+        let mut any = false;
+        let stray = |k: u32| {
+            matches!(
+                self.ttag(k),
+                T::Comma
+                    | T::LParen
+                    | T::RParen
+                    | T::Equal
+                    | T::EqualEqual
+                    | T::LessEqual
+                    | T::GreaterEqual
+                    | T::BangEqual
+            )
+        };
+        for &it in items {
+            if !(covered..self.first(it)).all(stray) {
+                return false;
+            }
+            any = true;
+            let ok = match self.tag(it) {
+                Tag::Word | Tag::Str | Tag::Group => true,
+                Tag::Delimited => self.expr_ok(it),
+                Tag::Assign => {
+                    let v = self.ast.rhs(Node(it));
+                    v == NONE
+                        || self.val_ok(v)
+                        || self.tag(v) == Tag::Seq
+                        || !matches!(self.tag(v), Tag::Bad | Tag::Delimited)
+                        // A value that is one stray `(` read as a field.
+                        || self.tag(v) == Tag::Bad && stray(self.main(v)) && self.ast.lhs(Node(v)) == self.main(v)
+                }
+                _ => false,
+            };
+            if !ok {
+                return false;
+            }
+            covered = self.last(it) + 1;
+        }
+        any = any || covered <= last;
+        any && (covered..=last).all(stray)
+    }
+
+    /// spice.peg's `s` before each item (`commas`: or `s? ','`s as `inst`
+    /// allows, a blank still before the item).
+    fn spaced_items(&self, prev: u32, items: &[u32], commas: bool) -> bool {
+        let mut prev = prev;
+        for &k in items {
+            let first = self.first(k);
+            if !(prev + 1..first).all(|x| commas && self.ttag(x) == T::Comma) {
+                return false;
+            }
+            if self.t.end(first - 1) == self.t.start(first) {
+                return false;
+            }
+            prev = self.last(k);
+        }
+        true
+    }
+
+    /// The element's name word's last token.
+    fn name_last(&self, n: u32) -> u32 {
+        self.last(self.ast.extra(self.ast.rhs(Node(n))))
     }
 
     /// The element's name after its letter (spice.peg `Name_e`).
@@ -179,6 +250,38 @@ impl Cx<'_> {
     fn component(&self, n: u32, e: Element) -> Option<Component> {
         let items = self.items(n);
         let name = self.elem_name(n);
+        // quirk: every element rule reads `s` between its fields; only an
+        // `inst` tail and a waveform's values take commas.
+        let commas = matches!(
+            e,
+            Element::Resistor
+                | Element::Capacitor
+                | Element::Inductor
+                | Element::Diode
+                | Element::Bjt
+                | Element::Mosfet
+                | Element::Jfet
+                | Element::Mesfet
+                | Element::VoltageSource
+                | Element::CurrentSource
+        );
+        let head = items.len().min(2);
+        // A `B` card's body after `key =` is text to the card's end.
+        let spaced = match e {
+            Element::Behavioural => items.len().min(3),
+            _ => items.len(),
+        };
+        if !self.spaced_items(self.name_last(n), &items[..head], false)
+            || !self.spaced_items(
+                items
+                    .get(head.wrapping_sub(1))
+                    .map_or(self.name_last(n), |&k| self.last(k)),
+                &items[head..spaced],
+                commas,
+            )
+        {
+            return None;
+        }
         let node = |i: usize| {
             items
                 .get(i)
@@ -451,7 +554,7 @@ impl Cx<'_> {
             return None;
         }
         let gname = self.ast.lhs(Node(*p));
-        if gname == NONE || !self.word_is(gname, "poly") {
+        if gname == NONE || !self.word_is(gname, "poly") || !self.group_closed(*p) {
             return None;
         }
         let inside = self.group_items(*p);
@@ -495,6 +598,12 @@ impl Cx<'_> {
             })
         })();
         Some(card)
+    }
+
+    /// Whether group `g` ends at its `)` (an unclosed one runs to the
+    /// card's end).
+    pub(super) fn group_closed(&self, g: u32) -> bool {
+        self.ttag(self.ast.extra(self.ast.rhs(Node(g)))) == T::RParen
     }
 
     /// A group's items.
@@ -556,7 +665,7 @@ impl Cx<'_> {
             }
         }
         let v = self.ast.rhs(Node(kv));
-        let whole = v != NONE && self.main(v) == first && self.last(v) == last;
+        let whole = v != NONE && self.first(v) == first && self.last(v) == last;
         if whole
             && self.tag(v) == Tag::Delimited
             && (self.expr_ok(v) || self.ttag(first) == T::LBrace)
@@ -661,6 +770,9 @@ impl Cx<'_> {
         let master = self.ast.extra(words + 1);
         let nodes = self.ast.list(words + 2);
         let items = self.items(n);
+        if !self.spaced_items(self.name_last(n), items, false) {
+            return None;
+        }
         let pairs: Vec<u32> = items
             .iter()
             .copied()
@@ -825,6 +937,9 @@ impl Cx<'_> {
         };
         if let Some(w) = wave_name.and_then(|w| self.wave(w)) {
             if self.tag(it) == Tag::Group {
+                if !self.group_closed(it) {
+                    return None;
+                }
                 let vals = self.group_items(it).to_vec();
                 if !vals.iter().all(|&v| self.is_word(v) || self.expr_ok(v)) {
                     return None;

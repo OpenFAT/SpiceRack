@@ -9,7 +9,8 @@
 //!
 //! `SYNTAX_SET=<set>` limits the run to one input set; `SYNTAX_SHOW=<n>`
 //! prints the first `n` differences (default 5) with their first differing
-//! JSON line. Strict xfail: `migration.xfail`'s `ir` and `report` lines.
+//! JSON line; `SYNTAX_KEY=<substring>` runs the inputs whose key holds it
+//! and shows each difference in context. Strict xfail: `migration.xfail`'s `ir` and `report` lines.
 //!
 //!   nix develop .#testing -c env IHP_PDK=<checkout> cargo test -j 4 --release \
 //!     --no-default-features --features corpus --test test_syntax_adapter -- --test-threads=4
@@ -41,6 +42,7 @@ fn ast_to_ir_matches_todays_reader() {
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(5);
+    let key_filter = std::env::var("SYNTAX_KEY").ok();
     let mut manifest = Vec::new();
     let all = inputs::inputs(repo, &mut manifest);
     let absent: Vec<&String> = manifest
@@ -55,6 +57,12 @@ fn ast_to_ir_matches_todays_reader() {
     let mut found: BTreeMap<String, String> = BTreeMap::new();
     for i in &all {
         if only.as_deref().is_some_and(|s| s != i.set) {
+            continue;
+        }
+        if key_filter
+            .as_deref()
+            .is_some_and(|k| !format!("{}/{}", i.set, i.rel).contains(k))
+        {
             continue;
         }
         let text = decode(&std::fs::read(&i.path).expect("input readable"));
@@ -75,7 +83,8 @@ fn ast_to_ir_matches_todays_reader() {
                 if target == "ir" {
                     e.1 += 1;
                 }
-                found.insert(format!("{key} {target}"), first_diff(&want, &got));
+                let wide = key_filter.is_some();
+                found.insert(format!("{key} {target}"), first_diff(&want, &got, wide));
             }
         }
     }
@@ -118,12 +127,21 @@ fn report(r: &spicerack::import::Report) -> String {
     format!("{v:#}")
 }
 
-/// The first differing line of two texts, with two lines of context.
-fn first_diff(want: &str, got: &str) -> String {
+/// The first differing line of two texts (with context when `wide`).
+fn first_diff(want: &str, got: &str, wide: bool) -> String {
     let (w, g): (Vec<&str>, Vec<&str>) = (want.lines().collect(), got.lines().collect());
     let k = (0..w.len().max(g.len()))
         .find(|&k| w.get(k) != g.get(k))
         .unwrap_or(0);
+    if wide {
+        let lo = k.saturating_sub(8);
+        let show = |v: &[&str]| v[lo.min(v.len())..(k + 8).min(v.len())].join("\n");
+        return format!(
+            "  line {k}\n  today:\n{}\n  syntax:\n{}",
+            show(&w),
+            show(&g)
+        );
+    }
     let at = |v: &[&str]| v.get(k).map_or("<end>", |l| l.trim()).to_string();
     format!("  line {k}: today {} | syntax {}", at(&w), at(&g))
 }
