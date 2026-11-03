@@ -117,6 +117,7 @@ impl W<'_, '_> {
                 np,
                 nm,
                 expr,
+                ..
             } => {
                 if laplace::is_laplace(&expr) {
                     self.laplace(&name, &np, &nm, &expr, current, tok)

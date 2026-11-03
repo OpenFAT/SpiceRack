@@ -101,6 +101,7 @@ impl<'a> Rd<'a> {
             np,
             nm,
             expr: expression,
+            value: self.ast.rhs(Node(*kv)),
         })
     }
 

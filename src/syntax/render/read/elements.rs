@@ -63,13 +63,15 @@ pub(in crate::syntax::render) enum Card {
         /// ngspice `portnum n z0 Z`.
         port: Option<(u32, f64)>,
     },
-    /// `B … V=` / `I=`, `E … value=`, `G … cur=`.
+    /// `B … V=` / `I=`, `E … value=`, `G … cur=`: the expression's text,
+    /// and its tree (the value node).
     Behavioural {
         current: bool,
         name: String,
         np: String,
         nm: String,
         expr: String,
+        value: u32,
     },
     /// `E`/`G` (two control nodes), `F`/`H` (a controlling source).
     Linear {
@@ -256,6 +258,7 @@ impl<'a> Rd<'a> {
                                 np,
                                 nm,
                                 expr: self.body_text(v),
+                                value: v,
                             });
                         }
                         let [_, _, c, d, g] = items else { return None };
