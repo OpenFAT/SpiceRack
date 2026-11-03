@@ -1,7 +1,8 @@
 //! The transpiler's front end (`docs/research/transpiler-architecture.md`):
 //! text → [`token::Tokens`] by a dialect's [`lexicon::Lexicon`] → [`ast::Ast`]
-//! by one parser → a [`resolve::Kit`] (a kit's files and its symbol table),
-//! and the temporary bridge [`ast_to_ir`] from the AST to
+//! by one parser → a [`resolve::Kit`] (a kit's files and its symbol table)
+//! → deck text in any dialect ([`render`]), and the temporary bridge
+//! [`ast_to_ir`] from the AST to
 //! today's `CircuitIR`. `import::parse` reads every deck through it (phase
 //! 2b of §5); `golden diff` against the recorded `daa0ad0` baseline, the
 //! PEG reader it replaced, gates every change (TESTING.md, "Golden gate").
@@ -11,8 +12,8 @@
 //! are gone, so a citation names the rule it means.
 //!
 //! Contents:
-//! - `pub mod ast`, `pub mod device`, `pub mod diag`, `pub mod lexicon`, `pub mod resolve`,
-//!   `pub mod statement`, `pub mod token`
+//! - `pub mod ast`, `pub mod device`, `pub mod diag`, `pub mod lexicon`, `pub mod render`,
+//!   `pub mod resolve`, `pub mod statement`, `pub mod token`
 //! - `pub use tokenize::tokenize`, `pub use parse::{parse, DEPTH_MAX}`,
 //!   `pub use adapter::ast_to_ir`
 
@@ -26,6 +27,7 @@ pub mod lexicon;
 mod named;
 mod number;
 mod parse;
+pub mod render;
 pub mod resolve;
 mod scan;
 mod spice;

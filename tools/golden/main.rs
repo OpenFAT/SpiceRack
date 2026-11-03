@@ -3,8 +3,8 @@
 //! byte against the recorded `daa0ad0` baseline
 //! (`docs/research/transpiler-architecture.md` §5).
 //!
-//!   golden record <out_dir>
-//!   golden diff <a> <b> [--xfail migration.xfail]
+//!   golden record [--writer syntax] <out_dir>
+//!   golden diff <a> <b> [--xfail migration.xfail] [--refusal-status-only <report>]
 //!   golden check-determinism
 //!
 //! `record` reads every input `inputs.rs` finds (run it in `nix develop
@@ -16,6 +16,12 @@
 //!   `codegen::netlist`, or `<target>.refused`, its error text;
 //! - `parse.refused` instead of all of these when `parse` refuses the file;
 //! - `<name>.panicked`, the panic message, when a call panics.
+//!
+//! With `--writer syntax`, every target `syntax::render::writes` names is
+//! written by the transpiler's renderer (`syntax::render`, phase 4) from the
+//! file's AST and kit instead of `codegen::netlist` from its IR; a refusal
+//! is its `W` codes, one per line (`<code> <title>`). The other targets,
+//! `ir.json` and `report.json` are recorded as without it.
 //!
 //! The reader is the transpiler's front end (phase 2b): `import::parse` for
 //! a corpus deck, `import::parse_kit` for a PDK kit file or a fixture, read
@@ -41,14 +47,16 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use spicerack::codegen::{Dialect, netlist};
 use spicerack::import::{decode, parse, parse_kit};
+use spicerack::syntax::diag::{Diag, info};
+use spicerack::syntax::render;
 
 mod diff;
 mod inputs;
 
 use inputs::{Form, Input, inputs, source};
 
-const USAGE: &str = "usage: golden record <out_dir> | \
-                     golden diff <a> <b> [--xfail <file>] | \
+const USAGE: &str = "usage: golden record [--writer syntax] <out_dir> | \
+                     golden diff <a> <b> [--xfail <file>] [--refusal-status-only <report>] | \
                      golden check-determinism";
 
 /// Input dialects no set reads, and why: the manifest's `skip` lines.
@@ -76,10 +84,25 @@ fn main() -> ExitCode {
         Some(_) => return usage(),
         None => None,
     };
+    let Ok(report) = flag(&mut rest, "--refusal-status-only") else {
+        return usage();
+    };
+    let syntax = match flag(&mut rest, "--writer") {
+        Ok(None) => false,
+        Ok(Some(w)) if w == "syntax" => true,
+        _ => return usage(),
+    };
     let run = match rest.as_slice() {
-        ["record", out] if xfail.is_none() => record(Path::new(out)).map(|()| true),
-        ["diff", a, b] => diff::diff(Path::new(a), Path::new(b), xfail.as_deref()),
-        ["check-determinism"] if xfail.is_none() => check_determinism(),
+        ["record", out] if xfail.is_none() && report.is_none() => {
+            record(Path::new(out), syntax).map(|()| true)
+        }
+        ["diff", a, b] if !syntax => diff::diff(
+            Path::new(a),
+            Path::new(b),
+            xfail.as_deref(),
+            report.as_deref().map(Path::new),
+        ),
+        ["check-determinism"] if xfail.is_none() && report.is_none() => check_determinism(syntax),
         _ => return usage(),
     };
     match run {
@@ -92,6 +115,19 @@ fn main() -> ExitCode {
     }
 }
 
+/// Removes `name <value>` from `rest`; `Err` when the value is missing.
+fn flag(rest: &mut Vec<&str>, name: &str) -> Result<Option<String>, ()> {
+    match rest.iter().position(|a| *a == name) {
+        Some(i) if i + 1 < rest.len() => {
+            let v = rest[i + 1].to_string();
+            rest.drain(i..i + 2);
+            Ok(Some(v))
+        }
+        Some(_) => Err(()),
+        None => Ok(None),
+    }
+}
+
 fn usage() -> ExitCode {
     eprintln!("{USAGE}");
     ExitCode::from(2)
@@ -99,7 +135,7 @@ fn usage() -> ExitCode {
 
 /// Records every input into `out`, which must be absent or empty, so no
 /// stale file from an earlier record survives into the tree.
-fn record(out: &Path) -> std::io::Result<()> {
+fn record(out: &Path, syntax: bool) -> std::io::Result<()> {
     if std::fs::read_dir(out).is_ok_and(|mut d| d.next().is_some()) {
         return Err(std::io::Error::other(format!(
             "{} is not empty",
@@ -124,7 +160,7 @@ fn record(out: &Path) -> std::io::Result<()> {
             let worker = std::thread::Builder::new().stack_size(256 << 20);
             let spawned = worker.spawn_scoped(s, || {
                 while let Some(input) = all.get(next.fetch_add(1, Ordering::Relaxed)) {
-                    match record_one(out, input) {
+                    match record_one(out, input, syntax) {
                         Ok(v) => lines.lock().expect("no worker panics").extend(v),
                         Err(e) => {
                             let why = format!("{}/{}: {e}", input.set, input.rel);
@@ -148,7 +184,7 @@ fn record(out: &Path) -> std::io::Result<()> {
 }
 
 /// Records one input; returns its manifest lines (input and output hashes).
-fn record_one(out: &Path, input: &Input) -> std::io::Result<Vec<String>> {
+fn record_one(out: &Path, input: &Input, syntax: bool) -> std::io::Result<Vec<String>> {
     let key = format!("{}/{}", input.set, input.rel);
     let dir = out.join(&key);
     std::fs::create_dir_all(&dir)?;
@@ -192,13 +228,31 @@ fn record_one(out: &Path, input: &Input) -> std::io::Result<Vec<String>> {
     put("report.json", &format!("{report:#}\n"))?;
     for d in Dialect::ALL {
         let t = d.name();
-        match catch_unwind(AssertUnwindSafe(|| netlist(&ir, d))) {
+        let written = if syntax && render::writes(d) {
+            let render = || match &input.kit {
+                Some((kit, f)) => render::render_kit(kit, *f, &name, d),
+                None => render::render_text(&src, input.dialect, &name, d),
+            };
+            catch_unwind(AssertUnwindSafe(render)).map(|r| r.map_err(|e| codes(&e)))
+        } else {
+            catch_unwind(AssertUnwindSafe(|| netlist(&ir, d)))
+                .map(|r| r.map_err(|e| format!("{e}\n")))
+        };
+        match written {
             Ok(Ok(text)) => put(&format!("{t}.txt"), &text)?,
-            Ok(Err(e)) => put(&format!("{t}.refused"), &format!("{e}\n"))?,
+            Ok(Err(e)) => put(&format!("{t}.refused"), &e)?,
             Err(p) => put(&format!("{t}.panicked"), &panic_text(p))?,
         }
     }
     Ok(lines)
+}
+
+/// A renderer's refusal as text: each code and its title, one a line.
+fn codes(diags: &[Diag]) -> String {
+    diags
+        .iter()
+        .map(|d| format!("{:?} {}\n", d.code, info(d.code).title))
+        .collect()
 }
 
 /// A panic's message, without its location (which moves with every edit).
@@ -225,21 +279,23 @@ fn hash(bytes: &[u8]) -> String {
 /// seed is per process), and diffs the two trees with no xfail list (both
 /// come from one reader, so any listed line would XPASS). Removes them on
 /// success.
-fn check_determinism() -> std::io::Result<bool> {
+fn check_determinism(syntax: bool) -> std::io::Result<bool> {
     let base = std::env::temp_dir().join(format!("golden-determinism-{}", std::process::id()));
     let exe = std::env::current_exe()?;
     for run in ["a", "b"] {
-        let status = std::process::Command::new(&exe)
-            .arg("record")
-            .arg(base.join(run))
-            .status()?;
+        let mut cmd = std::process::Command::new(&exe);
+        cmd.arg("record");
+        if syntax {
+            cmd.args(["--writer", "syntax"]);
+        }
+        let status = cmd.arg(base.join(run)).status()?;
         if !status.success() {
             return Err(std::io::Error::other(format!(
                 "record {run} failed: {status}"
             )));
         }
     }
-    let same = diff::diff(&base.join("a"), &base.join("b"), None)?;
+    let same = diff::diff(&base.join("a"), &base.join("b"), None, None)?;
     if same {
         std::fs::remove_dir_all(&base)?;
     } else {

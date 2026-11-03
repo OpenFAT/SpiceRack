@@ -5,7 +5,8 @@
 //!
 //! Codes are never renumbered or reused. The first letter is the stage:
 //! `L` tokenize, `P` parse, `R` resolve, `W` render. Phase 2 of the rewrite
-//! starts the `P` class, phase 3 the `R` class (`syntax::resolve`); phase 5
+//! starts the `P` class, phase 3 the `R` class (`syntax::resolve`), phase 4
+//! the `W` class (`syntax::render`, each a `Capability::Refuse`); phase 5
 //! completes the catalogue (`docs/research/transpiler-architecture.md` §2.6,
 //! §5).
 //!
@@ -63,6 +64,42 @@ pub enum Code {
     /// A `.lib file section` or `include … section=` naming a section the
     /// file does not hold.
     R0010,
+    /// A statement kept as text from another dialect family: only its own family reads it.
+    W0001,
+    /// A `^` whose meaning differs between the source and the target (power in one, XOR in the other).
+    W0002,
+    /// A statistical function (`agauss`, `gauss`, `aunif`, `unif`, `limit`) the target has no function for.
+    W0003,
+    /// A Verilog-A load the target loads another way (an OSDI binary where it compiles the source, or a command-line plugin).
+    W0004,
+    /// A `.lib file` with no section: LTspice reads the whole file; another target reads the card as a section definition.
+    W0005,
+    /// An R, C or L card naming a model the target's element line has no field for.
+    W0006,
+    /// A source's RF port (`portnum n z0 Z`) the target has no form for.
+    W0007,
+    /// A PWL source's repeat or delay (`r=`, `td=`) the target does not read.
+    W0008,
+    /// A TRNOISE or TRRANDOM waveform (ngspice only).
+    W0009,
+    /// A Laplace source whose expression has no transfer-function reading.
+    W0010,
+    /// A Laplace source the target has no form for (Xyce).
+    W0011,
+    /// A library section on a target that reads `.lib name` as a file (LTspice).
+    W0012,
+    /// A conditional block on a target with no `.if` (Xyce, LTspice).
+    W0013,
+    /// A `.param` or a load inside a conditional branch, which a SPICE `.if` may not hold.
+    W0014,
+    /// An analysis the target has no card for.
+    W0015,
+    /// A `.step` sweep the target has no card for (it would run once).
+    W0016,
+    /// An option the target has no spelling for.
+    W0017,
+    /// A Spectre `statistics` block a SPICE or VACASK deck cannot hold.
+    W0018,
 }
 
 /// A code's fixed text.
@@ -157,6 +194,72 @@ pub const fn info(c: Code) -> Info {
             "a section the file does not hold",
             "ngspice manual §2.7; Spectre Reference 19.1 p.498 (include ... section=)",
         ),
+        Code::W0001 => (
+            "a statement kept as another dialect's text",
+            "no clause: the text is the source dialect's (Pandoc's RawBlock rule)",
+        ),
+        Code::W0002 => (
+            "a `^` that means power in one dialect and XOR in the other",
+            "ngspice manual §2.8.5 (`^` power); LTspice help (`^` XOR); Xyce RG §2.1.18 (`^` XOR); VACASK Verilog-A operators",
+        ),
+        Code::W0003 => (
+            "a statistical function the target lacks",
+            "ngspice manual §2.11.5; LTspice help (`gauss(x)` takes one argument)",
+        ),
+        Code::W0004 => (
+            "a Verilog-A load the target cannot spell",
+            "ngspice manual §13 (`pre_osdi`); HSPICE `.hdl`; Xyce RG (`-plugin`)",
+        ),
+        Code::W0005 => (
+            "a `.lib` call with no section",
+            "ngspice manual §2.7; LTspice help (`.lib`)",
+        ),
+        Code::W0006 => (
+            "an R/C/L model reference the target lacks",
+            "ngspice manual §3.3.1-§3.3.10; LTspice help (R, C, L)",
+        ),
+        Code::W0007 => ("an RF port the target lacks", "ngspice manual §4.1.11"),
+        Code::W0008 => (
+            "a PWL repeat or delay the target lacks",
+            "ngspice manual §4.1.4",
+        ),
+        Code::W0009 => (
+            "a TRNOISE or TRRANDOM waveform the target lacks",
+            "ngspice manual §4.1.7, §4.1.8",
+        ),
+        Code::W0010 => (
+            "a Laplace expression that does not read",
+            "ngspice manual §12.2.16 (`s_xfer`); HSPICE `LAPLACE`",
+        ),
+        Code::W0011 => ("a Laplace source the target lacks", "Xyce RG §6.1.5"),
+        Code::W0012 => (
+            "a library section the target reads as a file",
+            "LTspice help (`.lib`); ngspice manual §2.7",
+        ),
+        Code::W0013 => (
+            "a conditional block the target lacks",
+            "ngspice manual §2.15; Xyce RG Table 6-1",
+        ),
+        Code::W0014 => (
+            "a `.param` or load inside a SPICE `.if` branch",
+            "ngspice manual §2.15",
+        ),
+        Code::W0015 => (
+            "an analysis the target lacks",
+            "ngspice manual ch.11; HSPICE UG; Xyce RG Table 6-1; LTspice help",
+        ),
+        Code::W0016 => (
+            "a `.step` the target lacks",
+            "ngspice manual (no `.step`; `.dc` sweeps); HSPICE `.alter`; Xyce RG p.155",
+        ),
+        Code::W0017 => (
+            "an option the target lacks",
+            "Xyce RG pp.96-104 (`.options <pkg>`)",
+        ),
+        Code::W0018 => (
+            "a statistics block the target cannot hold",
+            "docs/research/monte-carlo-spectre.md §10.5; Spectre Reference 19.1 pp.175-179",
+        ),
     };
     Info { title, cite }
 }
@@ -170,7 +273,9 @@ mod tests {
         use Code::*;
         for c in [
             P0001, P0002, P0003, P0004, P0005, P0006, P0007, P0008, P0009, R0001, R0002, R0003,
-            R0004, R0005, R0006, R0007, R0008, R0009, R0010,
+            R0004, R0005, R0006, R0007, R0008, R0009, R0010, W0001, W0002, W0003, W0004, W0005,
+            W0006, W0007, W0008, W0009, W0010, W0011, W0012, W0013, W0014, W0015, W0016, W0017,
+            W0018,
         ] {
             let i = info(c);
             assert!(!i.title.is_empty());

@@ -11,10 +11,17 @@
 //! a set, a kit's read order) means the two trees read different inputs,
 //! which no xfail line excuses.
 //!
+//! With a refusal report (`--refusal-status-only <file>`), a key refused on
+//! both sides is the same whatever the two texts say (the old refusals are
+//! free text, the renderer's are `W` codes until phase 5's messages), and
+//! each such pair whose texts differ is written to the report, old above
+//! new, for review; a listed key is then no XPASS. Written versus refused
+//! still differs.
+//!
 //! Cites: VerA `tools/vera.xfail:1-5` (strict xfail).
 //!
 //! Contents:
-//! - `pub(super) fn diff(a: &Path, b: &Path, xfail: Option<&Path>) -> std::io::Result<bool>`
+//! - `pub(super) fn diff(a: &Path, b: &Path, xfail: Option<&Path>, report: Option<&Path>) -> std::io::Result<bool>`
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -26,7 +33,12 @@ const STEMS: [&str; 3] = ["ir", "report", "parse"];
 
 /// Diffs `a` against `b` and prints the verdict; `Ok(true)` when every
 /// difference is listed in `xfail` and every listed key differs.
-pub(super) fn diff(a: &Path, b: &Path, xfail: Option<&Path>) -> std::io::Result<bool> {
+pub(super) fn diff(
+    a: &Path,
+    b: &Path,
+    xfail: Option<&Path>,
+    report: Option<&Path>,
+) -> std::io::Result<bool> {
     let listed = match xfail {
         Some(f) => parse_xfail(&std::fs::read_to_string(f)?)
             .map_err(|e| std::io::Error::other(format!("{}: {e}", f.display())))?,
@@ -53,13 +65,36 @@ pub(super) fn diff(a: &Path, b: &Path, xfail: Option<&Path>) -> std::io::Result<
     walk(a, "", &mut fa);
     walk(b, "", &mut fb);
     let mut differ: BTreeMap<(String, String), Vec<String>> = BTreeMap::new();
+    let mut refusals = String::new();
+    // Keys refused on both sides with other texts: the same, in the mode.
+    let mut refused_both: BTreeSet<(String, String)> = BTreeSet::new();
     for rel in fa.union(&fb) {
-        let same = fa.contains(rel)
-            && fb.contains(rel)
-            && std::fs::read(a.join(rel))? == std::fs::read(b.join(rel))?;
-        if !same {
-            differ.entry(key(rel)).or_default().push(rel.clone());
+        let both = fa.contains(rel) && fb.contains(rel);
+        let (ta, tb) = match both {
+            true => (std::fs::read(a.join(rel))?, std::fs::read(b.join(rel))?),
+            false => (vec![], vec![]),
+        };
+        if both && ta == tb {
+            continue;
         }
+        if both && report.is_some() && rel.ends_with(".refused") {
+            let k = key(rel);
+            refused_both.insert(k.clone());
+            refusals.push_str(&format!(
+                "== {} {}\n-- {}\n{}-- {}\n{}\n",
+                k.0,
+                k.1,
+                a.display(),
+                String::from_utf8_lossy(&ta),
+                b.display(),
+                String::from_utf8_lossy(&tb)
+            ));
+            continue;
+        }
+        differ.entry(key(rel)).or_default().push(rel.clone());
+    }
+    if let Some(r) = report {
+        std::fs::write(r, refusals)?;
     }
     let mut xfailed = 0;
     for (k, files) in &differ {
@@ -80,7 +115,8 @@ pub(super) fn diff(a: &Path, b: &Path, xfail: Option<&Path>) -> std::io::Result<
         }
     }
     for (k, reason) in &listed {
-        if !differ.contains_key(k) {
+        // A listed refusal text is no XPASS when only the status is compared.
+        if !differ.contains_key(k) && !refused_both.contains(k) {
             println!("XPASS {} {}: listed ({reason}) but identical", k.0, k.1);
             ok = false;
         }
