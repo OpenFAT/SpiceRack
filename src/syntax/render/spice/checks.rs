@@ -91,9 +91,10 @@ impl<'r> W<'_, 'r> {
     }
 
     /// Every expression the deck's cards carry as text: functions,
-    /// parameters, model, instance and element values. Text kept as lines
-    /// is not: it reaches its own dialect only.
-    fn expressions(&mut self, blocks: &[&Block]) -> Vec<String> {
+    /// parameters, model, instance and element values, and the draws the
+    /// `statistics` lift adds. Text kept as lines is not: it reaches its
+    /// own dialect only.
+    fn expressions(&self, blocks: &[&Block]) -> Vec<String> {
         let deck = self.deck;
         let funcs = deck
             .funcs
@@ -130,18 +131,10 @@ impl<'r> W<'_, 'r> {
                     card_exprs(self.rd.card_view(n), &mut out);
                 }
             }
-            if !b.statistics.is_empty() {
-                // ponytail: the statistics lowering (`Lift(StatisticsDraws)`)
-                // is not ported: a deck holding a block is refused, never
-                // written without its draws.
-                if let Action::Lift(_) = self.ask(Construct::Statistics, 0) {
-                    self.refuse(
-                        crate::syntax::diag::Code::W0018,
-                        self.rd.main(b.statistics[0]),
-                    );
-                }
-            }
         }
+        // The `statistics` lift's draws, as the old writer checked the
+        // lowered deck.
+        out.extend(self.draws.texts().map(str::to_string));
         out
     }
 }

@@ -7,7 +7,8 @@
 //! parameters and models, subcircuits, sections, the body, the testbench,
 //! `.end`) and the block-level cards; `cards` writes elements and
 //! waveforms, `bench` the testbench and analyses, `checks` the deck-wide
-//! refusals (another family's text, `^`, statistical calls).
+//! refusals (another family's text, `^`, statistical calls), `draws` the
+//! `statistics` lift.
 //!
 //! Cites: ngspice manual ch.2 (the deck), §2.4.3 (`.subckt`), §2.6, §2.7
 //! (`.include`, `.lib`), §2.15 (`.if`); HSPICE `.END` (a library ends
@@ -15,13 +16,14 @@
 //! level 49).
 //!
 //! Contents:
-//! - `pub(super) fn write(rd: &Rd, deck: &Deck, target: Dialect) -> Result<String, Vec<Diag>>`
+//! - `pub(super) fn write(rd: &mut Rd, deck: &Deck, target: Dialect) -> Result<String, Vec<Diag>>`
 
 mod bench;
 mod cards;
 mod checks;
+mod draws;
 
-use super::capability::{Action, Alt, Construct, action};
+use super::capability::{Action, Alt, Construct, Rule, action};
 use super::out::{Out, Space};
 use super::read::{Block, Comp, Deck, Func, Raw, Rd, Section};
 use super::spelling::{FuncForm, Spelling, spelling};
@@ -39,6 +41,8 @@ struct W<'a, 'r> {
     x: bool,
     o: Out,
     refused: Vec<Diag>,
+    /// The `statistics` lift's fixups.
+    draws: draws::Draws,
     /// The deck runs its `.four` cards as `fourier` commands in its
     /// `.control` block, so the cards are left out.
     drop_four: bool,
@@ -56,9 +60,19 @@ enum Elem {
 }
 
 /// The deck `rd` read, written for `target`; the refusals when any
-/// construct has no meaning-keeping form there.
-pub(super) fn write(rd: &Rd, deck: &Deck, target: Dialect) -> Result<String, Vec<Diag>> {
+/// construct has no meaning-keeping form there. The `Lift` rules record
+/// their fixups in `rd` before anything is written.
+pub(super) fn write(rd: &mut Rd, deck: &Deck, target: Dialect) -> Result<String, Vec<Diag>> {
     let sp = spelling(target);
+    let mut refused = Vec::new();
+    let draws = match action(target, Construct::Statistics) {
+        Action::Lift(Rule::StatisticsDraws) => draws::lift(rd, deck).unwrap_or_else(|d| {
+            refused.push(d);
+            draws::Draws::default()
+        }),
+        _ => draws::Draws::default(),
+    };
+    let rd: &Rd = rd;
     let mut w = W {
         rd,
         deck,
@@ -66,7 +80,8 @@ pub(super) fn write(rd: &Rd, deck: &Deck, target: Dialect) -> Result<String, Vec
         d: target,
         x: rd.d == Dialect::Ngspice,
         o: Out::new(4096),
-        refused: Vec::new(),
+        refused,
+        draws,
         drop_four: false,
         in_section: false,
     };
@@ -226,11 +241,25 @@ impl W<'_, '_> {
         self.models(b);
     }
 
-    /// `.param name=value`, one card each, in order.
+    /// `.param name=value`, one card each, in order, with the draws the
+    /// `statistics` lift puts before each and the value it gives one.
     fn param_cards(&mut self, params: &[u32]) {
         for &a in params {
-            let (name, v) = self.rd.param_view(a);
+            let draws = self.draws.before(a).to_vec();
+            self.param_lines(&draws);
+            let (name, mut v) = self.rd.param_view(a);
+            if let Some(d) = self.draws.value(a) {
+                v = d.to_string();
+            }
             let v = self.spelled(&v);
+            self.o.token(&format!(".param {name}={v}"), Space::Line);
+        }
+    }
+
+    /// `.param name=value` for parameters a `Lift` rule adds.
+    fn param_lines(&mut self, params: &[(String, String)]) {
+        for (name, v) in params {
+            let v = self.spelled(v);
             self.o.token(&format!(".param {name}={v}"), Space::Line);
         }
     }
@@ -298,6 +327,8 @@ impl W<'_, '_> {
         }
         self.o.token(&line, Space::Line);
         self.file_cards(sc);
+        let draws = self.draws.locals(sc.node).to_vec();
+        self.param_lines(&draws);
         self.param_cards(&sc.locals);
         self.models(sc);
         self.body(sc, self.rd.d == Dialect::Ltspice && !self.in_section);
