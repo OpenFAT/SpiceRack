@@ -17,7 +17,7 @@
 //! - `pub struct Lexicon`, `Lexicon::keyword(&self, word: &str) -> Option<Tag>`,
 //!   `Lexicon::element(&self, letter: u8) -> Option<Element>`
 //! - `pub enum Dollar`, `pub enum Backslash`, `pub struct End`, `pub enum Quote`,
-//!   `pub struct Quoting`, `pub enum Caret`, `pub struct Ops`
+//!   `pub struct Quoting`, `pub enum Caret`, `pub struct Ops`, `Ops::TERNARY: u8`
 //! - `pub struct Numbers`, `pub enum Scale`, `pub enum Tail`, `pub enum Arithmetic`
 //! - `pub enum Element`
 //! - `pub const NGSPICE`, `HSPICE`, `LTSPICE`, `XYCE`, `SPECTRE`, `VACASK: Lexicon`
@@ -226,11 +226,6 @@ pub struct Ops {
     pub index: bool,
 }
 
-impl Ops {
-    /// The binding power of `?:`.
-    pub const TERNARY: u8 = 1;
-}
-
 /// A dialect's number grammar: a mantissa, an exponent, a scale suffix from
 /// [`Numbers::scales`], then a unit tail, decoded by
 /// [`Numbers::arithmetic`].
@@ -413,6 +408,11 @@ const SPICE_OPERATORS: &[(&str, Tag)] = &[
     ("&&", Tag::AmpAmp),
     ("||", Tag::PipePipe),
 ];
+
+impl Ops {
+    /// The binding power of `?:`.
+    pub const TERNARY: u8 = 1;
+}
 
 impl Lexicon {
     /// The keyword `word` spells, `None` for any other word. Case-blind

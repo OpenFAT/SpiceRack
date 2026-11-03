@@ -9,10 +9,12 @@
 //! Contents:
 //! - `Cx::number(&self, n: u32) -> Option<f64>`, `Cx::count(&self, n: u32) -> Option<u32>`
 //! - `Cx::value(&self, n: u32) -> IrValue`, `Cx::irnum(&self, n: u32) -> Option<IrNum>`
-//! - `Cx::vtext(&self, n: u32) -> String`, `Cx::params(&self, items: &[u32]) -> Vec<(String, String)>`
+//! - `Cx::vtext(&self, n: u32) -> String`
 //! - `Cx::body_text(&self, n: u32) -> String`, `Cx::name_of(&self, n: u32) -> String`
 //! - `Cx::expr_ok(&self, n: u32) -> bool`, `Cx::inner(&self, n: u32) -> String`
 //! - `Cx::key(&self, n: u32) -> String`, `Cx::word_text(&self, n: u32) -> Option<String>`
+//! - `Cx::mtext(&self, n: u32) -> String`, `Cx::params_of(&self, items: &[u32], model: bool) -> Vec<(String, String)>`,
+//!   `Cx::nests_delimiter(&self, e: u32) -> bool`, `Cx::respell(&self, s: &str) -> String`
 
 use super::Cx;
 use crate::codegen::Dialect;

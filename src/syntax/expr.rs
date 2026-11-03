@@ -282,10 +282,7 @@ impl Parser<'_, '_> {
 
     /// The binary operators after `left` that bind at least `min_bp`.
     fn infix(&mut self, mut left: Node, min_bp: u8) -> Result<Node, ()> {
-        loop {
-            let Some(tag) = self.peek() else {
-                break;
-            };
+        while let Some(tag) = self.peek() {
             let ops = self.ops();
             if tag == T::Question && min_bp <= Ops::TERNARY {
                 let q = self.i;

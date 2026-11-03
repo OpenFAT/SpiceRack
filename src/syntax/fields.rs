@@ -19,7 +19,7 @@
 //! - `Parser::fields(&mut self, mode: Mode) -> u32`
 //! - `Parser::word(&mut self) -> Node`, `Parser::word_end(&self, i: u32) -> u32`
 //! - `Parser::delimited(&mut self) -> Node`, `Parser::starts_delimited(&self) -> bool`
-//! - `Parser::pairstart(&self, i: u32) -> bool`
+//! - `Parser::pairstart(&self, i: u32) -> bool`, `Parser::separates(&self, i: u32) -> bool`
 
 use crate::syntax::ast::{NONE, Node, Tag};
 use crate::syntax::diag::Code;
@@ -113,6 +113,38 @@ impl Parser<'_, '_> {
         self.ast.push(Tag::Delimited, open, inner, close)
     }
 
+    /// Whether token `i` separates words (spice.peg `namechar`): blanks are
+    /// gaps, and `,` `=` `(` `)` `'` `"` are never name bytes; nor are
+    /// braces where they delimit expressions.
+    pub(super) fn separates(&self, i: u32) -> bool {
+        // Spectre and VACASK: a name is letters, digits, escapes and quoted
+        // parts (one token), joined by `.` and `:` (`X1.n3`, `x1:p`).
+        if self.t.lexicon_at(i).letters.is_empty() {
+            return !matches!(
+                self.t.tags()[i as usize],
+                T::Ident | T::Number | T::Dot | T::Colon
+            );
+        }
+        match self.t.tags()[i as usize] {
+            T::Comma
+            | T::Equal
+            | T::EqualEqual
+            | T::BangEqual
+            | T::LessEqual
+            | T::GreaterEqual
+            | T::LParen
+            | T::RParen
+            | T::Quote
+            | T::String
+            | T::EndOfStatement
+            | T::Title
+            | T::LangSpice
+            | T::LangSpectre => true,
+            T::LBrace | T::RBrace => self.t.lexicon_at(i).expr_braces,
+            _ => false,
+        }
+    }
+
     /// Whether `word =` starts at `i`: a key and its `=` (not `==`).
     pub(super) fn pairstart(&self, i: u32) -> bool {
         if i >= self.end || self.separates(i) {
@@ -187,38 +219,6 @@ impl Parser<'_, '_> {
         self.t.text(i).bytes().next().is_some_and(|b| {
             b.is_ascii_alphabetic() || b == b'_' || named && matches!(b, b'$' | b'\'' | b'\\')
         })
-    }
-
-    /// Whether token `i` separates words (spice.peg `namechar`): blanks are
-    /// gaps, and `,` `=` `(` `)` `'` `"` are never name bytes; nor are
-    /// braces where they delimit expressions.
-    pub(super) fn separates(&self, i: u32) -> bool {
-        // Spectre and VACASK: a name is letters, digits, escapes and quoted
-        // parts (one token), joined by `.` and `:` (`X1.n3`, `x1:p`).
-        if self.t.lexicon_at(i).letters.is_empty() {
-            return !matches!(
-                self.t.tags()[i as usize],
-                T::Ident | T::Number | T::Dot | T::Colon
-            );
-        }
-        match self.t.tags()[i as usize] {
-            T::Comma
-            | T::Equal
-            | T::EqualEqual
-            | T::BangEqual
-            | T::LessEqual
-            | T::GreaterEqual
-            | T::LParen
-            | T::RParen
-            | T::Quote
-            | T::String
-            | T::EndOfStatement
-            | T::Title
-            | T::LangSpice
-            | T::LangSpectre => true,
-            T::LBrace | T::RBrace => self.t.lexicon_at(i).expr_braces,
-            _ => false,
-        }
     }
 
     /// A blank-separated chunk: a string, a quoted run, or touching tokens

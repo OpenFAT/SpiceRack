@@ -4,7 +4,7 @@
 //!
 //!   golden record <out_dir> [--frontend import|syntax]
 //!   golden diff <a> <b> [--xfail migration.xfail]
-//!   golden check-determinism [--xfail migration.xfail] [--frontend import|syntax]
+//!   golden check-determinism [--frontend import|syntax]
 //!
 //! `record` reads every input `inputs.rs` finds (run it in `nix develop
 //! .#testing`, which sets the corpus and PDK variables; `$IHP_PDK` names an
@@ -49,7 +49,7 @@ use inputs::{Form, Input, inputs, source};
 
 const USAGE: &str = "usage: golden record <out_dir> [--frontend import|syntax] | \
                      golden diff <a> <b> [--xfail <file>] | \
-                     golden check-determinism [--xfail <file>] [--frontend import|syntax]";
+                     golden check-determinism [--frontend import|syntax]";
 
 /// The reader a record runs.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -102,8 +102,8 @@ fn main() -> ExitCode {
         ["diff", a, b] if frontend.is_none() => {
             diff::diff(Path::new(a), Path::new(b), xfail.as_deref())
         }
-        ["check-determinism"] => {
-            check_determinism(xfail.as_deref(), frontend.unwrap_or(Frontend::Import))
+        ["check-determinism"] if xfail.is_none() => {
+            check_determinism(frontend.unwrap_or(Frontend::Import))
         }
         _ => return usage(),
     };
@@ -258,8 +258,10 @@ fn hash(bytes: &[u8]) -> String {
 }
 
 /// Records twice into a temp dir, each in its own process (a `HashMap`'s
-/// seed is per process), and diffs the two trees. Removes them on success.
-fn check_determinism(xfail: Option<&Path>, frontend: Frontend) -> std::io::Result<bool> {
+/// seed is per process), and diffs the two trees with no xfail list (both
+/// come from one front end, so any listed line would XPASS). Removes them
+/// on success.
+fn check_determinism(frontend: Frontend) -> std::io::Result<bool> {
     let base = std::env::temp_dir().join(format!("golden-determinism-{}", std::process::id()));
     let exe = std::env::current_exe()?;
     for run in ["a", "b"] {
@@ -278,7 +280,7 @@ fn check_determinism(xfail: Option<&Path>, frontend: Frontend) -> std::io::Resul
             )));
         }
     }
-    let same = diff::diff(&base.join("a"), &base.join("b"), xfail)?;
+    let same = diff::diff(&base.join("a"), &base.join("b"), None)?;
     if same {
         std::fs::remove_dir_all(&base)?;
     } else {

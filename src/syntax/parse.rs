@@ -30,15 +30,22 @@
 //!
 //! Contents:
 //! - `pub fn parse<'s>(t: &Tokens<'s>, lex: &'static Lexicon) -> Ast<'s>`
+//! - `pub(super) struct Parser<'t, 's>`, `pub(super) enum Head`, `pub(super) struct Frame`,
+//!   `pub(super) enum Wait`, `Frame::open(node: Node) -> Frame`
+//! - `pub(super) fn is_glue(gap: &str) -> bool`
+//! - `Parser::apply(&mut self, head: Head, stack: &mut Vec<Frame>)`,
+//!   `Parser::finish(&mut self, f: Frame, closer: u32, stack: &mut [Frame])`,
+//!   `Parser::condition(&mut self) -> u32`, `Parser::touches(&self, a: u32, b: u32) -> bool`,
+//!   `Parser::span_text(&self, a: u32, b: u32) -> Cow<'s, str>`,
+//!   `Parser::push_word(&mut self, a: u32, b: u32) -> Node`, `Parser::verbatim(&mut self, first: u32) -> Node`
 //! - `pub const DEPTH_MAX: u32`
 //! - `pub(super) fn parse_expression(t: &Tokens<'_>, lex: &'static Lexicon) -> bool`
-
-use std::borrow::Cow;
 
 use crate::syntax::ast::{Ast, NONE, Node, Tag};
 use crate::syntax::diag::Code;
 use crate::syntax::lexicon::{Backslash, Lexicon};
 use crate::syntax::token::{Tag as T, Tokens};
+use std::borrow::Cow;
 
 /// The deepest expression, group or delimiter nesting the parser reads;
 /// deeper input is a `P0006` and kept as tokens. Block nesting has no cap
@@ -77,6 +84,33 @@ pub(super) enum Head {
     /// `.elseif`, `} else if (c) {` (an `If`), `.else`, `} else {` (an
     /// `Else`): closes a branch, opens the next.
     Branch(Node),
+}
+
+/// An open block: its node and the statements read into it so far.
+pub(super) struct Frame {
+    pub(super) node: Node,
+    pub(super) items: Vec<u32>,
+    /// Earlier branches of an `If` chain: their bodies' offsets, whose
+    /// closer is patched when the chain ends.
+    chain: Vec<u32>,
+    /// The chain's first branch (`node` itself for any other block).
+    head: Node,
+    /// What a Spectre block waits for before its body.
+    pub(super) wait: Wait,
+    /// A Spectre branch's `}`, once read (the chain may go on with `else`).
+    pub(super) closer: u32,
+}
+
+/// What a Spectre block on the stack waits for.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum Wait {
+    /// Nothing: its body is being read.
+    No,
+    /// Its `{` (a `real f()` or `if (c)` whose brace is on the next line),
+    /// or for a branch its one unbraced statement.
+    Brace,
+    /// A branch that is complete: an `else` may continue the chain.
+    Else,
 }
 
 /// Parses all of `t` (read by `lex`, the file's lexicon). Allocates the node
@@ -145,33 +179,11 @@ pub(super) fn parse_expression(t: &Tokens<'_>, lex: &'static Lexicon) -> bool {
     e.0 != NONE && p.ast.tag(e) != Tag::Bad && p.next_statement(&mut s).is_none()
 }
 
-// ---- private ----
-
-/// An open block: its node and the statements read into it so far.
-pub(super) struct Frame {
-    pub(super) node: Node,
-    pub(super) items: Vec<u32>,
-    /// Earlier branches of an `If` chain: their bodies' offsets, whose
-    /// closer is patched when the chain ends.
-    chain: Vec<u32>,
-    /// The chain's first branch (`node` itself for any other block).
-    head: Node,
-    /// What a Spectre block waits for before its body.
-    pub(super) wait: Wait,
-    /// A Spectre branch's `}`, once read (the chain may go on with `else`).
-    pub(super) closer: u32,
-}
-
-/// What a Spectre block on the stack waits for.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(super) enum Wait {
-    /// Nothing: its body is being read.
-    No,
-    /// Its `{` (a `real f()` or `if (c)` whose brace is on the next line),
-    /// or for a branch its one unbraced statement.
-    Brace,
-    /// A branch that is complete: an `else` may continue the chain.
-    Else,
+/// hspice.peg `l_glue_break`: blanks, `\\`, blanks, the newline, blanks.
+pub(super) fn is_glue(gap: &str) -> bool {
+    gap.trim_matches([' ', '\t'])
+        .strip_prefix("\\\\")
+        .is_some_and(|r| r.trim_start_matches([' ', '\t', '\r']) == "\n")
 }
 
 impl Frame {
@@ -190,6 +202,113 @@ impl Frame {
         }
     }
 }
+
+impl<'s> Parser<'_, 's> {
+    /// Puts one head's node where it belongs on the block stack.
+    pub(super) fn apply(&mut self, head: Head, stack: &mut Vec<Frame>) {
+        let at = self.first;
+        let open = self.ast.tag(stack.last().expect("root").node);
+        match head {
+            Head::Flat(n) => stack.last_mut().expect("root").items.push(n.0),
+            Head::Open(n) => stack.push(Frame::open(n)),
+            Head::Close(tag, card) => {
+                let closes = open == tag || (tag == Tag::If && open == Tag::Else);
+                if stack.len() > 1 && closes {
+                    let f = stack.pop().expect("a block is open");
+                    self.finish(f, card.0, stack);
+                } else {
+                    self.ast.diag(Code::P0004, at);
+                    stack.last_mut().expect("root").items.push(card.0);
+                }
+            }
+            Head::Branch(branch) if stack.len() > 1 && open == Tag::If => {
+                let mut f = stack.pop().expect("an If is open");
+                let body = self.ast.push_body(branch.0, f.closer, &f.items);
+                self.ast.set_rhs(f.node, body);
+                f.chain.push(body);
+                stack.push(Frame {
+                    node: branch,
+                    items: Vec::new(),
+                    chain: f.chain,
+                    head: f.head,
+                    wait: Wait::No,
+                    closer: NONE,
+                });
+            }
+            Head::Branch(branch) => {
+                // A branch with no `.if` open: kept as a statement.
+                self.ast.diag(Code::P0004, at);
+                stack.last_mut().expect("root").items.push(branch.0);
+            }
+        }
+    }
+
+    /// Closes frame `f` with `closer` and adds it to its parent; an `If`
+    /// chain's earlier branches get the same closer, and the chain is one
+    /// statement of its parent, its first branch.
+    pub(super) fn finish(&mut self, f: Frame, closer: u32, stack: &mut [Frame]) {
+        let body = self.ast.push_body(NONE, closer, &f.items);
+        self.ast.set_rhs(f.node, body);
+        for &b in &f.chain {
+            self.ast.set_extra(b + 1, closer);
+        }
+        stack.last_mut().expect("root").items.push(f.head.0);
+    }
+
+    /// A conditional's condition, the rest of its statement as one
+    /// expression; the fields list holding it.
+    pub(super) fn condition(&mut self) -> u32 {
+        let e = self.expr_all();
+        self.ast.push_list(&[e.0])
+    }
+
+    /// Whether tokens `a` and `b` touch: nothing between them, or only an
+    /// HSPICE `\\` glue break.
+    pub(super) fn touches(&self, a: u32, b: u32) -> bool {
+        let (e, s) = (self.t.end(a) as usize, self.t.start(b) as usize);
+        if e == s {
+            return true;
+        }
+        self.t.lexicon_at(b).backslash == Backslash::Hspice && is_glue(&self.t.source()[e..s])
+    }
+
+    /// The text of tokens `a..=b` as one name: the source span, or with an
+    /// HSPICE glue cut out.
+    pub(super) fn span_text(&self, a: u32, b: u32) -> Cow<'s, str> {
+        let src = self.t.source();
+        let (s, e) = (self.t.start(a) as usize, self.t.end(b) as usize);
+        if (a..b).all(|k| self.t.end(k) == self.t.start(k + 1)) {
+            return Cow::Borrowed(&src[s..e]);
+        }
+        let mut out = String::new();
+        for k in a..=b {
+            out.push_str(self.t.text(k));
+        }
+        Cow::Owned(out)
+    }
+
+    /// Pushes a `Word` over tokens `a..=b`.
+    pub(super) fn push_word(&mut self, a: u32, b: u32) -> Node {
+        let text = self.span_text(a, b);
+        let name = self.ast.intern(text);
+        self.ast.push(Tag::Word, a, b, name.0)
+    }
+
+    /// Keeps the rest of the statement from `first` as a `Verbatim` with a
+    /// `P0001`.
+    pub(super) fn verbatim(&mut self, first: u32) -> Node {
+        self.ast.diag(Code::P0001, first);
+        let d = self.t.lexicon_at(first).dialect;
+        let k = crate::codegen::Dialect::ALL
+            .iter()
+            .position(|&x| x == d)
+            .expect("every lexicon's dialect is in Dialect::ALL");
+        self.i = self.end;
+        self.ast.push(Tag::Verbatim, first, self.end - 1, k as u32)
+    }
+}
+
+// ---- private ----
 
 impl<'s> Parser<'_, 's> {
     /// The statement after the one ending at token `*s`: its first token and
@@ -279,57 +398,6 @@ impl<'s> Parser<'_, 's> {
         self.apply(head, stack);
     }
 
-    /// Puts one head's node where it belongs on the block stack.
-    pub(super) fn apply(&mut self, head: Head, stack: &mut Vec<Frame>) {
-        let at = self.first;
-        let open = self.ast.tag(stack.last().expect("root").node);
-        match head {
-            Head::Flat(n) => stack.last_mut().expect("root").items.push(n.0),
-            Head::Open(n) => stack.push(Frame::open(n)),
-            Head::Close(tag, card) => {
-                let closes = open == tag || (tag == Tag::If && open == Tag::Else);
-                if stack.len() > 1 && closes {
-                    let f = stack.pop().expect("a block is open");
-                    self.finish(f, card.0, stack);
-                } else {
-                    self.ast.diag(Code::P0004, at);
-                    stack.last_mut().expect("root").items.push(card.0);
-                }
-            }
-            Head::Branch(branch) if stack.len() > 1 && open == Tag::If => {
-                let mut f = stack.pop().expect("an If is open");
-                let body = self.ast.push_body(branch.0, f.closer, &f.items);
-                self.ast.set_rhs(f.node, body);
-                f.chain.push(body);
-                stack.push(Frame {
-                    node: branch,
-                    items: Vec::new(),
-                    chain: f.chain,
-                    head: f.head,
-                    wait: Wait::No,
-                    closer: NONE,
-                });
-            }
-            Head::Branch(branch) => {
-                // A branch with no `.if` open: kept as a statement.
-                self.ast.diag(Code::P0004, at);
-                stack.last_mut().expect("root").items.push(branch.0);
-            }
-        }
-    }
-
-    /// Closes frame `f` with `closer` and adds it to its parent; an `If`
-    /// chain's earlier branches get the same closer, and the chain is one
-    /// statement of its parent, its first branch.
-    pub(super) fn finish(&mut self, f: Frame, closer: u32, stack: &mut [Frame]) {
-        let body = self.ast.push_body(NONE, closer, &f.items);
-        self.ast.set_rhs(f.node, body);
-        for &b in &f.chain {
-            self.ast.set_extra(b + 1, closer);
-        }
-        stack.last_mut().expect("root").items.push(f.head.0);
-    }
-
     /// A `.control` or `.data` line: the closer, a `.control` analysis
     /// command read as its dot card, or a `Line`.
     fn script_line(&mut self, block: Node) -> Head {
@@ -372,65 +440,6 @@ impl<'s> Parser<'_, 's> {
                 .unwrap_or(T::Directive),
         )
     }
-
-    /// A conditional's condition, the rest of its statement as one
-    /// expression; the fields list holding it.
-    pub(super) fn condition(&mut self) -> u32 {
-        let e = self.expr_all();
-        self.ast.push_list(&[e.0])
-    }
-
-    /// Whether tokens `a` and `b` touch: nothing between them, or only an
-    /// HSPICE `\\` glue break.
-    pub(super) fn touches(&self, a: u32, b: u32) -> bool {
-        let (e, s) = (self.t.end(a) as usize, self.t.start(b) as usize);
-        if e == s {
-            return true;
-        }
-        self.t.lexicon_at(b).backslash == Backslash::Hspice && is_glue(&self.t.source()[e..s])
-    }
-
-    /// The text of tokens `a..=b` as one name: the source span, or with an
-    /// HSPICE glue cut out.
-    pub(super) fn span_text(&self, a: u32, b: u32) -> Cow<'s, str> {
-        let src = self.t.source();
-        let (s, e) = (self.t.start(a) as usize, self.t.end(b) as usize);
-        if (a..b).all(|k| self.t.end(k) == self.t.start(k + 1)) {
-            return Cow::Borrowed(&src[s..e]);
-        }
-        let mut out = String::new();
-        for k in a..=b {
-            out.push_str(self.t.text(k));
-        }
-        Cow::Owned(out)
-    }
-
-    /// Pushes a `Word` over tokens `a..=b`.
-    pub(super) fn push_word(&mut self, a: u32, b: u32) -> Node {
-        let text = self.span_text(a, b);
-        let name = self.ast.intern(text);
-        self.ast.push(Tag::Word, a, b, name.0)
-    }
-
-    /// Keeps the rest of the statement from `first` as a `Verbatim` with a
-    /// `P0001`.
-    pub(super) fn verbatim(&mut self, first: u32) -> Node {
-        self.ast.diag(Code::P0001, first);
-        let d = self.t.lexicon_at(first).dialect;
-        let k = crate::codegen::Dialect::ALL
-            .iter()
-            .position(|&x| x == d)
-            .expect("every lexicon's dialect is in Dialect::ALL");
-        self.i = self.end;
-        self.ast.push(Tag::Verbatim, first, self.end - 1, k as u32)
-    }
-}
-
-/// hspice.peg `l_glue_break`: blanks, `\\`, blanks, the newline, blanks.
-pub(super) fn is_glue(gap: &str) -> bool {
-    gap.trim_matches([' ', '\t'])
-        .strip_prefix("\\\\")
-        .is_some_and(|r| r.trim_start_matches([' ', '\t', '\r']) == "\n")
 }
 
 #[cfg(test)]

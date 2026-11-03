@@ -9,6 +9,8 @@
 use spicerack::syntax::ast::{Ast, NONE, Node, Tag};
 use spicerack::syntax::token::Tokens;
 
+// ---- private ----
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let [d, path] = args.as_slice() else {

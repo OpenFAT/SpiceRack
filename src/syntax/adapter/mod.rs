@@ -11,32 +11,99 @@
 //! is the inventory of the old reader, and phase 7 turns the wrong ones into
 //! behaviour changes (`migration.xfail` lists what this cannot reproduce).
 //!
-//! This file is the spine: the per-deck state, the text of tokens as the
-//! line stage joined them, the walk over statements and blocks, and the
-//! cards that only place rows. `values` reads values, `elements` SPICE
-//! element cards, `cards` SPICE dot cards, `named` Spectre and VACASK.
+//! This file is the spine: the per-deck state and the walk over statements
+//! and blocks (`.subckt`, sections, `.if`). `text` joins tokens as the line
+//! stage did, `refused` sorts what the grammar refused into `Raw` and
+//! `Unparsed`, `values` reads values, `shapes`, `elements`, `devices` and
+//! `sources` SPICE element cards, `cards`, `testbench`, `outputs` and
+//! `options` SPICE dot cards, `named`, `named_blocks`, `named_elements` and
+//! `named_analyses` Spectre and VACASK statements.
 //!
 //! Cites: `import/lower/mod.rs` (the lowering ported), `import/mod.rs`
 //! `logical`; `grammar/spice.peg` `card`, `Raw`, `Unparsed`.
 //!
 //! Contents:
-//! - `pub fn ast_to_ir(ast: &Ast, t: &Tokens, d: Dialect, name: &str) -> (CircuitIR, Report)`
+//! - `fn ast_to_ir(ast: &Ast, t: &Tokens, d: Dialect, name: &str) -> (CircuitIR, Report)`
+//! - `Cx::named(&self) -> bool`
+//! - `Cx::tag(&self, n: u32) -> Tag`
+//! - `Cx::main(&self, n: u32) -> u32`
+//! - `Cx::fields(&self, n: u32) -> &'a [u32]`
+//! - `Cx::body(&self, n: u32) -> &'a [u32]`
+//! - `Cx::ttag(&self, k: u32) -> T`
+//! - `Cx::cards(&mut self, stmts: &[u32], here: &mut Subcircuit, scope: Scope)`
+//! - `Cx::raw(&mut self, n: u32, here: &mut Subcircuit, block: bool)`
+//! - `Cx::unparsed(&mut self, n: u32, here: &mut Subcircuit)`
+//! - `Cx::keep(&mut self, n: u32, here: &mut Subcircuit, k: Kept)`
+//! - `Cx::card(&mut self, n: u32, here: &mut Subcircuit, scope: Scope)`
+//! - `Cx::section(&mut self, n: u32, library: Option<String>) -> LibSection`
+//! - `Cx::if_head_ok(&self, n: u32) -> bool`
+//! - `Cx::subckt(&mut self, n: u32, head: SubcktHead) -> Subcircuit`
 
 use std::collections::{HashMap, HashSet};
 
 use crate::codegen::Dialect;
 use crate::import::Report;
 use crate::ir::*;
-use crate::syntax::ast::{Ast, NONE, Node, Tag};
-use crate::syntax::lexicon::Lexicon;
+use crate::syntax::ast::{Ast, Node, Tag};
 use crate::syntax::token::{Tag as T, Tokens};
 
 mod cards;
+mod devices;
 mod elements;
 mod named;
+mod named_analyses;
+mod named_blocks;
 mod named_elements;
+mod options;
+mod outputs;
+mod refused;
+mod shapes;
+mod sources;
 mod testbench;
+mod text;
 mod values;
+
+/// The per-deck state, as `lower::Cx`.
+struct Cx<'a> {
+    ast: &'a Ast<'a>,
+    t: &'a Tokens<'a>,
+    d: Dialect,
+    /// The deck's `.model` names, lowercased (lower/mod.rs:82-86).
+    models: HashSet<String>,
+    report: Report,
+    tb: Testbench,
+    globals: Vec<String>,
+    functions: Vec<FuncDef>,
+    defs: Vec<Subcircuit>,
+    sections: Vec<LibSection>,
+    /// Spectre/VACASK: model kinds by name, and subcircuit names.
+    kinds: HashMap<String, String>,
+    subckts: Vec<String>,
+}
+
+/// Where a card sits (lower/mod.rs:66-73).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Scope {
+    Top,
+    Subckt,
+    Section,
+}
+
+/// What the old reader made of a card it could not lower.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Kept {
+    /// The grammar read it, the IR has no field: a raw line, counted.
+    Raw,
+    /// The grammar refused it: an `Unparsed` line.
+    Unparsed,
+}
+
+/// A `.subckt` head the grammar read: its name, ports and defaults.
+struct SubcktHead {
+    name: String,
+    ports: Vec<Port>,
+    params: Vec<ParamDef>,
+}
 
 /// Builds the `CircuitIR` named `name` and the `Report` that
 /// `import::parse(t.source(), name, d)` returns, from `ast`, the parse of
@@ -46,12 +113,14 @@ mod values;
 /// When `d` has no lexicon (CDL, Verilog).
 pub fn ast_to_ir(ast: &Ast, t: &Tokens, d: Dialect, name: &str) -> (CircuitIR, Report) {
     let d = d.family();
-    let lex = crate::syntax::lexicon::of(d).expect("ast_to_ir: a dialect with a reader");
+    assert!(
+        crate::syntax::lexicon::of(d).is_some(),
+        "ast_to_ir: a dialect with a reader"
+    );
     let mut cx = Cx {
         ast,
         t,
         d,
-        lex,
         models: HashSet::new(),
         report: Report::default(),
         tb: Testbench::default(),
@@ -104,339 +173,41 @@ pub fn ast_to_ir(ast: &Ast, t: &Tokens, d: Dialect, name: &str) -> (CircuitIR, R
     (ir, report)
 }
 
-// ---- private ----
-
-/// The per-deck state, as `lower::Cx`.
-struct Cx<'a> {
-    ast: &'a Ast<'a>,
-    t: &'a Tokens<'a>,
-    d: Dialect,
-    lex: &'static Lexicon,
-    /// The deck's `.model` names, lowercased (lower/mod.rs:82-86).
-    models: HashSet<String>,
-    report: Report,
-    tb: Testbench,
-    globals: Vec<String>,
-    functions: Vec<FuncDef>,
-    defs: Vec<Subcircuit>,
-    sections: Vec<LibSection>,
-    /// Spectre/VACASK: model kinds by name, and subcircuit names.
-    kinds: HashMap<String, String>,
-    subckts: Vec<String>,
-}
-
-/// Where a card sits (lower/mod.rs:66-73).
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Scope {
-    Top,
-    Subckt,
-    Section,
-}
-
-/// What the old reader made of a card it could not lower.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Kept {
-    /// The grammar read it, the IR has no field: a raw line, counted.
-    Raw,
-    /// The grammar refused it: an `Unparsed` line.
-    Unparsed,
-}
-
-/// spice.peg `rawkind`: the dot words whose card, when no rule reads it,
-/// is `Raw`; any other dot card no rule reads is `Unparsed`.
-const RAWKIND: &[&str] = &[
-    "acphasenoise",
-    "osdi_include",
-    "appendmodel",
-    "temperature",
-    "montecarlo",
-    "phasenoise",
-    "tran_noise",
-    "trannoise",
-    "unprotect",
-    "envelope",
-    "ptdnoise",
-    "pre_osdi",
-    "acmatch",
-    "dcmatch",
-    "hbnoise",
-    "snnoise",
-    "measure",
-    "biaschk",
-    "stimuli",
-    "connect",
-    "protect",
-    "options",
-    "nodeset",
-    "include",
-    "verilog",
-    "dcsens",
-    "pnoise",
-    "jitter",
-    "sample",
-    "unprot",
-    "option",
-    "dcvolt",
-    "global",
-    "dcinc",
-    "disto",
-    "envlp",
-    "hbosc",
-    "hblin",
-    "matex",
-    "noise",
-    "snosc",
-    "check",
-    "power",
-    "store",
-    "mosra",
-    "print",
-    "probe",
-    "graph",
-    "width",
-    "title",
-    "model",
-    "acxf",
-    "dcxf",
-    "four",
-    "hbac",
-    "hbxf",
-    "lstb",
-    "qpss",
-    "sens",
-    "snac",
-    "snxf",
-    "tran",
-    "meas",
-    "dout",
-    "stim",
-    "plot",
-    "prot",
-    "step",
-    "endc",
-    "opts",
-    "temp",
-    "save",
-    "fft",
-    "lin",
-    "net",
-    "pac",
-    "pss",
-    "pxf",
-    "stb",
-    "pat",
-    "opt",
-    "hdl",
-    "ac",
-    "dc",
-    "hb",
-    "mc",
-    "op",
-    "pz",
-    "sn",
-    "sp",
-    "tf",
-    "ic",
-];
-
 impl<'a> Cx<'a> {
-    fn named(&self) -> bool {
+    pub(super) fn named(&self) -> bool {
         matches!(self.d, Dialect::Spectre | Dialect::Vacask)
     }
 
-    fn tag(&self, n: u32) -> Tag {
+    pub(super) fn tag(&self, n: u32) -> Tag {
         self.ast.tag(Node(n))
     }
 
-    fn main(&self, n: u32) -> u32 {
+    pub(super) fn main(&self, n: u32) -> u32 {
         self.ast.main_token(Node(n))
     }
 
-    fn fields(&self, n: u32) -> &'a [u32] {
+    pub(super) fn fields(&self, n: u32) -> &'a [u32] {
         self.ast.fields(Node(n))
     }
 
-    fn body(&self, n: u32) -> &'a [u32] {
+    pub(super) fn body(&self, n: u32) -> &'a [u32] {
         self.ast.body(Node(n))
     }
 
-    fn ttag(&self, k: u32) -> T {
+    pub(super) fn ttag(&self, k: u32) -> T {
         self.t.tags()[k as usize]
     }
 
-    /// The last token of the statement starting at token `first` (a
-    /// Spectre statement runs on while parentheses are open, as the parser
-    /// joins it).
-    fn line_last(&self, first: u32) -> u32 {
-        let tags = self.t.tags();
-        let named = self.t.lexicon_at(first).letters.is_empty();
-        let mut depth = 0i32;
-        let mut k = first as usize;
-        loop {
-            match tags[k] {
-                T::LParen if named => depth += 1,
-                T::RParen if named => depth -= 1,
-                T::EndOfStatement => {
-                    let more = tags[k + 1..].iter().any(|&t| t == T::EndOfStatement);
-                    if depth <= 0 || !more || matches!(tags[k + 1], T::LangSpice | T::LangSpectre) {
-                        return k as u32 - 1;
-                    }
-                }
-                _ => {}
-            }
-            k += 1;
-        }
-    }
-
-    /// A flat statement's (or a block head's) logical-line text.
-    fn line(&self, n: u32) -> String {
-        let first = self.main(n);
-        self.span(first, self.line_last(first))
-    }
-
-    /// The last token of item or expression `n`.
-    fn last(&self, n: u32) -> u32 {
-        let a = self.ast;
-        let mut n = Node(n);
-        loop {
-            match a.tag(n) {
-                Tag::Word | Tag::Bad | Tag::Verbatim | Tag::Line => return a.lhs(n),
-                Tag::Assign | Tag::Binary => {
-                    if a.rhs(n) == NONE {
-                        return self.last_of_key(n);
-                    }
-                    n = Node(a.rhs(n));
-                }
-                Tag::Unary => n = Node(a.lhs(n)),
-                Tag::Ternary => n = Node(a.extra(a.rhs(n) + 1)),
-                Tag::Group | Tag::Call | Tag::Probe | Tag::Vector | Tag::List => {
-                    return a.extra(a.rhs(n));
-                }
-                Tag::Index => return a.extra(a.rhs(n) + 1),
-                Tag::Paren | Tag::Delimited => return a.rhs(n),
-                Tag::Ident => return a.rhs(n),
-                Tag::Seq => {
-                    let parts = a.list(a.lhs(n));
-                    n = Node(*parts.last().expect("a Seq has parts"));
-                }
-                // else: leaves and statements anchor at their main token.
-                _ => return a.main_token(n),
-            }
-        }
-    }
-
-    fn last_of_key(&self, n: Node) -> u32 {
-        // An `Assign` with no value ends at its `=`, the token after its key.
-        self.last(self.ast.lhs(n)) + 1
-    }
-
-    /// The first token of item or expression `n` (a binary operator's
-    /// anchor is the operator).
-    fn first(&self, n: u32) -> u32 {
-        let a = self.ast;
-        let mut n = Node(n);
-        while matches!(a.tag(n), Tag::Binary | Tag::Ternary | Tag::Index) {
-            n = Node(a.lhs(n));
-        }
-        a.main_token(n)
-    }
-
-    /// The text of item `n` as the line stage joined it.
-    fn text(&self, n: u32) -> String {
-        self.span(self.first(n), self.last(n))
-    }
-
-    /// Tokens `a..=b` as `import::logical` joined them: the source inside
-    /// one physical piece, one blank between pieces (a continuation, a
-    /// comment), nothing across an HSPICE `\\` glue; VACASK glues a bracket
-    /// to what precedes it and puts a blank after it.
-    fn span(&self, a: u32, b: u32) -> String {
-        let mut out = String::new();
-        for k in a..=b {
-            if k > a {
-                out.push_str(&self.gap(k - 1, k));
-            }
-            out.push_str(self.t.text(k));
-        }
-        out
-    }
-
-    /// What the line stage put between tokens `p` and `k`.
-    fn gap(&self, p: u32, k: u32) -> std::borrow::Cow<'a, str> {
-        let src = self.t.source();
-        let g = &src[self.t.end(p) as usize..self.t.start(k) as usize];
-        let lex = self.t.lexicon_at(k);
-        if lex.brackets_join {
-            // quirk: vacask.peg `Glue`, a bracket, is joined with nothing;
-            // the `Piece` after one gets a blank (import/mod.rs `logical`).
-            let bracket = |t: T| {
-                matches!(
-                    t,
-                    T::LParen | T::RParen | T::LBracket | T::RBracket | T::LBrace | T::RBrace
-                )
-            };
-            if bracket(self.ttag(k)) {
-                return "".into();
-            }
-            if bracket(self.ttag(p)) {
-                return " ".into();
-            }
-            return if g.bytes().all(|c| matches!(c, b' ' | b'\t' | b'\r')) {
-                g.into()
-            } else {
-                " ".into()
-            };
-        }
-        if lex.backslash == crate::syntax::lexicon::Backslash::Hspice
-            && crate::syntax::parse::is_glue(g)
-        {
-            return "".into();
-        }
-        if g.contains('\n') || g.contains("/*") {
-            " ".into()
-        } else {
-            g.into()
-        }
-    }
-
     /// Each statement of `stmts`, in order.
-    fn cards(&mut self, stmts: &[u32], here: &mut Subcircuit, scope: Scope) {
+    pub(super) fn cards(&mut self, stmts: &[u32], here: &mut Subcircuit, scope: Scope) {
         for &s in stmts {
             self.card(s, here, scope);
         }
     }
 
-    /// Every line of statement `n`, a block's head, body and closer
-    /// included: a `Block` kept whole.
-    fn lines(&self, n: u32) -> Vec<String> {
-        let mut out = Vec::new();
-        let mut work = vec![(n, false)];
-        while let Some((s, closed)) = work.pop() {
-            if closed {
-                if let Some(c) = self.ast.closer(Node(s)) {
-                    out.push(self.line(c.0));
-                }
-                continue;
-            }
-            out.push(self.line(s));
-            if self.ast.rhs(Node(s)) == NONE || self.tag(s) == Tag::Instance {
-                continue;
-            }
-            // Push in reverse: the closer, the chained branch, the body.
-            match self.ast.next(Node(s)) {
-                Some(nx) => work.push((nx.0, false)),
-                None => work.push((s, true)),
-            }
-            for &b in self.body(s).iter().rev() {
-                work.push((b, false));
-            }
-        }
-        out
-    }
-
     /// A card kept as text (lower/mod.rs `raw`): a block one raw line per
     /// line, a SPICE element in its place among the components.
-    fn raw(&mut self, n: u32, here: &mut Subcircuit, block: bool) {
+    pub(super) fn raw(&mut self, n: u32, here: &mut Subcircuit, block: bool) {
         self.report.raw += 1;
         if block {
             here.raw_spice.extend(self.lines(n));
@@ -451,107 +222,21 @@ impl<'a> Cx<'a> {
     }
 
     /// A card the grammar refused: a raw line and a `Report::unparsed` one.
-    fn unparsed(&mut self, n: u32, here: &mut Subcircuit) {
+    pub(super) fn unparsed(&mut self, n: u32, here: &mut Subcircuit) {
         let line = self.line(n);
         self.report.unparsed.push(line.clone());
         here.raw_spice.push(line);
     }
 
-    fn keep(&mut self, n: u32, here: &mut Subcircuit, k: Kept) {
+    pub(super) fn keep(&mut self, n: u32, here: &mut Subcircuit, k: Kept) {
         match k {
             Kept::Raw => self.raw(n, here, false),
             Kept::Unparsed => self.unparsed(n, here),
         }
     }
 
-    /// quirk: spice.peg `Raw <- '.' rawkind !namechar rest / ends rest`: a
-    /// dot card no rule reads is `Raw` when its word is a `rawkind` (or
-    /// `.ends`/`.eom`), else `Unparsed` (and so are non-dot lines).
-    fn refused(&self, n: u32) -> Kept {
-        // The dot word as spice.peg's `!namechar` reads it: the head token
-        // and the name bytes touching it (`.probe/csd` is no `.probe`).
-        let first = self.main(n);
-        let last = self.line_last(first);
-        let mut end = first;
-        while end < last
-            && self.t.end(end) == self.t.start(end + 1)
-            && !matches!(
-                self.ttag(end + 1),
-                T::Comma
-                    | T::Equal
-                    | T::EqualEqual
-                    | T::BangEqual
-                    | T::LessEqual
-                    | T::GreaterEqual
-                    | T::LParen
-                    | T::RParen
-                    | T::Quote
-                    | T::String
-                    | T::LBrace
-                    | T::RBrace
-            )
-        {
-            end += 1;
-        }
-        let word = self.span(first, end).to_ascii_lowercase();
-        let Some(w) = word.strip_prefix('.') else {
-            return Kept::Unparsed;
-        };
-        if w == "ends" || w == "eom" || self.dialect_raw(w) || RAWKIND.contains(&w) {
-            Kept::Raw
-        } else {
-            Kept::Unparsed
-        }
-    }
-
-    /// quirk: the overlays' own raw dot words: ltspice.peg `Raw_lt`,
-    /// xyce.peg `Raw_xy`.
-    fn dialect_raw(&self, w: &str) -> bool {
-        const LT: &[&str] = &[
-            "endmachine",
-            "savestate",
-            "loadstate",
-            "softstart",
-            "backanno",
-            "savebias",
-            "loadbias",
-            "machine",
-            "fourier",
-            "output",
-            "ferret",
-            "state",
-            "wave",
-            "rule",
-            "endl",
-            "fra",
-        ];
-        const XY: &[&str] = &[
-            "embeddedsampling",
-            "global_param",
-            "temperature",
-            "preprocess",
-            "objective",
-            "sampling",
-            "initcond",
-            "result",
-            "mpde",
-            "dcop",
-            "temp",
-            "save",
-            "sens",
-            "pce",
-            "mor",
-            "rol",
-        ];
-        match self.d {
-            Dialect::Ltspice => LT.contains(&w),
-            Dialect::Xyce => XY.contains(&w),
-            _ => false,
-        }
-    }
-
     /// One card, as `lower::Cx::card`.
-    fn card(&mut self, n: u32, here: &mut Subcircuit, scope: Scope) {
+    pub(super) fn card(&mut self, n: u32, here: &mut Subcircuit, scope: Scope) {
         if self.named() {
             return self.named_card_spine(n, here, scope);
         }
@@ -610,6 +295,73 @@ impl<'a> Cx<'a> {
         }
     }
 
+    /// `.lib name` … `.endl`: its cards lowered as at the top, into the
+    /// section's own body and definitions (lower/sections.rs `section`).
+    pub(super) fn section(&mut self, n: u32, library: Option<String>) -> LibSection {
+        let name_item = self.fields(n)[0];
+        let mut body = sub(&self.name_of(name_item));
+        let (first, first_f) = (self.defs.len(), self.functions.len());
+        let stmts = self.body(n).to_vec();
+        self.cards(&stmts, &mut body, Scope::Section);
+        let functions = self.functions.split_off(first_f);
+        let subcircuit_defs = self.defs.split_off(first);
+        LibSection {
+            library,
+            body,
+            subcircuit_defs,
+            functions,
+        }
+    }
+
+    /// quirk: spice.peg `Branch <- '.if' s? Cond s? nl`: the condition is
+    /// one parenthesized group ending the line.
+    pub(super) fn if_head_ok(&self, n: u32) -> bool {
+        let first = self.main(n);
+        let last = self.line_last(first);
+        first < last
+            && self.ttag(first + 1) == T::LParen
+            && self.paren_close(first + 1) == Some(last)
+    }
+
+    /// `.subckt` … `.ends` (lower/mod.rs `subckt`): nested definitions
+    /// hoisted as `<parent>__<name>`, the parent's references renamed.
+    pub(super) fn subckt(&mut self, n: u32, head: SubcktHead) -> Subcircuit {
+        let mut sc = sub(&head.name);
+        sc.ports = head.ports;
+        sc.parameters = head.params;
+        let first = self.defs.len();
+        let mut renames: Vec<(String, String)> = Vec::new();
+        for &k in self.body(n) {
+            if self.tag(k) == Tag::Subckt
+                && let Some(h) = self.subckt_head(k)
+            {
+                let mut inner = self.subckt(k, h);
+                let scoped = format!("{}__{}", sc.name, inner.name);
+                renames.push((std::mem::replace(&mut inner.name, scoped.clone()), scoped));
+                self.defs.push(inner);
+            } else {
+                self.card(k, &mut sc, Scope::Subckt);
+            }
+        }
+        for inst in sc.instances.iter_mut().chain(
+            self.defs[first..]
+                .iter_mut()
+                .flat_map(|d| d.instances.iter_mut()),
+        ) {
+            if let Some((_, to)) = renames
+                .iter()
+                .find(|(from, _)| from.eq_ignore_ascii_case(&inst.subcircuit))
+            {
+                inst.subcircuit = to.clone();
+            }
+        }
+        sc
+    }
+}
+
+// ---- private ----
+
+impl<'a> Cx<'a> {
     /// A block whose head the grammar refused: the head `Unparsed`, the
     /// body read as cards where the block sits, the closer refused too.
     fn dissolve(&mut self, n: u32, here: &mut Subcircuit, scope: Scope) {
@@ -630,34 +382,6 @@ impl<'a> Cx<'a> {
             Tag::Save => self.ttag(self.main(n)) == T::KwSave,
             _ => false,
         }
-    }
-
-    /// `.lib name` … `.endl`: its cards lowered as at the top, into the
-    /// section's own body and definitions (lower/sections.rs `section`).
-    fn section(&mut self, n: u32, library: Option<String>) -> LibSection {
-        let name_item = self.fields(n)[0];
-        let mut body = sub(&self.name_of(name_item));
-        let (first, first_f) = (self.defs.len(), self.functions.len());
-        let stmts = self.body(n).to_vec();
-        self.cards(&stmts, &mut body, Scope::Section);
-        let functions = self.functions.split_off(first_f);
-        let subcircuit_defs = self.defs.split_off(first);
-        LibSection {
-            library,
-            body,
-            subcircuit_defs,
-            functions,
-        }
-    }
-
-    /// quirk: spice.peg `Branch <- '.if' s? Cond s? nl`: the condition is
-    /// one parenthesized group ending the line.
-    fn if_head_ok(&self, n: u32) -> bool {
-        let first = self.main(n);
-        let last = self.line_last(first);
-        first < last
-            && self.ttag(first + 1) == T::LParen
-            && self.paren_close(first + 1) == Some(last)
     }
 
     /// The `)` matching the `(` at token `open`, on its statement.
@@ -725,48 +449,6 @@ impl<'a> Cx<'a> {
         }
         out
     }
-
-    /// `.subckt` … `.ends` (lower/mod.rs `subckt`): nested definitions
-    /// hoisted as `<parent>__<name>`, the parent's references renamed.
-    fn subckt(&mut self, n: u32, head: SubcktHead) -> Subcircuit {
-        let mut sc = sub(&head.name);
-        sc.ports = head.ports;
-        sc.parameters = head.params;
-        let first = self.defs.len();
-        let mut renames: Vec<(String, String)> = Vec::new();
-        for &k in self.body(n) {
-            if self.tag(k) == Tag::Subckt
-                && let Some(h) = self.subckt_head(k)
-            {
-                let mut inner = self.subckt(k, h);
-                let scoped = format!("{}__{}", sc.name, inner.name);
-                renames.push((std::mem::replace(&mut inner.name, scoped.clone()), scoped));
-                self.defs.push(inner);
-            } else {
-                self.card(k, &mut sc, Scope::Subckt);
-            }
-        }
-        for inst in sc.instances.iter_mut().chain(
-            self.defs[first..]
-                .iter_mut()
-                .flat_map(|d| d.instances.iter_mut()),
-        ) {
-            if let Some((_, to)) = renames
-                .iter()
-                .find(|(from, _)| from.eq_ignore_ascii_case(&inst.subcircuit))
-            {
-                inst.subcircuit = to.clone();
-            }
-        }
-        sc
-    }
-}
-
-/// A `.subckt` head the grammar read: its name, ports and defaults.
-struct SubcktHead {
-    name: String,
-    ports: Vec<Port>,
-    params: Vec<ParamDef>,
 }
 
 fn implicit_rser(components: &mut [Component]) {

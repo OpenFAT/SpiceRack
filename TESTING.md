@@ -74,7 +74,7 @@ cargo build -j 4 --release --no-default-features --features json --bin golden
 G=${CARGO_TARGET_DIR:-target}/release/golden
 nix develop .#testing -c env IHP_PDK=<IHP-Open-PDK checkout> $G record <out_dir>
 $G diff <baseline> <out_dir> --xfail migration.xfail
-nix develop .#testing -c env IHP_PDK=<...> $G check-determinism --xfail migration.xfail
+nix develop .#testing -c env IHP_PDK=<...> $G check-determinism [--frontend syntax]
 ```
 
 Inputs (the `MANIFEST` of each record lists them, with content hashes):
