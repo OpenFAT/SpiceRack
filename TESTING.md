@@ -12,7 +12,7 @@ trusts. The rules behind it are in `AGENTS.md` (Testing).
 | docs | the site builds strictly; every Python example in it runs | `nix develop .#docs -c mkdocs build --strict`; `tests/test_docs.py` | `.github/workflows/docs.yaml`; pytest |
 | release | tag matches `Cargo.toml` and `pyproject.toml`, wheels for every target, sdist | `tools/bump_version.py`, then the release workflow | `.github/workflows/tags.yaml`, `publish.yaml` |
 | nightly | the spice-bench and corpus import suite (`--features corpus`) | `nix develop .#testing -c cargo test --no-default-features --features corpus --release --test test_import_suite` | `.github/workflows/nightly.yaml`, 03:17 UTC daily and on demand |
-| golden | the transpiler rewrite's byte-identical gate against `daa0ad0` ("Golden gate" below) | `golden record`, then `golden diff <baseline> <new> --xfail migration.xfail` | local, before each rewrite phase lands |
+| golden | the transpiler rewrite's byte-identical gate against `daa0ad0`, and its tokenizer against today's reader ("Golden gate" below) | `golden record`, then `golden diff <baseline> <new> --xfail migration.xfail`; `cargo test --features corpus --test test_syntax_tokenize` | local, before each rewrite phase lands |
 
 `tools/check_style.py` is vendored from the `code-style` skill
 (https://github.com/OmarSiwy/NixOSConfig/tree/main/skills, sha256 `55f417592f6e7ec3…`).
@@ -41,6 +41,7 @@ provenance, never by re-deriving it the way codegen does.
 | `test_sections_pdk.rs` | real PDK files: section names against a line scan, fixpoints; real ngspice on gf180mcu's `sm141064.ngspice` (nothing raw: subcircuit `.param`s are locals) and real VACASK on its `demo/cmos180n.lib`, written by SpiceRack, bit-identical to the original's run; gf180mcu's sections SPICE -> Spectre -> IR by meaning or refused by named reason; sky130's combined library and the ~190 files it reaches, nothing unparsed or raw, written back as ngspice and as HSPICE and run on `tt` by ngspice bit-identical to the PDK's own files; ESPice `--tokenizer=hspice` on the HSPICE tree, a named known gap (+5.1%) |
 | `test_spectre_golden/` | goldens; Spectre is licence-gated, so the text is checked against the Spectre reference manual |
 | `test_ltspice_dialect.rs` | emitted text against the LTspice help; no LTspice binary, so unverified by execution |
+| `test_syntax_tokenize.rs` | today's reader, over every golden-gate input: the statements rebuilt from `syntax::tokenize`'s tokens against `import::logical_lines` (the grammars' line stages), each number token's value against `import::number_value` (the dialect's `Num` rule and the lowering's arithmetic) to the bit; the hand-read `simulator lang=spice` region of `tests/fixtures/pdk_sections/bare.scs`. Strict xfail: `tests/syntax_tokenize.xfail` |
 | `test_backends.rs`, `test_unit.rs` | spec examples |
 | `src/ir` (`schema_check.rs`) | the JSON Schema 2020-12 spec: an IR with every field set, every component and analysis variant, the shipped example and decks imported from ngspice, Spectre and VACASK validate against `schema/circuit-ir.schema.json`; the checker panics on any keyword it does not implement, and rejects one counterexample per keyword |
 
@@ -111,6 +112,23 @@ Measured on a 32-thread, 31 GB development machine, 2026-11-03, at `daa0ad0`:
   `nix develop .#testing -c cargo test -j 4 --no-default-features --features corpus --release --test test_import_suite -- fixpoint --test-threads=4`
   runs in 64.0 s wall, peak RSS 2.1 GB, once built. `ngspice_corpus_fixpoint`
   sets the wall time.
+
+Phase 1, the tokenizer (`src/syntax/`, not wired in), has its own gate:
+
+```sh
+nix develop .#testing -c env IHP_PDK=<...> cargo test -j 4 --release \
+  --no-default-features --features corpus --test test_syntax_tokenize -- --test-threads=4
+```
+
+It reads the same inputs through `tools/golden/inputs.rs`. Measured on the
+same machine, 2026-11-03, release build:
+- the gate: all 14,938 inputs, 3,664,966 logical lines and 8,357,766 number
+  tokens, 0 differences, in 25.9 s wall, peak RSS 839 MB (`command time -v`
+  on the test binary; it runs today's PEG reader as the oracle);
+- tokenize alone (`throughput`, run with `--ignored`): 201.3 MB of input,
+  30.1 M tokens, in 2.28 s, which is 88.4 MB/s. That process peaks at 227 MB
+  RSS, including the input walk, which parses each kit file with today's
+  reader to follow its includes.
 
 ## Known gaps
 

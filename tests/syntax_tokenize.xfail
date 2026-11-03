@@ -1,0 +1,10 @@
+# The transpiler tokenizer's strict xfail list (tests/test_syntax_tokenize.rs;
+# docs/research/transpiler-architecture.md §5, phase 1).
+#
+#   <input-set>/<relpath> <check> <reason>
+#
+# <check> is `lines` (the statements rebuilt from tokens differ from today's
+# logical lines) or `numbers` (a number token's value differs from today's).
+# An unlisted difference fails, and so does a listed line that no longer
+# differs (XPASS): delete it then. Each reason names today's bug, with the
+# manual or ngspice run that shows it.

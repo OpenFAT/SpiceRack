@@ -46,6 +46,12 @@ corpus = ["json"]
 name = "test_import_suite"
 required-features = ["corpus"]
 
+# The transpiler rewrite's tokenizer against today's reader (TESTING.md,
+# "Golden gate"), over every golden-gate input.
+[[test]]
+name = "test_syntax_tokenize"
+required-features = ["corpus"]
+
 [[bin]]
 name = "spice2rack"
 path = "tools/spice2rack/main.rs"
