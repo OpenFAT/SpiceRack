@@ -38,7 +38,7 @@
         openvafAlias = pkgs.runCommand "openvaf-alias" { } ''
           mkdir -p $out/bin && ln -s ${openvaf}/bin/openvaf-r $out/bin/openvaf
         '';
-        # Read-only deck corpora for tests/test_import_suite.rs's fixpoints.
+        # Read-only deck corpora for tests/test_import_suite/'s fixpoints.
         xyceRegression = pkgs.fetchFromGitHub {
           owner = "Xyce";
           repo = "Xyce_Regression";
@@ -116,7 +116,7 @@
             vacask
             espice.packages.${system}.espice
           ];
-          # tests/test_import_suite.rs: the spice-bench round trip and the
+          # tests/test_import_suite/: the spice-bench round trip and the
           # per-dialect fixpoint corpora.
           SPICE_BENCH = spiceBench;
           NGSPICE_CORPUS = spiceBench;
