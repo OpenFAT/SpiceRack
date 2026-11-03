@@ -253,7 +253,7 @@ fn throughput() {
         let ast = parse(&t, lex);
         parsing += at.elapsed().as_secs_f64();
         let at = Instant::now();
-        std::hint::black_box(ast_to_ir(&ast, &t, d, &key));
+        std::hint::black_box(ast_to_ir(&ast, &t, d, &key, None));
         adapting += at.elapsed().as_secs_f64();
         (bytes, tokens, nodes) = (bytes + src.len(), tokens + t.len(), nodes + ast.len());
     }

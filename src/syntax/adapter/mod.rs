@@ -30,7 +30,8 @@
 //! SPICE grammar's `card`, `Raw`, `Unparsed`.
 //!
 //! Contents:
-//! - `fn ast_to_ir(ast: &Ast, t: &Tokens, d: Dialect, name: &str) -> (CircuitIR, Report)`
+//! - `fn ast_to_ir(ast: &Ast, t: &Tokens, d: Dialect, name: &str, kit: Option<(&Kit, FileId)>) -> (CircuitIR, Report)`
+//! - `Cx::kit_def(&self, n: u32) -> Option<&'a Def>`, `Cx::kit_split(&self, n: u32) -> Option<Split>`
 //! - `Cx::named(&self) -> bool`
 //! - `Cx::tag(&self, n: u32) -> Tag`
 //! - `Cx::main(&self, n: u32) -> u32`
@@ -50,6 +51,7 @@ use crate::codegen::Dialect;
 use crate::import::Report;
 use crate::ir::*;
 use crate::syntax::ast::{Ast, Node, Tag};
+use crate::syntax::resolve::{Binding, Def, FileId, Kit, Split};
 use crate::syntax::token::{Tag as T, Tokens};
 use blocks::Opened;
 
@@ -86,6 +88,8 @@ struct Cx<'a> {
     /// Spectre/VACASK: model kinds by name, and subcircuit names.
     kinds: HashMap<String, String>,
     subckts: Vec<String>,
+    /// The kit this file is read in, and the file.
+    kit: Option<(&'a Kit, FileId)>,
 }
 
 /// Where a card sits (the old lowering).
@@ -114,16 +118,30 @@ struct SubcktHead {
 
 /// Builds the `CircuitIR` named `name` and the `Report` that
 /// `import::parse(t.source(), name, d)` returns, from `ast`, the parse of
-/// `t`, read in dialect `d` (`syntax::lexicon::of(d)`).
+/// `t`, read in dialect `d` (`syntax::lexicon::of(d)`). With `kit`, `ast` is
+/// that kit file's tree, and a master, model word or node split the file
+/// alone leaves open is read from the kit (`syntax::resolve`): a Spectre or
+/// VACASK master declared in another file, an R/C/L model, a range card's
+/// split.
 ///
 /// # Panics
-/// When `d` has no lexicon (CDL, Verilog).
-pub fn ast_to_ir(ast: &Ast, t: &Tokens, d: Dialect, name: &str) -> (CircuitIR, Report) {
+/// When `d` has no lexicon (CDL, Verilog); when `ast` is not `kit`'s tree of
+/// its file (its node count differs).
+pub fn ast_to_ir(
+    ast: &Ast,
+    t: &Tokens,
+    d: Dialect,
+    name: &str,
+    kit: Option<(&Kit, FileId)>,
+) -> (CircuitIR, Report) {
     let d = d.family();
     assert!(
         crate::syntax::lexicon::of(d).is_some(),
         "ast_to_ir: a dialect with a reader"
     );
+    if let Some((k, f)) = kit {
+        assert_eq!(ast.len(), k.node_count(f), "ast_to_ir: the kit file's tree");
+    }
     let mut cx = Cx {
         ast,
         t,
@@ -137,6 +155,7 @@ pub fn ast_to_ir(ast: &Ast, t: &Tokens, d: Dialect, name: &str) -> (CircuitIR, R
         sections: vec![],
         kinds: HashMap::new(),
         subckts: vec![],
+        kit,
     };
     let top_stmts = ast.fields(ast.root()).to_vec();
     if cx.named() {
@@ -203,6 +222,21 @@ impl<'a> Cx<'a> {
 
     pub(super) fn ttag(&self, k: u32) -> T {
         self.t.tags()[k as usize]
+    }
+
+    /// The declaration instance `n`'s master binds to in the kit.
+    pub(super) fn kit_def(&self, n: u32) -> Option<&'a Def> {
+        let (kit, f) = self.kit?;
+        match kit.binding(f, Node(n))? {
+            Binding::Def(id) => Some(kit.definition(id)),
+            Binding::Primitive(_) | Binding::Unknown => None,
+        }
+    }
+
+    /// The kit's corrected split of element `n`.
+    pub(super) fn kit_split(&self, n: u32) -> Option<Split> {
+        let (kit, f) = self.kit?;
+        kit.split(f, Node(n))
     }
 
     /// A card kept as text (the old lowering's `raw`): a block one raw line per

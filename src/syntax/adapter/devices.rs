@@ -149,6 +149,7 @@ impl<'a> Cx<'a> {
         let items = &self.items(n)[..];
         let iflag = |k: u32| ["thermal", "off", "on"].iter().any(|f| self.word_is(k, f));
         // Nodes while another word (no flag, no pair) follows; then the model.
+        // In a kit, the split is where the kit's model is.
         let mut m = 0;
         while m < items.len() && self.is_word(items[m]) {
             let next = items.get(m + 1);
@@ -157,6 +158,14 @@ impl<'a> Cx<'a> {
             } else {
                 break;
             }
+        }
+        if let Some(s) = self.kit_split(n) {
+            m = s.nodes as usize;
+            assert_eq!(
+                items.get(m),
+                Some(&s.master.0),
+                "the split's master is its item"
+            );
         }
         if m >= items.len() || !self.is_word(items[m]) || !self.inst_ok(&items[m + 1..]) {
             return None;

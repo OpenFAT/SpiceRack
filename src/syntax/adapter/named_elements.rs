@@ -1,6 +1,7 @@
 //! Spectre and VACASK instance statements → IR components (by built-in
 //! master or model kind) or subcircuit `Instance`s, with their source
-//! waveforms, as the old lowering builds them.
+//! waveforms, as the old lowering builds them; a master another file of
+//! the kit declares is read as `syntax::resolve` binds it.
 //!
 //! Cites: the old lowering (its named elements and analyses, ported);
 //! Spectre Circuit Simulator Reference 5.0 `[CMP]` (`vsource` #4, #17, #18,
@@ -13,9 +14,11 @@
 use std::collections::HashMap;
 
 use super::Cx;
+use super::named::{spectre_kind, vacask_builtin, vacask_kind};
 use crate::codegen::Dialect;
 use crate::ir::*;
 use crate::syntax::ast::{NONE, Node, Tag};
+use crate::syntax::resolve::{DefKind, Polarity};
 
 /// The keys one dialect's built-in masters use (the old lowering).
 struct Keys {
@@ -76,6 +79,13 @@ const VACASK: Keys = Keys {
     coupling: "k",
 };
 
+/// What the kit declares a master as.
+enum Declared {
+    Subckt,
+    /// A model, by the kind `Cx::declarations` would give it.
+    Model(String),
+}
+
 /// `"text"` without its quotes.
 pub(super) fn unquoted(v: &str) -> Option<String> {
     Some(v.strip_prefix('"')?.strip_suffix('"')?.to_string())
@@ -99,7 +109,14 @@ impl<'a> Cx<'a> {
             return None;
         }
         let mut master = self.name_of(m);
-        if let Some(b) = kinds.get(&master).and_then(|k| k.strip_prefix('=')) {
+        // A master this file does not declare: the kit's declaration.
+        let local = kinds.contains_key(&master) || subckts.contains(&master);
+        let kit = if local { None } else { self.kit_master(n) };
+        let kind_of = match &kit {
+            Some(Declared::Model(k)) => Some(k.clone()),
+            Some(Declared::Subckt) | None => kinds.get(&master).cloned(),
+        };
+        if let Some(b) = kind_of.as_deref().and_then(|k| k.strip_prefix('=')) {
             master = b.to_string();
         }
         let p = self.pairs(n);
@@ -277,7 +294,7 @@ impl<'a> Cx<'a> {
                     coeffs,
                 }
             }
-            m if subckts.iter().any(|s| s == m) => {
+            m if subckts.iter().any(|s| s == m) || matches!(kit, Some(Declared::Subckt)) => {
                 return Some(Err(Instance {
                     name: self.strip(&name, 'x'),
                     subcircuit: m.to_string(),
@@ -287,7 +304,7 @@ impl<'a> Cx<'a> {
                 }));
             }
             m => {
-                let kind = kinds.get(m)?.as_str();
+                let kind = kind_of.as_deref()?;
                 let (model, params) = (m.to_string(), kept(&[]));
                 match (kind, ns.as_slice()) {
                     ("d", [np, nm]) => Component::Diode {
@@ -346,6 +363,28 @@ impl<'a> Cx<'a> {
 // ---- private ----
 
 impl<'a> Cx<'a> {
+    /// What instance `n`'s master is declared as in the kit, its kind
+    /// named as `Cx::declarations` names a model's (the old lowering's
+    /// `spectre_kind`, `vacask_kind`, `vacask_builtin`).
+    fn kit_master(&self, n: u32) -> Option<Declared> {
+        match &self.kit_def(n)?.kind {
+            DefKind::Subckt { .. } => Some(Declared::Subckt),
+            DefKind::Model { word, polarity, .. } => {
+                let p = *polarity == Some(Polarity::P);
+                if self.d == Dialect::Vacask {
+                    let ty = polarity.map(|_| if p { -1.0 } else { 1.0 });
+                    return match vacask_kind(word, ty) {
+                        Some((kind, _)) => Some(Declared::Model(kind)),
+                        None => vacask_builtin(word).map(|b| Declared::Model(format!("={b}"))),
+                    };
+                }
+                let ty = p.then_some(if word == "bjt" { "pnp" } else { "p" });
+                Some(Declared::Model(spectre_kind(word, ty).0))
+            }
+            DefKind::Param | DefKind::Func | DefKind::Section => None,
+        }
+    }
+
     fn keys(&self) -> &'static Keys {
         if self.d == Dialect::Vacask {
             &VACASK

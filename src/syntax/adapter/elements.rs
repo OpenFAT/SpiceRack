@@ -2,7 +2,8 @@
 //! the old lowering builds them, each card first checked against
 //! the shape its letter's rule in the old SPICE grammar reads (a card that
 //! fails it was `Raw_element`, kept raw; one with no field after its name
-//! was `Unparsed`). Two-terminal and linear controlled elements here; POLY,
+//! was `Unparsed`). In a kit, an R/C/L card's model word is the one
+//! `syntax::resolve` finds among its values. Two-terminal and linear controlled elements here; POLY,
 //! `B`, semiconductors and `X` in `devices`, V and I in `sources`.
 //!
 //! Cites: the old lowering (ported); the old SPICE grammar's §3.1 element rules
@@ -105,6 +106,11 @@ impl<'a> Cx<'a> {
                     Some(&v) if self.tag(v) != Tag::Assign => (Some(v), &rest[1..]),
                     _ => (None, rest),
                 };
+                // The kit's model word: the value, or a word after it.
+                let kit_model = self.kit_split(n).map(|s| s.master.0);
+                let late = kit_model.filter(|m| inst.contains(m));
+                let inst: Vec<u32> = inst.iter().copied().filter(|&k| Some(k) != late).collect();
+                let inst = &inst[..];
                 if val.is_some_and(|v| !self.val_ok(v) || self.tag(v) == Tag::Seq)
                     || !self.inst_ok(inst)
                 {
@@ -127,10 +133,15 @@ impl<'a> Cx<'a> {
                     .collect();
                 let mut model = None;
                 let value = match val {
+                    Some(v) if late.is_some() => {
+                        model = late.map(|m| self.text(m));
+                        self.value(v)
+                    }
                     Some(v)
                         if self.is_word(v)
                             && self.number(v).is_none()
-                            && self.models.contains(&self.text(v).to_ascii_lowercase()) =>
+                            && (self.models.contains(&self.text(v).to_ascii_lowercase())
+                                || kit_model == Some(v)) =>
                     {
                         model = Some(self.text(v));
                         IrValue::Raw {

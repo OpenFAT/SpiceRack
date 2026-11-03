@@ -13,11 +13,13 @@
 //! - `pub struct Report` (what a deck lost: `unparsed` lines, `raw` count)
 //! - `pub fn decode(bytes: &[u8]) -> String`
 //! - `pub fn parse(src: &str, name: &str, d: Dialect) -> Result<(CircuitIR, Report), String>`
+//! - `pub fn parse_kit(kit: &Kit, file: FileId, name: &str) -> (CircuitIR, Report)`
 //! - `pub fn dump(src: &str, d: Dialect) -> Result<String, String>`
 
 use crate::codegen::Dialect;
 use crate::ir::*;
 use crate::syntax::ast::{Ast, NONE, Node, Tag};
+use crate::syntax::resolve::{FileId, Kit, Role};
 use crate::syntax::{self, lexicon};
 
 /// What a deck lost on the way to IR.
@@ -54,7 +56,28 @@ pub fn parse(src: &str, name: &str, d: Dialect) -> Result<(CircuitIR, Report), S
     let lex = lexicon::of(d).ok_or_else(|| format!("no {d:?} reader yet"))?;
     let t = syntax::tokenize(src, lex);
     let ast = syntax::parse(&t, lex);
-    Ok(syntax::ast_to_ir(&ast, &t, d, name))
+    Ok(syntax::ast_to_ir(&ast, &t, d, name, None))
+}
+
+/// Parses file `file` of `kit` (its [`File::text`], in the kit's dialect)
+/// into IR named `name`, as [`parse`] does, but for what the file alone
+/// leaves open, which `kit` answers: a master another file declares, an
+/// R/C/L card's model word, a range card's node split.
+///
+/// # Panics
+/// When `file` is a Verilog-A source or unread (it has no tree).
+///
+/// [`File::text`]: crate::syntax::resolve::File::text
+pub fn parse_kit(kit: &Kit, file: FileId, name: &str) -> (CircuitIR, Report) {
+    let f = kit.file(file);
+    assert!(
+        matches!(f.role, Role::Deck | Role::Library),
+        "parse_kit: a file the kit read"
+    );
+    let lex = lexicon::of(kit.dialect()).expect("a kit's dialect has a reader");
+    let t = syntax::tokenize(&f.text, lex);
+    let ast = syntax::parse(&t, lex);
+    syntax::ast_to_ir(&ast, &t, kit.dialect(), name, Some((kit, file)))
 }
 
 /// The AST of `src` (debugging the parser): one row per statement and
