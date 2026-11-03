@@ -34,7 +34,13 @@
       "items": {
         "$ref": "#/$defs/ModelLibrary"
       }
-    }
+    },
+    "raw_dialect": {
+      "description": "The dialect the raw_spice lines are written in, set by the importer; such lines reach only that dialect. Absent or null: generic SPICE.",
+      "oneOf": [{ "$ref": "#/$defs/Dialect" }, { "type": "null" }]
+    },
+    "globals": { "description": ".global nodes: one net under the same name in every subcircuit. Absent: none.", "type": "array", "items": { "type": "string" } },
+    "functions": { "description": "Top-level .func definitions. Absent: none.", "type": "array", "items": { "$ref": "#/$defs/FuncDef" } }
   },
   "additionalProperties": false,
   "$defs": {
@@ -125,7 +131,8 @@
           "items": {
             "type": "string"
           }
-        }
+        },
+        "verilog_blocks": { "description": "Verilog blocks to co-simulate or synthesize. Absent: none.", "type": "array", "items": { "$ref": "#/$defs/VerilogBlock" } }
       },
       "additionalProperties": false
     },
@@ -203,7 +210,8 @@
           "items": {
             "$ref": "#/$defs/StringPair"
           }
-        }
+        },
+        "at": { "description": "Where the instance sat among its subcircuit's components, as read: before components[at]. Absent: after them all.", "type": "integer", "minimum": 0 }
       },
       "additionalProperties": false
     },
@@ -261,6 +269,7 @@
             "value": {
               "$ref": "#/$defs/IrValue"
             },
+            "model": { "description": "The .model the card names (R1 a b rmod l=10u); the value is then empty. Absent: null.", "type": ["string", "null"] },
             "params": {
               "type": "array",
               "items": {
@@ -296,6 +305,7 @@
             "value": {
               "$ref": "#/$defs/IrValue"
             },
+            "model": { "description": "The .model the card names (R1 a b rmod l=10u); the value is then empty. Absent: null.", "type": ["string", "null"] },
             "params": {
               "type": "array",
               "items": {
@@ -331,6 +341,7 @@
             "value": {
               "$ref": "#/$defs/IrValue"
             },
+            "model": { "description": "The .model the card names (R1 a b rmod l=10u); the value is then empty. Absent: null.", "type": ["string", "null"] },
             "params": {
               "type": "array",
               "items": {
@@ -712,6 +723,7 @@
             "ne": {
               "type": "string"
             },
+            "extra_nodes": { "description": "Nodes after the last named one, in card order (VDMOS thermal, SOI body and back gate). Absent: none.", "type": "array", "items": { "type": "string" } },
             "model": {
               "type": "string"
             },
@@ -753,8 +765,10 @@
               "type": "string"
             },
             "nb": {
-              "type": "string"
+              "description": "The bulk node; null on a 3-terminal VDMOS.",
+              "type": ["string", "null"]
             },
+            "extra_nodes": { "description": "Nodes after the last named one, in card order (VDMOS thermal, SOI body and back gate). Absent: none.", "type": "array", "items": { "type": "string" } },
             "model": {
               "type": "string"
             },
@@ -982,6 +996,21 @@
         },
         {
           "type": "object",
+          "description": "E/F/G/H POLY(n): controls are node pairs (E, G) or source names (F, H); coeffs in SPICE term order.",
+          "required": ["type", "name", "letter", "np", "nm", "controls", "coeffs"],
+          "properties": {
+            "type": { "const": "Poly" },
+            "name": { "type": "string" },
+            "letter": { "enum": ["E", "F", "G", "H"] },
+            "np": { "type": "string" },
+            "nm": { "type": "string" },
+            "controls": { "type": "array", "items": { "type": "string" } },
+            "coeffs": { "type": "array", "items": { "type": "number" } }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
           "required": [
             "type",
             "line"
@@ -1070,22 +1099,22 @@
               "const": "Sin"
             },
             "offset": {
-              "type": "number"
+              "$ref": "#/$defs/IrNum"
             },
             "amplitude": {
-              "type": "number"
+              "$ref": "#/$defs/IrNum"
             },
             "frequency": {
-              "type": "number"
+              "$ref": "#/$defs/IrNum"
             },
             "delay": {
-              "type": "number"
+              "$ref": "#/$defs/IrNum"
             },
             "damping": {
-              "type": "number"
+              "$ref": "#/$defs/IrNum"
             },
             "phase": {
-              "type": "number"
+              "$ref": "#/$defs/IrNum"
             }
           },
           "additionalProperties": false
@@ -1107,25 +1136,25 @@
               "const": "Pulse"
             },
             "initial": {
-              "type": "number"
+              "$ref": "#/$defs/IrNum"
             },
             "pulsed": {
-              "type": "number"
+              "$ref": "#/$defs/IrNum"
             },
             "delay": {
-              "type": "number"
+              "$ref": "#/$defs/IrNum"
             },
             "rise_time": {
-              "type": "number"
+              "$ref": "#/$defs/IrNum"
             },
             "fall_time": {
-              "type": "number"
+              "$ref": "#/$defs/IrNum"
             },
             "pulse_width": {
-              "type": "number"
+              "$ref": "#/$defs/IrNum"
             },
             "period": {
-              "type": "number"
+              "$ref": "#/$defs/IrNum"
             }
           },
           "additionalProperties": false
@@ -1143,16 +1172,16 @@
             "values": {
               "type": "array",
               "items": {
-                "$ref": "#/$defs/NumberPair"
+                "$ref": "#/$defs/IrNumPair"
               }
             },
             "repeat": {
               "description": "ngspice r=: the time the sequence repeats from, forever. Absent: once.",
-              "type": ["number", "string"]
+              "$ref": "#/$defs/IrNum"
             },
             "delay": {
               "description": "ngspice td=: the whole sequence delayed by this time. Absent: no delay.",
-              "type": ["number", "string"]
+              "$ref": "#/$defs/IrNum"
             }
           },
           "additionalProperties": false
@@ -1173,22 +1202,22 @@
               "const": "Exp"
             },
             "initial": {
-              "type": "number"
+              "$ref": "#/$defs/IrNum"
             },
             "pulsed": {
-              "type": "number"
+              "$ref": "#/$defs/IrNum"
             },
             "rise_delay": {
-              "type": "number"
+              "$ref": "#/$defs/IrNum"
             },
             "rise_tau": {
-              "type": "number"
+              "$ref": "#/$defs/IrNum"
             },
             "fall_delay": {
-              "type": "number"
+              "$ref": "#/$defs/IrNum"
             },
             "fall_tau": {
-              "type": "number"
+              "$ref": "#/$defs/IrNum"
             }
           },
           "additionalProperties": false
@@ -1208,19 +1237,19 @@
               "const": "Sffm"
             },
             "offset": {
-              "type": "number"
+              "$ref": "#/$defs/IrNum"
             },
             "amplitude": {
-              "type": "number"
+              "$ref": "#/$defs/IrNum"
             },
             "carrier_freq": {
-              "type": "number"
+              "$ref": "#/$defs/IrNum"
             },
             "modulation_index": {
-              "type": "number"
+              "$ref": "#/$defs/IrNum"
             },
             "signal_freq": {
-              "type": "number"
+              "$ref": "#/$defs/IrNum"
             }
           },
           "additionalProperties": false
@@ -1240,19 +1269,19 @@
               "const": "Am"
             },
             "amplitude": {
-              "type": "number"
+              "$ref": "#/$defs/IrNum"
             },
             "offset": {
-              "type": "number"
+              "$ref": "#/$defs/IrNum"
             },
             "modulating_freq": {
-              "type": "number"
+              "$ref": "#/$defs/IrNum"
             },
             "carrier_freq": {
-              "type": "number"
+              "$ref": "#/$defs/IrNum"
             },
             "delay": {
-              "type": "number"
+              "$ref": "#/$defs/IrNum"
             }
           },
           "additionalProperties": false
@@ -1263,13 +1292,13 @@
           "required": ["type", "na", "nt", "nalpha", "namp", "rtsam", "rtscapt", "rtsemt"],
           "properties": {
             "type": { "const": "TrNoise" },
-            "na": { "type": ["number", "string"] },
-            "nt": { "type": ["number", "string"] },
-            "nalpha": { "type": ["number", "string"] },
-            "namp": { "type": ["number", "string"] },
-            "rtsam": { "type": ["number", "string"] },
-            "rtscapt": { "type": ["number", "string"] },
-            "rtsemt": { "type": ["number", "string"] }
+            "na": { "$ref": "#/$defs/IrNum" },
+            "nt": { "$ref": "#/$defs/IrNum" },
+            "nalpha": { "$ref": "#/$defs/IrNum" },
+            "namp": { "$ref": "#/$defs/IrNum" },
+            "rtsam": { "$ref": "#/$defs/IrNum" },
+            "rtscapt": { "$ref": "#/$defs/IrNum" },
+            "rtsemt": { "$ref": "#/$defs/IrNum" }
           },
           "additionalProperties": false
         },
@@ -1280,10 +1309,10 @@
           "properties": {
             "type": { "const": "TrRandom" },
             "kind": { "description": "1 uniform, 2 Gaussian, 3 exponential, 4 Poisson.", "enum": [1, 2, 3, 4] },
-            "ts": { "type": ["number", "string"] },
-            "td": { "type": ["number", "string"] },
-            "p1": { "type": ["number", "string"] },
-            "p2": { "type": ["number", "string"] }
+            "ts": { "$ref": "#/$defs/IrNum" },
+            "td": { "$ref": "#/$defs/IrNum" },
+            "p1": { "$ref": "#/$defs/IrNum" },
+            "p2": { "$ref": "#/$defs/IrNum" }
           },
           "additionalProperties": false
         }
@@ -2267,7 +2296,8 @@
           "additionalProperties": {
             "type": "string"
           }
-        }
+        },
+        "setup_includes": { "description": "Files every backend includes before the library. Absent: none.", "type": "array", "items": { "type": "string" } }
       },
       "additionalProperties": false
     },
@@ -2306,6 +2336,52 @@
           "type": "integer",
           "minimum": 0
         }
+      },
+      "additionalProperties": false
+    },
+    "IrNum": {
+      "description": "A waveform parameter: a number, or the text of an expression over .params (vdd/2). JSON keeps a number a number.",
+      "type": ["number", "string"]
+    },
+    "IrNumPair": {
+      "description": "A PWL point [time, value], each an IrNum.",
+      "type": "array",
+      "prefixItems": [{ "$ref": "#/$defs/IrNum" }, { "$ref": "#/$defs/IrNum" }],
+      "items": false,
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "Dialect": {
+      "description": "A netlist language, by its lowercase name.",
+      "enum": ["ngspice", "ltspice", "hspice", "xyce", "spectre", "vacask", "espice", "cdl", "verilog"]
+    },
+    "FuncDef": {
+      "type": "object",
+      "description": "A .func: name(args) = body, the body an expression over the arguments and parameters.",
+      "required": ["name", "args", "body"],
+      "properties": {
+        "name": { "type": "string" },
+        "args": { "type": "array", "items": { "type": "string" } },
+        "body": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "VerilogBlock": {
+      "type": "object",
+      "description": "A Verilog module instance, co-simulated through XSPICE d_cosim (Simulate) or synthesized to standard cells (Synthesize).",
+      "required": ["source", "mode", "instance_name", "connections", "pdk", "liberty", "spice_models"],
+      "properties": {
+        "source": { "type": "string" },
+        "mode": { "enum": ["Simulate", "Synthesize"] },
+        "instance_name": { "type": "string" },
+        "connections": {
+          "description": "Module port -> one net, or a bus as a list of nets.",
+          "type": "object",
+          "additionalProperties": { "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }] }
+        },
+        "pdk": { "type": ["string", "null"] },
+        "liberty": { "type": ["string", "null"] },
+        "spice_models": { "type": ["string", "null"] }
       },
       "additionalProperties": false
     },

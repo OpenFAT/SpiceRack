@@ -37,6 +37,7 @@ provenance, never by re-deriving it the way codegen does.
 | `test_spectre_golden.rs` | goldens; Spectre is licence-gated, so the text is checked against the Spectre reference manual |
 | `test_ltspice_dialect.rs` | emitted text against the LTspice help; no LTspice binary, so unverified by execution |
 | `test_backends.rs`, `test_unit.rs` | spec examples |
+| `src/ir` (`schema_check.rs`) | the JSON Schema 2020-12 spec: an IR with every field set, every component and analysis variant, the shipped example and decks imported from ngspice, Spectre and VACASK validate against `schema/circuit-ir.schema.json`; the checker panics on any keyword it does not implement, and rejects one counterexample per keyword |
 
 ### Python (`tests/*.py`)
 

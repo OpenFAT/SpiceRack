@@ -1003,6 +1003,9 @@ impl CircuitIR {
 }
 
 #[cfg(test)]
+mod schema_check;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -1104,6 +1107,81 @@ mod tests {
     }
 
     // ── JSON serialization tests ──
+
+    /// `ir` as JSON breaks nothing in `schema/circuit-ir.schema.json`.
+    fn assert_schema(ir: &CircuitIR) {
+        let schema: serde_json::Value = serde_json::from_str(include_str!("../../schema/circuit-ir.schema.json")).unwrap();
+        let errs = super::schema_check::errors(&schema, &serde_json::to_value(ir).unwrap());
+        assert!(errs.is_empty(), "{} schema errors:\n{}", errs.len(), errs.join("\n"));
+    }
+
+    /// Every field an IR can hold, set (a PWL's repeat/delay as numbers and
+    /// expressions, every port direction and Verilog form), the shipped
+    /// example, and what the importers make of a deck per dialect: the JSON
+    /// the schema promises Schemify. Regression: the schema had no R/C/L
+    /// `model`, no `verilog_blocks` and an `IrNum` that was only a number.
+    #[test]
+    fn every_ir_field_and_imported_deck_matches_the_schema() {
+        let s = |x: &str| x.to_string();
+        let kv = || vec![(s("k"), s("v"))];
+        let x = |e: &str| IrNum::Expr(e.into());
+        let pwl = |repeat, delay| IrWaveform::Pwl { values: vec![(0.0.into(), x("v0")), (x("t1"), 1.0.into())], repeat, delay };
+        let src = |name: &str, waveform| Component::VoltageSource { name: s(name), np: s("a"), nm: s("0"), value: IrValue::Numeric { value: 0.0 }, ac_magnitude: Some(1.0), ac_phase: Some(90.0), waveform: Some(waveform), port: Some(RfPort { num: 1, z0: 50.0 }) };
+        let rcl = |value: IrValue| [
+            Component::Resistor { name: s("1"), n1: s("a"), n2: s("b"), value: value.clone(), model: Some(s("rm")), params: kv() },
+            Component::Capacitor { name: s("1"), n1: s("a"), n2: s("b"), value: value.clone(), model: Some(s("cm")), params: kv() },
+            Component::Inductor { name: s("1"), n1: s("a"), n2: s("b"), value, model: Some(s("lm")), params: kv() },
+        ];
+        let connections = [(s("a"), VerilogConnection::Single(s("n1"))), (s("b"), VerilogConnection::Bus(vec![s("d0"), s("d1")]))].into();
+        let verilog = |mode, opt: Option<String>| VerilogBlock { source: s("module m; endmodule"), mode, instance_name: s("u1"), connections: BTreeMap::clone(&connections), pdk: opt.clone(), liberty: opt.clone(), spice_models: opt };
+        let full = Subcircuit {
+            name: s("full"),
+            ports: [PortDirection::InOut, PortDirection::Input, PortDirection::Output].into_iter().map(|direction| Port { name: s("p"), direction }).collect(),
+            parameters: vec![ParamDef { name: s("w"), default: Some(s("1u")) }, ParamDef { name: s("l"), default: None }],
+            components: rcl(IrValue::Raw { text: String::new() }).into_iter().chain([src("1", pwl(Some(0.0.into()), Some(x("td")))), src("2", pwl(Some(x("r")), Some(1e-3.into())))]).collect(),
+            instances: vec![Instance { name: s("x1"), subcircuit: s("full"), port_mapping: vec![s("a")], parameters: kv(), at: Some(0) }],
+            models: vec![ModelDef { name: s("rm"), kind: s("r"), parameters: kv() }],
+            raw_spice: vec![s(".probe v(a)")],
+            includes: vec![s("a.inc")],
+            libs: vec![(s("a.lib"), s("tt"))],
+            osdi_loads: vec![s("a.osdi")],
+            verilog_blocks: vec![verilog(VerilogMode::Simulate, None), verilog(VerilogMode::Synthesize, Some(s("x")))],
+        };
+        let tb = Testbench {
+            stimulus: rcl(IrValue::Expression { expr: s("r") }).into(),
+            analyses: vec![Analysis::Op],
+            options: SimOptions { portable: kv(), backend_specific: [(s("xyce"), kv())].into() },
+            saves: vec![s("v(a)")],
+            measures: vec![s("tran m max v(a)")],
+            temperature: Some(27.0),
+            nominal_temperature: Some(25.0),
+            initial_conditions: vec![(s("a"), 1.0)],
+            node_sets: vec![(s("a"), 0.5)],
+            step_params: vec![StepParam { param: s("r"), start: 1.0, stop: 2.0, step: 1.0, sweep_type: Some(Sweep::Lin) }, StepParam { param: s("c"), start: 1.0, stop: 2.0, step: 1.0, sweep_type: None }],
+            extra_lines: vec![s(".option x")],
+            prints: vec![PrintCard { analysis: s("tran"), outputs: vec![s("v(a)")] }],
+        };
+        let library = ModelLibrary { name: s("sky"), path: s("sky.lib"), corner: Some(s("tt")), backend_paths: [(s("vacask"), s("sky.inc"))].into(), setup_includes: vec![s("a.inc")] };
+        let ir = CircuitIR {
+            top: full.clone(),
+            testbench: Some(tb),
+            subcircuit_defs: vec![full, Subcircuit::default()],
+            model_libraries: vec![library],
+            raw_dialect: Some(Dialect::Ngspice),
+            globals: vec![s("vdd")],
+            functions: vec![FuncDef { name: s("f"), args: vec![s("x")], body: s("x*2") }],
+        };
+        assert_schema(&ir);
+        assert_schema(&CircuitIR { testbench: None, ..ir });
+        assert_schema(&serde_json::from_str(include_str!("../../schema/examples/voltage_divider.circuit.json")).unwrap());
+        for (d, deck) in [
+            (Dialect::Ngspice, "t\n.param w=1u\n.func f(x) {x*2}\n.global vdd\n.model rm r\nR1 a b rm l=1u\nV1 a 0 pwl(0 0 1m {w}) r=0 td=1m\n.probe v(a)\n.tran 1u 1m\n.end\n"),
+            (Dialect::Spectre, "// t\nsimulator lang=spectre\nv1 (a 0) vsource type=pwl wave=[0 0 1m 1 2m 0] pwlperiod=2m\nr1 (a 0) resistor r=1k\ntr tran step=1u stop=1m\n"),
+            (Dialect::Vacask, "t\nload \"spice/resistor.osdi\"\nmodel r sp_resistor\nr1 (a 0) r r=1k\ncontrol\n  analysis op1 op\nendc\n"),
+        ] {
+            assert_schema(&crate::import::parse(deck, "t", d).unwrap().0);
+        }
+    }
 
     #[test]
     fn test_load_example_voltage_divider() {
@@ -1308,6 +1386,7 @@ mod tests {
         let json = serde_json::to_string_pretty(&ir).unwrap();
         let ir2: CircuitIR = serde_json::from_str(&json).unwrap();
         assert_eq!(ir, ir2);
+        assert_schema(&ir);
     }
 
     #[test]
@@ -1346,6 +1425,7 @@ mod tests {
         let json = serde_json::to_string_pretty(&ir).unwrap();
         let ir2: CircuitIR = serde_json::from_str(&json).unwrap();
         assert_eq!(ir, ir2);
+        assert_schema(&ir);
     }
 
     #[test]
