@@ -34,6 +34,7 @@ use crate::syntax::token::{Tag as T, Tokens};
 mod cards;
 mod elements;
 mod named;
+mod named_elements;
 mod testbench;
 mod values;
 
@@ -263,13 +264,28 @@ impl<'a> Cx<'a> {
         self.t.tags()[k as usize]
     }
 
-    /// The last token of the statement starting at token `first`.
+    /// The last token of the statement starting at token `first` (a
+    /// Spectre statement runs on while parentheses are open, as the parser
+    /// joins it).
     fn line_last(&self, first: u32) -> u32 {
         let tags = self.t.tags();
-        let eos = (first as usize..tags.len())
-            .find(|&k| tags[k] == T::EndOfStatement)
-            .expect("a statement ends");
-        eos as u32 - 1
+        let named = self.t.lexicon_at(first).letters.is_empty();
+        let mut depth = 0i32;
+        let mut k = first as usize;
+        loop {
+            match tags[k] {
+                T::LParen if named => depth += 1,
+                T::RParen if named => depth -= 1,
+                T::EndOfStatement => {
+                    let more = tags[k + 1..].iter().any(|&t| t == T::EndOfStatement);
+                    if depth <= 0 || !more || matches!(tags[k + 1], T::LangSpice | T::LangSpectre) {
+                        return k as u32 - 1;
+                    }
+                }
+                _ => {}
+            }
+            k += 1;
+        }
     }
 
     /// A flat statement's (or a block head's) logical-line text.

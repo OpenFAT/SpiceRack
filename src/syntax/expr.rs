@@ -116,10 +116,19 @@ impl Parser<'_, '_> {
         (k < self.end).then(|| self.t.tags()[k as usize])
     }
 
+    /// The tag at the cursor, past the ends of statement a Spectre line
+    /// join leaves inside open parentheses.
+    fn peek(&mut self) -> Option<T> {
+        while self.tag_at(self.i) == Some(T::EndOfStatement) {
+            self.i += 1;
+        }
+        self.tag_at(self.i)
+    }
+
     /// An operand: a prefix operator and its operand, or an atom with its
     /// postfix indexing.
     fn prefix(&mut self) -> Result<Node, ()> {
-        let tag = self.tag_at(self.i).ok_or(())?;
+        let tag = self.peek().ok_or(())?;
         let ops = self.ops();
         if ops.prefix.contains(&tag) {
             let op = self.i;
@@ -128,11 +137,11 @@ impl Parser<'_, '_> {
             return Ok(self.ast.push(Tag::Unary, op, x.0, NONE));
         }
         let mut x = self.atom(tag)?;
-        while ops.index && self.tag_at(self.i) == Some(T::LBracket) {
+        while ops.index && self.peek() == Some(T::LBracket) {
             let open = self.i;
             self.i += 1;
             let k = self.expr_bp(0)?;
-            if self.tag_at(self.i) != Some(T::RBracket) {
+            if self.peek() != Some(T::RBracket) {
                 return Err(());
             }
             let at = self.ast.push_extra(&[k.0, self.i]);
@@ -158,7 +167,7 @@ impl Parser<'_, '_> {
             T::LParen => {
                 self.i += 1;
                 let x = self.expr_bp(0)?;
-                if self.tag_at(self.i) != Some(T::RParen) {
+                if self.peek() != Some(T::RParen) {
                     return Err(());
                 }
                 self.i += 1;
@@ -189,7 +198,7 @@ impl Parser<'_, '_> {
         self.i = b + 1;
         let text = self.span_text(a, b);
         let name = self.ast.intern(text);
-        if self.tag_at(self.i) != Some(T::LParen) {
+        if self.peek() != Some(T::LParen) {
             return Ok(self.ast.push(Tag::Ident, a, name.0, b));
         }
         let lower = self.ast.name(name).to_ascii_lowercase();
@@ -201,11 +210,11 @@ impl Parser<'_, '_> {
         self.i += 1;
         let mut args = Vec::new();
         let close = loop {
-            if self.tag_at(self.i) == Some(T::RParen) {
+            if self.peek() == Some(T::RParen) {
                 break self.i;
             }
             args.push(self.expr_bp(0)?.0);
-            match self.tag_at(self.i) {
+            match self.peek() {
                 Some(T::Comma) => self.i += 1,
                 Some(T::RParen) => break self.i,
                 _ => return Err(()),
@@ -257,7 +266,7 @@ impl Parser<'_, '_> {
         self.i += 1;
         let mut items = Vec::new();
         let end = loop {
-            match self.tag_at(self.i).ok_or(())? {
+            match self.peek().ok_or(())? {
                 t if t == close => break self.i,
                 T::Comma | T::Semicolon => self.i += 1,
                 _ if whole => items.push(self.expr_bp(0)?.0),
@@ -274,7 +283,7 @@ impl Parser<'_, '_> {
     /// The binary operators after `left` that bind at least `min_bp`.
     fn infix(&mut self, mut left: Node, min_bp: u8) -> Result<Node, ()> {
         loop {
-            let Some(tag) = self.tag_at(self.i) else {
+            let Some(tag) = self.peek() else {
                 break;
             };
             let ops = self.ops();
@@ -282,7 +291,7 @@ impl Parser<'_, '_> {
                 let q = self.i;
                 self.i += 1;
                 let a = self.expr_bp(0)?;
-                if self.tag_at(self.i) != Some(T::Colon) {
+                if self.peek() != Some(T::Colon) {
                     return Err(());
                 }
                 self.i += 1;

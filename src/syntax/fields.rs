@@ -157,7 +157,11 @@ impl Parser<'_, '_> {
             }
             _ => {
                 let w = self.word();
-                let grouped = matches!(mode, Mode::Fields | Mode::Element) && self.at(T::LParen);
+                // Spectre's and VACASK's parentheses only bracket a node or
+                // parameter list (`(r=1)`, `sp_diode ( is=1 )`).
+                let named = self.t.lexicon_at(self.i - 1).letters.is_empty();
+                let grouped =
+                    matches!(mode, Mode::Fields | Mode::Element) && self.at(T::LParen) && !named;
                 let key = if grouped { self.group(w.0) } else { w };
                 if self.at(T::Equal) && (grouped || self.key_shaped(self.ast.main_token(w))) {
                     self.i += 1;
@@ -177,18 +181,26 @@ impl Parser<'_, '_> {
     }
 
     /// A key starts with a letter or `_` (spice.peg `Key`).
+    /// Spectre's and VACASK's keys are names (`$mfactor`, `'a b'`, `\x`).
     fn key_shaped(&self, i: u32) -> bool {
-        self.t
-            .text(i)
-            .bytes()
-            .next()
-            .is_some_and(|b| b.is_ascii_alphabetic() || b == b'_')
+        let named = self.t.lexicon_at(i).letters.is_empty();
+        self.t.text(i).bytes().next().is_some_and(|b| {
+            b.is_ascii_alphabetic() || b == b'_' || named && matches!(b, b'$' | b'\'' | b'\\')
+        })
     }
 
     /// Whether token `i` separates words (spice.peg `namechar`): blanks are
     /// gaps, and `,` `=` `(` `)` `'` `"` are never name bytes; nor are
     /// braces where they delimit expressions.
     pub(super) fn separates(&self, i: u32) -> bool {
+        // Spectre and VACASK: a name is letters, digits, escapes and quoted
+        // parts (one token), joined by `.` and `:` (`X1.n3`, `x1:p`).
+        if self.t.lexicon_at(i).letters.is_empty() {
+            return !matches!(
+                self.t.tags()[i as usize],
+                T::Ident | T::Number | T::Dot | T::Colon
+            );
+        }
         match self.t.tags()[i as usize] {
             T::Comma
             | T::Equal

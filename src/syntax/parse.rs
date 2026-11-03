@@ -93,6 +93,7 @@ pub fn parse<'s>(t: &Tokens<'s>, lex: &'static Lexicon) -> Ast<'s> {
         capped: false,
     };
     let mut stack: Vec<Frame> = vec![Frame::root()];
+    // A Spectre statement may close its blocks' waits (`}` then no `else`).
     let mut s = 0u32;
     while let Some((first, eos)) = p.next_statement(&mut s) {
         p.i = first;
@@ -103,6 +104,11 @@ pub fn parse<'s>(t: &Tokens<'s>, lex: &'static Lexicon) -> Ast<'s> {
     }
     while stack.len() > 1 {
         let f = stack.pop().expect("the stack holds a block");
+        if f.wait == Wait::Else {
+            let closer = f.closer;
+            p.finish(f, closer, &mut stack);
+            continue;
+        }
         let head = p.ast.main_token(f.node);
         p.ast.diag(Code::P0003, head);
         p.finish(f, NONE, &mut stack);
@@ -142,14 +148,30 @@ pub(super) fn parse_expression(t: &Tokens<'_>, lex: &'static Lexicon) -> bool {
 // ---- private ----
 
 /// An open block: its node and the statements read into it so far.
-struct Frame {
-    node: Node,
-    items: Vec<u32>,
+pub(super) struct Frame {
+    pub(super) node: Node,
+    pub(super) items: Vec<u32>,
     /// Earlier branches of an `If` chain: their bodies' offsets, whose
     /// closer is patched when the chain ends.
     chain: Vec<u32>,
     /// The chain's first branch (`node` itself for any other block).
     head: Node,
+    /// What a Spectre block waits for before its body.
+    pub(super) wait: Wait,
+    /// A Spectre branch's `}`, once read (the chain may go on with `else`).
+    pub(super) closer: u32,
+}
+
+/// What a Spectre block on the stack waits for.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum Wait {
+    /// Nothing: its body is being read.
+    No,
+    /// Its `{` (a `real f()` or `if (c)` whose brace is on the next line),
+    /// or for a branch its one unbraced statement.
+    Brace,
+    /// A branch that is complete: an `else` may continue the chain.
+    Else,
 }
 
 impl Frame {
@@ -157,12 +179,14 @@ impl Frame {
         Frame::open(Node(0))
     }
 
-    fn open(node: Node) -> Frame {
+    pub(super) fn open(node: Node) -> Frame {
         Frame {
             node,
             items: Vec::new(),
             chain: Vec::new(),
             head: node,
+            wait: Wait::No,
+            closer: NONE,
         }
     }
 }
@@ -179,9 +203,35 @@ impl<'s> Parser<'_, 's> {
         if first >= tags.len() {
             return None;
         }
-        let eos = (first..tags.len())
+        let mut eos = (first..tags.len())
             .find(|&k| tags[k] == T::EndOfStatement)
             .expect("every statement ends with an EndOfStatement");
+        // Spectre: an end of statement inside open parentheses is a blank
+        // (`if (a &&` ⏎ `b) {`); VACASK's lexicon already joins such lines.
+        if self.t.lexicon_at(first as u32).letters.is_empty() {
+            let mut depth = 0i32;
+            let mut k = first;
+            loop {
+                match tags[k] {
+                    T::LParen => depth += 1,
+                    T::RParen => depth -= 1,
+                    T::EndOfStatement if k == eos => {
+                        let more = tags[k + 1..].iter().position(|&t| t == T::EndOfStatement);
+                        match more {
+                            Some(m)
+                                if depth > 0
+                                    && !matches!(tags[k + 1], T::LangSpice | T::LangSpectre) =>
+                            {
+                                eos = k + 1 + m
+                            }
+                            _ => break,
+                        }
+                    }
+                    _ => {}
+                }
+                k += 1;
+            }
+        }
         *s = eos as u32 + 1;
         Some((first as u32, eos as u32))
     }
@@ -202,11 +252,35 @@ impl<'s> Parser<'_, 's> {
     fn statement(&mut self, stack: &mut Vec<Frame>) {
         let top = stack.last().expect("the root frame stays");
         let in_tag = self.ast.tag(top.node);
+        let first = self.i;
+        if in_tag == Tag::Region {
+            // spectre.peg `SpiceRegion`: a region ends at the switch back, or
+            // where its section or library ends.
+            let word = self.t.text(first);
+            if word == "endsection" || word == "endlibrary" {
+                let f = stack.pop().expect("a region is open");
+                self.finish(f, NONE, stack);
+                return self.named_statement(stack);
+            }
+            if self.t.tags().get(self.end as usize + 1) == Some(&T::LangSpectre) {
+                self.i = self.end;
+                let empty = self.ast.push_list(&[]);
+                let card = self.ast.push(Tag::Card, first, empty, NONE);
+                return self.apply(Head::Close(Tag::Region, card), stack);
+            }
+        }
+        let named = self.t.lexicon_at(first).letters.is_empty();
         let head = match in_tag {
-            Tag::Control | Tag::Data => self.script_line(top.node),
-            _ if self.t.lexicon_at(self.i).letters.is_empty() => self.named(in_tag),
+            Tag::Data => self.script_line(top.node),
+            Tag::Control if !named => self.script_line(top.node),
+            _ if named => return self.named_statement(stack),
             _ => self.spice(in_tag),
         };
+        self.apply(head, stack);
+    }
+
+    /// Puts one head's node where it belongs on the block stack.
+    pub(super) fn apply(&mut self, head: Head, stack: &mut Vec<Frame>) {
         let at = self.first;
         let open = self.ast.tag(stack.last().expect("root").node);
         match head {
@@ -224,7 +298,7 @@ impl<'s> Parser<'_, 's> {
             }
             Head::Branch(branch) if stack.len() > 1 && open == Tag::If => {
                 let mut f = stack.pop().expect("an If is open");
-                let body = self.ast.push_body(branch.0, NONE, &f.items);
+                let body = self.ast.push_body(branch.0, f.closer, &f.items);
                 self.ast.set_rhs(f.node, body);
                 f.chain.push(body);
                 stack.push(Frame {
@@ -232,6 +306,8 @@ impl<'s> Parser<'_, 's> {
                     items: Vec::new(),
                     chain: f.chain,
                     head: f.head,
+                    wait: Wait::No,
+                    closer: NONE,
                 });
             }
             Head::Branch(branch) => {
@@ -245,7 +321,7 @@ impl<'s> Parser<'_, 's> {
     /// Closes frame `f` with `closer` and adds it to its parent; an `If`
     /// chain's earlier branches get the same closer, and the chain is one
     /// statement of its parent, its first branch.
-    fn finish(&mut self, f: Frame, closer: u32, stack: &mut [Frame]) {
+    pub(super) fn finish(&mut self, f: Frame, closer: u32, stack: &mut [Frame]) {
         let body = self.ast.push_body(NONE, closer, &f.items);
         self.ast.set_rhs(f.node, body);
         for &b in &f.chain {

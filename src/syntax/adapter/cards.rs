@@ -58,6 +58,19 @@ impl Cx<'_> {
     /// `Subckt` reads it.
     pub(super) fn subckt_head(&self, n: u32) -> Option<SubcktHead> {
         let items = self.fields(n);
+        if self.named() {
+            return Some(SubcktHead {
+                name: self.name_of(*items.first()?),
+                ports: items[1..]
+                    .iter()
+                    .map(|&p| Port {
+                        name: self.name_of(p),
+                        direction: PortDirection::InOut,
+                    })
+                    .collect(),
+                params: vec![],
+            });
+        }
         let (&name, rest) = items.split_first()?;
         if !self.is_word_item(name) {
             return None;

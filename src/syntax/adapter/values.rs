@@ -47,6 +47,22 @@ impl Cx<'_> {
         }
         let text = self.text(n);
         let text = text.trim();
+        if self.named() {
+            // Spectre's and VACASK's `Val` holds one `Expr` row (a vector
+            // holds its elements).
+            return match self.tag(n) {
+                Tag::Vector | Tag::List
+                    if !text.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_') =>
+                {
+                    IrValue::Raw {
+                        text: text.to_string(),
+                    }
+                }
+                _ => IrValue::Expression {
+                    expr: text.to_string(),
+                },
+            };
+        }
         match self.tag(n) {
             Tag::Delimited => IrValue::Expression {
                 expr: self.respell(self.inner(n).trim()),
@@ -262,9 +278,16 @@ impl Cx<'_> {
     /// included), with today's arithmetic (lower/values.rs `num_value`).
     fn num_text(&self, s: &str, lex: &crate::syntax::lexicon::Lexicon) -> Option<f64> {
         if lex.letters.is_empty() {
-            let v = crate::syntax::number::value(s, lex);
-            return (!v.is_nan() && s.starts_with(|c: char| c.is_ascii_digit() || c == '.'))
-                .then_some(v);
+            // A signed literal where the sign is an operator (lower/values.rs
+            // `number`): `-1.5`, `- 1.5`.
+            let (neg, body) = match s.as_bytes().first() {
+                Some(b'-') => (true, s[1..].trim_start()),
+                Some(b'+') => (false, s[1..].trim_start()),
+                _ => (false, s),
+            };
+            let v = crate::syntax::number::value(body, lex);
+            let ok = !v.is_nan() && body.starts_with(|c: char| c.is_ascii_digit() || c == '.');
+            return ok.then_some(if neg { -v } else { v });
         }
         if matches!(lex.dialect, Dialect::Ngspice) {
             return ngspice_num(s)
