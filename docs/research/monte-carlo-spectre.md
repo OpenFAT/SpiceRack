@@ -773,3 +773,19 @@ from §5 and §10:
 - **T-R1 and T-R5** run on the sky130 and gf180mcu files and sections whose `.model`s have a
   Spectre master today; resistor, capacitor and level-3 diode model cards have none yet,
   a gap of their own.
+
+**Spectre results (T-S1 to T-S3).** Run on Spectre 21.1.0.460.isr10 (a licensed host), the decks in
+`tests/spectre/` through `run.py`, N = 2000: all 18 checks pass.
+
+| Deck | Result | Expected (tolerance) | ngspice |
+|---|---|---|---|
+| T-S1 nominal | v(out) = 0.5, exact | 0.5 (1e-9 rel) | 0.5 |
+| T-S2 agauss | mean 5.0030e-01, std 8.255e-03 | 0.5 (7.45e-4), 8.333e-3 (5.27e-4) | 4.9988e-01, 8.403e-03 |
+| T-S2 aunif | std 1.438e-02 | 1.4434e-2 (9.13e-4) | 1.4708e-02 |
+| T-S2 limit | two values only, std 1.2509e-02 | 1.2508e-2 (7.91e-4) | 1.2505e-02 |
+| T-S3 mismatch | ρ(o1, o2) = +0.027 | \|ρ\| < 0.089 | — |
+| T-S3 nested | \|ρ\| ≤ 0.04 for x1.xa/x2.xa, x1.xa/x1.xb, x1.xb/x2.xb; every std in tolerance | \|ρ\| < 0.089 | — |
+
+So Spectre samples `mismatch` per hierarchical instance (§5.1's medium-confidence claim
+holds), and its 4σ truncation is invisible at N = 2000. Spectre 21.1 keeps only the last
+iteration unless `savefamilyplots=yes`; `run.py` adds it to a copy of each deck.

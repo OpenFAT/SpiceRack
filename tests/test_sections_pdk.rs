@@ -312,6 +312,14 @@ fn sky130_combined_library_converts_losslessly() {
             root.display()
         );
     }
+    // `SPICERACK_KEEP_HSPICE=<dir>` keeps the HSPICE tree (tests/espice/).
+    if let Ok(keep) = std::env::var("SPICERACK_KEEP_HSPICE") {
+        for rel in &seen {
+            let to = Path::new(&keep).join(rel);
+            std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+            std::fs::copy(hspice.path().join(rel), to).unwrap();
+        }
+    }
     let espice = id(espice_hspice(&deck(hspice.path())));
     let gap = espice / want - 1.0;
     assert!(
