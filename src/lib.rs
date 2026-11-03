@@ -9,7 +9,8 @@
 //! Contents:
 //! - `pub mod backend` (feature `backend`), `codegen`, `import`, `ir`, `lint`,
 //!   `measure_parse`, `normalize`, `peg`, `rawfile`, `result`,
-//!   `simulation` (feature `backend`), `unit`, `veriloga`, `python` (feature `python`)
+//!   `simulation` (feature `backend`), `syntax` (the transpiler rewrite, not wired in yet),
+//!   `unit`, `veriloga`, `python` (feature `python`)
 
 #![allow(clippy::too_many_arguments)]
 
@@ -26,6 +27,7 @@ pub mod rawfile;
 pub mod result;
 #[cfg(feature = "backend")]
 pub mod simulation;
+pub mod syntax;
 pub mod unit;
 pub mod veriloga;
 
