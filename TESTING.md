@@ -136,7 +136,9 @@ lines and 8,357,766 number tokens with 0 differences in 25.9 s; phase 2's
 `golden record --frontend syntax` took 39.3 s wall, 49.3 s user, peak RSS
 2.46 GB, `check-determinism` 96 s; `throughput` (`--ignored`): 201.3 MB, 30.1
 M tokens, 26.1 M nodes, tokenize 2.36 s (85.3 MB/s), parse 3.44 s (58.5 MB/s),
-`ast_to_ir` 3.56 s.
+`ast_to_ir` 3.56 s. After it (phase 2b, `test_syntax` `throughput`, the
+same machine at load average 13): 201.3 MB, 30.1 M tokens, 26.1 M nodes,
+tokenize 2.43 s (82.9 MB/s), parse 3.23 s (62.3 MB/s), `ast_to_ir` 3.88 s.
 
 ```sh
 nix develop .#testing -c env IHP_PDK=<...> cargo test -j 4 --release \
