@@ -4,6 +4,9 @@
 //!
 //! - `lang_switch`: the Spectre fixtures' `simulator lang=spice` regions are
 //!   HSPICE tokens, against `bare.scs` read by hand;
+//! - `kits_resolve`: every PDK kit and fixture read as one `syntax::resolve`
+//!   kit: its read order is the manifest's (`inputs.rs`'s walk), and every
+//!   instance master binds or carries an `R0001`; the counts are printed;
 //! - `throughput` (`--ignored`): tokenize, parse and `ast_to_ir`, timed.
 //!
 //! The comparisons phase 1 and 2 made here against the old reader in
@@ -28,9 +31,14 @@
 use std::path::Path;
 use std::time::Instant;
 
+use std::collections::BTreeMap;
+
 use spicerack::codegen::Dialect;
 use spicerack::import::decode;
+use spicerack::syntax::ast::{self, NONE, Node};
+use spicerack::syntax::diag::Code;
 use spicerack::syntax::lexicon::{self, HSPICE, SPECTRE};
+use spicerack::syntax::resolve::{Binding, DefKind, FileId, LoadError, Role};
 use spicerack::syntax::token::Tag;
 use spicerack::syntax::{ast_to_ir, parse, tokenize};
 
@@ -90,6 +98,142 @@ fn lang_switch() {
             .count();
         let markers = t.tags().iter().filter(|&&x| x == Tag::LangSpice).count();
         assert_eq!(markers, lines, "{key}: {d:?}");
+    }
+}
+
+#[test]
+fn kits_resolve() {
+    // Every kit file's every instance binds: to a primitive, a declaration
+    // of the kit, or `Unknown` with an R0001 at its master (resolve's
+    // contract, docs/research/transpiler-architecture.md §2.4); and the
+    // kit reads its files in the order the golden walk records.
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut manifest = Vec::new();
+    inputs::inputs(repo, &mut manifest);
+    assert!(
+        !manifest.iter().any(|l| l.starts_with("absent")),
+        "run in `nix develop .#testing` with $IHP_PDK"
+    );
+    let mut counts: BTreeMap<&str, BTreeMap<String, usize>> = BTreeMap::new();
+    for ks in inputs::kits(repo) {
+        let kit = &ks.kit;
+        if ks.set != "fixtures" {
+            // The walk's files are the kit's, in the kit's order; the kit
+            // also follows includes the walk skips (inside a subckt or an
+            // `.if` branch), which are no golden inputs.
+            let kit_files: Vec<(String, &'static str)> = kit
+                .files()
+                .iter()
+                .map(|f| {
+                    let shown = f.path.strip_prefix(&ks.root).unwrap_or(&f.path);
+                    let what = match f.role {
+                        Role::Unread(LoadError::Refused) => "outside",
+                        Role::Unread(LoadError::NotFound) => "missing",
+                        Role::VerilogA | Role::Deck | Role::Library => "order",
+                    };
+                    (shown.to_string_lossy().replace('\\', "/"), what)
+                })
+                .collect();
+            let walked: Vec<(String, &'static str)> = manifest
+                .iter()
+                .filter_map(|l| {
+                    let w: Vec<&str> = l.split(' ').collect();
+                    match w.as_slice() {
+                        ["order", set, _, path, ..] if *set == ks.set => {
+                            Some((path.to_string(), "order"))
+                        }
+                        [what @ ("missing" | "outside"), set, path] if *set == ks.set => Some((
+                            path.to_string(),
+                            if *what == "missing" {
+                                "missing"
+                            } else {
+                                "outside"
+                            },
+                        )),
+                        _ => None,
+                    }
+                })
+                .collect();
+            let shared: Vec<&(String, &str)> =
+                kit_files.iter().filter(|f| walked.contains(f)).collect();
+            assert_eq!(
+                shared,
+                walked.iter().collect::<Vec<_>>(),
+                "{}: read order",
+                ks.set
+            );
+            let extra: Vec<&String> = kit_files
+                .iter()
+                .filter(|f| !walked.contains(f))
+                .map(|f| &f.0)
+                .collect();
+            println!(
+                "{}: {} files, {} past the walk: {extra:?}",
+                ks.set,
+                kit_files.len(),
+                extra.len()
+            );
+        }
+        let c = counts.entry(ks.set).or_default();
+        let lex = lexicon::of(kit.dialect()).expect("a reader");
+        for (k, file) in kit.files().iter().enumerate() {
+            if !matches!(file.role, Role::Deck | Role::Library) {
+                continue;
+            }
+            let id = FileId(k as u32);
+            let t = tokenize(&file.text, lex);
+            let a = parse(&t, lex);
+            assert_eq!(a.len(), kit.node_count(id));
+            let r0001: Vec<u32> = file
+                .diags
+                .iter()
+                .filter(|d| d.code == Code::R0001)
+                .map(|d| d.token)
+                .collect();
+            let mut unknown = 0;
+            for n in (0..a.len() as u32).map(Node) {
+                if a.tag(n) != ast::Tag::Instance {
+                    continue;
+                }
+                let what = match kit.binding(id, n) {
+                    None => "no device (letter)".to_string(),
+                    Some(Binding::Primitive(p)) => format!("primitive {p:?}"),
+                    Some(Binding::Def(d)) => match &kit.definition(d).kind {
+                        DefKind::Subckt { .. } => "subckt".into(),
+                        DefKind::Model { kind, .. } => format!("model {kind:?}"),
+                        DefKind::Param | DefKind::Func | DefKind::Section => "param/func".into(),
+                    },
+                    Some(Binding::Unknown) => {
+                        unknown += 1;
+                        let m = a.header(n).master;
+                        let at = if m == NONE {
+                            a.main_token(n)
+                        } else {
+                            a.main_token(Node(m))
+                        };
+                        assert!(
+                            r0001.contains(&at),
+                            "{}: an unknown master has its R0001",
+                            file.path.display()
+                        );
+                        "unknown".into()
+                    }
+                };
+                *c.entry(what).or_default() += 1;
+            }
+            assert_eq!(
+                unknown,
+                r0001.len(),
+                "{}: one R0001 per unknown",
+                file.path.display()
+            );
+            for d in &file.diags {
+                *c.entry(format!("diag {:?}", d.code)).or_default() += 1;
+            }
+        }
+    }
+    for (set, c) in &counts {
+        println!("{set}: {c:?}");
     }
 }
 

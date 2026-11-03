@@ -16,6 +16,8 @@
 //! - `pub(super) struct Input { pub(super) set: &'static str, pub(super) rel: String, pub(super) path: PathBuf, pub(super) dialect: Dialect, pub(super) form: Form }`
 //! - `pub(super) fn inputs(repo: &Path, manifest: &mut Vec<String>) -> Vec<Input>`
 //! - `pub(super) fn source(text: &str, form: Form, path: &Path) -> (String, String)`
+//! - `pub(super) struct KitSet { pub(super) set: &'static str, pub(super) root: PathBuf, pub(super) kit: resolve::Kit }`
+//! - `pub(super) fn kits(repo: &Path) -> Vec<KitSet>`
 
 use std::collections::{BTreeSet, VecDeque};
 use std::path::{Component, Path, PathBuf};
@@ -23,6 +25,7 @@ use std::path::{Component, Path, PathBuf};
 use spicerack::codegen::Dialect;
 use spicerack::import::{decode, parse};
 use spicerack::ir::CircuitIR;
+use spicerack::syntax::resolve::{self, LoadError};
 
 /// How a file is read: a deck (line 1 is its title, the IR is named for the
 /// file's stem) or a kit's library file (an empty title line is prepended
@@ -42,6 +45,16 @@ pub(super) struct Input {
     pub(super) path: PathBuf,
     pub(super) dialect: Dialect,
     pub(super) form: Form,
+}
+
+// `test_syntax` reads these; `record` does not yet (phase 3's behaviour commits).
+#[allow(dead_code)]
+/// One kit as `syntax::resolve` reads it: a PDK kit from its entries, or a
+/// fixture deck from itself; `root` is what its paths are shown against.
+pub(super) struct KitSet {
+    pub(super) set: &'static str,
+    pub(super) root: PathBuf,
+    pub(super) kit: resolve::Kit,
 }
 
 /// A corpus: every `*.<ext>` under `$<var>` whose full path passes `keep`.
@@ -219,7 +232,69 @@ pub(super) fn source(text: &str, form: Form, path: &Path) -> (String, String) {
     }
 }
 
+#[allow(dead_code)]
+/// Every PDK kit (entered at its entries, read as libraries) and every
+/// fixture deck (entered at itself, read as a deck, its includes followed
+/// under `tests/`) as a [`resolve::Kit`]. An absent kit is left out.
+pub(super) fn kits(repo: &Path) -> Vec<KitSet> {
+    let mut out = Vec::new();
+    for k in &KITS {
+        let Some(root) = root(k.set, k.var, k.sub, &mut Vec::new()) else {
+            continue;
+        };
+        let entries: Vec<PathBuf> = (k.entries)(&root).iter().map(|e| root.join(e)).collect();
+        let kit = resolve::Kit::load(
+            &entries,
+            resolve::Form::Library,
+            k.dialect,
+            &mut loader(&root),
+        );
+        out.push(KitSet {
+            set: k.set,
+            root,
+            kit,
+        });
+    }
+    let tests = repo.join("tests");
+    let mut found = Vec::new();
+    files(&tests, &mut found);
+    found.sort();
+    for path in found {
+        let Some(&(_, d)) = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .and_then(|e| FIXTURES.iter().find(|f| f.0 == e))
+        else {
+            continue;
+        };
+        let kit = resolve::Kit::load(&[path], resolve::Form::Deck, d, &mut loader(&tests));
+        out.push(KitSet {
+            set: "fixtures",
+            root: repo.to_path_buf(),
+            kit,
+        });
+    }
+    out
+}
+
 // ---- private ----
+
+#[allow(dead_code)]
+/// Reads a file under `root` (decoded as `import::decode` does); refuses
+/// any other path.
+fn loader(root: &Path) -> impl FnMut(&Path) -> Result<String, LoadError> + '_ {
+    move |p: &Path| {
+        if !p.starts_with(root) {
+            return Err(LoadError::Refused);
+        }
+        if !p.is_file() {
+            return Err(LoadError::NotFound);
+        }
+        std::fs::read(p)
+            .map(|b| decode(&b))
+            .map_err(|_| LoadError::NotFound)
+    }
+}
 
 /// `$<var>/<sub>` if it is set and exists; else an `absent` manifest line.
 fn root(set: &str, var: &str, sub: &str, manifest: &mut Vec<String>) -> Option<PathBuf> {
