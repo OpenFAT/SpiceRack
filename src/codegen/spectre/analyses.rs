@@ -354,12 +354,18 @@ pub(super) fn emit_analysis(analysis: &Analysis, keep_case: bool) -> Result<Stri
             inner,
             inner_type,
             seed,
+            variations,
         } => {
             let seed_str = seed.map(|s| format!(" seed={s}")).unwrap_or_default();
+            let var_str = variations
+                .as_ref()
+                .map(|v| format!(" variations={v}"))
+                .unwrap_or_default();
             format!(
-                "mc1 montecarlo numruns={}{} {{\n  {} {}\n}}",
+                "mc1 montecarlo numruns={}{}{} {{\n  {} {}\n}}",
                 iterations,
                 seed_str,
+                var_str,
                 inner,
                 inner_type.name(),
             )

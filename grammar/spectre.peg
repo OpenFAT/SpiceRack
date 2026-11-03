@@ -69,7 +69,7 @@ l_eolx     <- l_eol / !.
 
 # ── Statements ──
 deck       <- card* !.
-card       <- (SpiceRegion / Subckt / Library / LibDef / Model_group / Block / stmt) (nl / !.) / Unparsed nl
+card       <- (SpiceRegion / Subckt / Library / LibDef / Model_group / Statistics / Block / stmt) (nl / !.) / Unparsed nl
 Unparsed   <- rest
 
 # §3.1: a `simulator lang=spice` region, up to `simulator lang=spectre`:
@@ -110,6 +110,18 @@ secword    <- ('section' / 'library') !wchar
 # `nch.1`, `nch.2`, ... A group this cannot read is a `Block`.
 Model_group <- 'model' s Name s Name (s param)* s? '{' s? nl (s? Bin s? nl)+ s? '}'
 Bin        <- [0-9]+ s? ':' (s? param)*
+
+# R19 pp.175-179: `statistics { process { vary p dist=gauss std=1 } mismatch
+# { ... } correlate param=[a b] cc=0.5 truncate tr=4 }`, statements on their
+# own lines or on one. A block this does not read is a `Block`.
+Statistics <- 'statistics' ws '{' (ws stitem)* ws '}'
+stitem     <- Process / Mismatch / Correlate / Truncate
+Process    <- 'process' ws '{' (ws (Vary / Truncate))* ws '}'
+Mismatch   <- 'mismatch' ws '{' (ws (Vary / Truncate))* ws '}'
+Vary       <- 'vary' s Name (s param)*
+Correlate  <- 'correlate' (s param)*
+Truncate   <- 'truncate' (s param)*
+ws         <- (s / nl)*
 
 # Blocks no IR field holds, kept whole: a model group (UG p.108), `if` (R19
 # p.491), `statistics` (§4.13), and an analysis or control statement with

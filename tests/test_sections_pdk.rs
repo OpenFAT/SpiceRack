@@ -99,9 +99,9 @@ fn gf180mcu_model_file_round_trips_through_sections() {
 /// each section either crosses with the same meaning ([`meaning`]: a
 /// definition's locals are Spectre `parameters`, which an instance could
 /// set; numbers respelled, SPICE quotes dropped) or is refused for one of
-/// the named reasons: a statistical function Spectre has none of (agauss,
-/// in every mismatch and statistical corner) or a `.model` kind with no
-/// Spectre master mapped (`r`, `c`, a level-3 `d`).
+/// the named reasons: a `.model` kind with no Spectre master mapped (`r`,
+/// `c`, a level-3 `d`). The mismatch and statistical corners cross, their
+/// `agauss` calls lifted and read back (tests/test_monte_carlo.rs).
 #[test]
 fn gf180mcu_sections_cross_to_spectre() {
     let root = std::env::var("PDK_ROOT")
@@ -125,7 +125,6 @@ fn gf180mcu_sections_cross_to_spectre() {
                 Err(e) => {
                     let e = e.to_string();
                     let why = [
-                        "statistical function agauss()",
                         "(r level 1): no Spectre master",
                         "(c level 1): no Spectre master",
                         "(d level 3): no Spectre master",
@@ -143,7 +142,17 @@ fn gf180mcu_sections_cross_to_spectre() {
             crossed.push(format!("{f}:{}", s.body.name));
         }
     }
-    assert_eq!(refused.len(), 4, "{refused:?}");
+    assert_eq!(refused.len(), 3, "{refused:?}");
+    for name in [
+        "sm141064.ngspice:statistical",
+        "sm141064.ngspice:fets_mm",
+        "sm141064.ngspice:bjt_mc",
+    ] {
+        assert!(
+            crossed.iter().any(|c| c == name),
+            "{name} did not cross: {crossed:?}"
+        );
+    }
     // The sections with subcircuits and models among those that cross.
     for name in [
         "sm141064.ngspice:nfet_06v0_nvt_t",

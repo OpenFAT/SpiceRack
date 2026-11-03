@@ -1,0 +1,31 @@
+// t_s3_mismatch.scs
+
+simulator lang=spectre
+
+real rack_agauss(real nom, real avar, real sigma, real z) {
+    return nom + ((avar > 0 && sigma > 0) ? avar : 0) / ((sigma > 0) ? sigma : 1) * z;
+}
+parameters g_r=rack_agauss(0,100,1, rack_g_r_1) g=g_r rack_g_r_1=0 rack_s_rl_1=0
+statistics {
+    process {
+        vary rack_g_r_1 dist=gauss std=1
+    }
+    mismatch {
+        vary rack_s_rl_1 dist=gauss std=1
+    }
+}
+
+subckt s (a b)
+parameters rl=rack_agauss(1k,100,1, rack_s_rl_1)
+r1 (a b) resistor r=rl+g
+r2 (b 0) resistor r=1k
+ends s
+
+v1 (in 0) vsource dc=1
+x1 (in o1) s
+x2 (in o2) s
+
+op1 dc
+mc1 montecarlo numruns=2000 seed=1 variations=mismatch {
+  dcmc dc
+}

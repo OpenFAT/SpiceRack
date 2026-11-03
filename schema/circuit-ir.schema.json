@@ -134,7 +134,42 @@
           }
         },
         "verilog_blocks": { "description": "Verilog blocks to co-simulate or synthesize. Absent: none.", "type": "array", "items": { "$ref": "#/$defs/VerilogBlock" } },
+        "statistics": { "description": "Spectre statistics blocks, as the Spectre importer reads them. Absent: none.", "type": "array", "items": { "$ref": "#/$defs/Statistics" } },
         "locals": { "description": "A definition's own .param cards (SPICE .param inside a .subckt): computed in the body, never set by an instance; in card order. Absent: none.", "type": "array", "items": { "$ref": "#/$defs/ParamDef" } }
+      },
+      "additionalProperties": false
+    },
+    "Statistics": {
+      "type": "object",
+      "description": "One Spectre statistics { } block (R19 pp.175-179).",
+      "properties": {
+        "process": { "type": "array", "items": { "$ref": "#/$defs/Vary" } },
+        "mismatch": { "type": "array", "items": { "$ref": "#/$defs/Vary" } },
+        "correlations": { "type": "array", "items": { "$ref": "#/$defs/Correlate" } },
+        "truncate": { "description": "truncate tr= of the block, process and mismatch; null inherits.", "type": "array", "items": { "oneOf": [{ "type": "string" }, { "type": "null" }] } }
+      },
+      "additionalProperties": false
+    },
+    "Vary": {
+      "type": "object",
+      "description": "vary param dist= std=|N= [percent=yes].",
+      "required": ["param", "dist", "spread"],
+      "properties": {
+        "param": { "type": "string" },
+        "dist": { "type": "string", "enum": ["gauss", "lnorm", "unif"] },
+        "spread": { "type": "string" },
+        "percent": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "Correlate": {
+      "type": "object",
+      "description": "correlate param=[...] or dev=[...] cc=.",
+      "required": ["cc"],
+      "properties": {
+        "params": { "type": "array", "items": { "type": "string" } },
+        "devices": { "type": "array", "items": { "type": "string" } },
+        "cc": { "type": "string" }
       },
       "additionalProperties": false
     },
@@ -2017,6 +2052,7 @@
             "inner_type": {
               "$ref": "#/$defs/SpectreAnalysis"
             },
+            "variations": { "description": "process, mismatch or all (R19 p.166). Absent: Spectre's default.", "type": "string" },
             "seed": {
               "oneOf": [
                 {

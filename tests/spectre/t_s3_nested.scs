@@ -1,0 +1,33 @@
+// t_s3_nested.scs
+
+simulator lang=spectre
+
+real rack_agauss(real nom, real avar, real sigma, real z) {
+    return nom + ((avar > 0 && sigma > 0) ? avar : 0) / ((sigma > 0) ? sigma : 1) * z;
+}
+parameters rack_leaf_rl_1=0
+statistics {
+    mismatch {
+        vary rack_leaf_rl_1 dist=gauss std=1
+    }
+}
+
+subckt leaf (a b)
+parameters rl=rack_agauss(1k,100,1, rack_leaf_rl_1)
+r1 (a b) resistor r=rl
+r2 (b 0) resistor r=1k
+ends leaf
+
+subckt two (a b c)
+xa (a b) leaf
+xb (a c) leaf
+ends two
+
+v1 (in 0) vsource dc=1
+x1 (in o1 o2) two
+x2 (in o3 o4) two
+
+op1 dc
+mc1 montecarlo numruns=2000 seed=1 variations=mismatch {
+  dcmc dc
+}

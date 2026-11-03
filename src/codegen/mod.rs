@@ -15,6 +15,7 @@ mod append;
 pub mod laplace;
 mod spectre;
 pub(crate) mod spice3;
+pub(crate) mod statistics;
 mod vacask;
 pub mod xschem;
 
@@ -43,17 +44,27 @@ pub enum CodeGenError {
 /// [`params`], written straight into the deck by its `Display`.
 struct Params<'a>(&'a [(String, String)], fn(&str) -> Cow<'_, str>);
 
-/// The statistical functions of SPICE expressions (ngspice manual §2.8.5,
-/// p.64; HSPICE's `.PARAM` distributions): a nominal value plus a random
-/// draw. HSPICE, ngspice (and ESPice) and Xyce have them; the Spectre 19.1
-/// Reference's function table (pp.476-477) and VACASK's (lib/context.cpp)
-/// have none, and LTspice's `gauss(x)` is a different function of one
-/// argument.
-const STATISTICAL: [&str; 5] = ["agauss", "gauss", "aunif", "unif", "limit"];
-
 /// The whole deck for `d`. An analysis or component the simulator cannot run
 /// is an error, never a silently different deck.
 pub fn netlist(ir: &CircuitIR, d: Dialect) -> Result<String, CodeGenError> {
+    // Statistical calls and `statistics` tables in the target's own form
+    // (`docs/research/monte-carlo-spectre.md` §10): Spectre lifts the calls
+    // into normalized variables, SPICE and VACASK lower the tables to calls.
+    let spice = !matches!(
+        d,
+        Dialect::Spectre | Dialect::Vacask | Dialect::Cdl | Dialect::Verilog
+    );
+    let lowered = match d {
+        Dialect::Spectre => statistics::lift(ir)?,
+        Dialect::Vacask => {
+            let calls = statistics::vacask_calls(ir)?;
+            let ir = calls.as_ref().unwrap_or(ir);
+            statistics::lower(ir, true)?.or(calls)
+        }
+        _ if spice => statistics::lower(ir, false)?,
+        _ => None,
+    };
+    let ir = lowered.as_ref().unwrap_or(ir);
     check_caret_meaning(ir, d)?;
     check_functions(ir, d)?;
     match d {
@@ -178,19 +189,28 @@ fn expressions(ir: &CircuitIR) -> Vec<&str> {
 }
 
 /// Writing a statistical function where `d` has none would drop its random
-/// term or call something else: refuse, naming the function.
+/// term or call something else: refuse, naming the function. HSPICE,
+/// ngspice (and ESPice) and Xyce have the five (ngspice manual §2.11.5);
+/// Spectre gets them lifted and VACASK has four and a lowered `limit`
+/// (`statistics`); LTspice's `gauss(x)` is a different function of one
+/// argument, and it has none of the others.
 fn check_functions(ir: &CircuitIR, d: Dialect) -> Result<(), CodeGenError> {
     let has = match d {
         Dialect::Ngspice | Dialect::Espice | Dialect::Hspice | Dialect::Xyce => true,
         // The xschem layouts (LVS) are not evaluated.
         Dialect::Cdl | Dialect::Verilog => true,
-        Dialect::Ltspice | Dialect::Spectre | Dialect::Vacask => false,
+        Dialect::Spectre | Dialect::Vacask => true,
+        Dialect::Ltspice => false,
     };
     if has {
         return Ok(());
     }
     for e in expressions(ir) {
-        let stat = |f: &&str| STATISTICAL.iter().any(|s| s.eq_ignore_ascii_case(f));
+        let stat = |f: &&str| {
+            statistics::STATISTICAL
+                .iter()
+                .any(|s| s.eq_ignore_ascii_case(f))
+        };
         if let Some(f) = calls(e).find(stat) {
             return Err(CodeGenError::Other(format!(
                 "expression '{e}' calls the statistical function {f}(), which {} has no function for; refusing to drop its random term",

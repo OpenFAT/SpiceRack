@@ -180,5 +180,6 @@ pub fn spectre_monte_carlo(
         inner: inner.into(),
         inner_type,
         seed,
+        variations: None,
     })
 }

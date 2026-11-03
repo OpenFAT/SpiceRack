@@ -98,6 +98,10 @@ pub struct Subcircuit {
     /// the models and elements that read them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub locals: Vec<ParamDef>,
+    /// Spectre `statistics` blocks, as the Spectre importer reads them; on a
+    /// deck's top or a library section's body.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub statistics: Vec<Statistics>,
 }
 
 /// Verilog co-simulation or synthesis block stored in the IR

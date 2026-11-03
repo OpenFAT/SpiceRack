@@ -53,7 +53,7 @@ use crate::ir::*;
 use super::{CodeGenError, bare_node, param_defs};
 use analyses::emit_analysis_block;
 pub(crate) use components::emit_component;
-use library::{emit_models, emit_sections};
+use library::{emit_models, emit_sections, emit_statistics};
 pub(crate) use names::Names;
 use names::{inst_ref, signal};
 use values::{spectre_num, spectre_value, unsupported_component};
@@ -148,6 +148,7 @@ pub(super) fn netlist(ir: &CircuitIR) -> Result<String, CodeGenError> {
         param_defs(&mut out, &ir.top.parameters, spectre_value);
         out.push('\n');
     }
+    emit_statistics(&mut out, &ir.top.statistics);
 
     emit_models(&mut out, &ir.top.models, n)?;
 
@@ -349,6 +350,7 @@ fn emit_subcircuit_body(out: &mut String, sc: &Subcircuit, n: Names) -> Result<(
         param_defs(out, &sc.parameters, spectre_value);
         out.push('\n');
     }
+    emit_statistics(out, &sc.statistics);
     // A SPICE definition's own `.param`s: Spectre has no parameter an
     // instance cannot set, so they are `parameters` too, in order.
     if !sc.locals.is_empty() {

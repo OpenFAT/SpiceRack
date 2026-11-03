@@ -30,6 +30,14 @@ its `library` when it had one). SPICE bins (`nch.1`, `nch.2`) become a Spectre m
 back. LTspice reads `.lib tt` as a file, so it has no section form and is
 skipped.
 
+Monte Carlo statistics convert too (`docs/research/monte-carlo-spectre.md`).
+SPICE's `agauss`, `gauss`, `aunif`, `unif` and `limit` reach Spectre as
+`rack_*` functions of normalized variables varied in a `statistics` block
+(`process` at a file's or section's top, `mismatch` inside a subcircuit), and
+read back as the calls; VACASK writes them as they are (`limit` spelled out).
+A Spectre `statistics` block is read into the IR and written to SPICE as
+`agauss`/`aunif` draws. LTspice has none of the functions and refuses them.
+
 ## The JSON circuit format
 
 Every circuit has a JSON form (`to_json()`, `save_json()`, `load_json()`, see

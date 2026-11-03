@@ -1,0 +1,22 @@
+// t_s2_agauss.scs
+
+simulator lang=spectre
+
+real rack_agauss(real nom, real avar, real sigma, real z) {
+    return nom + ((avar > 0 && sigma > 0) ? avar : 0) / ((sigma > 0) ? sigma : 1) * z;
+}
+parameters rack_r1_r_1=0
+statistics {
+    process {
+        vary rack_r1_r_1 dist=gauss std=1
+    }
+}
+
+v1 (in 0) vsource dc=1
+r1 (in out) resistor r=rack_agauss(1k,100,3, rack_r1_r_1)
+r2 (out 0) resistor r=1k
+
+op1 dc
+mc1 montecarlo numruns=2000 seed=1 variations=all {
+  dcmc dc
+}

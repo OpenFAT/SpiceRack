@@ -162,11 +162,15 @@ pub enum Analysis {
         inner: String,
         inner_type: SpectreAnalysis,
     },
+    /// `variations=process|mismatch|all` (R19 p.166), written only when
+    /// set; a SPICE-origin deck with mismatch variables is written `all`.
     SpectreMonteCarlo {
         iterations: u32,
         inner: String,
         inner_type: SpectreAnalysis,
         seed: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        variations: Option<String>,
     },
     SpectrePac {
         #[serde(flatten)]

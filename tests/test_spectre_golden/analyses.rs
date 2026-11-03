@@ -326,8 +326,9 @@ fn spectre_sweep_and_montecarlo_blocks_match_documented_forms() {
             inner: "tran1".into(),
             inner_type: SpectreAnalysis::Tran,
             seed: Some(1234),
+            variations: Some("all".into()),
         }),
-        "mc1 montecarlo numruns=200 seed=1234 {\n  tran1 tran\n}",
+        "mc1 montecarlo numruns=200 seed=1234 variations=all {\n  tran1 tran\n}",
     );
     assert_eq!(
         analysis(Analysis::SpectreMonteCarlo {
@@ -335,6 +336,7 @@ fn spectre_sweep_and_montecarlo_blocks_match_documented_forms() {
             inner: "tran1".into(),
             inner_type: SpectreAnalysis::Tran,
             seed: None,
+            variations: None,
         }),
         "mc1 montecarlo numruns=8 {\n  tran1 tran\n}",
     );

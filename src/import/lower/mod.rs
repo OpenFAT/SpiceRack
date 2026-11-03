@@ -12,7 +12,8 @@
 //! `.global`, `.model`, `.param`, `.func`). Each card family lowers in its own
 //! file: `values` (value rows), `elements` and `analyses` (SPICE element and
 //! testbench cards), `named`, `named_elements` and `named_analyses` (Spectre
-//! and VACASK statements), `sections` (library sections).
+//! and VACASK statements), `sections` (library sections), `statistics`
+//! (Spectre `statistics` blocks; SpiceRack's own lifted calls read back).
 //!
 //! Cites: ADI LTspice help, CIRCUIT-ELEMENTS-REFERENCE (implicit inductor
 //! `Rser=1m`); Xyce Reference Guide Table 2-36 (BSIM3 is level 9).
@@ -34,6 +35,7 @@ mod named;
 mod named_analyses;
 mod named_elements;
 mod sections;
+mod statistics;
 mod values;
 
 struct Cx<'a> {
@@ -124,19 +126,21 @@ pub(super) fn deck(
         top.osdi_loads.sort();
     }
     let raw_dialect = Some(d.family());
-    (
-        CircuitIR {
-            raw_dialect,
-            globals,
-            functions,
-            top,
-            testbench: Some(tb),
-            subcircuit_defs: defs,
-            model_libraries: vec![],
-            sections,
-        },
-        report,
-    )
+    let mut ir = CircuitIR {
+        raw_dialect,
+        globals,
+        functions,
+        top,
+        testbench: Some(tb),
+        subcircuit_defs: defs,
+        model_libraries: vec![],
+        sections,
+    };
+    // SpiceRack's own lifted statistical calls read back as the calls.
+    if d == Dialect::Spectre {
+        crate::codegen::statistics::unlift(&mut ir);
+    }
+    (ir, report)
 }
 
 // ---- private ----
@@ -233,6 +237,10 @@ impl Cx<'_> {
                 here.raw_spice.push(line);
             }
             Tag::Raw | Tag::Block => self.raw(card, here),
+            Tag::Statistics => {
+                let st = self.statistics(card);
+                here.statistics.push(st);
+            }
             // Only a deck's top defines sections (a `.lib name` in a
             // `.subckt` stays raw, as it always has).
             Tag::Library | Tag::LibDef if scope != Scope::Top => self.raw(card, here),

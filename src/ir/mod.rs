@@ -3,7 +3,8 @@
 //! holds the dialect names and re-exports the tables, one file each:
 //! `circuit` (definitions, ports, instances, models), `component` (element
 //! cards), `waveform` (values and source waveforms), `testbench` (analyses,
-//! options, saves) and `features` (what a deck needs from a simulator).
+//! options, saves), `statistics` (Spectre `statistics` blocks) and
+//! `features` (what a deck needs from a simulator).
 //! JSON is `schema/circuit-ir.schema.json`, checked by `schema_check`.
 //!
 //! Cites: none here (each file cites its own manuals).
@@ -13,19 +14,22 @@
 //!   `Dialect::ALIASES: [(&str, Dialect); 3]`, `Dialect::name(self) -> &'static str`,
 //!   `Dialect::family(self) -> Dialect`, `Dialect::from_backend_name(&str) -> Option<Dialect>`,
 //!   `impl FromStr for Dialect`
-//! - `pub use circuit::*`, `component::*`, `features::*`, `testbench::*`, `waveform::*`
+//! - `pub use circuit::*`, `component::*`, `features::*`, `statistics::*`, `testbench::*`,
+//!   `waveform::*`
 
 use serde::{Deserialize, Serialize};
 
 mod circuit;
 mod component;
 mod features;
+mod statistics;
 mod testbench;
 mod waveform;
 
 pub use circuit::*;
 pub use component::*;
 pub use features::*;
+pub use statistics::*;
 pub use testbench::*;
 pub use waveform::*;
 
@@ -513,6 +517,26 @@ mod tests {
             locals: vec![ParamDef {
                 name: s("k"),
                 default: Some(s("w*2")),
+            }],
+            statistics: vec![Statistics {
+                process: vec![Vary {
+                    param: s("k"),
+                    dist: Dist::Gauss,
+                    spread: s("1"),
+                    percent: false,
+                }],
+                mismatch: vec![Vary {
+                    param: s("k"),
+                    dist: Dist::Unif,
+                    spread: s("2"),
+                    percent: true,
+                }],
+                correlations: vec![Correlate {
+                    params: vec![s("a"), s("b")],
+                    devices: vec![s("x1")],
+                    cc: s("0.5"),
+                }],
+                truncate: [Some(s("4")), None, Some(s("3"))],
             }],
         };
         let tb = Testbench {
@@ -1280,6 +1304,7 @@ mod tests {
                 inner: "tran1".into(),
                 inner_type: SpectreAnalysis::Tran,
                 seed: Some(42),
+                variations: Some("all".into()),
             },
             Analysis::SpectrePac {
                 pss: PssBase {

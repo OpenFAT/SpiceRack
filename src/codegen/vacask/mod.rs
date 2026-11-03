@@ -331,7 +331,11 @@ pub(super) fn netlist(ir: &CircuitIR) -> Result<String, CodeGenError> {
             for s in &step_sweeps {
                 w!(out, "  {s}\n");
             }
-            for l in analysis_block(idx, a, ir.raw_dialect == Some(Dialect::Vacask))? {
+            let block = match a {
+                Analysis::SpectreMonteCarlo { .. } => monte_carlo(ir, tb, idx, a)?,
+                a => analysis_block(idx, a, ir.raw_dialect == Some(Dialect::Vacask))?,
+            };
+            for l in block {
                 let ic = if l.trim_start().starts_with("analysis") {
                     ic.as_str()
                 } else {
@@ -356,6 +360,56 @@ fn param_list<'a>(out: &mut String, defs: impl Iterator<Item = &'a ParamDef>, lo
             None => w!(out, " {}=0", p.name.to_ascii_lowercase()),
         }
     }
+}
+
+/// A Spectre `montecarlo` as VACASK's `mc` loop (`docs/cmd-analysis-mc.md`
+/// lines 7-23) around the deck's analysis of the inner kind, `lh=0`
+/// (Spectre's `sampling=standard`). VACASK has no `variations` switch, so a
+/// `process` or `mismatch` that would drop the deck's variation is refused
+/// (monte-carlo-spectre.md §7).
+fn monte_carlo(
+    ir: &CircuitIR,
+    tb: &Testbench,
+    idx: usize,
+    a: &Analysis,
+) -> Result<Vec<String>, CodeGenError> {
+    let Analysis::SpectreMonteCarlo {
+        iterations,
+        inner_type,
+        seed,
+        variations,
+        ..
+    } = a
+    else {
+        unreachable!("monte_carlo takes a montecarlo");
+    };
+    if let Some(v) = variations.as_deref().filter(|v| *v != "all") {
+        return Err(unsupported_analysis(format!(
+            "montecarlo variations={v}: VACASK varies every scope at once"
+        )));
+    }
+    let inner = tb
+        .analyses
+        .iter()
+        .find(|x| {
+            !matches!(x, Analysis::SpectreMonteCarlo { .. }) && x.kind_str() == inner_type.name()
+        })
+        .ok_or_else(|| {
+            unsupported_analysis(format!(
+                "montecarlo over {} with no {} analysis to run",
+                inner_type.name(),
+                inner_type.name()
+            ))
+        })?;
+    let seed = seed.map(|s| format!(" seed={s}")).unwrap_or_default();
+    let mut out = vec![format!("mc mc{} samples={iterations}{seed} lh=0", idx + 1)];
+    out.extend(
+        analysis_block(idx, inner, ir.raw_dialect == Some(Dialect::Vacask))?
+            .into_iter()
+            .map(|l| format!("  {l}")),
+    );
+    out.push("endmc".into());
+    Ok(out)
 }
 
 /// A `subckt` ... `ends` block, with no line end after `ends`.

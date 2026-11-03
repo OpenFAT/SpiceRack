@@ -311,8 +311,8 @@ fn bare_spectre_sections_with_a_spice_region() {
 /// unbraced tail is one expression; a lone `+` between two assignments
 /// separates them; an empty `.param` sets nothing; a `.param` in a
 /// `.subckt` is a local. ngspice runs the deck written from the IR to the same currents.
-/// A statistical function reaches HSPICE and is refused, by name, where the
-/// dialect has none.
+/// A statistical function reaches HSPICE and is refused, by name, by
+/// LTspice, which has none.
 #[test]
 fn ngspice_value_forms_and_statistical_functions() {
     let deck = "forms\n.param x=2\n.param a = '-1*x' + b = '0 - 2.5'\n.param c = {1+x} + x*0*AGAUSS(0,1,1)\n.param\n.model rr r rsh=10 dw={\"-a-b/8\"}\n.subckt two p n\n.param k={x*2}\nR1 p n {k+c}\n.ends twoV1 1 0 1\nR1 1 0 rr l=10 w=1\nX1 1 0 two\nVb 2 0 1\nRb 2 0 {b+10}\n.op\n.end\n";
@@ -369,13 +369,10 @@ fn ngspice_value_forms_and_statistical_functions() {
             .unwrap()
             .contains(".param mis='agauss(0,1m,1)'")
     );
-    for d in [Dialect::Spectre, Dialect::Vacask, Dialect::Ltspice] {
-        let err = netlist(&stat, d).unwrap_err().to_string();
-        assert!(
-            err.contains("statistical function agauss()"),
-            "{d:?}: {err}"
-        );
-    }
+    // Spectre lifts the call, VACASK has it (tests/test_monte_carlo.rs);
+    // LTspice has none.
+    let err = netlist(&stat, Dialect::Ltspice).unwrap_err().to_string();
+    assert!(err.contains("statistical function agauss()"), "{err}");
 }
 
 /// sky130's two element forms ngspice reads its own way:

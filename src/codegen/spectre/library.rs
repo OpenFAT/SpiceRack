@@ -1,14 +1,16 @@
 //! A PDK model file's structure -> Spectre: SPICE bins as one model group,
-//! library sections in their `library`.
+//! library sections in their `library`, `statistics` blocks.
 //!
 //! Cites: Spectre User Guide 5.1.41 p.108 (model groups); `[REF]` p.498
-//! (`library`, `section`, `endsection`, `endlibrary`).
+//! (`library`, `section`, `endsection`, `endlibrary`), pp.175-179
+//! (`statistics`).
 //!
 //! Contents:
 //! - `pub(super) fn emit_models(out: &mut String, models: &[ModelDef], n: Names)
 //!   -> Result<(), CodeGenError>`
 //! - `pub(super) fn emit_sections(out: &mut String, ir: &CircuitIR, n: Names)
 //!   -> Result<(), CodeGenError>`
+//! - `pub(super) fn emit_statistics(out: &mut String, blocks: &[Statistics])`
 
 use super::{
     Names, emit_model, emit_model_params, emit_subcircuit, emit_subcircuit_body, spectre_master,
@@ -99,6 +101,58 @@ pub(super) fn emit_sections(
         }
     }
     Ok(())
+}
+
+/// `[REF]` pp.175-179: `statistics { process { vary p dist=gauss std=s }
+/// mismatch { ... } correlate param=[a b] cc=c truncate tr=t }`, one block
+/// per table, one statement a line; values in Spectre's spelling.
+pub(super) fn emit_statistics(out: &mut String, blocks: &[Statistics]) {
+    let v = |s: &str| super::spectre_value(s).into_owned();
+    for st in blocks {
+        out.push_str("statistics {\n");
+        let truncate = |out: &mut String, t: &Option<String>, pad: &str| {
+            if let Some(t) = t {
+                w!(out, "{pad}truncate tr={}\n", v(t));
+            }
+        };
+        for (name, varies, t) in [
+            ("process", &st.process, &st.truncate[1]),
+            ("mismatch", &st.mismatch, &st.truncate[2]),
+        ] {
+            if varies.is_empty() && t.is_none() {
+                continue;
+            }
+            w!(out, "    {name} {{\n");
+            for x in varies {
+                let (dist, key) = match x.dist {
+                    Dist::Gauss => ("gauss", "std"),
+                    Dist::Lnorm => ("lnorm", "std"),
+                    Dist::Unif => ("unif", "N"),
+                };
+                let pct = if x.percent { " percent=yes" } else { "" };
+                w!(
+                    out,
+                    "        vary {} dist={dist} {key}={}{pct}\n",
+                    x.param,
+                    v(&x.spread)
+                );
+            }
+            truncate(out, t, "        ");
+            out.push_str("    }\n");
+        }
+        for c in &st.correlations {
+            out.push_str("    correlate");
+            if !c.devices.is_empty() {
+                w!(out, " dev=[{}]", c.devices.join(" "));
+            }
+            if !c.params.is_empty() {
+                w!(out, " param=[{}]", c.params.join(" "));
+            }
+            w!(out, " cc={}\n", v(&c.cc));
+        }
+        truncate(out, &st.truncate[0], "    ");
+        out.push_str("}\n");
+    }
 }
 
 // ---- private ----

@@ -1,0 +1,48 @@
+{
+  "_provenance": "Decks: written by SpiceRack (tests/test_monte_carlo.rs spectre_run_decks_are_current) from the SPICE sources in that test. Closed forms: docs/research/monte-carlo-spectre.md §10.6 (v(out) of a 1k/1k divider, linearized: dv/dR1 = -2.5e-4 per ohm). ngspice: ngspice 45, N=2000 operating points re-drawn by mc_source, on the original SPICE deck. Tolerances: mean within 4*sigma/sqrt(N), std within 4*sigma/sqrt(2N) (N=2000); Spectre's default 4-sigma truncation changes a std by -0.054%, far inside them.",
+  "t_s1_nominal.scs": {
+    "test": "T-S1",
+    "nominal": { "out": 0.5 },
+    "rel_tol": 1e-9,
+    "why": "every call at its nominal: r1 = 1k + 0 + 0"
+  },
+  "t_s2_agauss.scs": {
+    "test": "T-S2",
+    "probe": "out",
+    "mean": 0.5, "std": 8.333333e-3,
+    "mean_tol": 7.45e-4, "std_tol": 5.27e-4,
+    "ngspice": { "mean": 4.998825e-1, "std": 8.403456e-3 }
+  },
+  "t_s2_aunif.scs": {
+    "test": "T-S2",
+    "probe": "out",
+    "mean": 0.5, "std": 1.443376e-2,
+    "mean_tol": 1.291e-3, "std_tol": 9.13e-4,
+    "ngspice": { "mean": 5.005014e-1, "std": 1.470835e-2 }
+  },
+  "t_s2_limit.scs": {
+    "test": "T-S2",
+    "probe": "out",
+    "values": [0.4878049, 0.5128205],
+    "value_tol": 1e-6,
+    "mean": 0.5003127, "std": 1.250782e-2,
+    "mean_tol": 1.119e-3, "std_tol": 7.91e-4,
+    "ngspice": { "mean": 5.007004e-1, "std": 1.250492e-2 }
+  },
+  "t_s3_mismatch.scs": {
+    "test": "T-S3",
+    "pairs": [["o1", "o2"]],
+    "abs_rho_below": 0.0894,
+    "std": { "o1": 2.5e-2, "o2": 2.5e-2 },
+    "std_tol": 1.58e-3,
+    "why": "variations=mismatch: the shared process draw g is off; each instance's rl = agauss(1k,100,1) is its own"
+  },
+  "t_s3_nested.scs": {
+    "test": "T-S3",
+    "pairs": [["o1", "o3"], ["o1", "o2"], ["o2", "o4"]],
+    "abs_rho_below": 0.0894,
+    "std": { "o1": 2.5e-2, "o2": 2.5e-2, "o3": 2.5e-2, "o4": 2.5e-2 },
+    "std_tol": 1.58e-3,
+    "why": "x1.xa, x1.xb, x2.xa and x2.xb are four instances of leaf: four independent draws (hierarchical instances, R19 'per subcircuit instance')"
+  }
+}

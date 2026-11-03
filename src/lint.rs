@@ -298,6 +298,47 @@ pub fn lint_netlist(netlist: &str, backend: Option<&str>) -> LintResult {
         }
     }
 
+    // A one-layer random `.param` read more than once: ngspice, HSPICE and
+    // Xyce draw each read anew, Spectre and VACASK once per scope
+    // (monte-carlo-spectre.md §1.2, §5.1, §10.5).
+    let random: Vec<(String, usize)> = rows
+        .iter()
+        .filter(|r| r.card(".PARAM"))
+        .flat_map(|r| {
+            param_assigns(&r.text[6..])
+                .into_iter()
+                .map(move |(n, v)| (n, v, r.no))
+        })
+        .filter(|(_, v, _)| crate::codegen::statistics::has_statistical(v))
+        .map(|(n, _, no)| (n, no))
+        .collect();
+    for (name, line) in random {
+        // Every occurrence but the definition's own name is a read.
+        let reads = rows
+            .iter()
+            .filter(|r| !r.text.starts_with('*'))
+            .map(|r| {
+                idents(&r.text.to_lowercase())
+                    .filter(|w| *w == name)
+                    .count()
+            })
+            .sum::<usize>()
+            - 1;
+        if reads > 1 {
+            warn(
+                &mut out,
+                line,
+                format!(
+                    "random .param '{name}' is read {reads} times: ngspice, HSPICE and Xyce draw each read anew, Spectre and VACASK once"
+                ),
+                format!(
+                    "Draw it once everywhere: .param {name}_r=<call> and .param {name}={name}_r"
+                ),
+                &["spectre", "vacask"],
+            );
+        }
+    }
+
     // An alias (`ngspice-shared`) checks as the dialect it names.
     let family = backend.map_or("", |b| {
         crate::ir::Dialect::from_backend_name(b).map_or(b, |d| d.name())
@@ -323,6 +364,37 @@ pub fn lint_netlist(netlist: &str, backend: Option<&str>) -> LintResult {
 }
 
 // ---- private ----
+
+/// `.param` assignments, lowercased names and their value text: `a=1
+/// b = 'x*2'` is `[("a", "1"), ("b", "'x*2'")]`.
+fn param_assigns(s: &str) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    let mut rest = s;
+    while let Some(eq) = rest.find('=') {
+        let head = rest[..eq].trim_end();
+        let name = head
+            .rsplit(|c: char| c.is_whitespace() || c == ',')
+            .next()
+            .unwrap_or("")
+            .to_lowercase();
+        if let Some(last) = out.last_mut() {
+            let v = head[..head.len() - name.len()].trim();
+            last.1 = v.to_string();
+        }
+        out.push((name, String::new()));
+        rest = &rest[eq + 1..];
+    }
+    if let Some(last) = out.last_mut() {
+        last.1 = rest.trim().to_string();
+    }
+    out
+}
+
+/// The identifiers of `s`.
+fn idents(s: &str) -> impl Iterator<Item = &str> {
+    s.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .filter(|w| !w.is_empty())
+}
 
 fn is_ground(t: &str) -> bool {
     t == "0" || t.eq_ignore_ascii_case("gnd")
