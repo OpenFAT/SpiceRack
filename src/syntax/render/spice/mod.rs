@@ -1,14 +1,16 @@
-//! The SPICE-family writer (ngspice, ESPice, HSPICE, Xyce, LTspice): one
-//! deck spine over the reader's plan, spelled by the target's
+//! The SPICE-family writer (ngspice, ESPice, HSPICE, Xyce, LTspice, and
+//! CDL in the xschem layout): one deck spine over the reader's plan, spelled by the target's
 //! [`Spelling`] row and gated by [`action`]. The targets differ only in
 //! table rows and in the `Spell`/`Lift`/`Refuse` answers.
 //!
 //! This file is the spine (title, loads, globals, functions, includes,
 //! parameters and models, subcircuits, sections, the body, the testbench,
-//! `.end`) and the block-level cards; `cards` writes elements and
+//! `.end`; the frame of title, `.end` and control blocks decided once, by
+//! the file's role) and the block-level cards; `cards` writes elements and
 //! waveforms, `bench` the testbench and analyses, `checks` the deck-wide
 //! refusals (another family's text, `^`, statistical calls), `draws` the
-//! `statistics` lift, `laplace` the transfer function a Laplace lift reads.
+//! `statistics` lift, `laplace` the transfer function a Laplace lift reads,
+//! `names` the element names with their letters, `cdl` CDL's layout.
 //!
 //! Cites: ngspice manual ch.2 (the deck), §2.4.3 (`.subckt`), §2.6, §2.7
 //! (`.include`, `.lib`), §2.15 (`.if`); HSPICE `.END` (a library ends
@@ -20,16 +22,20 @@
 
 mod bench;
 mod cards;
+mod cdl;
 mod checks;
 mod draws;
 mod laplace;
+mod names;
 
 use super::capability::{Action, Alt, Construct, Rule, action};
 use super::out::{Out, Space};
 use super::read::{Block, Comp, Deck, Func, Raw, Rd, Section};
+use super::role::{self, Frame};
 use super::spelling::{FuncForm, Spelling, spelling};
 use crate::codegen::Dialect;
 use crate::syntax::diag::{Code, Diag};
+use crate::syntax::resolve::Role;
 
 /// The writer's state for one deck.
 struct W<'a, 'r> {
@@ -44,6 +50,11 @@ struct W<'a, 'r> {
     refused: Vec<Diag>,
     /// The `statistics` lift's fixups.
     draws: draws::Draws,
+    /// The element names, letters added.
+    names: names::Names,
+    /// The subcircuit being written (its node; `NONE` at the top): the
+    /// scope a reference is looked up in.
+    scope: u32,
     /// The deck runs its `.four` cards as `fourier` commands in its
     /// `.control` block, so the cards are left out.
     drop_four: bool,
@@ -79,18 +90,32 @@ pub(super) fn write(rd: &mut Rd, deck: &Deck, target: Dialect) -> Result<String,
         deck,
         sp,
         d: target,
-        x: rd.d == Dialect::Ngspice,
+        // CDL's cards are the old layout's `codegen::card(c, Ngspice)`,
+        // which spells numbers without ngspice's arithmetic.
+        x: rd.d == Dialect::Ngspice && target != Dialect::Cdl,
         o: Out::new(4096),
         refused,
         draws,
+        names: names::Names::new(rd, deck),
+        scope: crate::syntax::ast::NONE,
         drop_four: false,
         in_section: false,
     };
     w.checks();
-    let control = w.control_run();
+    if target == Dialect::Cdl {
+        w.cdl();
+        return match w.refused.is_empty() {
+            true => Ok(w.o.finish()),
+            false => Err(w.refused),
+        };
+    }
+    let frame = w.frame();
+    let control = if frame.control { w.control_run() } else { None };
     w.drop_four = control.is_some();
-    w.o.token(&format!("{} {}", sp.comment, deck.top.name), Space::Line);
-    w.loads();
+    if frame.title {
+        w.o.token(&format!("{} {}", sp.comment, deck.top.name), Space::Line);
+    }
+    w.loads(frame.control);
     w.globals();
     w.funcs(&deck.funcs);
     w.file_cards(&deck.top);
@@ -104,13 +129,11 @@ pub(super) fn write(rd: &mut Rd, deck: &Deck, target: Dialect) -> Result<String,
         w.section(s);
     }
     w.body(&deck.top, true);
-    let runs = w.bench(control.as_deref());
-    // HSPICE's `.END` ends the run, even in a file read by `.include` or
-    // `.lib`: a deck with no analysis is a library, and ends without one.
-    if target == Dialect::Hspice && !runs {
-        w.o.pop();
-    } else {
-        w.o.token(".end", Space::None);
+    w.bench(control.as_deref());
+    match frame.end {
+        true => w.o.token(".end", Space::None),
+        // The deck ends on its last card's line end.
+        false => w.o.pop(),
     }
     match w.refused.is_empty() {
         true => Ok(w.o.finish()),
@@ -121,6 +144,32 @@ pub(super) fn write(rd: &mut Rd, deck: &Deck, target: Dialect) -> Result<String,
 // ---- private ----
 
 impl W<'_, '_> {
+    /// What the deck is written in: what its role says ([`role::frame`]),
+    /// but for the old writer's rules where they give other bytes, which
+    /// the golden gate holds until phase 7.
+    fn frame(&self) -> Frame {
+        let role = self.rd.role();
+        let mut f = role::frame(role);
+        if role == Role::Library {
+            // quirk: the old writer titled and ended a library, and loaded
+            // its Verilog-A in a `.control` block, as any deck; phase 7
+            // writes it bare.
+            f = Frame {
+                title: true,
+                end: true,
+                control: true,
+            };
+        }
+        if self.d == Dialect::Hspice {
+            // quirk: the old HSPICE writer's guess at the role: `.END` ends
+            // the run even in an included file, so a file with no analysis
+            // (a library, or a deck of sources alone) ends without one;
+            // phase 7 asks the role.
+            f.end = self.runs();
+        }
+        f
+    }
+
     /// `c`'s action for the target; a refusal is recorded at `token`.
     fn ask(&mut self, c: Construct, token: u32) -> Action {
         let a = action(self.d, c);
@@ -135,25 +184,28 @@ impl W<'_, '_> {
     }
 
     /// Model loads that must precede any card instantiating them:
-    /// ngspice's `pre_osdi` control block, ESPice's and HSPICE's `.hdl`
-    /// (they compile Verilog-A themselves and load no OSDI binaries).
-    fn loads(&mut self) {
+    /// ngspice's `pre_osdi` control block (when the frame has `control`),
+    /// ESPice's and HSPICE's `.hdl` (they compile Verilog-A themselves and
+    /// load no OSDI binaries).
+    fn loads(&mut self, control: bool) {
         let deck = self.deck;
         let path = |n: u32| self.rd.unquote(self.rd.fields(n)[0]);
         let top: Vec<String> = deck.top.loads.iter().map(|&n| path(n)).collect();
         let tok = deck.top.loads.first().map_or(0, |&n| self.rd.main(n));
         let source = crate::veriloga::is_source;
         match self.d {
-            Dialect::Ngspice if !top.is_empty() => match crate::veriloga::osdi_loads(&top) {
-                Ok(loads) => {
-                    self.o.token(".control", Space::Line);
-                    for p in &loads {
-                        self.o.token(&format!("pre_osdi {p}"), Space::Line);
+            Dialect::Ngspice if control && !top.is_empty() => {
+                match crate::veriloga::osdi_loads(&top) {
+                    Ok(loads) => {
+                        self.o.token(".control", Space::Line);
+                        for p in &loads {
+                            self.o.token(&format!("pre_osdi {p}"), Space::Line);
+                        }
+                        self.o.token(".endc", Space::Line);
                     }
-                    self.o.token(".endc", Space::Line);
+                    Err(_) => self.refuse(Code::W0004, tok),
                 }
-                Err(_) => self.refuse(Code::W0004, tok),
-            },
+            }
             Dialect::Espice => {
                 let all = deck
                     .top
@@ -304,6 +356,7 @@ impl W<'_, '_> {
     }
 
     fn subckt(&mut self, sc: &Block) {
+        self.scope = sc.node;
         let head = self
             .rd
             .subckt_head(sc.node)
@@ -334,6 +387,7 @@ impl W<'_, '_> {
         self.models(sc);
         self.body(sc, self.rd.d == Dialect::Ltspice && !self.in_section);
         self.o.token(&format!(".ends {}", sc.name), Space::Line);
+        self.scope = crate::syntax::ast::NONE;
     }
 
     /// `.lib <name>` … `.endl <name>`, the body written as a deck's top is.

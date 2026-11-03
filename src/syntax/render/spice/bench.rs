@@ -12,7 +12,8 @@
 //!
 //! Contents:
 //! - `fn is_four(line: &str) -> bool`, `fn is_continuation(line: &str) -> bool`
-//! - `W::control_run(&self) -> Option<Vec<String>>`, `W::bench(&mut self, control: Option<&[String]>) -> bool`
+//! - `pub(super) struct Tb`, `W::fold(&self) -> Tb`
+//! - `W::control_run(&self) -> Option<Vec<String>>`, `W::bench(&mut self, control: Option<&[String]>)`, `W::runs(&self) -> bool`
 
 use super::W;
 use crate::codegen::Dialect;
@@ -21,13 +22,9 @@ use crate::syntax::render::out::Space;
 use crate::syntax::render::read::{Ana, Bench, BenchCard, Opt};
 use crate::syntax::render::spelling::spelling;
 
-/// Control commands that start an analysis: a `.control` block issuing one
-/// owns the run.
-const RUN_COMMANDS: [&str; 5] = ["run", "op", "ac", "tran", "dc"];
-
 /// The testbench, folded from its statements in read order.
 #[derive(Default)]
-struct Tb {
+pub(super) struct Tb {
     /// Each analysis, with its statement's first token.
     analyses: Vec<(Ana, u32)>,
     portable: Vec<(String, String)>,
@@ -42,8 +39,12 @@ struct Tb {
     /// Each `.step`'s sweep, name, numbers and first token.
     steps: Vec<(Option<&'static str>, String, [f64; 3], u32)>,
     /// VACASK control lines kept as text.
-    extra: Vec<String>,
+    pub(super) extra: Vec<String>,
 }
+
+/// Control commands that start an analysis: a `.control` block issuing one
+/// owns the run.
+const RUN_COMMANDS: [&str; 5] = ["run", "op", "ac", "tran", "dc"];
 
 /// True if `line` is a `.four` card (any case).
 pub(super) fn is_four(line: &str) -> bool {
@@ -97,8 +98,33 @@ impl W<'_, '_> {
             .then_some(fourier)
     }
 
-    /// The testbench's cards; whether the deck runs an analysis.
-    pub(super) fn bench(&mut self, control: Option<&[String]>) -> bool {
+    /// The deck's testbench statements, folded in read order.
+    pub(super) fn fold(&self) -> Tb {
+        let mut tb = Tb::default();
+        for &b in &self.deck.bench {
+            let tok = match b {
+                Bench::Card(n)
+                | Bench::Meas(n)
+                | Bench::Save(n)
+                | Bench::Analysis(n)
+                | Bench::Options(n)
+                | Bench::NodeVals(n)
+                | Bench::Control(n) => self.rd.main(n),
+            };
+            for card in self.rd.bench_cards(b) {
+                self.fold_one(&mut tb, card, tok);
+            }
+        }
+        tb
+    }
+
+    /// Whether the deck runs an analysis.
+    pub(super) fn runs(&self) -> bool {
+        !self.fold().analyses.is_empty()
+    }
+
+    /// The testbench's cards.
+    pub(super) fn bench(&mut self, control: Option<&[String]>) {
         let tb = self.fold();
         if self.d == Dialect::Xyce {
             for l in self.xyce_options(&tb) {
@@ -196,33 +222,12 @@ impl W<'_, '_> {
                 }
             }
         }
-        !tb.analyses.is_empty()
     }
 }
 
 // ---- private ----
 
 impl W<'_, '_> {
-    /// The deck's testbench statements, folded in read order.
-    fn fold(&self) -> Tb {
-        let mut tb = Tb::default();
-        for &b in &self.deck.bench {
-            let tok = match b {
-                Bench::Card(n)
-                | Bench::Meas(n)
-                | Bench::Save(n)
-                | Bench::Analysis(n)
-                | Bench::Options(n)
-                | Bench::NodeVals(n)
-                | Bench::Control(n) => self.rd.main(n),
-            };
-            for card in self.rd.bench_cards(b) {
-                self.fold_one(&mut tb, card, tok);
-            }
-        }
-        tb
-    }
-
     /// One testbench card into `tb`.
     fn fold_one(&self, tb: &mut Tb, card: BenchCard, tok: u32) {
         {

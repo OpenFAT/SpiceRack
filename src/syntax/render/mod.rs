@@ -1,7 +1,7 @@
 //! [`Ast`] (and its [`Kit`]) → deck text in any dialect: the transpiler's
 //! last stage (`docs/research/transpiler-architecture.md` §2.5). Two
 //! structural writers, because there are two statement shapes: the SPICE
-//! family (`spice`: ngspice, ESPice, HSPICE, Xyce, LTspice) and the named
+//! family (`spice`: ngspice, ESPice, HSPICE, Xyce, LTspice, CDL) and the named
 //! family (Spectre, VACASK; not yet ported). Each reads the reader's plan
 //! (`read`: which statement is written where, and its views), spells
 //! through the target's [`spelling::Spelling`] row, asks
@@ -112,12 +112,17 @@ pub fn render_text(
     render(&src, target)
 }
 
-/// Whether [`render`] writes `target` from a deck read in `from`: the SPICE
-/// family from SPICE-family input, for now (the named reader and writer
-/// are not ported yet).
+/// Whether [`render`] writes `target`: the SPICE family and CDL, for now
+/// (the named writer is not ported yet; Verilog stays on the old layout
+/// writer, whose element lines are the old IR's own text).
 pub fn writes(target: Dialect) -> bool {
     matches!(
         target,
-        Dialect::Ngspice | Dialect::Espice | Dialect::Hspice | Dialect::Xyce | Dialect::Ltspice
+        Dialect::Ngspice
+            | Dialect::Espice
+            | Dialect::Hspice
+            | Dialect::Xyce
+            | Dialect::Ltspice
+            | Dialect::Cdl
     )
 }

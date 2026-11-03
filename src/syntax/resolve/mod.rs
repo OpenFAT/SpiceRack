@@ -283,7 +283,10 @@ struct Open<'a> {
 /// Cost: one walk of the tree, its declarations collected and dropped.
 pub fn role(t: &Tokens, ast: &Ast) -> Role {
     let role = declare::declare(FileId(0), t, ast, false).role;
-    assert!(matches!(role, Role::Deck | Role::Library), "a file read is a deck or a library");
+    assert!(
+        matches!(role, Role::Deck | Role::Library),
+        "a file read is a deck or a library"
+    );
     role
 }
 

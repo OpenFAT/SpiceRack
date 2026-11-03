@@ -28,6 +28,8 @@ impl W<'_, '_> {
     /// `Rser` carries LTspice's implicit `Rser=1m`.
     pub(super) fn card(&mut self, n: u32, coupled: Option<&[String]>) {
         let tok = self.rd.main(n);
+        // The name the letter policy gives the element (`names`).
+        let decl = self.names.decl(n).to_string();
         let line = match self.rd.card_view(n) {
             Card::Rcl {
                 letter,
@@ -48,7 +50,7 @@ impl W<'_, '_> {
                 if model.is_some() {
                     self.ask(Construct::RclModel, tok);
                 }
-                let mut s = format!("{letter}{name} {n1} {n2}");
+                let mut s = format!("{decl} {n1} {n2}");
                 match &value {
                     Val::Raw(t) if t.is_empty() => {}
                     v => s.push_str(&format!(" {}", self.value(v))),
@@ -59,27 +61,34 @@ impl W<'_, '_> {
                 s + &self.params(&params)
             }
             Card::Charge {
-                name,
                 n1,
                 n2,
                 charge,
                 params,
+                ..
             } => {
                 let q = match self.ask(Construct::ChargeCapacitor, tok) {
                     Action::Spell(Alt::ChargeBraced) => format!("Q={{{charge}}}"),
                     Action::Spell(Alt::ChargeBare) => format!("Q={charge}"),
                     _ => format!("Q='{charge}'"),
                 };
-                format!("C{name} {n1} {n2} {q}{}", self.params(&params))
+                format!("{decl} {n1} {n2} {q}{}", self.params(&params))
             }
             Card::Coupling {
-                name, l1, l2, k, ..
+                l1, l2, refs, k, ..
             } => {
-                format!("K{name} L{l1} L{l2} {}", self.sp.decimal(k, self.x))
+                // Each inductor as the map spells its declaration in this
+                // scope; one declared elsewhere gains its letter as written.
+                let l = |r: &str, rest: &str| {
+                    self.names
+                        .reference(self.scope, r, 'L')
+                        .map_or_else(|| format!("L{rest}"), str::to_string)
+                };
+                let (l1, l2) = (l(&refs[0], &l1), l(&refs[1], &l2));
+                format!("{decl} {l1} {l2} {}", self.sp.decimal(k, self.x))
             }
             Card::Source {
                 letter,
-                name,
                 np,
                 nm,
                 value,
@@ -87,6 +96,7 @@ impl W<'_, '_> {
                 ac_phase,
                 wave,
                 port,
+                ..
             } => {
                 if let Some(w) = &wave {
                     self.wave_ok(letter, w, tok);
@@ -94,7 +104,7 @@ impl W<'_, '_> {
                 if port.is_some() {
                     self.ask(Construct::RfPort, tok);
                 }
-                let mut s = format!("{letter}{name} {np} {nm} {}", self.value(&value));
+                let mut s = format!("{decl} {np} {nm} {}", self.value(&value));
                 if let Some(mag) = ac_mag {
                     s.push_str(&format!(" AC {}", self.sp.decimal(mag, self.x)));
                     if let Some(phase) = ac_phase {
@@ -122,38 +132,37 @@ impl W<'_, '_> {
                 value,
             } => {
                 if laplace::has_laplace(self.rd, value) {
-                    self.laplace(&name, &np, &nm, value, current, tok)
+                    self.laplace(&decl, &np, &nm, value, current, tok)
                 } else {
                     let key = if current { 'I' } else { 'V' };
                     match self.ask(Construct::BehaviouralSource, tok) {
+                        // quirk: HSPICE's `E`/`G` form renames `B1` to `G1` or
+                        // `E1` here alone, not where a reference names it
+                        // (`i(B1)`), and may meet an `E1` of the deck's own;
+                        // phase 7 renames it in the map.
                         Action::Spell(Alt::VolCur) if current => {
                             format!("G{name} {np} {nm} cur='{expr}'")
                         }
                         Action::Spell(Alt::VolCur) => format!("E{name} {np} {nm} vol='{expr}'"),
                         Action::Spell(Alt::BracedBehaviour) => {
-                            format!("B{name} {np} {nm} {key}={{{expr}}}")
+                            format!("{decl} {np} {nm} {key}={{{expr}}}")
                         }
-                        _ => format!("B{name} {np} {nm} {key}={expr}"),
+                        _ => format!("{decl} {np} {nm} {key}={expr}"),
                     }
                 }
             }
-            Card::Linear {
-                letter,
-                name,
-                nodes,
-                gain,
-            } => format!(
-                "{letter}{name} {} {}",
+            Card::Linear { nodes, gain, .. } => format!(
+                "{decl} {} {}",
                 nodes.join(" "),
                 self.sp.decimal(gain, self.x)
             ),
             Card::Poly {
                 letter,
-                name,
                 np,
                 nm,
                 controls,
                 coeffs,
+                ..
             } => {
                 let dims = if matches!(letter, 'E' | 'G') {
                     controls.len() / 2
@@ -163,46 +172,31 @@ impl W<'_, '_> {
                 let coeffs: Vec<String> =
                     coeffs.iter().map(|&c| self.sp.number(c, self.x)).collect();
                 format!(
-                    "{letter}{name} {np} {nm} POLY({dims}) {} {}",
+                    "{decl} {np} {nm} POLY({dims}) {} {}",
                     controls.join(" "),
                     coeffs.join(" ")
                 )
             }
             Card::Semi {
-                letter,
-                name,
                 nodes,
                 model,
                 params,
-            } => format!(
-                "{letter}{name} {} {model}{}",
-                nodes.join(" "),
-                self.params(&params)
-            ),
-            Card::Switch {
-                letter,
-                name,
-                nodes,
-                model,
-            } => format!("{letter}{name} {} {model}", nodes.join(" ")),
-            Card::Line {
-                name,
-                nodes,
-                z0,
-                td,
-            } => format!(
-                "T{name} {} Z0={} TD={}",
+                ..
+            } => format!("{decl} {} {model}{}", nodes.join(" "), self.params(&params)),
+            Card::Switch { nodes, model, .. } => format!("{decl} {} {model}", nodes.join(" ")),
+            Card::Line { nodes, z0, td, .. } => format!(
+                "{decl} {} Z0={} TD={}",
                 nodes.join(" "),
                 self.sp.decimal(z0, self.x),
                 self.sp.decimal(td, self.x)
             ),
             Card::Inst {
-                name,
                 ports,
                 master,
                 params,
+                ..
             } => {
-                let mut s = format!("X{name}");
+                let mut s = decl;
                 for p in &ports {
                     s.push(' ');
                     s.push_str(p);
@@ -320,7 +314,7 @@ impl W<'_, '_> {
     /// `Laplace=`; a constant `H(s)` is a plain controlled source anywhere.
     fn laplace(
         &mut self,
-        name: &str,
+        decl: &str,
         np: &str,
         nm: &str,
         value: u32,
@@ -334,7 +328,7 @@ impl W<'_, '_> {
                 gain,
             }) => {
                 return format!(
-                    "{letter}B{name} {np} {nm} {ip} {im} {}",
+                    "{letter}{decl} {np} {nm} {ip} {im} {}",
                     self.sp.number(gain, self.x)
                 );
             }
@@ -346,7 +340,7 @@ impl W<'_, '_> {
         };
         match self.ask(Construct::Laplace, tok) {
             Action::Lift(Rule::LaplaceAttr) => format!(
-                "{letter}B{name} {np} {nm} {ip} {im} Laplace={}/{}",
+                "{letter}{decl} {np} {nm} {ip} {im} Laplace={}/{}",
                 laplace::horner(&num),
                 laplace::horner(&den),
             ),
@@ -354,7 +348,7 @@ impl W<'_, '_> {
                 let asc =
                     |c: &[f64]| laplace::coeff_array(&c.iter().rev().copied().collect::<Vec<_>>());
                 format!(
-                    "{letter}B{name} {np} {nm} LAPLACE {ip} {im} {} / {}",
+                    "{letter}{decl} {np} {nm} LAPLACE {ip} {im} {} / {}",
                     asc(&num),
                     asc(&den)
                 )
@@ -364,8 +358,8 @@ impl W<'_, '_> {
                 // One integrator stage per denominator order.
                 let ic = vec!["0"; den.len() - 1].join(" ");
                 format!(
-                    "AB{name} %vd({ip} {im}) %{port}({np} {nm}) B{name}_xfer\n\
-                     .model B{name}_xfer s_xfer(num_coeff=[{}] den_coeff=[{}] int_ic=[{ic}])",
+                    "A{decl} %vd({ip} {im}) %{port}({np} {nm}) {decl}_xfer\n\
+                     .model {decl}_xfer s_xfer(num_coeff=[{}] den_coeff=[{}] int_ic=[{ic}])",
                     laplace::coeff_array(&num),
                     laplace::coeff_array(&den),
                 )
