@@ -14,7 +14,13 @@ use crate::ir::Dialect;
 pub fn canonical(name: &str, backend: Option<Dialect>) -> (String, bool) {
     let lower = name.to_lowercase();
     let lt = backend == Some(Dialect::Ltspice);
-    let hierarchy = |s: &str| if lt { s.replace(':', ".") } else { s.to_string() };
+    let hierarchy = |s: &str| {
+        if lt {
+            s.replace(':', ".")
+        } else {
+            s.to_string()
+        }
+    };
     if let Some(inner) = lower.strip_prefix("i(").and_then(|s| s.strip_suffix(')')) {
         return (format!("i({})", hierarchy(inner)), true);
     }
@@ -28,9 +34,14 @@ pub fn canonical(name: &str, backend: Option<Dialect>) -> (String, bool) {
     {
         return (format!("i({dev})"), true);
     }
-    let wrapped = lower.strip_prefix("v(").or_else(|| lower.strip_prefix("v ("));
+    let wrapped = lower
+        .strip_prefix("v(")
+        .or_else(|| lower.strip_prefix("v ("));
     match wrapped.and_then(|s| s.strip_suffix(')')) {
-        Some(inner) => (hierarchy(inner.split(',').next().unwrap_or(inner).trim()), false),
+        Some(inner) => (
+            hierarchy(inner.split(',').next().unwrap_or(inner).trim()),
+            false,
+        ),
         None if lt => (hierarchy(&lower), false),
         None => (lower, false),
     }
@@ -51,7 +62,11 @@ mod tests {
     #[test]
     fn no_backend_reads_ngspice_names() {
         for name in ["v(x1:a)", "I(V1)", "v1#branch", "V1:p", "time"] {
-            assert_eq!(canonical(name, None), canonical(name, Some(Dialect::Ngspice)), "{name}");
+            assert_eq!(
+                canonical(name, None),
+                canonical(name, Some(Dialect::Ngspice)),
+                "{name}"
+            );
         }
         assert_eq!(canonical("v1#branch", None), ("i(v1)".to_string(), true));
         assert_eq!(canonical("V1:p", None), ("v1:p".to_string(), false));
@@ -81,7 +96,6 @@ mod tests {
         assert_eq!(norm("v(x1.internal)", "ngspice"), "x1.internal");
         assert_eq!(norm("V(X1.INTERNAL)", "ngspice"), "x1.internal");
     }
-
 
     // ── LTspice ──
 
@@ -186,15 +200,9 @@ mod tests {
         let names_lt = ["TIME", "V(OUT)", "V(IN)", "I(V1)"];
         let names_sp = ["time", "out", "in", "V1:p"];
 
-        let norm_ng: Vec<String> = names_ng.iter()
-            .map(|n| norm(n, "ngspice"))
-            .collect();
-        let norm_lt: Vec<String> = names_lt.iter()
-            .map(|n| norm(n, "ltspice"))
-            .collect();
-        let norm_sp: Vec<String> = names_sp.iter()
-            .map(|n| norm(n, "spectre"))
-            .collect();
+        let norm_ng: Vec<String> = names_ng.iter().map(|n| norm(n, "ngspice")).collect();
+        let norm_lt: Vec<String> = names_lt.iter().map(|n| norm(n, "ltspice")).collect();
+        let norm_sp: Vec<String> = names_sp.iter().map(|n| norm(n, "spectre")).collect();
 
         assert_eq!(norm_ng, norm_lt, "ngspice vs ltspice");
         assert_eq!(norm_ng, norm_sp, "ngspice vs spectre");

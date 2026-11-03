@@ -65,10 +65,24 @@ impl Grammar {
     /// Compiles grammar texts, each layered over the ones before it; `tag`
     /// names a captured rule's AST tag.
     pub fn compile(texts: &[&str], tag: impl Fn(&str) -> Option<u8>) -> Result<Grammar, String> {
-        let mut g = Grammar { nodes: vec![], kids: vec![], bytes: vec![], classes: vec![], names: vec![], bodies: vec![], tags: vec![] };
+        let mut g = Grammar {
+            nodes: vec![],
+            kids: vec![],
+            bytes: vec![],
+            classes: vec![],
+            names: vec![],
+            bodies: vec![],
+            tags: vec![],
+        };
         let mut refs = Vec::new();
         for text in texts {
-            let mut c = Compiler { src: text.as_bytes(), pos: 0, g, refs, seen: vec![] };
+            let mut c = Compiler {
+                src: text.as_bytes(),
+                pos: 0,
+                g,
+                refs,
+                seen: vec![],
+            };
             while c.peek() != 0 {
                 let name = c.ident().ok_or_else(|| c.err("rule name"))?;
                 if !c.arrow() {
@@ -83,7 +97,9 @@ impl Grammar {
                     Some(i) => c.g.bodies[i] = body,
                     None => {
                         let t = match name.starts_with(|ch: char| ch.is_ascii_uppercase()) {
-                            true => Some(tag(name).ok_or_else(|| format!("rule {name} is captured but no AST tag"))?),
+                            true => Some(tag(name).ok_or_else(|| {
+                                format!("rule {name} is captured but no AST tag")
+                            })?),
                             false => None,
                         };
                         c.g.names.push(name.to_string());
@@ -97,7 +113,11 @@ impl Grammar {
         for n in &mut g.nodes {
             if let Node::Ref(i) = n {
                 let name = &refs[*i as usize];
-                *i = g.names.iter().position(|r| r == name).ok_or_else(|| format!("undefined rule {name}"))? as u32;
+                *i = g
+                    .names
+                    .iter()
+                    .position(|r| r == name)
+                    .ok_or_else(|| format!("undefined rule {name}"))? as u32;
             }
         }
         Ok(g)
@@ -115,7 +135,13 @@ impl Grammar {
     /// Parses all of `src` from rule `start`; `Err` is the furthest byte any
     /// terminal reached.
     pub fn parse<'s>(&self, start: u32, src: &'s str) -> Result<Tree<'s>, usize> {
-        let mut p = Parser { g: self, src: src.as_bytes(), rows: Vec::new(), depth: 0, furthest: 0 };
+        let mut p = Parser {
+            g: self,
+            src: src.as_bytes(),
+            rows: Vec::new(),
+            depth: 0,
+            furthest: 0,
+        };
         match p.rule(start, 0) {
             Ok(Some(end)) if end as usize == src.len() => Ok(Tree { rows: p.rows, src }),
             _ => Err(p.furthest as usize),
@@ -185,7 +211,11 @@ impl<'a> Compiler<'a> {
     fn ident(&mut self) -> Option<&'a str> {
         self.skip();
         let start = self.pos;
-        while self.src.get(self.pos).is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'_') {
+        while self
+            .src
+            .get(self.pos)
+            .is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'_')
+        {
             self.pos += 1;
         }
         (self.pos > start).then(|| std::str::from_utf8(&self.src[start..self.pos]).unwrap())
@@ -211,7 +241,11 @@ impl<'a> Compiler<'a> {
         }
         let (a, b) = (self.g.kids.len() as u32, items.len() as u32);
         self.g.kids.extend(items);
-        self.add(if choice { Node::Choice(a, b) } else { Node::Seq(a, b) })
+        self.add(if choice {
+            Node::Choice(a, b)
+        } else {
+            Node::Seq(a, b)
+        })
     }
 
     fn choice(&mut self) -> Result<u32, String> {
@@ -239,7 +273,11 @@ impl<'a> Compiler<'a> {
             }
             items.push(self.prefix()?);
         }
-        Ok(if items.is_empty() { self.add(Node::Seq(0, 0)) } else { self.group(false, items) })
+        Ok(if items.is_empty() {
+            self.add(Node::Seq(0, 0))
+        } else {
+            self.group(false, items)
+        })
     }
 
     fn prefix(&mut self) -> Result<u32, String> {
@@ -247,7 +285,11 @@ impl<'a> Compiler<'a> {
         if ch == b'&' || ch == b'!' {
             self.pos += 1;
             let inner = self.suffix()?;
-            return Ok(self.add(if ch == b'&' { Node::And(inner) } else { Node::Not(inner) }));
+            return Ok(self.add(if ch == b'&' {
+                Node::And(inner)
+            } else {
+                Node::Not(inner)
+            }));
         }
         self.suffix()
     }
@@ -284,7 +326,10 @@ impl<'a> Compiler<'a> {
             q @ (b'\'' | b'"') => self.literal(q),
             b'[' => self.class(),
             _ => {
-                let name = self.ident().ok_or_else(|| self.err("expression"))?.to_string();
+                let name = self
+                    .ident()
+                    .ok_or_else(|| self.err("expression"))?
+                    .to_string();
                 self.refs.push(name);
                 Ok(self.add(Node::Ref(self.refs.len() as u32 - 1)))
             }
@@ -305,7 +350,11 @@ impl<'a> Compiler<'a> {
             b't' => b'\t',
             b'\\' | b'\'' | b'"' | b']' | b'[' | b'-' | b'^' => e,
             b'x' => {
-                let hex = self.src.get(self.pos..self.pos + 2).and_then(|h| u8::from_str_radix(std::str::from_utf8(h).ok()?, 16).ok()).ok_or_else(|| self.err("\\xHH"))?;
+                let hex = self
+                    .src
+                    .get(self.pos..self.pos + 2)
+                    .and_then(|h| u8::from_str_radix(std::str::from_utf8(h).ok()?, 16).ok())
+                    .ok_or_else(|| self.err("\\xHH"))?;
                 self.pos += 2;
                 hex
             }
@@ -328,7 +377,11 @@ impl<'a> Compiler<'a> {
         if len == 0 {
             return Err(self.err("non-empty literal"));
         }
-        let blind = self.src.get(self.pos) == Some(&b'i') && !self.src.get(self.pos + 1).is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'_');
+        let blind = self.src.get(self.pos) == Some(&b'i')
+            && !self
+                .src
+                .get(self.pos + 1)
+                .is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'_');
         if blind {
             self.pos += 1;
         }
@@ -348,7 +401,9 @@ impl<'a> Compiler<'a> {
             }
             let lo = self.escaped()?;
             let mut hi = lo;
-            if self.src.get(self.pos) == Some(&b'-') && self.src.get(self.pos + 1).is_some_and(|&b| b != b']') {
+            if self.src.get(self.pos) == Some(&b'-')
+                && self.src.get(self.pos + 1).is_some_and(|&b| b != b']')
+            {
                 self.pos += 1;
                 hi = self.escaped()?;
             }
@@ -385,7 +440,13 @@ impl Parser<'_, '_> {
         let body = self.g.bodies[r as usize];
         let out = if let Some(tag) = self.g.tags[r as usize] {
             let at = self.rows.len();
-            self.rows.push(Row { rule: r, tag, start: pos, end: pos, next: 0 });
+            self.rows.push(Row {
+                rule: r,
+                tag,
+                start: pos,
+                end: pos,
+                next: 0,
+            });
             let end = self.at(body, pos);
             match end {
                 Ok(Some(e)) => {
@@ -452,7 +513,15 @@ impl Parser<'_, '_> {
             Node::Lit(a, b, blind) => {
                 let want = &self.g.bytes[a as usize..(a + b) as usize];
                 match self.src.get(pos as usize..(pos + b) as usize) {
-                    Some(got) if if blind { got.eq_ignore_ascii_case(want) } else { got == want } => Ok(Some(pos + b)),
+                    Some(got)
+                        if if blind {
+                            got.eq_ignore_ascii_case(want)
+                        } else {
+                            got == want
+                        } =>
+                    {
+                        Ok(Some(pos + b))
+                    }
                     _ => self.miss(pos),
                 }
             }
@@ -460,7 +529,13 @@ impl Parser<'_, '_> {
                 Some(&b) if self.g.classes[c as usize][b as usize] => Ok(Some(pos + 1)),
                 _ => self.miss(pos),
             },
-            Node::Any => if (pos as usize) < self.src.len() { Ok(Some(pos + 1)) } else { self.miss(pos) },
+            Node::Any => {
+                if (pos as usize) < self.src.len() {
+                    Ok(Some(pos + 1))
+                } else {
+                    self.miss(pos)
+                }
+            }
             Node::Ref(r) => self.rule(r, pos),
         }
     }
@@ -472,16 +547,40 @@ mod tests {
 
     #[test]
     fn captures_lookahead_and_layers() {
-        let tag = |n: &str| ["List", "Item"].iter().position(|t| *t == n).map(|i| i as u8);
-        let g = Grammar::compile(&["List <- Item (',' Item)* !.\nItem <- 'ab'i / [0-9]+ # comment\n"], tag).unwrap();
+        let tag = |n: &str| {
+            ["List", "Item"]
+                .iter()
+                .position(|t| *t == n)
+                .map(|i| i as u8)
+        };
+        let g = Grammar::compile(
+            &["List <- Item (',' Item)* !.\nItem <- 'ab'i / [0-9]+ # comment\n"],
+            tag,
+        )
+        .unwrap();
         let t = g.parse(g.rule("List").unwrap(), "AB,12,ab").unwrap();
         let items: Vec<&str> = t.children(Some(0)).map(|i| t.text(i)).collect();
         assert_eq!(items, ["AB", "12", "ab"]);
         assert!(t.children(Some(0)).all(|i| t.tag(i) == 1));
         assert!(g.parse(0, "ab,").is_err());
-        assert!(Grammar::compile(&["List <- b"], tag).err().unwrap().contains("undefined rule b"));
-        assert!(Grammar::compile(&["Bad <- 'x'"], tag).err().unwrap().contains("no AST tag"));
-        assert!(Grammar::compile(&["a <- 'x'\na <- 'y'"], tag).err().unwrap().contains("duplicate"));
+        assert!(
+            Grammar::compile(&["List <- b"], tag)
+                .err()
+                .unwrap()
+                .contains("undefined rule b")
+        );
+        assert!(
+            Grammar::compile(&["Bad <- 'x'"], tag)
+                .err()
+                .unwrap()
+                .contains("no AST tag")
+        );
+        assert!(
+            Grammar::compile(&["a <- 'x'\na <- 'y'"], tag)
+                .err()
+                .unwrap()
+                .contains("duplicate")
+        );
         // A later text replaces a rule.
         let g = Grammar::compile(&["List <- Item !.\nItem <- 'a'", "Item <- 'b'"], tag).unwrap();
         assert!(g.parse(0, "b").is_ok() && g.parse(0, "a").is_err());

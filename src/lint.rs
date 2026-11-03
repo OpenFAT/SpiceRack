@@ -37,21 +37,68 @@ impl Row<'_> {
     }
     /// Case-insensitive prefix match on a dot-card (`.MODEL`, `.PZ`, ...).
     fn card(&self, card: &str) -> bool {
-        self.text.get(..card.len()).is_some_and(|p| p.eq_ignore_ascii_case(card))
+        self.text
+            .get(..card.len())
+            .is_some_and(|p| p.eq_ignore_ascii_case(card))
     }
 }
 
 /// Backend family, card prefix, message, suggestion (`None` = error).
-type BackendCard = (&'static str, &'static str, &'static str, Option<&'static str>);
+type BackendCard = (
+    &'static str,
+    &'static str,
+    &'static str,
+    Option<&'static str>,
+);
 const BACKEND_CARDS: &[BackendCard] = &[
-    ("ngspice", ".MEAS", ".meas only produces output in batch mode (ngspice -b)", Some("Run with ngspice -b, not interactive mode")),
-    ("ltspice", ".PZ", ".pz analysis is not supported by LTspice", Some("Use .ac analysis instead")),
-    ("ltspice", ".DISTO", ".disto analysis is not supported by LTspice", Some("Use .tran with .four or .FFT instead")),
-    ("ltspice", ".SENS", ".sens analysis is not supported by LTspice", Some("Use parametric sweeps with .step instead")),
-    ("ltspice", ".CONTROL", ".control blocks are not supported by LTspice", None),
-    ("spectre", ".CONTROL", ".control blocks are not supported by Spectre", None),
-    ("spectre", ".PZ", ".pz analysis is not supported by Spectre", Some("Use stb or ac analysis for stability/poles")),
-    ("spectre", ".DISTO", ".disto analysis is not supported by Spectre", Some("Use HB (harmonic balance) analysis for distortion")),
+    (
+        "ngspice",
+        ".MEAS",
+        ".meas only produces output in batch mode (ngspice -b)",
+        Some("Run with ngspice -b, not interactive mode"),
+    ),
+    (
+        "ltspice",
+        ".PZ",
+        ".pz analysis is not supported by LTspice",
+        Some("Use .ac analysis instead"),
+    ),
+    (
+        "ltspice",
+        ".DISTO",
+        ".disto analysis is not supported by LTspice",
+        Some("Use .tran with .four or .FFT instead"),
+    ),
+    (
+        "ltspice",
+        ".SENS",
+        ".sens analysis is not supported by LTspice",
+        Some("Use parametric sweeps with .step instead"),
+    ),
+    (
+        "ltspice",
+        ".CONTROL",
+        ".control blocks are not supported by LTspice",
+        None,
+    ),
+    (
+        "spectre",
+        ".CONTROL",
+        ".control blocks are not supported by Spectre",
+        None,
+    ),
+    (
+        "spectre",
+        ".PZ",
+        ".pz analysis is not supported by Spectre",
+        Some("Use stb or ac analysis for stability/poles"),
+    ),
+    (
+        "spectre",
+        ".DISTO",
+        ".disto analysis is not supported by Spectre",
+        Some("Use HB (harmonic balance) analysis for distortion"),
+    ),
 ];
 
 fn is_ground(t: &str) -> bool {
@@ -69,18 +116,38 @@ pub fn lint_netlist(netlist: &str, backend: Option<&str>) -> LintResult {
         .enumerate()
         .map(|(i, l)| {
             let text = l.trim();
-            Row { no: i + 1, text, toks: text.split_whitespace().collect() }
+            Row {
+                no: i + 1,
+                text,
+                toks: text.split_whitespace().collect(),
+            }
         })
         .collect();
     let elems = || rows.iter().filter(|r| r.is_elem());
     let mut out = LintResult::default();
-    let err = |out: &mut LintResult, line, message| out.errors.push(Finding { line, message, suggestion: None, backends: &[] });
+    let err = |out: &mut LintResult, line, message| {
+        out.errors.push(Finding {
+            line,
+            message,
+            suggestion: None,
+            backends: &[],
+        })
+    };
     let warn = |out: &mut LintResult, line, message, suggestion: String, backends| {
-        out.warnings.push(Finding { line, message, suggestion: Some(suggestion), backends })
+        out.warnings.push(Finding {
+            line,
+            message,
+            suggestion: Some(suggestion),
+            backends,
+        })
     };
 
     if !rows.iter().any(|r| r.text.eq_ignore_ascii_case(".end")) {
-        err(&mut out, rows.len(), "Netlist does not end with .end".into());
+        err(
+            &mut out,
+            rows.len(),
+            "Netlist does not end with .end".into(),
+        );
     }
 
     // Ground may sit on a `+` continuation line too.
@@ -89,13 +156,24 @@ pub fn lint_netlist(netlist: &str, backend: Option<&str>) -> LintResult {
         .filter(|r| !r.text.is_empty() && !r.text.starts_with(['*', '.']))
         .any(|r| r.toks.iter().any(|t| is_ground(t)));
     if !ground {
-        err(&mut out, 0, "No ground node (0 or gnd) found in netlist".into());
+        err(
+            &mut out,
+            0,
+            "No ground node (0 or gnd) found in netlist".into(),
+        );
     }
 
     let mut seen: HashMap<String, usize> = HashMap::new();
     for r in elems().filter(|r| r.text.starts_with(|c: char| c.is_ascii_alphabetic())) {
         match seen.get(&r.toks[0].to_lowercase()) {
-            Some(prev) => err(&mut out, r.no, format!("Duplicate element name '{}' (first defined on line {})", r.toks[0], prev)),
+            Some(prev) => err(
+                &mut out,
+                r.no,
+                format!(
+                    "Duplicate element name '{}' (first defined on line {})",
+                    r.toks[0], prev
+                ),
+            ),
             None => {
                 seen.insert(r.toks[0].to_lowercase(), r.no);
             }
@@ -112,10 +190,23 @@ pub fn lint_netlist(netlist: &str, backend: Option<&str>) -> LintResult {
             'Q' | 'J' | 'Z' => 3,
             'M' | 'E' | 'G' | 'S' | 'T' => 4,
             // Subcircuit: tokens before the first `k=v`, minus the subckt name.
-            'X' => t.iter().skip(1).take_while(|p| !p.contains('=')).count().max(1) - 1,
+            'X' => {
+                t.iter()
+                    .skip(1)
+                    .take_while(|p| !p.contains('='))
+                    .count()
+                    .max(1)
+                    - 1
+            }
             _ => 0,
         };
-        for node in t.get(1..=n).unwrap_or(&[]).iter().filter(|n| !is_ground(n)).map(|n| n.to_lowercase()) {
+        for node in t
+            .get(1..=n)
+            .unwrap_or(&[])
+            .iter()
+            .filter(|n| !is_ground(n))
+            .map(|n| n.to_lowercase())
+        {
             match index.get(&node) {
                 Some(&i) => nodes[i].2 += 1,
                 None => {
@@ -126,21 +217,47 @@ pub fn lint_netlist(netlist: &str, backend: Option<&str>) -> LintResult {
         }
     }
     for (node, line, _) in nodes.into_iter().filter(|n| n.2 == 1) {
-        let msg = format!("Node '{}' is connected to only one element (floating node)", node);
-        warn(&mut out, line, msg, "Add another connection or remove the node".into(), &[]);
+        let msg = format!(
+            "Node '{}' is connected to only one element (floating node)",
+            node
+        );
+        warn(
+            &mut out,
+            line,
+            msg,
+            "Add another connection or remove the node".into(),
+            &[],
+        );
     }
 
     for r in elems().filter(|r| r.toks.get(3).is_some_and(|v| is_zero_value(v))) {
         match r.kind() {
-            'R' => warn(&mut out, r.no, format!("Resistor '{}' has zero resistance", r.toks[0]), "Use a small value (e.g., 1m) or a voltage source instead".into(), &["ngspice", "ltspice"]),
-            'C' => warn(&mut out, r.no, format!("Capacitor '{}' has zero capacitance", r.toks[0]), "Remove the capacitor or use a small value".into(), &["ngspice"]),
+            'R' => warn(
+                &mut out,
+                r.no,
+                format!("Resistor '{}' has zero resistance", r.toks[0]),
+                "Use a small value (e.g., 1m) or a voltage source instead".into(),
+                &["ngspice", "ltspice"],
+            ),
+            'C' => warn(
+                &mut out,
+                r.no,
+                format!("Capacitor '{}' has zero capacitance", r.toks[0]),
+                "Remove the capacitor or use a small value".into(),
+                &["ngspice"],
+            ),
             _ => {}
         }
     }
 
     // Model references; any .include/.lib may define them, so skip then.
     if !rows.iter().any(|r| r.card(".INCLUDE") || r.card(".LIB")) {
-        let models: HashSet<String> = rows.iter().filter(|r| r.card(".MODEL")).filter_map(|r| r.toks.get(1)).map(|m| m.to_lowercase()).collect();
+        let models: HashSet<String> = rows
+            .iter()
+            .filter(|r| r.card(".MODEL"))
+            .filter_map(|r| r.toks.get(1))
+            .map(|m| m.to_lowercase())
+            .collect();
         for r in elems() {
             let pos = match r.kind() {
                 'D' => 3,
@@ -151,8 +268,17 @@ pub fn lint_netlist(netlist: &str, backend: Option<&str>) -> LintResult {
             if let Some(m) = r.toks.get(pos)
                 && !models.contains(&m.to_lowercase())
             {
-                let msg = format!("Element '{}' references model '{}' which is not defined in this netlist", r.toks[0], m);
-                warn(&mut out, r.no, msg, "Add a .model definition or .include the model file".into(), &[]);
+                let msg = format!(
+                    "Element '{}' references model '{}' which is not defined in this netlist",
+                    r.toks[0], m
+                );
+                warn(
+                    &mut out,
+                    r.no,
+                    msg,
+                    "Add a .model definition or .include the model file".into(),
+                    &[],
+                );
             }
         }
     }
@@ -170,20 +296,41 @@ pub fn lint_netlist(netlist: &str, backend: Option<&str>) -> LintResult {
             let Some(e) = rest[s..].find('}') else { break };
             let expr = &rest[s + 1..s + e];
             let name = expr.trim().to_lowercase();
-            if !name.is_empty() && !name.contains(['+', '-', '*', '/', '(']) && !params.contains(&name) && name.parse::<f64>().is_err() {
+            if !name.is_empty()
+                && !name.contains(['+', '-', '*', '/', '('])
+                && !params.contains(&name)
+                && name.parse::<f64>().is_err()
+            {
                 let msg = format!("Parameter '{{{}}}' used but not defined with .param", expr);
-                warn(&mut out, r.no, msg, format!("Add: .param {} = <value>", expr), &[]);
+                warn(
+                    &mut out,
+                    r.no,
+                    msg,
+                    format!("Add: .param {} = <value>", expr),
+                    &[],
+                );
             }
             rest = &rest[s + e + 1..];
         }
     }
 
     // An alias (`ngspice-shared`) checks as the dialect it names.
-    let family = backend.map_or("", |b| crate::ir::Dialect::from_backend_name(b).map_or(b, |d| d.name()));
+    let family = backend.map_or("", |b| {
+        crate::ir::Dialect::from_backend_name(b).map_or(b, |d| d.name())
+    });
     for r in &rows {
-        for (fam, _, msg, sugg) in BACKEND_CARDS.iter().filter(|c| c.0 == family && r.card(c.1)) {
+        for (fam, _, msg, sugg) in BACKEND_CARDS
+            .iter()
+            .filter(|c| c.0 == family && r.card(c.1))
+        {
             match sugg {
-                Some(s) => warn(&mut out, r.no, msg.to_string(), s.to_string(), std::slice::from_ref(fam)),
+                Some(s) => warn(
+                    &mut out,
+                    r.no,
+                    msg.to_string(),
+                    s.to_string(),
+                    std::slice::from_ref(fam),
+                ),
                 None => err(&mut out, r.no, msg.to_string()),
             }
         }

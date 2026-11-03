@@ -27,7 +27,15 @@ pub fn parse_measures(text: &str, backend: Option<Dialect>) -> Vec<MeasureResult
         // ports com_measure2.c).
         Some(Dialect::Ngspice | Dialect::Espice) => parse_ngspice(text),
         Some(Dialect::Ltspice) => parse_ltspice(text),
-        None | Some(Dialect::Spectre | Dialect::Vacask | Dialect::Hspice | Dialect::Xyce | Dialect::Cdl | Dialect::Verilog) => {
+        None
+        | Some(
+            Dialect::Spectre
+            | Dialect::Vacask
+            | Dialect::Hspice
+            | Dialect::Xyce
+            | Dialect::Cdl
+            | Dialect::Verilog,
+        ) => {
             // Try all parsers, return whichever finds results
             let results = parse_ngspice(text);
             if !results.is_empty() {
@@ -105,7 +113,10 @@ fn measure_line(trimmed: &str) -> Option<MeasureResult> {
         return None;
     }
     let value = value_str.split_whitespace().next()?.parse::<f64>().ok()?;
-    Some(MeasureResult { name: name.to_string(), value })
+    Some(MeasureResult {
+        name: name.to_string(),
+        value,
+    })
 }
 
 /// Later values win: a deck that reports a measure twice should not yield
@@ -128,9 +139,12 @@ fn parse_ltspice(text: &str) -> Vec<MeasureResult> {
         }
 
         // Skip non-measurement lines
-        if trimmed.starts_with("Circuit:") || trimmed.starts_with("Date:") ||
-           trimmed.starts_with("Total elapsed") || trimmed.starts_with(".step") ||
-           trimmed.starts_with("Measurement:") {
+        if trimmed.starts_with("Circuit:")
+            || trimmed.starts_with("Date:")
+            || trimmed.starts_with("Total elapsed")
+            || trimmed.starts_with(".step")
+            || trimmed.starts_with("Measurement:")
+        {
             continue;
         }
 
@@ -158,13 +172,14 @@ fn parse_ltspice(text: &str) -> Vec<MeasureResult> {
             // Try "KEY=value" format: "name: AVG=1.23e-09" or "name: FROM=... TO=... AVG=..."
             for part in rest.split_whitespace() {
                 if let Some((_key, val_str)) = part.split_once('=')
-                    && let Ok(value) = val_str.parse::<f64>() {
-                        results.push(MeasureResult {
-                            name: name.to_string(),
-                            value,
-                        });
-                        break; // Take first parseable value
-                    }
+                    && let Ok(value) = val_str.parse::<f64>()
+                {
+                    results.push(MeasureResult {
+                        name: name.to_string(),
+                        value,
+                    });
+                    break; // Take first parseable value
+                }
             }
         }
     }
@@ -286,7 +301,8 @@ Measurement: avg_vout
 
     #[test]
     fn test_parse_measures_dispatches_correctly() {
-        let ngspice_out = "  Measurements for Transient Analysis\n\nrise_time        =  2.345000e-09\n";
+        let ngspice_out =
+            "  Measurements for Transient Analysis\n\nrise_time        =  2.345000e-09\n";
         let ltspice_out = "rise_time: 2.345e-009\n";
 
         let r1 = parse_measures(ngspice_out, Some(Dialect::Ngspice));
@@ -305,5 +321,4 @@ Measurement: avg_vout
         assert_eq!(results.len(), 1);
         assert!((results[0].value - 5.6789e6).abs() < 1.0);
     }
-
 }

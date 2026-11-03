@@ -55,7 +55,11 @@ pub enum Laplace {
     Gain { input: (String, String), gain: f64 },
     /// A genuine transfer function. `num`/`den` are in **descending** powers
     /// of `s`, with `den.len() >= 2` and `num.len() <= den.len()`.
-    Xfer { input: (String, String), num: Vec<f64>, den: Vec<f64> },
+    Xfer {
+        input: (String, String),
+        num: Vec<f64>,
+        den: Vec<f64>,
+    },
 }
 
 impl Laplace {
@@ -96,8 +100,7 @@ pub fn parse(expr: &str) -> Result<Laplace, String> {
         return Err(format!("expected `Laplace(input, H(s))`, got `{t}`"));
     }
     let open = t.len() - rest.len();
-    let close = match_paren(t, open)
-        .ok_or_else(|| format!("unbalanced parentheses in `{t}`"))?;
+    let close = match_paren(t, open).ok_or_else(|| format!("unbalanced parentheses in `{t}`"))?;
     if !t[close + 1..].trim().is_empty() {
         return Err(format!(
             "`Laplace(...)` must be the whole expression; `{}` trails it. \
@@ -124,7 +127,10 @@ pub fn parse(expr: &str) -> Result<Laplace, String> {
         if num.len() > 1 {
             return Err(improper(&num, &den));
         }
-        return Ok(Laplace::Gain { input, gain: num[0] / den[0] });
+        return Ok(Laplace::Gain {
+            input,
+            gain: num[0] / den[0],
+        });
     }
     if num.len() > den.len() {
         return Err(improper(&num, &den));
@@ -254,11 +260,17 @@ fn is_zero(p: &[f64]) -> bool {
 
 impl Rational {
     fn constant(v: f64) -> Self {
-        Self { num: vec![v], den: vec![1.0] }
+        Self {
+            num: vec![v],
+            den: vec![1.0],
+        }
     }
 
     fn s() -> Self {
-        Self { num: vec![0.0, 1.0], den: vec![1.0] }
+        Self {
+            num: vec![0.0, 1.0],
+            den: vec![1.0],
+        }
     }
 
     fn as_constant(&self) -> Option<f64> {
@@ -266,27 +278,43 @@ impl Rational {
     }
 
     fn mul(self, o: Self) -> Self {
-        Self { num: trim(poly_mul(&self.num, &o.num)), den: trim(poly_mul(&self.den, &o.den)) }
+        Self {
+            num: trim(poly_mul(&self.num, &o.num)),
+            den: trim(poly_mul(&self.den, &o.den)),
+        }
     }
 
     fn div(self, o: Self) -> Result<Self, String> {
         if is_zero(&o.num) {
             return Err("division by zero in H(s)".into());
         }
-        Ok(Self { num: trim(poly_mul(&self.num, &o.den)), den: trim(poly_mul(&self.den, &o.num)) })
+        Ok(Self {
+            num: trim(poly_mul(&self.num, &o.den)),
+            den: trim(poly_mul(&self.den, &o.num)),
+        })
     }
 
     fn add(self, o: Self) -> Self {
         let num = poly_add(&poly_mul(&self.num, &o.den), &poly_mul(&o.num, &self.den));
-        Self { num: trim(num), den: trim(poly_mul(&self.den, &o.den)) }
+        Self {
+            num: trim(num),
+            den: trim(poly_mul(&self.den, &o.den)),
+        }
     }
 
     fn neg(self) -> Self {
-        Self { num: self.num.iter().map(|c| -c).collect(), den: self.den }
+        Self {
+            num: self.num.iter().map(|c| -c).collect(),
+            den: self.den,
+        }
     }
 
     fn powi(self, n: i32) -> Result<Self, String> {
-        let base = if n < 0 { Rational::constant(1.0).div(self)? } else { self };
+        let base = if n < 0 {
+            Rational::constant(1.0).div(self)?
+        } else {
+            self
+        };
         let mut acc = Rational::constant(1.0);
         for _ in 0..n.unsigned_abs() {
             acc = acc.mul(base.clone());
@@ -307,10 +335,17 @@ impl Rational {
 
     fn parse(src: &str) -> Result<Self, String> {
         let toks = lex(src)?;
-        let mut p = Parser { toks: &toks, pos: 0, src };
+        let mut p = Parser {
+            toks: &toks,
+            pos: 0,
+            src,
+        };
         let r = p.expr()?;
         if p.pos != p.toks.len() {
-            return Err(format!("unexpected `{}` in H(s) `{src}`", p.toks[p.pos].show()));
+            return Err(format!(
+                "unexpected `{}` in H(s) `{src}`",
+                p.toks[p.pos].show()
+            ));
         }
         if is_zero(&r.den) {
             return Err(format!("H(s) `{src}` has a zero denominator"));
@@ -395,8 +430,12 @@ fn lex(src: &str) -> Result<Vec<Tok>, String> {
 /// are the next token.
 fn lex_number(b: &[char], start: usize) -> Result<(Tok, usize), String> {
     // The number is ASCII, so its byte length is its char count.
-    let text: String = b[start..].iter().take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '+' | '-')).collect();
-    let (v, len, scale) = crate::unit::parse_spice_number(&text).ok_or_else(|| format!("cannot read number `{text}` in H(s)"))?;
+    let text: String = b[start..]
+        .iter()
+        .take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '+' | '-'))
+        .collect();
+    let (v, len, scale) = crate::unit::parse_spice_number(&text)
+        .ok_or_else(|| format!("cannot read number `{text}` in H(s)"))?;
     Ok((Tok::Num(v), start + len + scale.len()))
 }
 
@@ -452,9 +491,9 @@ impl Parser<'_> {
         if let Some(Tok::Pow) = self.peek() {
             self.pos += 1;
             let exp = self.unary()?;
-            let n = exp.as_constant().ok_or_else(|| {
-                format!("exponent in H(s) `{}` must be a constant", self.src)
-            })?;
+            let n = exp
+                .as_constant()
+                .ok_or_else(|| format!("exponent in H(s) `{}` must be a constant", self.src))?;
             if n.fract() != 0.0 || n.abs() > 16.0 {
                 return Err(format!(
                     "exponent {n} in H(s) `{}` must be a whole number in -16..16 \
@@ -539,7 +578,10 @@ mod tests {
     fn approx(a: &[f64], b: &[f64]) {
         assert_eq!(a.len(), b.len(), "{a:?} vs {b:?}");
         for (x, y) in a.iter().zip(b) {
-            assert!((x - y).abs() <= 1e-12 * y.abs().max(1e-12), "{a:?} vs {b:?}");
+            assert!(
+                (x - y).abs() <= 1e-12 * y.abs().max(1e-12),
+                "{a:?} vs {b:?}"
+            );
         }
     }
 
@@ -577,8 +619,14 @@ mod tests {
 
     #[test]
     fn power_forms_agree() {
-        assert_eq!(xfer("Laplace(v(a), 1/(1+s^2))"), xfer("Laplace(v(a), 1/(1+s**2))"));
-        assert_eq!(xfer("Laplace(v(a), 1/(1+s^2))"), xfer("Laplace(v(a), 1/(1+s*s))"));
+        assert_eq!(
+            xfer("Laplace(v(a), 1/(1+s^2))"),
+            xfer("Laplace(v(a), 1/(1+s**2))")
+        );
+        assert_eq!(
+            xfer("Laplace(v(a), 1/(1+s^2))"),
+            xfer("Laplace(v(a), 1/(1+s*s))")
+        );
     }
 
     #[test]
@@ -617,12 +665,18 @@ mod tests {
     fn constant_is_a_gain() {
         assert_eq!(
             parse("Laplace(v(in), 2.5)").unwrap(),
-            Laplace::Gain { input: ("in".into(), "0".into()), gain: 2.5 }
+            Laplace::Gain {
+                input: ("in".into(), "0".into()),
+                gain: 2.5
+            }
         );
         // Ratios of constants collapse too.
         assert_eq!(
             parse("Laplace(v(in), 10/4)").unwrap(),
-            Laplace::Gain { input: ("in".into(), "0".into()), gain: 2.5 }
+            Laplace::Gain {
+                input: ("in".into(), "0".into()),
+                gain: 2.5
+            }
         );
     }
 
@@ -658,7 +712,11 @@ mod tests {
     #[test]
     fn refuses_zero_denominator() {
         assert!(parse("Laplace(v(in), 1/0)").unwrap_err().contains("zero"));
-        assert!(parse("Laplace(v(in), 1/(s-s))").unwrap_err().contains("zero"));
+        assert!(
+            parse("Laplace(v(in), 1/(s-s))")
+                .unwrap_err()
+                .contains("zero")
+        );
     }
 
     #[test]

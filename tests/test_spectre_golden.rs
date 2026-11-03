@@ -17,7 +17,7 @@
 //! These tests prove only "we emit what the manual describes". They do NOT
 //! prove any simulation result.
 
-use spicerack::codegen::{netlist, CodeGenError, Dialect};
+use spicerack::codegen::{CodeGenError, Dialect, netlist};
 use spicerack::ir::*;
 
 fn spectre(ir: &CircuitIR) -> Result<String, CodeGenError> {
@@ -27,7 +27,11 @@ fn spectre(ir: &CircuitIR) -> Result<String, CodeGenError> {
 /// The deck's last section: the analyses, or the components when there is no
 /// testbench. Neither contains a blank line.
 fn last_block(ir: &CircuitIR) -> Result<String, CodeGenError> {
-    Ok(spectre(ir)?.rsplit("\n\n").next().unwrap_or_default().to_string())
+    Ok(spectre(ir)?
+        .rsplit("\n\n")
+        .next()
+        .unwrap_or_default()
+        .to_string())
 }
 
 fn try_analysis(a: &Analysis) -> Result<String, CodeGenError> {
@@ -44,16 +48,23 @@ fn try_component(c: &Component) -> Result<String, CodeGenError> {
 
 fn empty_top(name: &str) -> Subcircuit {
     Subcircuit {
-        name: name.into(), ..Default::default() }
+        name: name.into(),
+        ..Default::default()
+    }
 }
 
 fn empty_tb() -> Testbench {
     Testbench {
-        ..Default::default() }
+        ..Default::default()
+    }
 }
 
 fn ir_with(top: Subcircuit, tb: Option<Testbench>) -> CircuitIR {
-    CircuitIR { top, testbench: tb, ..Default::default() }
+    CircuitIR {
+        top,
+        testbench: tb,
+        ..Default::default()
+    }
 }
 
 fn analysis(a: Analysis) -> String {
@@ -77,15 +88,24 @@ fn spectre_deck_preamble_matches_documented_statements() {
     top.osdi_loads.push("/m/bsimcmg.va".into());
     top.includes.push("/pdk/models.scs".into());
     top.libs.push(("/pdk/corners.scs".into(), "tt".into()));
-    top.parameters.push(ParamDef { name: "vdd".into(), default: Some("1.8".into()) });
+    top.parameters.push(ParamDef {
+        name: "vdd".into(),
+        default: Some("1.8".into()),
+    });
 
     let netlist = spectre(&ir_with(top, None)).unwrap();
 
     assert!(netlist.starts_with("// Preamble\n"), "{netlist}");
     assert!(netlist.contains("\nsimulator lang=spectre\n"), "{netlist}");
-    assert!(netlist.contains("ahdl_include \"/m/bsimcmg.va\""), "{netlist}");
+    assert!(
+        netlist.contains("ahdl_include \"/m/bsimcmg.va\""),
+        "{netlist}"
+    );
     assert!(netlist.contains("include \"/pdk/models.scs\""), "{netlist}");
-    assert!(netlist.contains("include \"/pdk/corners.scs\" section=tt"), "{netlist}");
+    assert!(
+        netlist.contains("include \"/pdk/corners.scs\" section=tt"),
+        "{netlist}"
+    );
     assert!(netlist.contains("parameters vdd=1.8"), "{netlist}");
     // Spectre has no `.end`.
     assert!(!netlist.contains(".end"), "{netlist}");
@@ -103,23 +123,42 @@ fn spectre_subckt_and_instance_match_documented_forms() {
     let sc = Subcircuit {
         name: "coax".into(),
         ports: vec![
-            Port { name: "i1".into(), direction: PortDirection::Input },
-            Port { name: "o1".into(), direction: PortDirection::Output },
+            Port {
+                name: "i1".into(),
+                direction: PortDirection::Input,
+            },
+            Port {
+                name: "o1".into(),
+                direction: PortDirection::Output,
+            },
         ],
-        parameters: vec![ParamDef { name: "zin".into(), default: Some("50".into()) }], ..Default::default() };
+        parameters: vec![ParamDef {
+            name: "zin".into(),
+            default: Some("50".into()),
+        }],
+        ..Default::default()
+    };
     let mut ir = ir_with(empty_top("defs"), None);
     ir.subcircuit_defs.push(sc);
     let emitted = spectre(&ir).unwrap();
-    assert!(emitted.contains("\n\nsubckt coax (i1 o1)\nparameters zin=50\nends coax\n"), "{emitted}");
+    assert!(
+        emitted.contains("\n\nsubckt coax (i1 o1)\nparameters zin=50\nends coax\n"),
+        "{emitted}"
+    );
 
     let mut top = empty_top("inst");
     top.instances.push(Instance {
         name: "Coax1".into(),
         subcircuit: "coax".into(),
         port_mapping: vec!["pin".into(), "nin".into()],
-        parameters: vec![("zin".into(), "75".into())], ..Default::default() });
+        parameters: vec![("zin".into(), "75".into())],
+        ..Default::default()
+    });
     let netlist = spectre(&ir_with(top, None)).unwrap();
-    assert!(netlist.contains("xcoax1 (pin nin) coax zin=75"), "{netlist}");
+    assert!(
+        netlist.contains("xcoax1 (pin nin) coax zin=75"),
+        "{netlist}"
+    );
 }
 
 /// `[CMP]` p.628 `model resmod resistor rsh=150 l=2u w=2u etch=0.05u tc1=0.1`,
@@ -131,11 +170,20 @@ fn spectre_model_statement_has_no_parentheses() {
     top.models.push(ModelDef {
         name: "nch".into(),
         kind: "bsim3v3".into(),
-        parameters: vec![("type".into(), "n".into()), ("version".into(), "3.1".into())],
+        parameters: vec![
+            ("type".into(), "n".into()),
+            ("version".into(), "3.1".into()),
+        ],
     });
     let netlist = spectre(&ir_with(top, None)).unwrap();
-    assert!(netlist.contains("model nch bsim3v3 type=n version=3.1"), "{netlist}");
-    assert!(!netlist.contains("bsim3v3 ("), "model params must not be parenthesised: {netlist}");
+    assert!(
+        netlist.contains("model nch bsim3v3 type=n version=3.1"),
+        "{netlist}"
+    );
+    assert!(
+        !netlist.contains("bsim3v3 ("),
+        "model params must not be parenthesised: {netlist}"
+    );
 }
 
 /// `[REF]` p.490 `ic 7=0 out=1 ...`, p.502 `nodeset 7=0 out=1 ...`,
@@ -162,7 +210,8 @@ fn spectre_measure_is_fenced_by_language_switches() {
     tb.measures.push(".meas tran vmax MAX V(out)".into());
     let netlist = spectre(&ir_with(empty_top("t"), Some(tb))).unwrap();
     assert!(
-        netlist.contains("simulator lang=spice\n.meas tran vmax MAX V(out)\nsimulator lang=spectre"),
+        netlist
+            .contains("simulator lang=spice\n.meas tran vmax MAX V(out)\nsimulator lang=spectre"),
         "{netlist}",
     );
 }
@@ -190,7 +239,10 @@ fn spectre_options_use_documented_parameter_names() {
         s,
         "myopts options reltol=100u iabstol=100f vabstol=100n gmin=100f dcmaxiters=150",
     );
-    assert!(!s.contains(" maxiters="), "maxiters is a dc parameter, not an option: {s}");
+    assert!(
+        !s.contains(" maxiters="),
+        "maxiters is a dc parameter, not an option: {s}"
+    );
 }
 
 // ── Components ──
@@ -211,8 +263,12 @@ fn spectre_options_use_documented_parameter_names() {
 fn spectre_primitives_match_documented_instance_forms() {
     assert_eq!(
         component(Component::Resistor {
-            name: "1".into(), n1: "a".into(), n2: "b".into(),
-            value: IrValue::Numeric { value: 1200.0 }, model: None, params: vec![("m".into(), "2".into())],
+            name: "1".into(),
+            n1: "a".into(),
+            n2: "b".into(),
+            value: IrValue::Numeric { value: 1200.0 },
+            model: None,
+            params: vec![("m".into(), "2".into())],
         }),
         "r1 (a b) resistor r=1.2k m=2",
     );
@@ -222,35 +278,54 @@ fn spectre_primitives_match_documented_instance_forms() {
     // report: the artifact is in shared code this change may not touch.
     assert_eq!(
         component(Component::Capacitor {
-            name: "2".into(), n1: "1".into(), n2: "0".into(),
-            value: IrValue::Numeric { value: 2e-6 }, model: None, params: vec![],
+            name: "2".into(),
+            n1: "1".into(),
+            n2: "0".into(),
+            value: IrValue::Numeric { value: 2e-6 },
+            model: None,
+            params: vec![],
         }),
         "c2 (1 0) capacitor c=2u",
     );
     assert_eq!(
         component(Component::Inductor {
-            name: "33".into(), n1: "0".into(), n2: "net29".into(),
-            value: IrValue::Numeric { value: 10e-9 }, model: None, params: vec![],
+            name: "33".into(),
+            n1: "0".into(),
+            n2: "net29".into(),
+            value: IrValue::Numeric { value: 10e-9 },
+            model: None,
+            params: vec![],
         }),
         "l33 (0 net29) inductor l=10n",
     );
     assert_eq!(
         component(Component::MutualInductor {
-            name: "1".into(), inductor1: "1".into(), inductor2: "2".into(), coupling: 1.0,
+            name: "1".into(),
+            inductor1: "1".into(),
+            inductor2: "2".into(),
+            coupling: 1.0,
         }),
         "k1 mutual_inductor coupling=1 ind1=l1 ind2=l2",
     );
     assert_eq!(
         component(Component::Vcvs {
-            name: "1".into(), np: "out1".into(), nm: "0".into(),
-            ncp: "pos".into(), ncm: "neg".into(), gain: 10.0,
+            name: "1".into(),
+            np: "out1".into(),
+            nm: "0".into(),
+            ncp: "pos".into(),
+            ncm: "neg".into(),
+            gain: 10.0,
         }),
         "e1 (out1 0 pos neg) vcvs gain=10",
     );
     assert_eq!(
         component(Component::Vccs {
-            name: "1".into(), np: "sink".into(), nm: "src".into(),
-            ncp: "ps".into(), ncm: "ns".into(), transconductance: -1.0,
+            name: "1".into(),
+            np: "sink".into(),
+            nm: "src".into(),
+            ncp: "ps".into(),
+            ncm: "ns".into(),
+            transconductance: -1.0,
         }),
         "g1 (sink src ps ns) vccs gm=-1",
     );
@@ -258,44 +333,119 @@ fn spectre_primitives_match_documented_instance_forms() {
     // reference has to be lowercased identically (`[KUN]` B.2: case sensitive).
     assert_eq!(
         component(Component::Cccs {
-            name: "cs".into(), np: "pos".into(), nm: "gnd".into(),
-            vsense: "V1".into(), gain: 2.5,
+            name: "cs".into(),
+            np: "pos".into(),
+            nm: "gnd".into(),
+            vsense: "V1".into(),
+            gain: 2.5,
         }),
         "fcs (pos gnd) cccs probe=v1 gain=2.5",
     );
     assert_eq!(
         component(Component::Ccvs {
-            name: "vs".into(), np: "pos".into(), nm: "gnd".into(),
-            vsense: "V1".into(), transresistance: 1.0,
+            name: "vs".into(),
+            np: "pos".into(),
+            nm: "gnd".into(),
+            vsense: "V1".into(),
+            transresistance: 1.0,
         }),
         "hvs (pos gnd) ccvs probe=v1 rm=1",
     );
     assert_eq!(
         component(Component::Diode {
-            name: "0".into(), np: "dp".into(), nm: "dn".into(),
-            model: "pdiode".into(), params: vec![("area".into(), "1".into())],
+            name: "0".into(),
+            np: "dp".into(),
+            nm: "dn".into(),
+            model: "pdiode".into(),
+            params: vec![("area".into(), "1".into())],
         }),
         "d0 (dp dn) pdiode area=1",
     );
     assert_eq!(
         component(Component::TLine {
-            name: "1".into(), inp: "1".into(), inm: "0".into(),
-            outp: "2".into(), outm: "0".into(), z0: 100.0, td: 1e-9,
+            name: "1".into(),
+            inp: "1".into(),
+            inm: "0".into(),
+            outp: "2".into(),
+            outm: "0".into(),
+            z0: 100.0,
+            td: 1e-9,
         }),
         "t1 (1 0 2 0) tline z0=100 td=1n",
     );
     // Every number goes through the one Spectre formatter: scale suffixes,
     // with Spectre's capital M for mega (`[KUN]` B.2).
-    assert_eq!(component(Component::Vcvs { name: "2".into(), np: "a".into(), nm: "0".into(), ncp: "b".into(), ncm: "0".into(), gain: 2e6 }), "e2 (a 0 b 0) vcvs gain=2M");
-    assert_eq!(component(Component::Vccs { name: "2".into(), np: "a".into(), nm: "0".into(), ncp: "b".into(), ncm: "0".into(), transconductance: 1e-3 }), "g2 (a 0 b 0) vccs gm=1m");
-    assert_eq!(component(Component::Cccs { name: "2".into(), np: "a".into(), nm: "0".into(), vsense: "V1".into(), gain: 1e-6 }), "f2 (a 0) cccs probe=v1 gain=1u");
-    assert_eq!(component(Component::Ccvs { name: "2".into(), np: "a".into(), nm: "0".into(), vsense: "V1".into(), transresistance: 1e3 }), "h2 (a 0) ccvs probe=v1 rm=1k");
-    assert_eq!(component(Component::MutualInductor { name: "2".into(), inductor1: "1".into(), inductor2: "2".into(), coupling: 1e-3 }), "k2 mutual_inductor coupling=1m ind1=l1 ind2=l2");
-    assert_eq!(component(Component::TLine { name: "2".into(), inp: "1".into(), inm: "0".into(), outp: "2".into(), outm: "0".into(), z0: 1e6, td: 2.5e-12 }), "t2 (1 0 2 0) tline z0=1M td=2.5p");
+    assert_eq!(
+        component(Component::Vcvs {
+            name: "2".into(),
+            np: "a".into(),
+            nm: "0".into(),
+            ncp: "b".into(),
+            ncm: "0".into(),
+            gain: 2e6
+        }),
+        "e2 (a 0 b 0) vcvs gain=2M"
+    );
+    assert_eq!(
+        component(Component::Vccs {
+            name: "2".into(),
+            np: "a".into(),
+            nm: "0".into(),
+            ncp: "b".into(),
+            ncm: "0".into(),
+            transconductance: 1e-3
+        }),
+        "g2 (a 0 b 0) vccs gm=1m"
+    );
+    assert_eq!(
+        component(Component::Cccs {
+            name: "2".into(),
+            np: "a".into(),
+            nm: "0".into(),
+            vsense: "V1".into(),
+            gain: 1e-6
+        }),
+        "f2 (a 0) cccs probe=v1 gain=1u"
+    );
+    assert_eq!(
+        component(Component::Ccvs {
+            name: "2".into(),
+            np: "a".into(),
+            nm: "0".into(),
+            vsense: "V1".into(),
+            transresistance: 1e3
+        }),
+        "h2 (a 0) ccvs probe=v1 rm=1k"
+    );
+    assert_eq!(
+        component(Component::MutualInductor {
+            name: "2".into(),
+            inductor1: "1".into(),
+            inductor2: "2".into(),
+            coupling: 1e-3
+        }),
+        "k2 mutual_inductor coupling=1m ind1=l1 ind2=l2"
+    );
+    assert_eq!(
+        component(Component::TLine {
+            name: "2".into(),
+            inp: "1".into(),
+            inm: "0".into(),
+            outp: "2".into(),
+            outm: "0".into(),
+            z0: 1e6,
+            td: 2.5e-12
+        }),
+        "t2 (1 0 2 0) tline z0=1M td=2.5p"
+    );
     assert_eq!(
         component(Component::VSwitch {
-            name: "1".into(), np: "1".into(), nm: "2".into(),
-            ncp: "ps".into(), ncm: "ns".into(), model: "my_relay".into(),
+            name: "1".into(),
+            np: "1".into(),
+            nm: "2".into(),
+            ncp: "ps".into(),
+            ncm: "ns".into(),
+            model: "my_relay".into(),
         }),
         "s1 (1 2 ps ns) my_relay",
     );
@@ -312,45 +462,88 @@ fn spectre_primitives_match_documented_instance_forms() {
 fn spectre_vsource_waveforms_match_documented_parameters() {
     let v = |wf: Option<IrWaveform>, mag: Option<f64>, ph: Option<f64>| {
         component(Component::VoltageSource {
-            name: "1".into(), np: "1".into(), nm: "0".into(),
+            name: "1".into(),
+            np: "1".into(),
+            nm: "0".into(),
             value: IrValue::Numeric { value: 0.0 },
-            ac_magnitude: mag, ac_phase: ph, waveform: wf,
+            ac_magnitude: mag,
+            ac_phase: ph,
+            waveform: wf,
             port: None,
         })
     };
 
     assert_eq!(
-        v(Some(IrWaveform::Pulse {
-            initial: 0.0.into(), pulsed: 5.0.into(), delay: 0.0.into(),
-            rise_time: 10e-9.into(), fall_time: 10e-9.into(), pulse_width: 40e-9.into(), period: 100e-9.into(),
-        }), None, None),
+        v(
+            Some(IrWaveform::Pulse {
+                initial: 0.0.into(),
+                pulsed: 5.0.into(),
+                delay: 0.0.into(),
+                rise_time: 10e-9.into(),
+                fall_time: 10e-9.into(),
+                pulse_width: 40e-9.into(),
+                period: 100e-9.into(),
+            }),
+            None,
+            None
+        ),
         "v1 (1 0) vsource dc=0 type=pulse val0=0 val1=5 delay=0 rise=10n fall=10n width=40n period=100n",
     );
 
     assert_eq!(
-        v(Some(IrWaveform::Pwl { values: vec![((1e-9).into(), (0.0).into()), ((1.5e-9).into(), (0.5).into())], repeat: None, delay: None }), None, None),
+        v(
+            Some(IrWaveform::Pwl {
+                values: vec![
+                    ((1e-9).into(), (0.0).into()),
+                    ((1.5e-9).into(), (0.5).into())
+                ],
+                repeat: None,
+                delay: None
+            }),
+            None,
+            None
+        ),
         "v1 (1 0) vsource dc=0 type=pwl wave=[1n 0 1.5n 500m]",
     );
 
     // sine: `delay` and `damp` are the documented names. The previous codegen
     // emitted `sinedelay=` / `sinedamp=`, which vsource does not have.
     assert_eq!(
-        v(Some(IrWaveform::Sin {
-            offset: 1.0.into(), amplitude: 0.5.into(), frequency: 1e6.into(),
-            delay: 1e-9.into(), damping: 2.0.into(), phase: 45.0.into(),
-        }), None, None),
+        v(
+            Some(IrWaveform::Sin {
+                offset: 1.0.into(),
+                amplitude: 0.5.into(),
+                frequency: 1e6.into(),
+                delay: 1e-9.into(),
+                damping: 2.0.into(),
+                phase: 45.0.into(),
+            }),
+            None,
+            None
+        ),
         "v1 (1 0) vsource dc=0 type=sine sinedc=1 ampl=500m freq=1M delay=1n damp=2 sinephase=45",
     );
 
     assert_eq!(
-        v(Some(IrWaveform::Exp {
-            initial: 0.0.into(), pulsed: 1.0.into(),
-            rise_delay: 1e-9.into(), rise_tau: 2e-9.into(), fall_delay: 3e-9.into(), fall_tau: 4e-9.into(),
-        }), None, None),
+        v(
+            Some(IrWaveform::Exp {
+                initial: 0.0.into(),
+                pulsed: 1.0.into(),
+                rise_delay: 1e-9.into(),
+                rise_tau: 2e-9.into(),
+                fall_delay: 3e-9.into(),
+                fall_tau: 4e-9.into(),
+            }),
+            None,
+            None
+        ),
         "v1 (1 0) vsource dc=0 type=exp val0=0 val1=1 td1=1n tau1=2n td2=3n tau2=4n",
     );
 
-    assert_eq!(v(None, Some(1.0), Some(45.0)), "v1 (1 0) vsource dc=0 mag=1 phase=45");
+    assert_eq!(
+        v(None, Some(1.0), Some(45.0)),
+        "v1 (1 0) vsource dc=0 mag=1 phase=45"
+    );
 }
 
 /// `[CMP]` p.683 `vsource` `delay` (#4, the general waveform delay: ngspice
@@ -363,17 +556,36 @@ fn spectre_vsource_waveforms_match_documented_parameters() {
 #[test]
 fn spectre_pwl_writes_delay_and_only_an_exact_pwlperiod() {
     let tri = |end: f64, repeat: Option<f64>, delay: Option<f64>| {
-        let values = [(0.0, 0.0), (1e-3, 1.0), (2e-3, end)].map(|(t, v)| (IrNum::Num(t), IrNum::Num(v))).to_vec();
+        let values = [(0.0, 0.0), (1e-3, 1.0), (2e-3, end)]
+            .map(|(t, v)| (IrNum::Num(t), IrNum::Num(v)))
+            .to_vec();
         Component::VoltageSource {
-            name: "1".into(), np: "1".into(), nm: "0".into(), value: IrValue::Numeric { value: 0.0 },
-            ac_magnitude: None, ac_phase: None, port: None,
-            waveform: Some(IrWaveform::Pwl { values, repeat: repeat.map(IrNum::Num), delay: delay.map(IrNum::Num) }),
+            name: "1".into(),
+            np: "1".into(),
+            nm: "0".into(),
+            value: IrValue::Numeric { value: 0.0 },
+            ac_magnitude: None,
+            ac_phase: None,
+            port: None,
+            waveform: Some(IrWaveform::Pwl {
+                values,
+                repeat: repeat.map(IrNum::Num),
+                delay: delay.map(IrNum::Num),
+            }),
         }
     };
-    assert_eq!(component(tri(0.0, None, Some(0.5e-3))), "v1 (1 0) vsource dc=0 type=pwl wave=[0 0 1m 1 2m 0] delay=500u");
-    assert_eq!(component(tri(0.0, Some(0.0), Some(0.5e-3))), "v1 (1 0) vsource dc=0 type=pwl wave=[0 0 1m 1 2m 0] delay=500u pwlperiod=2m");
+    assert_eq!(
+        component(tri(0.0, None, Some(0.5e-3))),
+        "v1 (1 0) vsource dc=0 type=pwl wave=[0 0 1m 1 2m 0] delay=500u"
+    );
+    assert_eq!(
+        component(tri(0.0, Some(0.0), Some(0.5e-3))),
+        "v1 (1 0) vsource dc=0 type=pwl wave=[0 0 1m 1 2m 0] delay=500u pwlperiod=2m"
+    );
     for (end, repeat) in [(0.0, 1e-3), (0.5, 0.0)] {
-        let e = try_component(&tri(end, Some(repeat), None)).unwrap_err().to_string();
+        let e = try_component(&tri(end, Some(repeat), None))
+            .unwrap_err()
+            .to_string();
         assert!(e.contains("PWL"), "end {end}, r={repeat}: {e}");
     }
 }
@@ -384,34 +596,55 @@ fn spectre_pwl_writes_delay_and_only_an_exact_pwlperiod() {
 fn spectre_refuses_constructs_without_a_documented_spelling() {
     let cases: Vec<Component> = vec![
         // XSPICE A-devices are ngspice-only.
-        Component::Xspice { name: "1".into(), connections: vec!["a".into()], model: "d_and".into() },
+        Component::Xspice {
+            name: "1".into(),
+            connections: vec!["a".into()],
+            model: "d_and".into(),
+        },
         // Raw SPICE cannot be placed without knowing where a
         // `simulator lang=spice` region may legally open.
-        Component::RawSpice { line: ".model sw sw vt=0.5".into() },
+        Component::RawSpice {
+            line: ".model sw sw vt=0.5".into(),
+        },
         // `[CMP]` p.856: Spectre bsource expressions are `v(a,b)`,
         // `i("inst:idx")`, `$time` — not SPICE's `V()`/`I()`/`time`, and
         // Spectre is case sensitive.
         Component::BehavioralVoltage {
-            name: "1".into(), np: "o".into(), nm: "0".into(), expression: "V(a)*2".into(),
+            name: "1".into(),
+            np: "o".into(),
+            nm: "0".into(),
+            expression: "V(a)*2".into(),
         },
         Component::BehavioralCurrent {
-            name: "1".into(), np: "o".into(), nm: "0".into(), expression: "I(V1)*2".into(),
+            name: "1".into(),
+            np: "o".into(),
+            nm: "0".into(),
+            expression: "I(V1)*2".into(),
         },
         // `[CMP]` p.625 `relay` is voltage controlled; p.643 `switch` changes
         // position only between analyses. Neither is SPICE's W element.
         Component::ISwitch {
-            name: "1".into(), np: "a".into(), nm: "b".into(),
-            vcontrol: "V1".into(), model: "csw".into(),
+            name: "1".into(),
+            np: "a".into(),
+            nm: "b".into(),
+            vcontrol: "V1".into(),
+            model: "csw".into(),
         },
         // `[CMP]` p.685 documents ammodindex/ammodfreq but no waveform
         // equation, so the SPICE AM() mapping cannot be established.
         Component::VoltageSource {
-            name: "1".into(), np: "a".into(), nm: "0".into(),
+            name: "1".into(),
+            np: "a".into(),
+            nm: "0".into(),
             value: IrValue::Numeric { value: 0.0 },
-            ac_magnitude: None, ac_phase: None,
+            ac_magnitude: None,
+            ac_phase: None,
             waveform: Some(IrWaveform::Am {
-                amplitude: 1.0.into(), offset: 0.5.into(), modulating_freq: 1e3.into(),
-                carrier_freq: 1e6.into(), delay: 0.0.into(),
+                amplitude: 1.0.into(),
+                offset: 0.5.into(),
+                modulating_freq: 1e3.into(),
+                carrier_freq: 1e6.into(),
+                delay: 0.0.into(),
             }),
             port: None,
         },
@@ -438,11 +671,24 @@ fn spectre_refuses_constructs_without_a_documented_spelling() {
 fn spectre_dc_sweeps_pick_the_documented_selector() {
     assert_eq!(analysis(Analysis::Op), "op1 dc");
 
-    let dc = |src: &str| analysis(Analysis::Dc {
-        sweeps: vec![DcSweep { source: src.into(), start: 0.0, stop: 5.0, step: 0.1 }],
-    });
-    assert_eq!(dc("Vin"), "dc1 dc dev=vin param=dc start=0 stop=5 step=100m");
-    assert_eq!(dc("Iin"), "dc1 dc dev=iin param=dc start=0 stop=5 step=100m");
+    let dc = |src: &str| {
+        analysis(Analysis::Dc {
+            sweeps: vec![DcSweep {
+                source: src.into(),
+                start: 0.0,
+                stop: 5.0,
+                step: 0.1,
+            }],
+        })
+    };
+    assert_eq!(
+        dc("Vin"),
+        "dc1 dc dev=vin param=dc start=0 stop=5 step=100m"
+    );
+    assert_eq!(
+        dc("Iin"),
+        "dc1 dc dev=iin param=dc start=0 stop=5 step=100m"
+    );
     assert_eq!(dc("temp"), "dc1 dc param=temp start=0 stop=5 step=100m");
     assert_eq!(dc("rload"), "dc1 dc param=rload start=0 stop=5 step=100m");
 }
@@ -454,12 +700,23 @@ fn spectre_dc_sweeps_pick_the_documented_selector() {
 #[test]
 fn spectre_ac_and_tran_match_documented_parameters() {
     assert_eq!(
-        analysis(Analysis::Ac { sweep: FreqSweep { variation: Sweep::Dec, points: 100, start: 1.0, stop: 1e9 } }),
+        analysis(Analysis::Ac {
+            sweep: FreqSweep {
+                variation: Sweep::Dec,
+                points: 100,
+                start: 1.0,
+                stop: 1e9
+            }
+        }),
         "ac1 ac start=1 stop=1G dec=100",
     );
     assert_eq!(
         analysis(Analysis::Transient {
-            step: 1e-9, stop: 1e-6, start: Some(1e-7), max_step: Some(5e-9), uic: false,
+            step: 1e-9,
+            stop: 1e-6,
+            start: Some(1e-7),
+            max_step: Some(5e-9),
+            uic: false,
         }),
         "tran1 tran step=1n stop=1u start=100n maxstep=5n",
     );
@@ -471,9 +728,17 @@ fn spectre_ac_and_tran_match_documented_parameters() {
 #[test]
 fn spectre_rejects_octave_frequency_sweeps() {
     let r = try_analysis(&Analysis::Ac {
-        sweep: FreqSweep { variation: Sweep::Oct, points: 10, start: 1.0, stop: 1e6 },
+        sweep: FreqSweep {
+            variation: Sweep::Oct,
+            points: 10,
+            start: 1.0,
+            stop: 1e6,
+        },
     });
-    assert!(matches!(r, Err(CodeGenError::UnsupportedAnalysis { .. })), "{r:?}");
+    assert!(
+        matches!(r, Err(CodeGenError::UnsupportedAnalysis { .. })),
+        "{r:?}"
+    );
 }
 
 /// `[REF]` p.181-182 noise: `Name [p] [n] noise parameter=value ...`,
@@ -484,8 +749,15 @@ fn spectre_rejects_octave_frequency_sweeps() {
 fn spectre_noise_puts_the_output_in_the_terminal_list() {
     assert_eq!(
         analysis(Analysis::Noise {
-            output: "out".into(), reference: "0".into(), source: "Vin".into(),
-            sweep: FreqSweep { variation: Sweep::Dec, points: 10, start: 1.0, stop: 1e6 },
+            output: "out".into(),
+            reference: "0".into(),
+            source: "Vin".into(),
+            sweep: FreqSweep {
+                variation: Sweep::Dec,
+                points: 10,
+                start: 1.0,
+                stop: 1e6
+            },
             points_per_summary: None,
         }),
         "noise1 (out 0) noise start=1 stop=1M dec=10 iprobe=vin",
@@ -500,7 +772,10 @@ fn spectre_noise_puts_the_output_in_the_terminal_list() {
 /// INFERRED, NOT VERIFIED: `freq=0` as the stand-in for SPICE's DC `.tf`.
 #[test]
 fn spectre_xf_has_no_source_parameter() {
-    let s = analysis(Analysis::Tf { output: "V(out)".into(), source: "Vin".into() });
+    let s = analysis(Analysis::Tf {
+        output: "V(out)".into(),
+        source: "Vin".into(),
+    });
     assert_eq!(s, "xf1 (out 0) xf freq=0");
     assert!(!s.contains("source="), "{s}");
 }
@@ -511,13 +786,21 @@ fn spectre_xf_has_no_source_parameter() {
 #[test]
 fn spectre_sens_matches_documented_control_statement() {
     assert_eq!(
-        analysis(Analysis::Sensitivity { output: "V(out)".into(), ac: None }),
+        analysis(Analysis::Sensitivity {
+            output: "V(out)".into(),
+            ac: None
+        }),
         "sensdc1 dc\nsens (out) for (sensdc1)",
     );
     assert_eq!(
         analysis(Analysis::Sensitivity {
             output: "out".into(),
-            ac: Some(FreqSweep { variation: Sweep::Dec, points: 10, start: 1.0, stop: 1e6 }),
+            ac: Some(FreqSweep {
+                variation: Sweep::Dec,
+                points: 10,
+                start: 1.0,
+                stop: 1e6
+            }),
         }),
         "sensac1 ac start=1 stop=1M dec=10\nsens (out) for (sensac1)",
     );
@@ -532,25 +815,44 @@ fn spectre_sens_matches_documented_control_statement() {
 fn spectre_rf_large_signal_analyses_match_documented_parameters() {
     assert_eq!(
         analysis(Analysis::Pss {
-            fundamental: 1e9, stabilization: 1e-7,
-            observe_node: "out".into(), points_per_period: 128, harmonics: 10,
-            sc_iter: None, steady_coeff: None, uic: false,
+            fundamental: 1e9,
+            stabilization: 1e-7,
+            observe_node: "out".into(),
+            points_per_period: 128,
+            harmonics: 10,
+            sc_iter: None,
+            steady_coeff: None,
+            uic: false,
         }),
         "pss1 (out 0) pss fund=1G tstab=100n harms=10",
     );
     assert_eq!(
         analysis(Analysis::HarmonicBalance {
-            frequencies: vec![1e9, 1.01e9], harmonics: vec![5, 3],
+            frequencies: vec![1e9, 1.01e9],
+            harmonics: vec![5, 3],
         }),
         "hb1 hb fundfreqs=[1G 1.01G] maxharms=[5 3]",
     );
     assert_eq!(
-        analysis(Analysis::SPar { sweep: FreqSweep { variation: Sweep::Dec, points: 20, start: 1e6, stop: 1e9 } }),
+        analysis(Analysis::SPar {
+            sweep: FreqSweep {
+                variation: Sweep::Dec,
+                points: 20,
+                start: 1e6,
+                stop: 1e9
+            }
+        }),
         "sp1 sp start=1M stop=1G dec=20",
     );
     assert_eq!(
         analysis(Analysis::Stability {
-            probe: "IPRB0".into(), sweep: FreqSweep { variation: Sweep::Dec, points: 20, start: 1.0, stop: 1e9 },
+            probe: "IPRB0".into(),
+            sweep: FreqSweep {
+                variation: Sweep::Dec,
+                points: 20,
+                start: 1.0,
+                stop: 1e9
+            },
         }),
         "stb1 stb start=1 stop=1G dec=20 probe=iprb0",
     );
@@ -562,8 +864,17 @@ fn spectre_rf_large_signal_analyses_match_documented_parameters() {
 #[test]
 fn spectre_periodic_small_signal_analyses_drop_invented_parameters() {
     let pac = analysis(Analysis::SpectrePac {
-        pss: PssBase { pss_fundamental: 1e9, pss_stabilization: 1e-7, pss_harmonics: 10 },
-        sweep: FreqSweep { variation: Sweep::Dec, points: 100, start: 1.0, stop: 1e9 },
+        pss: PssBase {
+            pss_fundamental: 1e9,
+            pss_stabilization: 1e-7,
+            pss_harmonics: 10,
+        },
+        sweep: FreqSweep {
+            variation: Sweep::Dec,
+            points: 100,
+            start: 1.0,
+            stop: 1e9,
+        },
         sweep_type: "relative".into(),
     });
     assert_eq!(
@@ -573,9 +884,19 @@ fn spectre_periodic_small_signal_analyses_drop_invented_parameters() {
     );
 
     let pnoise = analysis(Analysis::SpectrePnoise {
-        pss: PssBase { pss_fundamental: 1e9, pss_stabilization: 1e-7, pss_harmonics: 10 },
-        output: "out".into(), reference: "0".into(),
-        sweep: FreqSweep { variation: Sweep::Dec, points: 10, start: 1.0, stop: 1e6 },
+        pss: PssBase {
+            pss_fundamental: 1e9,
+            pss_stabilization: 1e-7,
+            pss_harmonics: 10,
+        },
+        output: "out".into(),
+        reference: "0".into(),
+        sweep: FreqSweep {
+            variation: Sweep::Dec,
+            points: 10,
+            start: 1.0,
+            stop: 1e6,
+        },
     });
     assert_eq!(
         pnoise,
@@ -585,9 +906,19 @@ fn spectre_periodic_small_signal_analyses_drop_invented_parameters() {
     assert!(!pnoise.contains("refprobe"), "{pnoise}");
 
     let pxf = analysis(Analysis::SpectrePxf {
-        pss: PssBase { pss_fundamental: 1e9, pss_stabilization: 1e-7, pss_harmonics: 10 },
-        output: "out".into(), source: "Vin".into(),
-        sweep: FreqSweep { variation: Sweep::Dec, points: 10, start: 1.0, stop: 1e6 },
+        pss: PssBase {
+            pss_fundamental: 1e9,
+            pss_stabilization: 1e-7,
+            pss_harmonics: 10,
+        },
+        output: "out".into(),
+        source: "Vin".into(),
+        sweep: FreqSweep {
+            variation: Sweep::Dec,
+            points: 10,
+            start: 1.0,
+            stop: 1e6,
+        },
     });
     assert_eq!(
         pxf,
@@ -597,8 +928,18 @@ fn spectre_periodic_small_signal_analyses_drop_invented_parameters() {
     assert!(!pxf.contains("isrc"), "{pxf}");
 
     let pstb = analysis(Analysis::SpectrePstb {
-        pss: PssBase { pss_fundamental: 1e9, pss_stabilization: 1e-7, pss_harmonics: 10 },
-        probe: "IPRB0".into(), sweep: FreqSweep { variation: Sweep::Dec, points: 10, start: 1.0, stop: 1e6 },
+        pss: PssBase {
+            pss_fundamental: 1e9,
+            pss_stabilization: 1e-7,
+            pss_harmonics: 10,
+        },
+        probe: "IPRB0".into(),
+        sweep: FreqSweep {
+            variation: Sweep::Dec,
+            points: 10,
+            start: 1.0,
+            stop: 1e6,
+        },
     });
     assert_eq!(
         pstb,
@@ -621,20 +962,30 @@ fn spectre_periodic_small_signal_analyses_drop_invented_parameters() {
 fn spectre_sweep_and_montecarlo_blocks_match_documented_forms() {
     assert_eq!(
         analysis(Analysis::SpectreSweep {
-            param: "rload".into(), start: 1e3, stop: 10e3, step: 1e3,
-            inner: "ac1".into(), inner_type: SpectreAnalysis::Ac,
+            param: "rload".into(),
+            start: 1e3,
+            stop: 10e3,
+            step: 1e3,
+            inner: "ac1".into(),
+            inner_type: SpectreAnalysis::Ac,
         }),
         "sweep1 sweep param=rload start=1k stop=10k step=1k {\n  ac1 ac\n}",
     );
     assert_eq!(
         analysis(Analysis::SpectreMonteCarlo {
-            iterations: 200, inner: "tran1".into(), inner_type: SpectreAnalysis::Tran, seed: Some(1234),
+            iterations: 200,
+            inner: "tran1".into(),
+            inner_type: SpectreAnalysis::Tran,
+            seed: Some(1234),
         }),
         "mc1 montecarlo numruns=200 seed=1234 {\n  tran1 tran\n}",
     );
     assert_eq!(
         analysis(Analysis::SpectreMonteCarlo {
-            iterations: 8, inner: "tran1".into(), inner_type: SpectreAnalysis::Tran, seed: None,
+            iterations: 8,
+            inner: "tran1".into(),
+            inner_type: SpectreAnalysis::Tran,
+            seed: None,
         }),
         "mc1 montecarlo numruns=8 {\n  tran1 tran\n}",
     );
@@ -662,18 +1013,31 @@ fn spectre_fourier_is_emitted_as_a_component() {
 /// bandwidth, so there is nothing faithful to emit.
 #[test]
 fn spectre_refuses_transient_noise() {
-    let r = try_analysis(&Analysis::TransientNoise { step: 1e-9, stop: 1e-6 });
-    assert!(matches!(r, Err(CodeGenError::UnsupportedAnalysis { .. })), "{r:?}");
+    let r = try_analysis(&Analysis::TransientNoise {
+        step: 1e-9,
+        stop: 1e-6,
+    });
+    assert!(
+        matches!(r, Err(CodeGenError::UnsupportedAnalysis { .. })),
+        "{r:?}"
+    );
 }
 
 /// Analyses belonging to other simulators' dialects must be refused.
 #[test]
 fn spectre_refuses_foreign_analyses() {
     let r = try_analysis(&Analysis::PoleZero {
-        node1: "1".into(), node2: "0".into(), node3: "3".into(), node4: "0".into(),
-        tf_type: PzTransfer::Vol, pz_type: PzKind::Pz,
+        node1: "1".into(),
+        node2: "0".into(),
+        node3: "3".into(),
+        node4: "0".into(),
+        tf_type: PzTransfer::Vol,
+        pz_type: PzKind::Pz,
     });
-    assert!(matches!(r, Err(CodeGenError::UnsupportedAnalysis { .. })), "{r:?}");
+    assert!(
+        matches!(r, Err(CodeGenError::UnsupportedAnalysis { .. })),
+        "{r:?}"
+    );
 }
 
 /// Kundert Appendix B, Table B.1 (SI, used by Spectre) vs Table B.2 (SPICE):
@@ -681,16 +1045,25 @@ fn spectre_refuses_foreign_analyses() {
 /// `M`/`G`/`T`. `k m u n p f` mean the same in both.
 #[test]
 fn spectre_numbers_use_si_scale_factors() {
-    let r = |v: f64| component(Component::Resistor {
-        name: "1".into(), n1: "a".into(), n2: "b".into(),
-        value: IrValue::Numeric { value: v }, model: None, params: vec![],
-    });
+    let r = |v: f64| {
+        component(Component::Resistor {
+            name: "1".into(),
+            n1: "a".into(),
+            n2: "b".into(),
+            value: IrValue::Numeric { value: v },
+            model: None,
+            params: vec![],
+        })
+    };
     assert!(r(1e6).ends_with("r=1M"), "{}", r(1e6));
     assert!(r(1e9).ends_with("r=1G"), "{}", r(1e9));
     assert!(r(1e12).ends_with("r=1T"), "{}", r(1e12));
     assert!(r(1e3).ends_with("r=1k"), "{}", r(1e3));
     for v in [1e6_f64, 1e9, 1e12] {
         let s = r(v);
-        assert!(!s.contains("meg") && !s.ends_with('g') && !s.ends_with('t'), "{s}");
+        assert!(
+            !s.contains("meg") && !s.ends_with('g') && !s.ends_with('t'),
+            "{s}"
+        );
     }
 }

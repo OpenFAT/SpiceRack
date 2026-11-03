@@ -9,35 +9,49 @@
 //! The ESPice runs need `espice` on PATH (`$ESPICE` overrides): unsupported
 //! fails, never skips, so outside `nix develop .#testing` they fail.
 
-use spicerack::codegen::{netlist, Dialect};
+use spicerack::codegen::{Dialect, netlist};
 use spicerack::ir::*;
 
 fn sub(name: &str) -> Subcircuit {
     Subcircuit {
-        name: name.into(), ..Default::default() }
+        name: name.into(),
+        ..Default::default()
+    }
 }
 
 fn tb(analyses: Vec<Analysis>) -> Testbench {
     Testbench {
-        analyses, ..Default::default() }
+        analyses,
+        ..Default::default()
+    }
 }
 
 /// v(mid) = 0.5 (a parameter expression over a parametrised subcircuit),
 /// v(b) = 2 v(mid) + 1 = 2, v(lp) = DC gain of 1/(1 + 1e-3 s) = 1.
 fn circuit(analyses: Vec<Analysis>) -> CircuitIR {
     let mut load = sub("load");
-    load.ports = vec![Port { name: "n".into(), direction: PortDirection::InOut }];
-    load.parameters = vec![ParamDef { name: "r".into(), default: Some("1k".into()) }];
+    load.ports = vec![Port {
+        name: "n".into(),
+        direction: PortDirection::InOut,
+    }];
+    load.parameters = vec![ParamDef {
+        name: "r".into(),
+        default: Some("1k".into()),
+    }];
     load.components = vec![Component::Resistor {
         name: "1".into(),
         n1: "n".into(),
         n2: "0".into(),
         value: IrValue::Expression { expr: "r".into() },
-        model: None, params: vec![],
+        model: None,
+        params: vec![],
     }];
 
     let mut top = sub("dialects");
-    top.parameters = vec![ParamDef { name: "rv".into(), default: Some("2k".into()) }];
+    top.parameters = vec![ParamDef {
+        name: "rv".into(),
+        default: Some("2k".into()),
+    }];
     top.components = vec![
         Component::VoltageSource {
             name: "1".into(),
@@ -54,7 +68,8 @@ fn circuit(analyses: Vec<Analysis>) -> CircuitIR {
             n1: "in".into(),
             n2: "mid".into(),
             value: IrValue::Expression { expr: "rv".into() },
-            model: None, params: vec![],
+            model: None,
+            params: vec![],
         },
         Component::BehavioralVoltage {
             name: "1".into(),
@@ -73,16 +88,32 @@ fn circuit(analyses: Vec<Analysis>) -> CircuitIR {
         name: "1".into(),
         subcircuit: "load".into(),
         port_mapping: vec!["mid".into()],
-        parameters: vec![("r".into(), "2k".into())], ..Default::default() }];
-    CircuitIR { top, testbench: Some(tb(analyses)), subcircuit_defs: vec![load], ..Default::default() }
+        parameters: vec![("r".into(), "2k".into())],
+        ..Default::default()
+    }];
+    CircuitIR {
+        top,
+        testbench: Some(tb(analyses)),
+        subcircuit_defs: vec![load],
+        ..Default::default()
+    }
 }
 
 #[test]
 fn every_dialect_dumps() {
     // VACASK has no behavioural-source language; the rest is common ground.
     let mut ir = circuit(vec![Analysis::Op]);
-    ir.top.components.retain(|c| !matches!(c, Component::BehavioralVoltage { .. }));
-    for d in [Dialect::Ngspice, Dialect::Hspice, Dialect::Ltspice, Dialect::Vacask, Dialect::Spectre, Dialect::Espice] {
+    ir.top
+        .components
+        .retain(|c| !matches!(c, Component::BehavioralVoltage { .. }));
+    for d in [
+        Dialect::Ngspice,
+        Dialect::Hspice,
+        Dialect::Ltspice,
+        Dialect::Vacask,
+        Dialect::Spectre,
+        Dialect::Espice,
+    ] {
         let text = netlist(&ir, d).unwrap_or_else(|e| panic!("{d:?}: {e}"));
         assert!(text.contains("mid"), "{d:?}:\n{text}");
     }
@@ -91,13 +122,23 @@ fn every_dialect_dumps() {
 #[test]
 fn hspice_card_forms() {
     let mut ir = circuit(vec![
-        Analysis::Transient { step: 1e-9, stop: 1e-6, start: Some(1e-7), max_step: Some(5e-9), uic: true },
+        Analysis::Transient {
+            step: 1e-9,
+            stop: 1e-6,
+            start: Some(1e-7),
+            max_step: Some(5e-9),
+            uic: true,
+        },
         Analysis::Noise {
             output: "mid".into(),
             reference: "0".into(),
             source: "V1".into(),
-            sweep: FreqSweep { variation: Sweep::Dec,
-            points: 2, start: 1e3, stop: 1e5 },
+            sweep: FreqSweep {
+                variation: Sweep::Dec,
+                points: 2,
+                start: 1e3,
+                stop: 1e5,
+            },
             points_per_summary: Some(1),
         },
     ]);
@@ -117,13 +158,26 @@ fn hspice_card_forms() {
         assert!(n.contains(want), "missing `{want}` in:\n{n}");
     }
     // ESPice refuses these in an HSPICE deck (invalid/hspice_brace_*.sp).
-    assert!(!n.contains('{') && !n.contains("PARAMS:") && !n.contains("\nB"), "{n}");
+    assert!(
+        !n.contains('{') && !n.contains("PARAMS:") && !n.contains("\nB"),
+        "{n}"
+    );
 
-    let step = StepParam { param: "rv".into(), start: 1e3, stop: 3e3, step: 1e3, sweep_type: None };
+    let step = StepParam {
+        param: "rv".into(),
+        start: 1e3,
+        stop: 3e3,
+        step: 1e3,
+        sweep_type: None,
+    };
     let mut stepped = circuit(vec![Analysis::Op]);
     stepped.testbench.as_mut().unwrap().step_params = vec![step];
     assert!(netlist(&stepped, Dialect::Hspice).is_err());
-    let xspice = Component::Xspice { name: "1".into(), connections: vec!["a".into()], model: "m".into() };
+    let xspice = Component::Xspice {
+        name: "1".into(),
+        connections: vec!["a".into()],
+        model: "m".into(),
+    };
     let mut with_a = circuit(vec![Analysis::Op]);
     with_a.top.components.push(xspice);
     assert!(netlist(&with_a, Dialect::Hspice).is_err());
@@ -136,7 +190,11 @@ fn raw_spice_is_refused_not_dropped() {
     for at_top in [true, false] {
         let mut ir = circuit(vec![Analysis::Op]);
         let line = "Gp 0 p poly(1) mid 0 0 1m".to_string();
-        if at_top { ir.top.raw_spice.push(line.clone()) } else { ir.subcircuit_defs[0].raw_spice.push(line.clone()) }
+        if at_top {
+            ir.top.raw_spice.push(line.clone())
+        } else {
+            ir.subcircuit_defs[0].raw_spice.push(line.clone())
+        }
         for d in [Dialect::Spectre, Dialect::Vacask] {
             let e = netlist(&ir, d).unwrap_err().to_string();
             assert!(e.contains("raw SPICE line"), "{d:?}: {e}");
@@ -155,9 +213,21 @@ fn raw_spice_is_refused_not_dropped() {
 /// Spectre deck text that would parse but mean something else.
 #[test]
 fn spectre_keeps_spice_meaning() {
-    let mut ir = circuit(vec![Analysis::Transient { step: 1e-9, stop: 1e-6, start: None, max_step: None, uic: true }]);
-    ir.top.components.retain(|c| !matches!(c, Component::BehavioralVoltage { .. }));
-    ir.top.models = vec![ModelDef { name: "qn".into(), kind: "NPN".into(), parameters: vec![("IKF".into(), "30M".into())] }];
+    let mut ir = circuit(vec![Analysis::Transient {
+        step: 1e-9,
+        stop: 1e-6,
+        start: None,
+        max_step: None,
+        uic: true,
+    }]);
+    ir.top
+        .components
+        .retain(|c| !matches!(c, Component::BehavioralVoltage { .. }));
+    ir.top.models = vec![ModelDef {
+        name: "qn".into(),
+        kind: "NPN".into(),
+        parameters: vec![("IKF".into(), "30M".into())],
+    }];
     ir.testbench.as_mut().unwrap().saves = vec!["i(V1)".into()];
     let n = netlist(&ir, Dialect::Spectre).unwrap();
     // SPICE 30M is milli; Spectre's M is mega, its m milli.
@@ -166,12 +236,27 @@ fn spectre_keeps_spice_meaning() {
     assert!(n.contains("save v1:p"), "current save: {n}");
 
     let tb = ir.testbench.as_mut().unwrap();
-    let sweep = |s: &str| DcSweep { source: s.into(), start: 0.0, stop: 1.0, step: 0.1 };
-    tb.analyses = vec![Analysis::Dc { sweeps: vec![sweep("V1"), sweep("temp")] }];
-    assert!(netlist(&ir, Dialect::Spectre).is_err(), "a nested .dc must not lose a sweep");
+    let sweep = |s: &str| DcSweep {
+        source: s.into(),
+        start: 0.0,
+        stop: 1.0,
+        step: 0.1,
+    };
+    tb.analyses = vec![Analysis::Dc {
+        sweeps: vec![sweep("V1"), sweep("temp")],
+    }];
+    assert!(
+        netlist(&ir, Dialect::Spectre).is_err(),
+        "a nested .dc must not lose a sweep"
+    );
     ir.top.models[0].kind = "VDMOS".into();
     ir.testbench.as_mut().unwrap().analyses = vec![Analysis::Op];
-    assert!(netlist(&ir, Dialect::Spectre).unwrap_err().to_string().contains("no Spectre master"));
+    assert!(
+        netlist(&ir, Dialect::Spectre)
+            .unwrap_err()
+            .to_string()
+            .contains("no Spectre master")
+    );
 }
 
 /// An empty option value is a flag: bare in SPICE, refused by Spectre, whose
@@ -179,10 +264,19 @@ fn spectre_keeps_spice_meaning() {
 #[test]
 fn option_flags() {
     let mut ir = circuit(vec![Analysis::Op]);
-    ir.top.components.retain(|c| !matches!(c, Component::BehavioralVoltage { .. }));
+    ir.top
+        .components
+        .retain(|c| !matches!(c, Component::BehavioralVoltage { .. }));
     let tb = ir.testbench.as_mut().unwrap();
-    tb.options.portable = vec![("noacct".into(), String::new()), ("reltol".into(), "1e-4".into())];
-    assert!(netlist(&ir, Dialect::Ngspice).unwrap().contains(".options noacct reltol=1e-4"));
+    tb.options.portable = vec![
+        ("noacct".into(), String::new()),
+        ("reltol".into(), "1e-4".into()),
+    ];
+    assert!(
+        netlist(&ir, Dialect::Ngspice)
+            .unwrap()
+            .contains(".options noacct reltol=1e-4")
+    );
     let e = netlist(&ir, Dialect::Spectre).unwrap_err().to_string();
     assert!(e.contains("option flag 'noacct'"), "{e}");
 }
@@ -191,8 +285,15 @@ fn option_flags() {
 
 fn espice() -> String {
     let bin = std::env::var("ESPICE").unwrap_or_else(|_| "espice".into());
-    let ok = std::process::Command::new(&bin).arg("--version").output().map(|o| o.status.success()).unwrap_or(false);
-    assert!(ok, "`{bin} --version` failed: run the tests in `nix develop .#testing`, which puts espice on PATH");
+    let ok = std::process::Command::new(&bin)
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    assert!(
+        ok,
+        "`{bin} --version` failed: run the tests in `nix develop .#testing`, which puts espice on PATH"
+    );
     bin
 }
 
@@ -225,7 +326,12 @@ fn node(raw: &spicerack::result::RawData, name: &str) -> f64 {
         .variables
         .iter()
         .position(|v| v.name.eq_ignore_ascii_case(name) || v.name.eq_ignore_ascii_case(&wrapped))
-        .unwrap_or_else(|| panic!("no {name} in {:?}", raw.variables.iter().map(|v| &v.name).collect::<Vec<_>>()));
+        .unwrap_or_else(|| {
+            panic!(
+                "no {name} in {:?}",
+                raw.variables.iter().map(|v| &v.name).collect::<Vec<_>>()
+            )
+        });
     raw.real_data[i][0]
 }
 
@@ -233,8 +339,14 @@ fn node(raw: &spicerack::result::RawData, name: &str) -> f64 {
 /// the reason. A listed dialect that reads back fails the test until its
 /// line goes.
 const ESPICE_REFUSES: &[(Dialect, &str)] = &[
-    (Dialect::Ngspice, "ESPice has no XSPICE code models; ngspice spells the Laplace block as an `s_xfer` A element"),
-    (Dialect::Spectre, "codegen refuses a B source for Spectre (`v(mid)` has no safe Spectre spelling)"),
+    (
+        Dialect::Ngspice,
+        "ESPice has no XSPICE code models; ngspice spells the Laplace block as an `s_xfer` A element",
+    ),
+    (
+        Dialect::Spectre,
+        "codegen refuses a B source for Spectre (`v(mid)` has no safe Spectre spelling)",
+    ),
 ];
 
 #[test]
@@ -265,7 +377,11 @@ fn espice_reads_each_dialect_to_the_same_op() {
         };
         for (name, want) in [("mid", 0.5), ("b", 2.0), ("lp", 1.0)] {
             let got = node(&raw, name);
-            assert!((got - want).abs() < 1e-6, "{:?}: v({name}) = {got}, want {want}\n{deck}", g);
+            assert!(
+                (got - want).abs() < 1e-6,
+                "{:?}: v({name}) = {got}, want {want}\n{deck}",
+                g
+            );
         }
     }
     let got: Vec<Dialect> = refused.iter().map(|(d, _)| *d).collect();
@@ -285,9 +401,14 @@ fn caret_meaning_refused_across_dialects() {
         n1: "a".into(),
         n2: "0".into(),
         value: IrValue::Expression { expr: "a^b".into() },
-        model: None, params: vec![],
+        model: None,
+        params: vec![],
     }];
-    let ir = CircuitIR { raw_dialect: Some(Dialect::Ltspice), top, ..Default::default() };
+    let ir = CircuitIR {
+        raw_dialect: Some(Dialect::Ltspice),
+        top,
+        ..Default::default()
+    };
 
     let err = netlist(&ir, Dialect::Ngspice).unwrap_err();
     assert!(err.to_string().contains("a^b"), "{err}");

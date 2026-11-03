@@ -19,9 +19,17 @@ const PREFIXES: [(f64, &str); 10] = [
 /// SPICE scale suffixes, lowercase, as a reader tries them: `meg` and `mil`
 /// before `m`, since the shorter match first turns a megohm into a milliohm.
 pub const SPICE_SCALES: &[(&str, f64)] = &[
-    ("meg", 1e6), ("mil", 25.4e-6),
-    ("t", 1e12), ("g", 1e9), ("k", 1e3), ("m", 1e-3),
-    ("u", 1e-6), ("n", 1e-9), ("p", 1e-12), ("f", 1e-15), ("a", 1e-18),
+    ("meg", 1e6),
+    ("mil", 25.4e-6),
+    ("t", 1e12),
+    ("g", 1e9),
+    ("k", 1e3),
+    ("m", 1e-3),
+    ("u", 1e-6),
+    ("n", 1e-9),
+    ("p", 1e-12),
+    ("f", 1e-15),
+    ("a", 1e-18),
 ];
 
 /// The SPICE number at the start of `t`: an unsigned mantissa (digits and
@@ -33,14 +41,28 @@ pub const SPICE_SCALES: &[(&str, f64)] = &[
 /// mantissa parses. Not ngspice's own arithmetic: that is [`ngspice_value`].
 pub fn parse_spice_number(t: &str) -> Option<(f64, usize, &'static str)> {
     let b = t.as_bytes();
-    let mut end = b.iter().take_while(|c| c.is_ascii_digit() || **c == b'.').count();
-    if matches!(b.get(end), Some(b'e' | b'E')) && b.get(end + 1).is_some_and(|c| c.is_ascii_digit() || matches!(c, b'+' | b'-')) {
-        end += 2 + b[end + 2..].iter().take_while(|c| c.is_ascii_digit()).count();
+    let mut end = b
+        .iter()
+        .take_while(|c| c.is_ascii_digit() || **c == b'.')
+        .count();
+    if matches!(b.get(end), Some(b'e' | b'E'))
+        && b.get(end + 1)
+            .is_some_and(|c| c.is_ascii_digit() || matches!(c, b'+' | b'-'))
+    {
+        end += 2 + b[end + 2..]
+            .iter()
+            .take_while(|c| c.is_ascii_digit())
+            .count();
     }
     let mantissa: f64 = t[..end].parse().ok()?;
     let rest = &t[end..];
-    let (suffix, mult) = SPICE_SCALES.iter().copied()
-        .find(|(s, _)| rest.get(..s.len()).is_some_and(|p| p.eq_ignore_ascii_case(s)))
+    let (suffix, mult) = SPICE_SCALES
+        .iter()
+        .copied()
+        .find(|(s, _)| {
+            rest.get(..s.len())
+                .is_some_and(|p| p.eq_ignore_ascii_case(s))
+        })
         .unwrap_or(("", 1.0));
     Some((scale(mantissa, mult), end, suffix))
 }
@@ -54,14 +76,24 @@ pub fn ngspice_value(t: &str) -> Option<f64> {
     let b = t.as_bytes();
     let mut i = 0;
     let sign = match b.first() {
-        Some(b'+') => { i += 1; 1.0 }
-        Some(b'-') => { i += 1; -1.0 }
+        Some(b'+') => {
+            i += 1;
+            1.0
+        }
+        Some(b'-') => {
+            i += 1;
+            -1.0
+        }
         _ => 1.0,
     };
     if !b.get(i).is_some_and(|c| c.is_ascii_digit() || *c == b'.') {
         return None;
     }
-    let digit = |i: usize| b.get(i).filter(|c| c.is_ascii_digit()).map(|c| (c - b'0') as f64);
+    let digit = |i: usize| {
+        b.get(i)
+            .filter(|c| c.is_ascii_digit())
+            .map(|c| (c - b'0') as f64)
+    };
     let (mut mantis, mut expo1) = (0.0f64, 0i32);
     while let Some(d) = digit(i) {
         mantis = 10.0 * mantis + d;
@@ -80,7 +112,10 @@ pub fn ngspice_value(t: &str) -> Option<f64> {
         i += 1;
         match b.get(i) {
             Some(b'+') => i += 1,
-            Some(b'-') => { i += 1; expsgn = -1 }
+            Some(b'-') => {
+                i += 1;
+                expsgn = -1
+            }
             _ => {}
         }
         while let Some(d) = digit(i) {
@@ -168,7 +203,11 @@ fn plain(m: &str, e: i32) -> String {
     } else if point as usize >= digits.len() {
         format!("{digits}{}", "0".repeat(point as usize - digits.len()))
     } else {
-        format!("{}.{}", &digits[..point as usize], &digits[point as usize..])
+        format!(
+            "{}.{}",
+            &digits[..point as usize],
+            &digits[point as usize..]
+        )
     };
     format!("{sign}{body}")
 }
@@ -179,7 +218,10 @@ pub fn si_prefix(v: f64) -> (f64, &'static str) {
     if v == 0.0 {
         return (1.0, "");
     }
-    PREFIXES.into_iter().find(|p| v.abs() >= p.0).unwrap_or(PREFIXES[9])
+    PREFIXES
+        .into_iter()
+        .find(|p| v.abs() >= p.0)
+        .unwrap_or(PREFIXES[9])
 }
 
 /// `v * mult` for a power-of-ten `mult`, rounded once: `100 @ u_ns` is the
@@ -284,7 +326,20 @@ mod ngspice_numbers {
         assert_eq!(ngspice_value("2mil"), Some(2.0 * 25.4 * 1e-6));
         assert_eq!(ngspice_value("abc"), None);
         assert_eq!(ngspice_value("0.5u"), Some(5.0 * 10f64.powf(-7.0)));
-        for t in ["500n", "0.5u", "1.5meg", "4.7k", "0.1n", "-3.3", "1e-12", "108f", "2.2e-9", "0.000000001", "0.050000", "1.000000"] {
+        for t in [
+            "500n",
+            "0.5u",
+            "1.5meg",
+            "4.7k",
+            "0.1n",
+            "-3.3",
+            "1e-12",
+            "108f",
+            "2.2e-9",
+            "0.000000001",
+            "0.050000",
+            "1.000000",
+        ] {
             let v = ngspice_value(t).unwrap();
             assert_eq!(ngspice_value(&ngspice_spelling(v)), Some(v), "{t}");
         }
@@ -299,7 +354,11 @@ mod ngspice_numbers {
         assert_eq!(parse_spice_number("1kHz"), Some((1e3, 1, "k")));
         assert_eq!(parse_spice_number("2mil"), Some((50.8e-6, 1, "mil")));
         assert_eq!(parse_spice_number("1e-4*s"), Some((1e-4, 4, "")));
-        assert_eq!(parse_spice_number("1e"), Some((1.0, 1, "")), "a bare e is no exponent");
+        assert_eq!(
+            parse_spice_number("1e"),
+            Some((1.0, 1, "")),
+            "a bare e is no exponent"
+        );
         assert_eq!(parse_spice_number("-1"), None, "the sign is the caller's");
         assert_eq!(parse_spice_number("."), None);
     }

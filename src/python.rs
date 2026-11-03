@@ -7,14 +7,15 @@
 //!
 //! Every class here builds `ir` data directly; netlists come only from codegen.
 
-
 use std::collections::HashMap;
 
+use pyo3::exceptions::{PyAttributeError, PyKeyError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::exceptions::{PyKeyError, PyAttributeError, PyRuntimeError, PyValueError};
 use pyo3::types::{PyDict, PyList};
 
-use crate::ir::{self, Analysis, CircuitIR, Component, Dialect, IrNum, IrValue, IrWaveform, PssBase};
+use crate::ir::{
+    self, Analysis, CircuitIR, Component, Dialect, IrNum, IrValue, IrWaveform, PssBase,
+};
 use crate::result::*;
 use crate::unit as u;
 
@@ -26,7 +27,6 @@ fn measures_to_dict(measures: &[crate::result::MeasureResult]) -> HashMap<String
 fn runtime_err(e: impl std::fmt::Display) -> PyErr {
     PyRuntimeError::new_err(e.to_string())
 }
-
 
 // ── Unit bindings ──
 
@@ -46,7 +46,12 @@ struct PyUnitValue {
 #[pymethods]
 impl PyUnit {
     fn __rmatmul__(&self, value: f64) -> PyUnitValue {
-        PyUnitValue { inner: u::UnitValue { value: u::scale(value, self.mult), symbol: self.symbol } }
+        PyUnitValue {
+            inner: u::UnitValue {
+                value: u::scale(value, self.mult),
+                symbol: self.symbol,
+            },
+        }
     }
 
     fn __repr__(&self) -> String {
@@ -120,8 +125,14 @@ fn check_backend_name(name: &str) -> PyResult<()> {
     if crate::backend::parse(name).is_some() {
         return Ok(());
     }
-    let names = crate::backend::RUNNABLE.map(Dialect::name).into_iter().chain(Dialect::ALIASES.map(|a| a.0));
-    Err(PyValueError::new_err(format!("unknown backend {name:?}; expected one of {}", names.collect::<Vec<_>>().join(", "))))
+    let names = crate::backend::RUNNABLE
+        .map(Dialect::name)
+        .into_iter()
+        .chain(Dialect::ALIASES.map(|a| a.0));
+    Err(PyValueError::new_err(format!(
+        "unknown backend {name:?}; expected one of {}",
+        names.collect::<Vec<_>>().join(", ")
+    )))
 }
 
 /// Extract DC sweep params: kwargs like Vinput=slice(-2, 5, 0.01)
@@ -138,7 +149,9 @@ fn dc_sweeps(kwargs: Option<Bound<'_, PyDict>>) -> PyResult<Analysis> {
         }
     }
     if sweeps.is_empty() {
-        return Err(PyValueError::new_err("dc() requires at least one sweep parameter"));
+        return Err(PyValueError::new_err(
+            "dc() requires at least one sweep parameter",
+        ));
     }
     Ok(Analysis::Dc { sweeps })
 }
@@ -156,11 +169,18 @@ impl PyValueArg {
     fn ir(self) -> IrValue {
         match self {
             Self::Float(value) => IrValue::Numeric { value },
-            Self::Unit(uv) => IrValue::Numeric { value: uv.inner.value },
+            Self::Unit(uv) => IrValue::Numeric {
+                value: uv.inner.value,
+            },
             Self::Expr(e) => {
                 let t = e.trim();
-                let inner = t.strip_prefix('{').and_then(|t| t.strip_suffix('}')).unwrap_or(t);
-                IrValue::Expression { expr: inner.trim().to_string() }
+                let inner = t
+                    .strip_prefix('{')
+                    .and_then(|t| t.strip_suffix('}'))
+                    .unwrap_or(t);
+                IrValue::Expression {
+                    expr: inner.trim().to_string(),
+                }
             }
         }
     }
@@ -180,20 +200,26 @@ fn num(value: f64) -> IrValue {
     IrValue::Numeric { value }
 }
 
-
-
 /// One of two spellings of the same argument (`dc`/`dc_offset`), never both.
 fn either(a: Option<f64>, b: Option<f64>, an: &str, bn: &str) -> PyResult<Option<f64>> {
     match (a, b) {
-        (Some(_), Some(_)) => Err(pyo3::exceptions::PyTypeError::new_err(format!("pass {an} or {bn}, not both"))),
+        (Some(_), Some(_)) => Err(pyo3::exceptions::PyTypeError::new_err(format!(
+            "pass {an} or {bn}, not both"
+        ))),
         _ => Ok(a.or(b)),
     }
 }
 
 /// A waveform source: its DC value is `dc`, else the waveform's t=0 value.
 fn wave_source(
-    current: bool, name: &str, np: String, nm: String, wf: IrWaveform,
-    dc: Option<f64>, ac: Option<f64>, ac_phase: Option<f64>,
+    current: bool,
+    name: &str,
+    np: String,
+    nm: String,
+    wf: IrWaveform,
+    dc: Option<f64>,
+    ac: Option<f64>,
+    ac_phase: Option<f64>,
 ) -> Component {
     let value = dc.map_or_else(|| wf.at_zero(), num);
     source(current, name, np, nm, value, ac, ac_phase, Some(wf))
@@ -201,14 +227,37 @@ fn wave_source(
 
 /// A `V` (or, with `current`, an `I`) source.
 fn source(
-    current: bool, name: &str, np: String, nm: String, value: IrValue,
-    ac_magnitude: Option<f64>, ac_phase: Option<f64>, waveform: Option<IrWaveform>,
+    current: bool,
+    name: &str,
+    np: String,
+    nm: String,
+    value: IrValue,
+    ac_magnitude: Option<f64>,
+    ac_phase: Option<f64>,
+    waveform: Option<IrWaveform>,
 ) -> Component {
     let name = name.to_string();
     if current {
-        Component::CurrentSource { name, np, nm, value, ac_magnitude, ac_phase, waveform }
+        Component::CurrentSource {
+            name,
+            np,
+            nm,
+            value,
+            ac_magnitude,
+            ac_phase,
+            waveform,
+        }
     } else {
-        Component::VoltageSource { name, np, nm, value, ac_magnitude, ac_phase, waveform, port: None }
+        Component::VoltageSource {
+            name,
+            np,
+            nm,
+            value,
+            ac_magnitude,
+            ac_phase,
+            waveform,
+            port: None,
+        }
     }
 }
 
@@ -237,7 +286,8 @@ fn run_deck(ir: CircuitIR, backend: Option<&str>) -> PyResult<RawData> {
 }
 
 fn issues(ir: &CircuitIR, backend: &str) -> Vec<String> {
-    ir.check_backend(backend).into_iter()
+    ir.check_backend(backend)
+        .into_iter()
         .map(|issue| format!("{:?}: {}", issue.severity, issue.message))
         .collect()
 }
@@ -255,8 +305,20 @@ struct PyCircuit {
 impl PyCircuit {
     #[new]
     fn new(title: &str) -> (Self, PySubcircuit) {
-        let top = ir::Subcircuit { name: title.to_string(), ..Default::default() };
-        (Self { defs: vec![], tb: Default::default() }, PySubcircuit { inner: top, ground_alias: true })
+        let top = ir::Subcircuit {
+            name: title.to_string(),
+            ..Default::default()
+        };
+        (
+            Self {
+                defs: vec![],
+                tb: Default::default(),
+            },
+            PySubcircuit {
+                inner: top,
+                ground_alias: true,
+            },
+        )
     }
 
     #[pyo3(signature = (**kwargs))]
@@ -278,13 +340,25 @@ impl PyCircuit {
     fn __getitem__(slf: PyRef<'_, Self>, name: &str) -> PyResult<String> {
         let top = &slf.as_super().inner;
         let one = if let Some(c) = top.components.iter().find(|c| c.name() == Some(name)) {
-            ir::Subcircuit { components: vec![c.clone()], ..Default::default() }
+            ir::Subcircuit {
+                components: vec![c.clone()],
+                ..Default::default()
+            }
         } else if let Some(i) = top.instances.iter().find(|i| i.name == name) {
-            ir::Subcircuit { instances: vec![i.clone()], ..Default::default() }
+            ir::Subcircuit {
+                instances: vec![i.clone()],
+                ..Default::default()
+            }
         } else {
             return Err(PyKeyError::new_err(format!("Element '{name}' not found")));
         };
-        let deck = emit_ir_netlist(CircuitIR { top: one, ..Default::default() }, "ngspice")?;
+        let deck = emit_ir_netlist(
+            CircuitIR {
+                top: one,
+                ..Default::default()
+            },
+            "ngspice",
+        )?;
         // Drop the title line and `.end`.
         let lines: Vec<&str> = deck.lines().collect();
         Ok(lines[1..lines.len() - 1].join("\n"))
@@ -297,13 +371,19 @@ impl PyCircuit {
     fn set_source_value(mut slf: PyRefMut<'_, Self>, name: &str, value: f64) -> PyResult<()> {
         for c in &mut slf.as_super().inner.components {
             match c {
-                Component::VoltageSource { name: n, value: v, .. }
-                | Component::CurrentSource { name: n, value: v, .. } if n == name => {
+                Component::VoltageSource {
+                    name: n, value: v, ..
+                }
+                | Component::CurrentSource {
+                    name: n, value: v, ..
+                } if n == name => {
                     *v = num(value);
                     return Ok(());
                 }
                 c if c.name() == Some(name) => {
-                    return Err(PyKeyError::new_err(format!("{name} is not a voltage or current source")));
+                    return Err(PyKeyError::new_err(format!(
+                        "{name} is not a voltage or current source"
+                    )));
                 }
                 _ => {}
             }
@@ -330,7 +410,11 @@ impl PyCircuit {
         if let Some(name) = simulator {
             check_backend_name(name)?;
         }
-        Ok(PySimulator { ir: Self::ir(&slf), backend: simulator.map(str::to_string), save_currents: false })
+        Ok(PySimulator {
+            ir: Self::ir(&slf),
+            backend: simulator.map(str::to_string),
+            save_currents: false,
+        })
     }
 }
 
@@ -351,13 +435,19 @@ impl PyCircuit {
 /// SPICE scopes a `.lib` in a `.subckt` to that subcircuit.
 fn hoisted(top: &mut ir::Subcircuit, child: &ir::Subcircuit) -> ir::Subcircuit {
     for inc in &child.includes {
-        if !top.includes.contains(inc) { top.includes.push(inc.clone()); }
+        if !top.includes.contains(inc) {
+            top.includes.push(inc.clone());
+        }
     }
     for lib in &child.libs {
-        if !top.libs.contains(lib) { top.libs.push(lib.clone()); }
+        if !top.libs.contains(lib) {
+            top.libs.push(lib.clone());
+        }
     }
     for osdi in &child.osdi_loads {
-        if !top.osdi_loads.contains(osdi) { top.osdi_loads.push(osdi.clone()); }
+        if !top.osdi_loads.contains(osdi) {
+            top.osdi_loads.push(osdi.clone());
+        }
     }
     let mut def = child.clone();
     def.includes.clear();
@@ -369,58 +459,141 @@ fn hoisted(top: &mut ir::Subcircuit, child: &ir::Subcircuit) -> ir::Subcircuit {
 /// One `Analysis` per card that both forms build: `CircuitSimulator.x()`
 /// runs it, `Testbench.add_x()` queues it.
 mod card {
-    use pyo3::{exceptions::PyValueError, PyResult};
+    use pyo3::{PyResult, exceptions::PyValueError};
 
     use crate::ir::{Analysis, FreqSweep};
 
     /// Where a Python sweep name becomes a [`crate::ir::Sweep`]: anything
     /// but dec, oct, lin or log (any case) is a `ValueError` here.
     pub fn sweep(variation: &str, points: u32, start: f64, stop: f64) -> PyResult<FreqSweep> {
-        Ok(FreqSweep { variation: variation.parse().map_err(PyValueError::new_err)?, points, start, stop })
+        Ok(FreqSweep {
+            variation: variation.parse().map_err(PyValueError::new_err)?,
+            points,
+            start,
+            stop,
+        })
     }
 
     pub fn ac(variation: &str, points: u32, start: f64, stop: f64) -> PyResult<Analysis> {
-        Ok(Analysis::Ac { sweep: sweep(variation, points, start, stop)? })
+        Ok(Analysis::Ac {
+            sweep: sweep(variation, points, start, stop)?,
+        })
     }
 
-    pub fn transient(step: f64, stop: f64, start: Option<f64>, max_step: Option<f64>, uic: bool) -> Analysis {
-        Analysis::Transient { step, stop, start, max_step, uic }
+    pub fn transient(
+        step: f64,
+        stop: f64,
+        start: Option<f64>,
+        max_step: Option<f64>,
+        uic: bool,
+    ) -> Analysis {
+        Analysis::Transient {
+            step,
+            stop,
+            start,
+            max_step,
+            uic,
+        }
     }
 
-    pub fn noise(output: &str, reference: &str, source: &str, variation: &str, points: u32, start: f64, stop: f64, points_per_summary: Option<u32>) -> PyResult<Analysis> {
+    pub fn noise(
+        output: &str,
+        reference: &str,
+        source: &str,
+        variation: &str,
+        points: u32,
+        start: f64,
+        stop: f64,
+        points_per_summary: Option<u32>,
+    ) -> PyResult<Analysis> {
         let sweep = sweep(variation, points, start, stop)?;
-        Ok(Analysis::Noise { output: output.into(), reference: reference.into(), source: source.into(), sweep, points_per_summary })
+        Ok(Analysis::Noise {
+            output: output.into(),
+            reference: reference.into(),
+            source: source.into(),
+            sweep,
+            points_per_summary,
+        })
     }
 
     pub fn tf(output: &str, source: &str) -> Analysis {
-        Analysis::Tf { output: output.into(), source: source.into() }
+        Analysis::Tf {
+            output: output.into(),
+            source: source.into(),
+        }
     }
 
     /// `.sens`: DC without `ac`, else over that AC sweep.
     pub fn sensitivity(output: &str, ac: Option<FreqSweep>) -> Analysis {
-        Analysis::Sensitivity { output: output.into(), ac }
+        Analysis::Sensitivity {
+            output: output.into(),
+            ac,
+        }
     }
 
     /// `tf_type` is vol or cur, `pz_type` pol, zer or pz (any case); else
     /// a `ValueError`.
     pub fn polezero(nodes: [&str; 4], tf_type: &str, pz_type: &str) -> PyResult<Analysis> {
         let [node1, node2, node3, node4] = nodes.map(String::from);
-        let (tf_type, pz_type) = (tf_type.parse().map_err(PyValueError::new_err)?, pz_type.parse().map_err(PyValueError::new_err)?);
-        Ok(Analysis::PoleZero { node1, node2, node3, node4, tf_type, pz_type })
+        let (tf_type, pz_type) = (
+            tf_type.parse().map_err(PyValueError::new_err)?,
+            pz_type.parse().map_err(PyValueError::new_err)?,
+        );
+        Ok(Analysis::PoleZero {
+            node1,
+            node2,
+            node3,
+            node4,
+            tf_type,
+            pz_type,
+        })
     }
 
-    pub fn distortion(variation: &str, points: u32, start: f64, stop: f64, f2overf1: Option<f64>) -> PyResult<Analysis> {
-        Ok(Analysis::Distortion { sweep: sweep(variation, points, start, stop)?, f2overf1 })
+    pub fn distortion(
+        variation: &str,
+        points: u32,
+        start: f64,
+        stop: f64,
+        f2overf1: Option<f64>,
+    ) -> PyResult<Analysis> {
+        Ok(Analysis::Distortion {
+            sweep: sweep(variation, points, start, stop)?,
+            f2overf1,
+        })
     }
 
-    pub fn spectre_sweep(param: &str, start: f64, stop: f64, step: f64, inner: &str, inner_type: &str) -> PyResult<Analysis> {
+    pub fn spectre_sweep(
+        param: &str,
+        start: f64,
+        stop: f64,
+        step: f64,
+        inner: &str,
+        inner_type: &str,
+    ) -> PyResult<Analysis> {
         let inner_type = inner_type.parse().map_err(PyValueError::new_err)?;
-        Ok(Analysis::SpectreSweep { param: param.into(), start, stop, step, inner: inner.into(), inner_type })
+        Ok(Analysis::SpectreSweep {
+            param: param.into(),
+            start,
+            stop,
+            step,
+            inner: inner.into(),
+            inner_type,
+        })
     }
 
-    pub fn spectre_monte_carlo(iterations: u32, inner: &str, inner_type: &str, seed: Option<u64>) -> PyResult<Analysis> {
+    pub fn spectre_monte_carlo(
+        iterations: u32,
+        inner: &str,
+        inner_type: &str,
+        seed: Option<u64>,
+    ) -> PyResult<Analysis> {
         let inner_type = inner_type.parse().map_err(PyValueError::new_err)?;
-        Ok(Analysis::SpectreMonteCarlo { iterations, inner: inner.into(), inner_type, seed })
+        Ok(Analysis::SpectreMonteCarlo {
+            iterations,
+            inner: inner.into(),
+            inner_type,
+            seed,
+        })
     }
 }
 
@@ -447,7 +620,8 @@ impl PySimulator {
     fn deck_as_queued(&self) -> CircuitIR {
         let mut ir = self.ir.clone();
         if self.save_currents {
-            ir.testbench.get_or_insert_with(Default::default).saves = vec!["all".into(), "@all[i]".into()];
+            ir.testbench.get_or_insert_with(Default::default).saves =
+                vec!["all".into(), "@all[i]".into()];
         }
         ir
     }
@@ -538,59 +712,125 @@ impl PySimulator {
 
     #[getter]
     fn get_ngbehavior(&self) -> Option<String> {
-        self.ir.testbench.as_ref().and_then(|tb| tb.ngbehavior.clone())
+        self.ir
+            .testbench
+            .as_ref()
+            .and_then(|tb| tb.ngbehavior.clone())
     }
 
     #[pyo3(signature = (param, start, stop, step))]
     fn step(&mut self, param: &str, start: f64, stop: f64, step: f64) {
-        self.tb().step_params.push(ir::StepParam { param: param.to_string(), start, stop, step, sweep_type: None });
+        self.tb().step_params.push(ir::StepParam {
+            param: param.to_string(),
+            start,
+            stop,
+            step,
+            sweep_type: None,
+        });
     }
 
     #[pyo3(signature = (param, start, stop, step, sweep_type))]
-    fn step_sweep(&mut self, param: &str, start: f64, stop: f64, step: f64, sweep_type: &str) -> PyResult<()> {
+    fn step_sweep(
+        &mut self,
+        param: &str,
+        start: f64,
+        stop: f64,
+        step: f64,
+        sweep_type: &str,
+    ) -> PyResult<()> {
         let sweep_type = Some(sweep_type.parse().map_err(PyValueError::new_err)?);
-        self.tb().step_params.push(ir::StepParam { param: param.to_string(), start, stop, step, sweep_type });
+        self.tb().step_params.push(ir::StepParam {
+            param: param.to_string(),
+            start,
+            stop,
+            step,
+            sweep_type,
+        });
         Ok(())
     }
 
     // ── Analyses ──
 
     fn operating_point(&self) -> PyResult<PyOperatingPoint> {
-        Ok(PyOperatingPoint { inner: Results::from_raw(self.run(Analysis::Op)?) })
+        Ok(PyOperatingPoint {
+            inner: Results::from_raw(self.run(Analysis::Op)?),
+        })
     }
 
     #[pyo3(signature = (**kwargs))]
     fn dc(&self, kwargs: Option<Bound<'_, PyDict>>) -> PyResult<PyDcAnalysis> {
-        Ok(PyDcAnalysis { inner: Results::from_raw(self.run(dc_sweeps(kwargs)?)?) })
+        Ok(PyDcAnalysis {
+            inner: Results::from_raw(self.run(dc_sweeps(kwargs)?)?),
+        })
     }
 
     #[pyo3(signature = (variation="dec", number_of_points=10, start_frequency=1.0, stop_frequency=1e9))]
-    fn ac(&self, variation: &str, number_of_points: u32, start_frequency: f64, stop_frequency: f64) -> PyResult<PyAcAnalysis> {
+    fn ac(
+        &self,
+        variation: &str,
+        number_of_points: u32,
+        start_frequency: f64,
+        stop_frequency: f64,
+    ) -> PyResult<PyAcAnalysis> {
         let a = card::ac(variation, number_of_points, start_frequency, stop_frequency)?;
-        Ok(PyAcAnalysis { inner: Results::from_raw(self.run(a)?) })
+        Ok(PyAcAnalysis {
+            inner: Results::from_raw(self.run(a)?),
+        })
     }
 
     #[pyo3(signature = (step_time, end_time, start_time=None, max_time=None, use_initial_condition=false))]
     fn transient(
-        &self, step_time: f64, end_time: f64, start_time: Option<f64>, max_time: Option<f64>,
+        &self,
+        step_time: f64,
+        end_time: f64,
+        start_time: Option<f64>,
+        max_time: Option<f64>,
         use_initial_condition: bool,
     ) -> PyResult<PyTransientAnalysis> {
-        let a = card::transient(step_time, end_time, start_time, max_time, use_initial_condition);
-        Ok(PyTransientAnalysis { inner: Results::from_raw(self.run(a)?) })
+        let a = card::transient(
+            step_time,
+            end_time,
+            start_time,
+            max_time,
+            use_initial_condition,
+        );
+        Ok(PyTransientAnalysis {
+            inner: Results::from_raw(self.run(a)?),
+        })
     }
 
     #[pyo3(signature = (output_node, ref_node, src, variation="dec", points=10, start_frequency=1e3, stop_frequency=1e8, points_per_summary=None))]
     fn noise(
-        &self, output_node: &str, ref_node: &str, src: &str, variation: &str, points: u32,
-        start_frequency: f64, stop_frequency: f64, points_per_summary: Option<u32>,
+        &self,
+        output_node: &str,
+        ref_node: &str,
+        src: &str,
+        variation: &str,
+        points: u32,
+        start_frequency: f64,
+        stop_frequency: f64,
+        points_per_summary: Option<u32>,
     ) -> PyResult<PyNoiseAnalysis> {
-        let a = card::noise(output_node, ref_node, src, variation, points, start_frequency, stop_frequency, points_per_summary)?;
-        Ok(PyNoiseAnalysis { inner: Results::from_raw(self.run(a)?) })
+        let a = card::noise(
+            output_node,
+            ref_node,
+            src,
+            variation,
+            points,
+            start_frequency,
+            stop_frequency,
+            points_per_summary,
+        )?;
+        Ok(PyNoiseAnalysis {
+            inner: Results::from_raw(self.run(a)?),
+        })
     }
 
     #[pyo3(signature = (outvar, insrc))]
     fn transfer_function(&self, outvar: &str, insrc: &str) -> PyResult<PyTransferFunctionAnalysis> {
-        Ok(PyTransferFunctionAnalysis { inner: Results::from_raw(self.run(card::tf(outvar, insrc))?) })
+        Ok(PyTransferFunctionAnalysis {
+            inner: Results::from_raw(self.run(card::tf(outvar, insrc))?),
+        })
     }
 
     #[pyo3(signature = (outvar, insrc))]
@@ -601,88 +841,177 @@ impl PySimulator {
     #[pyo3(signature = (output_variable))]
     fn dc_sensitivity(&self, output_variable: &str) -> PyResult<PySensitivityAnalysis> {
         let a = card::sensitivity(output_variable, None);
-        Ok(PySensitivityAnalysis { inner: Results::from_raw(self.run(a)?) })
+        Ok(PySensitivityAnalysis {
+            inner: Results::from_raw(self.run(a)?),
+        })
     }
 
     #[pyo3(signature = (output_variable, variation="dec", number_of_points=10, start_frequency=100.0, stop_frequency=1e5))]
     fn ac_sensitivity(
-        &self, output_variable: &str, variation: &str, number_of_points: u32,
-        start_frequency: f64, stop_frequency: f64,
+        &self,
+        output_variable: &str,
+        variation: &str,
+        number_of_points: u32,
+        start_frequency: f64,
+        stop_frequency: f64,
     ) -> PyResult<PySensitivityAnalysis> {
-        let a = card::sensitivity(output_variable, Some(card::sweep(variation, number_of_points, start_frequency, stop_frequency)?));
-        Ok(PySensitivityAnalysis { inner: Results::from_raw(self.run(a)?) })
+        let a = card::sensitivity(
+            output_variable,
+            Some(card::sweep(
+                variation,
+                number_of_points,
+                start_frequency,
+                stop_frequency,
+            )?),
+        );
+        Ok(PySensitivityAnalysis {
+            inner: Results::from_raw(self.run(a)?),
+        })
     }
 
     #[pyo3(signature = (node1, node2, node3, node4, tf_type, pz_type))]
     fn polezero(
-        &self, node1: &str, node2: &str, node3: &str, node4: &str, tf_type: &str, pz_type: &str,
+        &self,
+        node1: &str,
+        node2: &str,
+        node3: &str,
+        node4: &str,
+        tf_type: &str,
+        pz_type: &str,
     ) -> PyResult<PyPoleZeroAnalysis> {
         let a = card::polezero([node1, node2, node3, node4], tf_type, pz_type)?;
-        Ok(PyPoleZeroAnalysis { inner: Results::from_raw(self.run(a)?) })
+        Ok(PyPoleZeroAnalysis {
+            inner: Results::from_raw(self.run(a)?),
+        })
     }
 
     #[pyo3(signature = (variation="dec", points=10, start_frequency=100.0, stop_frequency=1e8, f2overf1=None))]
     fn distortion(
-        &self, variation: &str, points: u32, start_frequency: f64, stop_frequency: f64, f2overf1: Option<f64>,
+        &self,
+        variation: &str,
+        points: u32,
+        start_frequency: f64,
+        stop_frequency: f64,
+        f2overf1: Option<f64>,
     ) -> PyResult<PyDistortionAnalysis> {
         let a = card::distortion(variation, points, start_frequency, stop_frequency, f2overf1)?;
-        Ok(PyDistortionAnalysis { inner: Results::from_raw(self.run(a)?) })
+        Ok(PyDistortionAnalysis {
+            inner: Results::from_raw(self.run(a)?),
+        })
     }
 
     /// `sc_iter`, `steady_coeff`, `uic`: ngspice's shooting controls
     /// (`sciter`, `steadycoeff`, `uic`; defaults 50 and 1e-3 when unset).
     #[pyo3(signature = (fundamental_frequency, stabilization_time, observe_node, points_per_period=128, harmonics=10, sc_iter=None, steady_coeff=None, uic=false))]
     fn pss(
-        &self, fundamental_frequency: f64, stabilization_time: f64, observe_node: &str,
-        points_per_period: u32, harmonics: u32, sc_iter: Option<u32>, steady_coeff: Option<f64>, uic: bool,
+        &self,
+        fundamental_frequency: f64,
+        stabilization_time: f64,
+        observe_node: &str,
+        points_per_period: u32,
+        harmonics: u32,
+        sc_iter: Option<u32>,
+        steady_coeff: Option<f64>,
+        uic: bool,
     ) -> PyResult<PyPssAnalysis> {
         let a = Analysis::Pss {
-            fundamental: fundamental_frequency, stabilization: stabilization_time,
-            observe_node: observe_node.into(), points_per_period, harmonics, sc_iter, steady_coeff, uic,
+            fundamental: fundamental_frequency,
+            stabilization: stabilization_time,
+            observe_node: observe_node.into(),
+            points_per_period,
+            harmonics,
+            sc_iter,
+            steady_coeff,
+            uic,
         };
-        Ok(PyPssAnalysis { inner: Results::from_raw(self.run(a)?) })
+        Ok(PyPssAnalysis {
+            inner: Results::from_raw(self.run(a)?),
+        })
     }
 
     #[pyo3(signature = (variation="dec", number_of_points=10, start_frequency=1e6, stop_frequency=1e10))]
-    fn s_param(&self, variation: &str, number_of_points: u32, start_frequency: f64, stop_frequency: f64) -> PyResult<PySParamAnalysis> {
-        let a = Analysis::SPar { sweep: card::sweep(variation, number_of_points, start_frequency, stop_frequency)? };
-        Ok(PySParamAnalysis { inner: Results::from_raw(self.run(a)?) })
+    fn s_param(
+        &self,
+        variation: &str,
+        number_of_points: u32,
+        start_frequency: f64,
+        stop_frequency: f64,
+    ) -> PyResult<PySParamAnalysis> {
+        let a = Analysis::SPar {
+            sweep: card::sweep(variation, number_of_points, start_frequency, stop_frequency)?,
+        };
+        Ok(PySParamAnalysis {
+            inner: Results::from_raw(self.run(a)?),
+        })
     }
 
     /// LTspice `.net` network-parameter analysis over an AC sweep.
     #[pyo3(signature = (output_current, input_source, z_in=50.0, z_out=50.0, variation="dec", points=100, start_freq=1e3, stop_freq=1e9))]
     fn network_params(
-        &self, output_current: &str, input_source: &str, z_in: f64, z_out: f64,
-        variation: &str, points: u32, start_freq: f64, stop_freq: f64,
+        &self,
+        output_current: &str,
+        input_source: &str,
+        z_in: f64,
+        z_out: f64,
+        variation: &str,
+        points: u32,
+        start_freq: f64,
+        stop_freq: f64,
     ) -> PyResult<PySParamAnalysis> {
         let mut ir = self.deck(card::ac(variation, points, start_freq, stop_freq)?);
         if let Some(tb) = &mut ir.testbench {
-            tb.extra_lines.push(format!(".net {output_current} {input_source} Rout={z_out} Rin={z_in}"));
+            tb.extra_lines.push(format!(
+                ".net {output_current} {input_source} Rout={z_out} Rin={z_in}"
+            ));
         }
-        Ok(PySParamAnalysis { inner: Results::from_raw(run_deck(ir, self.backend.as_deref())?) })
+        Ok(PySParamAnalysis {
+            inner: Results::from_raw(run_deck(ir, self.backend.as_deref())?),
+        })
     }
 
     #[pyo3(signature = (fundamental_frequencies, num_harmonics=None))]
-    fn harmonic_balance(&self, fundamental_frequencies: Vec<f64>, num_harmonics: Option<Vec<u32>>) -> PyResult<PyHarmonicBalanceAnalysis> {
+    fn harmonic_balance(
+        &self,
+        fundamental_frequencies: Vec<f64>,
+        num_harmonics: Option<Vec<u32>>,
+    ) -> PyResult<PyHarmonicBalanceAnalysis> {
         let harmonics = num_harmonics.unwrap_or_else(|| vec![7; fundamental_frequencies.len()]);
-        let a = Analysis::HarmonicBalance { frequencies: fundamental_frequencies, harmonics };
-        Ok(PyHarmonicBalanceAnalysis { inner: Results::from_raw(self.run(a)?) })
+        let a = Analysis::HarmonicBalance {
+            frequencies: fundamental_frequencies,
+            harmonics,
+        };
+        Ok(PyHarmonicBalanceAnalysis {
+            inner: Results::from_raw(self.run(a)?),
+        })
     }
 
     #[pyo3(signature = (probe, variation="dec", number_of_points=10, start_frequency=1.0, stop_frequency=1e10))]
     fn stability(
-        &self, probe: &str, variation: &str, number_of_points: u32, start_frequency: f64, stop_frequency: f64,
+        &self,
+        probe: &str,
+        variation: &str,
+        number_of_points: u32,
+        start_frequency: f64,
+        stop_frequency: f64,
     ) -> PyResult<PyStabilityAnalysis> {
         let a = Analysis::Stability {
-            probe: probe.into(), sweep: card::sweep(variation, number_of_points, start_frequency, stop_frequency)?,
+            probe: probe.into(),
+            sweep: card::sweep(variation, number_of_points, start_frequency, stop_frequency)?,
         };
-        Ok(PyStabilityAnalysis { inner: Results::from_raw(self.run(a)?) })
+        Ok(PyStabilityAnalysis {
+            inner: Results::from_raw(self.run(a)?),
+        })
     }
 
     #[pyo3(signature = (step_time, end_time))]
     fn transient_noise(&self, step_time: f64, end_time: f64) -> PyResult<PyTransientNoiseAnalysis> {
-        let a = Analysis::TransientNoise { step: step_time, stop: end_time };
-        Ok(PyTransientNoiseAnalysis { inner: Results::from_raw(self.run(a)?) })
+        let a = Analysis::TransientNoise {
+            step: step_time,
+            stop: end_time,
+        };
+        Ok(PyTransientNoiseAnalysis {
+            inner: Results::from_raw(self.run(a)?),
+        })
     }
 
     // ── Spectre-specific analyses ──
@@ -690,82 +1019,185 @@ impl PySimulator {
     /// Spectre parametric sweep wrapping an inner analysis (Spectre-native text).
     #[pyo3(signature = (param, start, stop, step, inner_analysis, inner_type="ac"))]
     fn spectre_sweep(
-        &self, param: &str, start: f64, stop: f64, step: f64, inner_analysis: &str, inner_type: &str,
+        &self,
+        param: &str,
+        start: f64,
+        stop: f64,
+        step: f64,
+        inner_analysis: &str,
+        inner_type: &str,
     ) -> PyResult<PyRawData> {
-        Ok(PyRawData { inner: self.run_spectre(card::spectre_sweep(param, start, stop, step, inner_analysis, inner_type)?)? })
+        Ok(PyRawData {
+            inner: self.run_spectre(card::spectre_sweep(
+                param,
+                start,
+                stop,
+                step,
+                inner_analysis,
+                inner_type,
+            )?)?,
+        })
     }
 
     /// Spectre Monte Carlo wrapping an inner analysis.
     #[pyo3(signature = (num_iterations, inner_analysis, inner_type="ac", seed=None))]
-    fn spectre_monte_carlo(&self, num_iterations: u32, inner_analysis: &str, inner_type: &str, seed: Option<u64>) -> PyResult<PyRawData> {
-        Ok(PyRawData { inner: self.run_spectre(card::spectre_monte_carlo(num_iterations, inner_analysis, inner_type, seed)?)? })
+    fn spectre_monte_carlo(
+        &self,
+        num_iterations: u32,
+        inner_analysis: &str,
+        inner_type: &str,
+        seed: Option<u64>,
+    ) -> PyResult<PyRawData> {
+        Ok(PyRawData {
+            inner: self.run_spectre(card::spectre_monte_carlo(
+                num_iterations,
+                inner_analysis,
+                inner_type,
+                seed,
+            )?)?,
+        })
     }
 
     /// Deprecated: [`Self::spectre_monte_carlo`], the spelling
     /// `Testbench.add_spectre_monte_carlo` uses. Warns `DeprecationWarning`.
     #[pyo3(signature = (num_iterations, inner_analysis, inner_type="ac", seed=None))]
-    fn spectre_montecarlo(&self, py: Python<'_>, num_iterations: u32, inner_analysis: &str, inner_type: &str, seed: Option<u64>) -> PyResult<PyRawData> {
+    fn spectre_montecarlo(
+        &self,
+        py: Python<'_>,
+        num_iterations: u32,
+        inner_analysis: &str,
+        inner_type: &str,
+        seed: Option<u64>,
+    ) -> PyResult<PyRawData> {
         let category = py.get_type::<pyo3::exceptions::PyDeprecationWarning>();
-        PyErr::warn(py, &category, c"spectre_montecarlo is deprecated; use spectre_monte_carlo", 1)?;
+        PyErr::warn(
+            py,
+            &category,
+            c"spectre_montecarlo is deprecated; use spectre_monte_carlo",
+            1,
+        )?;
         self.spectre_monte_carlo(num_iterations, inner_analysis, inner_type, seed)
     }
 
     /// SpectreRF Periodic AC (PAC) analysis with automatic PSS prerequisite.
     #[pyo3(signature = (pss_fundamental, pss_stabilization, pss_harmonics=10, variation="dec", points=100, start_freq=1.0, stop_freq=1e9, sweep_type="relative"))]
     fn spectre_pac(
-        &self, pss_fundamental: f64, pss_stabilization: f64, pss_harmonics: u32,
-        variation: &str, points: u32, start_freq: f64, stop_freq: f64, sweep_type: &str,
+        &self,
+        pss_fundamental: f64,
+        pss_stabilization: f64,
+        pss_harmonics: u32,
+        variation: &str,
+        points: u32,
+        start_freq: f64,
+        stop_freq: f64,
+        sweep_type: &str,
     ) -> PyResult<PyAcAnalysis> {
         let a = Analysis::SpectrePac {
-            pss: PssBase { pss_fundamental, pss_stabilization, pss_harmonics },
-            sweep: card::sweep(variation, points, start_freq, stop_freq)?, sweep_type: sweep_type.into(),
+            pss: PssBase {
+                pss_fundamental,
+                pss_stabilization,
+                pss_harmonics,
+            },
+            sweep: card::sweep(variation, points, start_freq, stop_freq)?,
+            sweep_type: sweep_type.into(),
         };
-        Ok(PyAcAnalysis { inner: Results::from_raw(self.run_spectre(a)?) })
+        Ok(PyAcAnalysis {
+            inner: Results::from_raw(self.run_spectre(a)?),
+        })
     }
 
     /// SpectreRF Periodic Noise (PNoise) analysis with automatic PSS prerequisite.
     #[pyo3(signature = (pss_fundamental, pss_stabilization, output_node, ref_node, pss_harmonics=10, variation="dec", points=100, start_freq=1.0, stop_freq=1e9))]
     fn spectre_pnoise(
-        &self, pss_fundamental: f64, pss_stabilization: f64, output_node: &str, ref_node: &str,
-        pss_harmonics: u32, variation: &str, points: u32, start_freq: f64, stop_freq: f64,
+        &self,
+        pss_fundamental: f64,
+        pss_stabilization: f64,
+        output_node: &str,
+        ref_node: &str,
+        pss_harmonics: u32,
+        variation: &str,
+        points: u32,
+        start_freq: f64,
+        stop_freq: f64,
     ) -> PyResult<PyNoiseAnalysis> {
         let a = Analysis::SpectrePnoise {
-            pss: PssBase { pss_fundamental, pss_stabilization, pss_harmonics }, output: output_node.into(), reference: ref_node.into(),
+            pss: PssBase {
+                pss_fundamental,
+                pss_stabilization,
+                pss_harmonics,
+            },
+            output: output_node.into(),
+            reference: ref_node.into(),
             sweep: card::sweep(variation, points, start_freq, stop_freq)?,
         };
-        Ok(PyNoiseAnalysis { inner: Results::from_raw(self.run_spectre(a)?) })
+        Ok(PyNoiseAnalysis {
+            inner: Results::from_raw(self.run_spectre(a)?),
+        })
     }
 
     /// SpectreRF Periodic Transfer Function (PXF) analysis with automatic PSS prerequisite.
     #[pyo3(signature = (pss_fundamental, pss_stabilization, output_node, source, pss_harmonics=10, variation="dec", points=100, start_freq=1.0, stop_freq=1e9))]
     fn spectre_pxf(
-        &self, pss_fundamental: f64, pss_stabilization: f64, output_node: &str, source: &str,
-        pss_harmonics: u32, variation: &str, points: u32, start_freq: f64, stop_freq: f64,
+        &self,
+        pss_fundamental: f64,
+        pss_stabilization: f64,
+        output_node: &str,
+        source: &str,
+        pss_harmonics: u32,
+        variation: &str,
+        points: u32,
+        start_freq: f64,
+        stop_freq: f64,
     ) -> PyResult<PyAcAnalysis> {
         let a = Analysis::SpectrePxf {
-            pss: PssBase { pss_fundamental, pss_stabilization, pss_harmonics }, output: output_node.into(), source: source.into(),
+            pss: PssBase {
+                pss_fundamental,
+                pss_stabilization,
+                pss_harmonics,
+            },
+            output: output_node.into(),
+            source: source.into(),
             sweep: card::sweep(variation, points, start_freq, stop_freq)?,
         };
-        Ok(PyAcAnalysis { inner: Results::from_raw(self.run_spectre(a)?) })
+        Ok(PyAcAnalysis {
+            inner: Results::from_raw(self.run_spectre(a)?),
+        })
     }
 
     /// SpectreRF Periodic Stability (PSTB) analysis with automatic PSS prerequisite.
     #[pyo3(signature = (pss_fundamental, pss_stabilization, probe, pss_harmonics=10, variation="dec", points=100, start_freq=1.0, stop_freq=1e9))]
     fn spectre_pstb(
-        &self, pss_fundamental: f64, pss_stabilization: f64, probe: &str,
-        pss_harmonics: u32, variation: &str, points: u32, start_freq: f64, stop_freq: f64,
+        &self,
+        pss_fundamental: f64,
+        pss_stabilization: f64,
+        probe: &str,
+        pss_harmonics: u32,
+        variation: &str,
+        points: u32,
+        start_freq: f64,
+        stop_freq: f64,
     ) -> PyResult<PyStabilityAnalysis> {
         let a = Analysis::SpectrePstb {
-            pss: PssBase { pss_fundamental, pss_stabilization, pss_harmonics }, probe: probe.into(),
+            pss: PssBase {
+                pss_fundamental,
+                pss_stabilization,
+                pss_harmonics,
+            },
+            probe: probe.into(),
             sweep: card::sweep(variation, points, start_freq, stop_freq)?,
         };
-        Ok(PyStabilityAnalysis { inner: Results::from_raw(self.run_spectre(a)?) })
+        Ok(PyStabilityAnalysis {
+            inner: Results::from_raw(self.run_spectre(a)?),
+        })
     }
 
     /// List all available simulator backends on this system
     #[staticmethod]
     fn available_backends() -> Vec<String> {
-        crate::backend::available().iter().map(|b| b.name().to_string()).collect()
+        crate::backend::available()
+            .iter()
+            .map(|b| b.name().to_string())
+            .collect()
     }
 
     /// Check backend compatibility for this deck.
@@ -789,14 +1221,24 @@ struct PyRawData {
 #[pymethods]
 impl PyRawData {
     #[getter]
-    fn title(&self) -> String { self.inner.title.clone() }
+    fn title(&self) -> String {
+        self.inner.title.clone()
+    }
     #[getter]
-    fn plot_name(&self) -> String { self.inner.plot_name.clone() }
+    fn plot_name(&self) -> String {
+        self.inner.plot_name.clone()
+    }
     #[getter]
-    fn is_complex(&self) -> bool { self.inner.is_complex }
+    fn is_complex(&self) -> bool {
+        self.inner.is_complex
+    }
     #[getter]
     fn variable_names(&self) -> Vec<String> {
-        self.inner.variables.iter().map(|v| v.name.clone()).collect()
+        self.inner
+            .variables
+            .iter()
+            .map(|v| v.name.clone())
+            .collect()
     }
     fn __getitem__<'py>(&self, py: Python<'py>, name: &str) -> PyResult<Bound<'py, PyList>> {
         float_list(py, &self.inner.re(self.column(name)?))
@@ -809,11 +1251,19 @@ impl PyRawData {
         let i = self.column(name)?;
         match self.inner.complex(i) {
             Some(c) => PyList::new(py, c),
-            None => PyList::new(py, self.inner.re(i).iter().map(|&x| num_complex::Complex64::new(x, 0.0))),
+            None => PyList::new(
+                py,
+                self.inner
+                    .re(i)
+                    .iter()
+                    .map(|&x| num_complex::Complex64::new(x, 0.0)),
+            ),
         }
     }
     #[getter]
-    fn measures(&self) -> HashMap<String, f64> { measures_to_dict(&self.inner.measures) }
+    fn measures(&self) -> HashMap<String, f64> {
+        measures_to_dict(&self.inner.measures)
+    }
 }
 
 impl PyRawData {
@@ -853,16 +1303,20 @@ struct PyOperatingPoint {
 #[pymethods]
 impl PyOperatingPoint {
     fn __getitem__(&self, name: &str) -> PyResult<f64> {
-        self.value(name).ok_or_else(|| PyKeyError::new_err(format!("Node '{}' not found", name)))
+        self.value(name)
+            .ok_or_else(|| PyKeyError::new_err(format!("Node '{}' not found", name)))
     }
 
     fn __getattr__(&self, name: &str) -> PyResult<f64> {
-        self.value(name).ok_or_else(|| PyAttributeError::new_err(format!("No node '{}'", name)))
+        self.value(name)
+            .ok_or_else(|| PyAttributeError::new_err(format!("No node '{}'", name)))
     }
 
     /// Parsed .meas results as {name: value} dict
     #[getter]
-    fn measures(&self) -> HashMap<String, f64> { measures_to_dict(&self.inner.raw.measures) }
+    fn measures(&self) -> HashMap<String, f64> {
+        measures_to_dict(&self.inner.raw.measures)
+    }
 }
 
 impl PyOperatingPoint {
@@ -884,7 +1338,9 @@ fn complex_part(
     name: &str,
     f: fn(num_complex::Complex64) -> f64,
 ) -> PyResult<Vec<f64>> {
-    let i = a.column(name).ok_or_else(|| PyKeyError::new_err(format!("Node '{}' not found", name)))?;
+    let i = a
+        .column(name)
+        .ok_or_else(|| PyKeyError::new_err(format!("Node '{}' not found", name)))?;
     let c = a.raw.complex(i).ok_or_else(|| {
         pyo3::exceptions::PyValueError::new_err(format!(
             "Node '{}' has no complex data; the backend returned a real-valued plot",
@@ -957,7 +1413,11 @@ analysis_class!(PyPoleZeroAnalysis, "PoleZeroAnalysis");
 analysis_class!(PyDistortionAnalysis, "DistortionAnalysis", frequency);
 analysis_class!(PyPssAnalysis, "PssAnalysis", time);
 analysis_class!(PySParamAnalysis, "SParamAnalysis", frequency);
-analysis_class!(PyHarmonicBalanceAnalysis, "HarmonicBalanceAnalysis", frequency);
+analysis_class!(
+    PyHarmonicBalanceAnalysis,
+    "HarmonicBalanceAnalysis",
+    frequency
+);
 analysis_class!(PyStabilityAnalysis, "StabilityAnalysis", frequency);
 analysis_class!(PyTransientNoiseAnalysis, "TransientNoiseAnalysis", time);
 
@@ -969,19 +1429,35 @@ fn typed_result(py: Python<'_>, a: &Analysis, raw: Option<RawData>) -> PyResult<
     Ok(match a {
         Analysis::Op => Py::new(py, PyOperatingPoint { inner: r() })?.into_any(),
         Analysis::Dc { .. } => Py::new(py, PyDcAnalysis { inner: r() })?.into_any(),
-        Analysis::Ac { .. } | Analysis::SpectrePac { .. } | Analysis::SpectrePxf { .. } => Py::new(py, PyAcAnalysis { inner: r() })?.into_any(),
-        Analysis::Transient { .. } | Analysis::Fourier { .. } => Py::new(py, PyTransientAnalysis { inner: r() })?.into_any(),
-        Analysis::Noise { .. } | Analysis::SpectrePnoise { .. } => Py::new(py, PyNoiseAnalysis { inner: r() })?.into_any(),
+        Analysis::Ac { .. } | Analysis::SpectrePac { .. } | Analysis::SpectrePxf { .. } => {
+            Py::new(py, PyAcAnalysis { inner: r() })?.into_any()
+        }
+        Analysis::Transient { .. } | Analysis::Fourier { .. } => {
+            Py::new(py, PyTransientAnalysis { inner: r() })?.into_any()
+        }
+        Analysis::Noise { .. } | Analysis::SpectrePnoise { .. } => {
+            Py::new(py, PyNoiseAnalysis { inner: r() })?.into_any()
+        }
         Analysis::Tf { .. } => Py::new(py, PyTransferFunctionAnalysis { inner: r() })?.into_any(),
-        Analysis::Sensitivity { .. } => Py::new(py, PySensitivityAnalysis { inner: r() })?.into_any(),
+        Analysis::Sensitivity { .. } => {
+            Py::new(py, PySensitivityAnalysis { inner: r() })?.into_any()
+        }
         Analysis::PoleZero { .. } => Py::new(py, PyPoleZeroAnalysis { inner: r() })?.into_any(),
         Analysis::Distortion { .. } => Py::new(py, PyDistortionAnalysis { inner: r() })?.into_any(),
         Analysis::Pss { .. } => Py::new(py, PyPssAnalysis { inner: r() })?.into_any(),
         Analysis::SPar { .. } => Py::new(py, PySParamAnalysis { inner: r() })?.into_any(),
-        Analysis::HarmonicBalance { .. } => Py::new(py, PyHarmonicBalanceAnalysis { inner: r() })?.into_any(),
-        Analysis::Stability { .. } | Analysis::SpectrePstb { .. } => Py::new(py, PyStabilityAnalysis { inner: r() })?.into_any(),
-        Analysis::TransientNoise { .. } => Py::new(py, PyTransientNoiseAnalysis { inner: r() })?.into_any(),
-        Analysis::SpectreSweep { .. } | Analysis::SpectreMonteCarlo { .. } => Py::new(py, PyRawData { inner: r().raw })?.into_any(),
+        Analysis::HarmonicBalance { .. } => {
+            Py::new(py, PyHarmonicBalanceAnalysis { inner: r() })?.into_any()
+        }
+        Analysis::Stability { .. } | Analysis::SpectrePstb { .. } => {
+            Py::new(py, PyStabilityAnalysis { inner: r() })?.into_any()
+        }
+        Analysis::TransientNoise { .. } => {
+            Py::new(py, PyTransientNoiseAnalysis { inner: r() })?.into_any()
+        }
+        Analysis::SpectreSweep { .. } | Analysis::SpectreMonteCarlo { .. } => {
+            Py::new(py, PyRawData { inner: r().raw })?.into_any()
+        }
     })
 }
 
@@ -992,9 +1468,15 @@ fn typed_result(py: Python<'_>, a: &Analysis, raw: Option<RawData>) -> PyResult<
 /// Returns a dict with "warnings" and "errors" lists.
 #[pyfunction]
 #[pyo3(signature = (netlist, backend=None))]
-fn lint<'py>(py: Python<'py>, netlist: &str, backend: Option<&str>) -> PyResult<Bound<'py, pyo3::types::PyDict>> {
+fn lint<'py>(
+    py: Python<'py>,
+    netlist: &str,
+    backend: Option<&str>,
+) -> PyResult<Bound<'py, pyo3::types::PyDict>> {
     let r = crate::lint::lint_netlist(netlist, backend);
-    let rows = |fs: &[crate::lint::Finding], warn: bool| -> PyResult<Vec<Bound<'py, pyo3::types::PyDict>>> {
+    let rows = |fs: &[crate::lint::Finding],
+                warn: bool|
+     -> PyResult<Vec<Bound<'py, pyo3::types::PyDict>>> {
         fs.iter()
             .map(|f| {
                 let d = pyo3::types::PyDict::new(py);
@@ -1028,7 +1510,9 @@ fn lint<'py>(py: Python<'py>, netlist: &str, backend: Option<&str>) -> PyResult<
 /// ```
 #[pyfunction]
 fn compile_veriloga(source_or_path: &str) -> PyResult<String> {
-    crate::veriloga::resolve(source_or_path).and_then(|p| crate::veriloga::compile_osdi(&p)).map_err(pyo3::exceptions::PyRuntimeError::new_err)
+    crate::veriloga::resolve(source_or_path)
+        .and_then(|p| crate::veriloga::compile_osdi(&p))
+        .map_err(pyo3::exceptions::PyRuntimeError::new_err)
 }
 
 /// The IR block for a `verilog(...)` call; connection values are a net name
@@ -1062,7 +1546,9 @@ fn verilog_block(
         } else if let Ok(v) = obj.extract::<Vec<String>>(py) {
             VerilogConnection::Bus(v)
         } else {
-            return Err(pyo3::exceptions::PyTypeError::new_err("Connection value must be a string or list of strings"));
+            return Err(pyo3::exceptions::PyTypeError::new_err(
+                "Connection value must be a string or list of strings",
+            ));
         };
         conns.insert(port.clone(), conn);
     }
@@ -1200,12 +1686,20 @@ struct PySubcircuit {
 
 /// A node name at the top level: `gnd` (any case) is the global ground `0`.
 fn top_net(n: &str) -> String {
-    if n.eq_ignore_ascii_case("gnd") { "0".into() } else { n.into() }
+    if n.eq_ignore_ascii_case("gnd") {
+        "0".into()
+    } else {
+        n.into()
+    }
 }
 
 impl PySubcircuit {
     fn net(&self, n: &str) -> String {
-        if self.ground_alias { top_net(n) } else { n.into() }
+        if self.ground_alias {
+            top_net(n)
+        } else {
+            n.into()
+        }
     }
 
     fn push(&mut self, c: Component) {
@@ -1213,15 +1707,42 @@ impl PySubcircuit {
     }
 
     /// Adds one waveform source; the generated `*Source` methods call it.
-    fn place_wave(mut slf: PyRefMut<'_, Self>, current: bool, name: &str, p: &str, n: &str, wf: IrWaveform,
-                  dc: Option<f64>, ac: Option<f64>, ac_phase: Option<f64>) {
+    fn place_wave(
+        mut slf: PyRefMut<'_, Self>,
+        current: bool,
+        name: &str,
+        p: &str,
+        n: &str,
+        wf: IrWaveform,
+        dc: Option<f64>,
+        ac: Option<f64>,
+        ac_phase: Option<f64>,
+    ) {
         let c = wave_source(current, name, slf.net(p), slf.net(n), wf, dc, ac, ac_phase);
         slf.push(c);
     }
 
-    fn src(&mut self, current: bool, name: &str, p: &str, n: &str, value: IrValue,
-           ac: Option<f64>, ac_phase: Option<f64>, wf: Option<IrWaveform>) {
-        let c = source(current, name, self.net(p), self.net(n), value, ac, ac_phase, wf);
+    fn src(
+        &mut self,
+        current: bool,
+        name: &str,
+        p: &str,
+        n: &str,
+        value: IrValue,
+        ac: Option<f64>,
+        ac_phase: Option<f64>,
+        wf: Option<IrWaveform>,
+    ) {
+        let c = source(
+            current,
+            name,
+            self.net(p),
+            self.net(n),
+            value,
+            ac,
+            ac_phase,
+            wf,
+        );
         self.push(c);
     }
 }
@@ -1594,9 +2115,27 @@ struct PyTestbench {}
 impl PyTestbench {
     /// Adds one waveform source to the stimulus; the generated `*Source`
     /// methods call it.
-    fn place_wave(mut slf: PyRefMut<'_, Self>, current: bool, name: &str, p: &str, n: &str, wf: IrWaveform,
-                  dc: Option<f64>, ac: Option<f64>, ac_phase: Option<f64>) {
-        slf.as_super().stim(wave_source(current, name, top_net(p), top_net(n), wf, dc, ac, ac_phase));
+    fn place_wave(
+        mut slf: PyRefMut<'_, Self>,
+        current: bool,
+        name: &str,
+        p: &str,
+        n: &str,
+        wf: IrWaveform,
+        dc: Option<f64>,
+        ac: Option<f64>,
+        ac_phase: Option<f64>,
+    ) {
+        slf.as_super().stim(wave_source(
+            current,
+            name,
+            top_net(p),
+            top_net(n),
+            wf,
+            dc,
+            ac,
+            ac_phase,
+        ));
     }
 }
 
@@ -1814,7 +2353,12 @@ struct PyModelLibrary {
 impl PyModelLibrary {
     #[new]
     #[pyo3(signature = (path, corner=None, setup_includes=None, **backend_paths))]
-    fn new(path: &str, corner: Option<&str>, setup_includes: Option<Vec<String>>, backend_paths: Option<Bound<'_, PyDict>>) -> PyResult<Self> {
+    fn new(
+        path: &str,
+        corner: Option<&str>,
+        setup_includes: Option<Vec<String>>,
+        backend_paths: Option<Bound<'_, PyDict>>,
+    ) -> PyResult<Self> {
         let mut bp = std::collections::BTreeMap::new();
         if let Some(dict) = backend_paths {
             for (k, v) in dict.iter() {
@@ -1837,16 +2381,25 @@ impl PyModelLibrary {
     }
 
     #[getter]
-    fn name(&self) -> String { self.inner.name.clone() }
+    fn name(&self) -> String {
+        self.inner.name.clone()
+    }
 
     #[getter]
-    fn path(&self) -> String { self.inner.path.clone() }
+    fn path(&self) -> String {
+        self.inner.path.clone()
+    }
 
     #[getter]
-    fn corner(&self) -> Option<String> { self.inner.corner.clone() }
+    fn corner(&self) -> Option<String> {
+        self.inner.corner.clone()
+    }
 
     fn __str__(&self) -> String {
-        format!("ModelLibrary('{}', corner={:?})", self.inner.path, self.inner.corner)
+        format!(
+            "ModelLibrary('{}', corner={:?})",
+            self.inner.path, self.inner.corner
+        )
     }
 
     fn __repr__(&self) -> String {
@@ -1918,27 +2471,52 @@ fn lower_verilog(sub: &mut ir::Subcircuit) -> Result<(), String> {
         match crate::veriloga::lower(&vb)? {
             crate::veriloga::Lowered::Cosim { vvp, ports } => {
                 let bridges = [
-                    ("adc_buf", "adc_bridge", [("in_low", "0.5"), ("in_high", "0.5")]),
-                    ("dac_buf", "dac_bridge", [("out_low", "0.0"), ("out_high", "1.8")]),
+                    (
+                        "adc_buf",
+                        "adc_bridge",
+                        [("in_low", "0.5"), ("in_high", "0.5")],
+                    ),
+                    (
+                        "dac_buf",
+                        "dac_bridge",
+                        [("out_low", "0.0"), ("out_high", "1.8")],
+                    ),
                 ];
                 for (name, kind, params) in bridges {
                     if !sub.models.iter().any(|m| m.kind == kind) {
                         sub.models.push(ir::ModelDef {
                             name: name.into(),
                             kind: kind.into(),
-                            parameters: params.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
+                            parameters: params
+                                .iter()
+                                .map(|(k, v)| (k.to_string(), v.to_string()))
+                                .collect(),
                         });
                     }
                 }
                 let model = format!("cosim_{}", vb.instance_name);
-                sub.raw_spice.push(format!(".model {model} d_cosim(delay=1n simulation_id=\"{vvp}\")"));
-                sub.components.push(Component::Xspice { name: vb.instance_name.clone(), connections: ports, model });
+                sub.raw_spice.push(format!(
+                    ".model {model} d_cosim(delay=1n simulation_id=\"{vvp}\")"
+                ));
+                sub.components.push(Component::Xspice {
+                    name: vb.instance_name.clone(),
+                    connections: ports,
+                    model,
+                });
             }
-            crate::veriloga::Lowered::Gates { spice_models, cells } => {
+            crate::veriloga::Lowered::Gates {
+                spice_models,
+                cells,
+            } => {
                 sub.includes.push(spice_models);
-                sub.instances.extend(cells.into_iter().map(|c| ir::Instance {
-                    name: c.name, subcircuit: c.cell, port_mapping: c.nodes, parameters: vec![], at: None,
-                }));
+                sub.instances
+                    .extend(cells.into_iter().map(|c| ir::Instance {
+                        name: c.name,
+                        subcircuit: c.cell,
+                        port_mapping: c.nodes,
+                        parameters: vec![],
+                        at: None,
+                    }));
             }
         }
     }

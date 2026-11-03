@@ -1,6 +1,6 @@
+use num_complex::Complex64;
 use std::borrow::Cow;
 use std::collections::HashMap;
-use num_complex::Complex64;
 
 use crate::ir::Dialect;
 
@@ -69,7 +69,10 @@ pub struct MeasureResult {
 impl RawData {
     /// Complex column `i`, or `None` when that variable is real-valued.
     pub fn complex(&self, i: usize) -> Option<&[Complex64]> {
-        self.complex_data.get(i).filter(|c| !c.is_empty()).map(Vec::as_slice)
+        self.complex_data
+            .get(i)
+            .filter(|c| !c.is_empty())
+            .map(Vec::as_slice)
     }
 
     /// Column `i` as reals: a real column borrowed, the real part of a
@@ -92,28 +95,41 @@ pub struct Results {
     pub branches: HashMap<String, usize>,
 }
 
-
 impl Results {
     pub fn from_raw(raw: RawData) -> Self {
         let mut nodes = HashMap::new();
         let mut branches = HashMap::new();
         for v in &raw.variables {
             let (name, current) = crate::normalize::canonical(&v.name, raw.backend_hint);
-            let map = if v.var_type == VarType::Current || current { &mut branches } else { &mut nodes };
+            let map = if v.var_type == VarType::Current || current {
+                &mut branches
+            } else {
+                &mut nodes
+            };
             map.insert(name, v.index);
         }
-        Self { raw, nodes, branches }
+        Self {
+            raw,
+            nodes,
+            branches,
+        }
     }
 
     /// Column of `name` (canonical form, any case), nodes before branches.
     /// Allocates only when `name` is not already lowercase ASCII.
     pub fn column(&self, name: &str) -> Option<usize> {
-        let lower: Cow<str> = if name.bytes().all(|b| b.is_ascii() && !b.is_ascii_uppercase()) {
+        let lower: Cow<str> = if name
+            .bytes()
+            .all(|b| b.is_ascii() && !b.is_ascii_uppercase())
+        {
             Cow::Borrowed(name)
         } else {
             Cow::Owned(name.to_lowercase())
         };
-        self.nodes.get(lower.as_ref()).or_else(|| self.branches.get(lower.as_ref())).copied()
+        self.nodes
+            .get(lower.as_ref())
+            .or_else(|| self.branches.get(lower.as_ref()))
+            .copied()
     }
 
     /// Waveform of `name`; the real part for a complex plot (computed, the
