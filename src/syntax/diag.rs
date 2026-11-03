@@ -5,8 +5,9 @@
 //!
 //! Codes are never renumbered or reused. The first letter is the stage:
 //! `L` tokenize, `P` parse, `R` resolve, `W` render. Phase 2 of the rewrite
-//! starts the `P` class; phase 5 completes the catalogue
-//! (`docs/research/transpiler-architecture.md` §2.6, §5).
+//! starts the `P` class, phase 3 the `R` class (`syntax::resolve`); phase 5
+//! completes the catalogue (`docs/research/transpiler-architecture.md` §2.6,
+//! §5).
 //!
 //! Cites: `transpiler-architecture.md` §2.6; `compiler-architecture-reference.md`
 //! §3.5 (Zig `Ast.Error`), §8.1 (VerA `lib/diag/code.zig`).
@@ -37,6 +38,31 @@ pub enum Code {
     P0008,
     /// A section opened inside a section: sections do not nest.
     P0009,
+    /// An instance whose master names nothing the kit declares: no
+    /// subcircuit, model or primitive. The instance keeps its name.
+    R0001,
+    /// A name declared twice in one scope (two subcircuits, two models, two
+    /// instances of one block); the first is the one a lookup finds.
+    R0002,
+    /// A master that names declarations of different kinds equally near
+    /// (a subcircuit and a model); the first in read order is bound.
+    R0003,
+    /// An instance whose node count differs from its subcircuit's ports.
+    R0004,
+    /// A master that names a parameter or a function, not a device.
+    R0005,
+    /// An include, `.lib` call or Verilog-A source the kit lacks.
+    R0006,
+    /// An include the loader refused (a path outside the kit's root).
+    R0007,
+    /// An include past the kit's nesting cap (`resolve::DEPTH_MAX`): not
+    /// read.
+    R0008,
+    /// An include past the kit's file cap (`resolve::FILES_MAX`): not read.
+    R0009,
+    /// A `.lib file section` or `include … section=` naming a section the
+    /// file does not hold.
+    R0010,
 }
 
 /// A code's fixed text.
@@ -91,6 +117,46 @@ pub const fn info(c: Code) -> Info {
             "a section inside a section",
             "ngspice manual §2.7; Spectre Reference 19.1 p.498",
         ),
+        Code::R0001 => (
+            "a master the kit does not declare",
+            "ngspice manual §2.4.3 (X ... SUBNAM), ch.7-ch.11 (mname); Spectre UG p.66",
+        ),
+        Code::R0002 => (
+            "a name declared twice in one scope",
+            "ngspice manual §2.5; Spectre UG p.94 (names unique in a subcircuit)",
+        ),
+        Code::R0003 => (
+            "a master naming declarations of different kinds",
+            "Spectre UG p.66 (a master is a model, a subcircuit or a primitive)",
+        ),
+        Code::R0004 => (
+            "an instance's node count differs from its subcircuit's ports",
+            "ngspice manual §2.4.3; Spectre UG p.94",
+        ),
+        Code::R0005 => (
+            "a master naming a parameter or a function",
+            "ngspice manual §2.4.3, §2.8; Spectre UG p.66",
+        ),
+        Code::R0006 => (
+            "an included file the kit lacks",
+            "ngspice manual §2.6 (.include), §2.7 (.lib); Spectre UG p.98 (include)",
+        ),
+        Code::R0007 => (
+            "an include the loader refused",
+            "no clause: the kit's loader confines paths (syntax::resolve::Kit::load)",
+        ),
+        Code::R0008 => (
+            "an include past the nesting cap",
+            "no clause: the kit's own limit, syntax::resolve::DEPTH_MAX",
+        ),
+        Code::R0009 => (
+            "an include past the file cap",
+            "no clause: the kit's own limit, syntax::resolve::FILES_MAX",
+        ),
+        Code::R0010 => (
+            "a section the file does not hold",
+            "ngspice manual §2.7; Spectre Reference 19.1 p.498 (include ... section=)",
+        ),
     };
     Info { title, cite }
 }
@@ -103,7 +169,8 @@ mod tests {
     fn every_code_has_a_title_and_a_cite() {
         use Code::*;
         for c in [
-            P0001, P0002, P0003, P0004, P0005, P0006, P0007, P0008, P0009,
+            P0001, P0002, P0003, P0004, P0005, P0006, P0007, P0008, P0009, R0001, R0002, R0003,
+            R0004, R0005, R0006, R0007, R0008, R0009, R0010,
         ] {
             let i = info(c);
             assert!(!i.title.is_empty());
