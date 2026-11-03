@@ -1,4 +1,3 @@
-#![cfg(feature = "backend")]
 //! VACASK end-to-end: every deck here is emitted by `VacaskCodeGen` and then
 //! handed to the real binary. A deck that parses and produces a raw file is the
 //! only evidence that counts, so nothing is asserted against the generated text
@@ -6,6 +5,11 @@
 //!
 //! Unsupported fails, never skips: without `vacask` on PATH every run fails;
 //! run the tests in `nix develop .#testing`.
+//!
+//! Cites: real VACASK; the closed forms named in each module's tests.
+//!
+//! Contents: none (tests only).
+#![cfg(feature = "backend")]
 
 use spicerack::backend::{Dialect, netlist as emit};
 use spicerack::ir::*;
@@ -16,6 +20,8 @@ mod devices;
 mod refusals;
 mod structure;
 mod waveforms;
+
+// ---- private ----
 
 // ── Harness ──
 

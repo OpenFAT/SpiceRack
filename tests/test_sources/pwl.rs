@@ -1,6 +1,13 @@
+//! PWL `r=`/`td=` -> ngspice (and ESPice) runs that repeat and delay as the
+//! closed form says; each dialect without a form refuses.
+//!
+//! Cites: ngspice 45 manual §4.1.4; real ngspice and ESPice.
+//!
+//! Contents: none (tests only).
+
 use super::*;
 
-// ── PWL r= / td= ──
+// ---- private ----
 
 #[test]
 fn a_repeating_pwl_two_periods_on_equals_its_first_period() {
@@ -78,7 +85,7 @@ fn pwl_repeat_and_delay_are_refused_where_no_dialect_form_exists() {
         assert!(e.contains("PWL"), "{d:?}: {e}");
     }
     // Spectre: `delay` and `pwlperiod`, but only for an r= that is exactly a
-    // period (test_spectre_golden.rs); r=1m repeats from mid-waveform.
+    // period (test_spectre_golden/); r=1m repeats from mid-waveform.
     assert!(
         netlist(&bench(source(false, tri()), 1e-5, 1e-3), Dialect::Spectre)
             .unwrap()

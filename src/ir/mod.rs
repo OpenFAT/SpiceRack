@@ -1,3 +1,20 @@
+//! `CircuitIR`: the backend-neutral circuit every reader (`import`, the
+//! Python API, JSON) writes and every writer (`codegen`) reads. This file
+//! holds the dialect names and re-exports the tables, one file each:
+//! `circuit` (definitions, ports, instances, models), `component` (element
+//! cards), `waveform` (values and source waveforms), `testbench` (analyses,
+//! options, saves) and `features` (what a deck needs from a simulator).
+//! JSON is `schema/circuit-ir.schema.json`, checked by `schema_check`.
+//!
+//! Cites: none here (each file cites its own manuals).
+//!
+//! Contents:
+//! - `pub enum Dialect`, `Dialect::ALL: [Dialect; 9]`,
+//!   `Dialect::ALIASES: [(&str, Dialect); 3]`, `Dialect::name(self) -> &'static str`,
+//!   `Dialect::family(self) -> Dialect`, `Dialect::from_backend_name(&str) -> Option<Dialect>`,
+//!   `impl FromStr for Dialect`
+//! - `pub use circuit::*`, `component::*`, `features::*`, `testbench::*`, `waveform::*`
+
 use serde::{Deserialize, Serialize};
 
 mod circuit;
@@ -11,8 +28,6 @@ pub use component::*;
 pub use features::*;
 pub use testbench::*;
 pub use waveform::*;
-
-// ── Core IR types ──
 
 /// The netlist language a simulator reads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -1,4 +1,3 @@
-#![cfg(feature = "backend")]
 //! Laplace-domain sources, end to end, against real ngspice 44.2.
 //!
 //! Every assertion here is a closed-form number, not "it exited 0". The deck
@@ -6,13 +5,23 @@
 //! `Undefined parameter [s]`, `exit(1)` — so "it ran" is exactly the claim
 //! that needed evidence.
 //!
-//! Skipped automatically when ngspice is not on PATH.
+//! Unsupported fails, never skips: no ngspice on PATH fails every test.
+//!
+//! Cites: closed-form Laplace responses; real ngspice.
+//!
+//! Contents: none (tests only).
+#![cfg(feature = "backend")]
 
 use spicerack::codegen::Dialect;
 use spicerack::ir::{
     Analysis, CircuitIR, Component, FreqSweep, IrValue, Subcircuit, Sweep, Testbench,
 };
 use spicerack::result::RawData;
+
+/// The top level of a deck under test.
+struct Deck(Subcircuit);
+
+// ---- private ----
 
 /// Unsupported fails, never skips: no ngspice is a failure.
 fn require_ngspice() {
@@ -33,9 +42,6 @@ fn ngspice() -> Dialect {
 fn ltspice() -> Dialect {
     Dialect::Ltspice
 }
-
-/// The top level of a deck under test.
-struct Deck(Subcircuit);
 
 impl Deck {
     fn new(title: &str) -> Self {

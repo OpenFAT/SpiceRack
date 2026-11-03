@@ -1,3 +1,17 @@
+//! The circuit's definitions: the top and every `.subckt` (ports,
+//! parameters, components, instances, models, raw lines), model libraries,
+//! and the identifier walk a rename runs over them.
+//!
+//! Cites: none (SpiceRack's own IR; JSON in `schema/circuit-ir.schema.json`).
+//!
+//! Contents:
+//! - `pub struct CircuitIR`, `pub struct FuncDef`, `pub struct Subcircuit`
+//! - `pub struct VerilogBlock`, `pub enum VerilogMode`, `pub enum VerilogConnection`
+//! - `pub struct Port`, `pub enum PortDirection`, `pub struct ParamDef`
+//! - `pub struct Instance`, `pub enum Element<'a>`, `pub struct ModelDef`, `pub struct ModelLibrary`
+//! - `Subcircuit::elements(&self) -> Vec<Element<'_>>`
+//! - `CircuitIR::names_mut(&mut self, f: impl FnMut(&mut String))`
+
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
@@ -115,6 +129,25 @@ pub enum Element<'a> {
     Instance(&'a Instance),
 }
 
+/// Model definition
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ModelDef {
+    pub name: String,
+    pub kind: String,
+    pub parameters: Vec<(String, String)>,
+}
+
+/// Opaque PDK/model library reference
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ModelLibrary {
+    pub name: String,
+    pub path: String,
+    pub corner: Option<String>,
+    pub backend_paths: BTreeMap<String, String>,
+    #[serde(default)]
+    pub setup_includes: Vec<String>,
+}
+
 impl Subcircuit {
     /// Components and instances merged in card order (each instance before
     /// the component it preceded).
@@ -134,25 +167,6 @@ impl Subcircuit {
         out.extend(insts.map(Element::Instance));
         out
     }
-}
-
-/// Model definition
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct ModelDef {
-    pub name: String,
-    pub kind: String,
-    pub parameters: Vec<(String, String)>,
-}
-
-/// Opaque PDK/model library reference
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ModelLibrary {
-    pub name: String,
-    pub path: String,
-    pub corner: Option<String>,
-    pub backend_paths: BTreeMap<String, String>,
-    #[serde(default)]
-    pub setup_includes: Vec<String>,
 }
 
 impl CircuitIR {

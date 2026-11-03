@@ -1,6 +1,13 @@
+//! What VACASK cannot do (measures, PWL, behavioural sources, switches,
+//! transmission lines, XSPICE, ...) -> a codegen error, never a broken deck.
+//!
+//! Cites: real VACASK, for what it refuses or runs wrong.
+//!
+//! Contents: none (tests only).
+
 use super::*;
 
-// ── Refusals: things VACASK genuinely cannot do ──
+// ---- private ----
 
 #[test]
 fn refusals_are_errors_not_broken_decks() {

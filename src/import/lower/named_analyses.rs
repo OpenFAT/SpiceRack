@@ -1,3 +1,14 @@
+//! Spectre analysis and options statements and VACASK `control` blocks ->
+//! `Testbench` rows; `false`/`None` when the IR cannot hold the statement.
+//!
+//! Cites: Spectre Circuit Simulator Reference `[REF]` analysis statements;
+//! `codegen::spectre::map_option_name` (inverted).
+//!
+//! Contents:
+//! - `Cx::spectre_analysis(&self, card: usize) -> Option<Analysis>`
+//! - `Cx::spectre_options(&mut self, card: usize)`
+//! - `Cx::vacask_control(&mut self, st: usize) -> bool`
+
 use super::{Cx, values::unquoted};
 use crate::import::Tag;
 use crate::ir::*;
@@ -92,19 +103,6 @@ impl Cx<'_> {
                 }
             }
         }
-    }
-
-    /// `ic=["n"; v; ...]` (or `{"n", v, ...}`) -> node values.
-    fn node_list(&self, v: usize) -> Option<Vec<(String, f64)>> {
-        let mut items = self.kids(v);
-        // The `Val` holds one `Expr`, whose rows are the list's elements.
-        while let [one] = items.as_slice() {
-            items = self.kids(*one);
-        }
-        items
-            .chunks(2)
-            .map(|c| Some((unquoted(self.text(*c.first()?))?, self.number(*c.get(1)?)?)))
-            .collect()
     }
 
     /// One VACASK `control` block statement the IR models; `false` if not.
@@ -226,5 +224,22 @@ impl Cx<'_> {
             }
             _ => false,
         }
+    }
+}
+
+// ---- private ----
+
+impl Cx<'_> {
+    /// `ic=["n"; v; ...]` (or `{"n", v, ...}`) -> node values.
+    fn node_list(&self, v: usize) -> Option<Vec<(String, f64)>> {
+        let mut items = self.kids(v);
+        // The `Val` holds one `Expr`, whose rows are the list's elements.
+        while let [one] = items.as_slice() {
+            items = self.kids(*one);
+        }
+        items
+            .chunks(2)
+            .map(|c| Some((unquoted(self.text(*c.first()?))?, self.number(*c.get(1)?)?)))
+            .collect()
     }
 }

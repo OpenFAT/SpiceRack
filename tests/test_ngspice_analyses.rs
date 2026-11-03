@@ -1,12 +1,16 @@
-#![cfg(feature = "backend")]
 //! End-to-end coverage of every analysis the library exposes on ngspice:
-//! the shared suite in `common/mod.rs`, then what only ngspice runs.
+//! the shared suite in `common/suite.rs`, then what only ngspice runs.
 //!
 //! Each test runs a real deck through `Dialect::Ngspice` and asserts a
 //! closed-form number, not merely that the process exited 0. Verified against
 //! ngspice 44.2.
 //!
-//! Skipped automatically when ngspice is not on PATH.
+//! Unsupported fails, never skips: no ngspice on PATH fails every test.
+//!
+//! Cites: ngspice manual §11.3 for each analysis; real ngspice.
+//!
+//! Contents: none (tests only).
+#![cfg(feature = "backend")]
 
 #[macro_use]
 mod common;
@@ -14,6 +18,8 @@ mod common;
 use spicerack::backend::Dialect;
 
 analysis_suite!(Dialect::Ngspice, tf_columns: ("output_impedance_at_v(out)", "v1#input_impedance"));
+
+// ---- private ----
 
 // ── .noise ──
 

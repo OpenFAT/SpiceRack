@@ -16,6 +16,8 @@
 //!
 //! These tests prove only "we emit what the manual describes". They do NOT
 //! prove any simulation result.
+//!
+//! Contents: none (tests only).
 
 use spicerack::codegen::{CodeGenError, Dialect, netlist};
 use spicerack::ir::*;
@@ -23,6 +25,8 @@ use spicerack::ir::*;
 mod analyses;
 mod components;
 mod deck;
+
+// ---- private ----
 
 fn spectre(ir: &CircuitIR) -> Result<String, CodeGenError> {
     netlist(ir, Dialect::Spectre)

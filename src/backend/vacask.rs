@@ -1,4 +1,9 @@
 //! VACASK: run `vacask` on a native deck, read back every per-analysis `.raw`.
+//!
+//! Cites: none (VACASK's CLI).
+//!
+//! Contents:
+//! - `pub(super) fn run(netlist: &str) -> Result<Vec<RawData>, BackendError>`
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -39,6 +44,8 @@ pub(super) fn run(netlist: &str) -> Result<Vec<RawData>, BackendError> {
     );
     Ok(plots)
 }
+
+// ---- private ----
 
 /// Analysis names declared by a deck, in order: `analysis <name> <kind> ...`.
 fn analysis_names(netlist: &str) -> impl Iterator<Item = &str> {

@@ -1,6 +1,13 @@
+//! Spectre deck structure (preamble, includes, subcircuits, models, ic,
+//! nodeset, save, measures, options) -> text checked against the manual.
+//!
+//! Cites: `[REF]`, `[CMP]` and `[KUN]` (see `main.rs`), per test.
+//!
+//! Contents: none (tests only).
+
 use super::*;
 
-// ── Deck structure ──
+// ---- private ----
 
 /// `[KUN]` B.2: "all Spectre netlists must begin with a `lang=spectre`
 /// statement"; `//` starts a comment.

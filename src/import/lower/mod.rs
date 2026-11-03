@@ -4,6 +4,20 @@
 //! word names a `.model`, which numbers a waveform's fields are, what a card
 //! means inside a `.subckt`. A card that parsed but has no IR form is kept
 //! raw ([`Report::raw`]).
+//!
+//! This file is the spine: the per-deck state `Cx`, the walk over cards and
+//! `.subckt` bodies, and the SPICE cards that only place rows (includes,
+//! `.global`, `.model`, `.param`, `.func`). Each card family lowers in its own
+//! file: `values` (value rows), `elements` and `analyses` (SPICE element and
+//! testbench cards), `named`, `named_elements` and `named_analyses` (Spectre
+//! and VACASK statements).
+//!
+//! Cites: ADI LTspice help, CIRCUIT-ELEMENTS-REFERENCE (implicit inductor
+//! `Rser=1m`); Xyce Reference Guide Table 2-36 (BSIM3 is level 9).
+//!
+//! Contents:
+//! - `pub(super) fn deck(t: &Tree, src: &str, name: &str, d: Dialect, lang: &Lang)
+//!   -> (CircuitIR, Report)`
 
 use std::collections::{HashMap, HashSet};
 
@@ -106,44 +120,7 @@ pub(super) fn deck(
     )
 }
 
-fn implicit_rser(components: &mut [Component]) {
-    let coupled: HashSet<String> = components
-        .iter()
-        .filter_map(|c| match c {
-            Component::MutualInductor {
-                inductor1,
-                inductor2,
-                ..
-            } => Some([inductor1.clone(), inductor2.clone()]),
-            _ => None,
-        })
-        .flatten()
-        .collect();
-    for c in components.iter_mut() {
-        if let Component::Inductor { name, params, .. } = c
-            && !coupled.contains(name)
-            && !params.iter().any(|(k, _)| k.eq_ignore_ascii_case("rser"))
-        {
-            params.push(("Rser".to_string(), "1m".to_string()));
-        }
-    }
-}
-
-fn tag(t: &Tree, i: usize) -> Tag {
-    Tag::from_u8(t.tag(i))
-}
-
-fn sub(name: &str) -> Subcircuit {
-    Subcircuit {
-        name: name.into(),
-        ..Default::default()
-    }
-}
-
-/// `{expr}`-style delimiters off a body the grammar kept whole.
-fn trim(s: &str) -> String {
-    s.trim().to_string()
-}
+// ---- private ----
 
 impl Cx<'_> {
     fn text(&self, i: usize) -> &str {
@@ -194,8 +171,6 @@ impl Cx<'_> {
             _ => here.raw_spice.push(text),
         }
     }
-
-    // ── Cards ──
 
     fn card(&mut self, card: usize, here: &mut Subcircuit, inside: bool) {
         let named = matches!(self.d, Dialect::Spectre | Dialect::Vacask);
@@ -406,6 +381,45 @@ impl Cx<'_> {
         }
         sc
     }
+}
+
+fn implicit_rser(components: &mut [Component]) {
+    let coupled: HashSet<String> = components
+        .iter()
+        .filter_map(|c| match c {
+            Component::MutualInductor {
+                inductor1,
+                inductor2,
+                ..
+            } => Some([inductor1.clone(), inductor2.clone()]),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    for c in components.iter_mut() {
+        if let Component::Inductor { name, params, .. } = c
+            && !coupled.contains(name)
+            && !params.iter().any(|(k, _)| k.eq_ignore_ascii_case("rser"))
+        {
+            params.push(("Rser".to_string(), "1m".to_string()));
+        }
+    }
+}
+
+fn tag(t: &Tree, i: usize) -> Tag {
+    Tag::from_u8(t.tag(i))
+}
+
+fn sub(name: &str) -> Subcircuit {
+    Subcircuit {
+        name: name.into(),
+        ..Default::default()
+    }
+}
+
+/// `{expr}`-style delimiters off a body the grammar kept whole.
+fn trim(s: &str) -> String {
+    s.trim().to_string()
 }
 
 fn is_element(t: Tag) -> bool {

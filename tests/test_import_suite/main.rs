@@ -15,6 +15,11 @@
 //! `tests/fixtures/spice_bench_known_failures.txt`: the suite READMEs list the
 //! ones ngspice-45 cannot run. Every dialect is also emitted, and the decks
 //! each backend refuses are counted, not failed.
+//!
+//! Cites: real ngspice, run on the original deck and on the deck written from
+//! its IR.
+//!
+//! Contents: none (tests only).
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -33,6 +38,31 @@ mod fixpoint;
 
 use compare::*;
 use fixpoint::*;
+/// One ngspice run: every plot, and the `.meas` results.
+struct Run {
+    plots: Vec<RawData>,
+    measures: Vec<(String, f64)>,
+}
+
+enum Outcome {
+    Pass,
+    /// Every check but the simulation passed: the deck is in [`SLOW`].
+    Slow,
+    Skip(String),
+    Fail(String),
+}
+
+/// The decks ngspice cannot run as written, one `<path under $SPICE_BENCH>
+/// <reason>` per line.
+const KNOWN_FAILURES: &str = include_str!("../fixtures/spice_bench_known_failures.txt");
+
+/// The decks ngspice cannot finish in the CPU budget, same format. Whether a
+/// deck crosses a time budget depends on the machine, so these are
+/// quarantined by name: every check but the simulation runs.
+const SLOW: &str = include_str!("../fixtures/spice_bench_slow.txt");
+
+// ---- private ----
+
 /// Files ending in `.ext` under `dir`, skipping `src*` directories.
 fn files(dir: &Path, ext: &str, out: &mut Vec<PathBuf>) {
     let Ok(rd) = std::fs::read_dir(dir) else {
@@ -74,12 +104,6 @@ fn decks(dir: &Path, out: &mut Vec<PathBuf>) {
             out.push(p);
         }
     }
-}
-
-/// One ngspice run: every plot, and the `.meas` results.
-struct Run {
-    plots: Vec<RawData>,
-    measures: Vec<(String, f64)>,
 }
 
 /// Runs `deck` (text) with ngspice from `dir` so relative includes resolve
@@ -334,14 +358,6 @@ fn ltspice_corpus_fixpoint() {
     corpus_fixpoint("LTSPICE_CORPUS", Dialect::Ltspice, "net", |_| true);
 }
 
-enum Outcome {
-    Pass,
-    /// Every check but the simulation passed: the deck is in [`SLOW`].
-    Slow,
-    Skip(String),
-    Fail(String),
-}
-
 fn check(
     deck: &Path,
     secs: u64,
@@ -393,7 +409,7 @@ fn check(
     if let Some(p) = original
         .plots
         .iter()
-        .find(|p| p.variables.len() > 0 && p.re(0).is_empty())
+        .find(|p| !p.variables.is_empty() && p.re(0).is_empty())
     {
         return Outcome::Skip(format!("original fails: {} has no points", p.plot_name));
     }
@@ -422,15 +438,6 @@ fn check(
         Err(e) => Outcome::Fail(format!("converted fails: {e}")),
     }
 }
-
-/// The decks ngspice cannot run as written, one `<path under $SPICE_BENCH>
-/// <reason>` per line.
-const KNOWN_FAILURES: &str = include_str!("../fixtures/spice_bench_known_failures.txt");
-
-/// The decks ngspice cannot finish in the CPU budget, same format. Whether a
-/// deck crosses a time budget depends on the machine, so these are
-/// quarantined by name: every check but the simulation runs.
-const SLOW: &str = include_str!("../fixtures/spice_bench_slow.txt");
 
 /// The deck paths of a known-failure list.
 fn names(list: &str) -> Vec<&str> {

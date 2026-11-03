@@ -1,6 +1,13 @@
+//! Each analysis, emitted for VACASK and run: op, dc sweeps, ac, tran,
+//! noise and dc transfer function against their closed forms.
+//!
+//! Cites: real VACASK; the closed forms named in each test.
+//!
+//! Contents: none (tests only).
+
 use super::*;
 
-// ── Analyses ──
+// ---- private ----
 
 #[test]
 fn op_solves_a_resistive_divider() {

@@ -1,3 +1,13 @@
+//! SPICE element cards -> `Component`s and `Instance`s, with the source
+//! waveforms they carry; `None` when the IR has no faithful form.
+//!
+//! Cites: ngspice manual §4.1.4 (PWL `r=`/`td=`), §4.1.7, §4.1.8 (TRNOISE,
+//! TRRANDOM), §4.1.11 (RF port `portnum`/`z0`).
+//!
+//! Contents:
+//! - `Cx::instance(&self, card: usize) -> Option<Instance>`
+//! - `Cx::component(&self, card: usize) -> Option<Component>`
+
 use super::Cx;
 use crate::import::Tag;
 use crate::ir::*;
@@ -12,88 +22,6 @@ impl Cx<'_> {
             port_mapping: self.texts(card, Tag::Node),
             parameters: self.params(card),
             at: None,
-        })
-    }
-
-    fn waveform(&self, w: usize) -> Option<IrWaveform> {
-        let a: Vec<IrNum> = self
-            .all(w, Tag::Val)
-            .into_iter()
-            .map(|v| self.irnum(v))
-            .collect::<Option<_>>()?;
-        let g = |i: usize| a.get(i).cloned().unwrap_or(IrNum::Num(0.0));
-        Some(match self.tag(w) {
-            Tag::Sin => IrWaveform::Sin {
-                offset: g(0),
-                amplitude: g(1),
-                frequency: g(2),
-                delay: g(3),
-                damping: g(4),
-                phase: g(5),
-            },
-            Tag::Pulse => IrWaveform::Pulse {
-                initial: g(0),
-                pulsed: g(1),
-                delay: g(2),
-                rise_time: g(3),
-                fall_time: g(4),
-                pulse_width: g(5),
-                period: g(6),
-            },
-            Tag::Pwl if a.len().is_multiple_of(2) => IrWaveform::Pwl {
-                values: a.chunks(2).map(|p| (p[0].clone(), p[1].clone())).collect(),
-                repeat: None,
-                delay: None,
-            },
-            Tag::Exp => IrWaveform::Exp {
-                initial: g(0),
-                pulsed: g(1),
-                rise_delay: g(2),
-                rise_tau: g(3),
-                fall_delay: g(4),
-                fall_tau: g(5),
-            },
-            Tag::Sffm => IrWaveform::Sffm {
-                offset: g(0),
-                amplitude: g(1),
-                carrier_freq: g(2),
-                modulation_index: g(3),
-                signal_freq: g(4),
-            },
-            Tag::Am => IrWaveform::Am {
-                amplitude: g(0),
-                offset: g(1),
-                modulating_freq: g(2),
-                carrier_freq: g(3),
-                delay: g(4),
-            },
-            Tag::Trnoise => IrWaveform::TrNoise {
-                na: g(0),
-                nt: g(1),
-                nalpha: g(2),
-                namp: g(3),
-                rtsam: g(4),
-                rtscapt: g(5),
-                rtsemt: g(6),
-            },
-            // TYPE must be a number ngspice defines; PARAM1 defaults to 1
-            // (manual §4.1.8).
-            Tag::Trrandom => {
-                let kind = a
-                    .first()?
-                    .num()
-                    .filter(|t| t.fract() == 0.0 && (1.0..=4.0).contains(t))?
-                    as u8;
-                let p1 = a.get(3).cloned().unwrap_or(IrNum::Num(1.0));
-                IrWaveform::TrRandom {
-                    kind: RandomKind::try_from(kind).ok()?,
-                    ts: a.get(1)?.clone(),
-                    td: g(2),
-                    p1,
-                    p2: g(4),
-                }
-            }
-            _ => return None,
         })
     }
 
@@ -470,6 +398,92 @@ impl Cx<'_> {
                     outm: node(3)?,
                     z0: get("z0")?,
                     td: get("td")?,
+                }
+            }
+            _ => return None,
+        })
+    }
+}
+
+// ---- private ----
+
+impl Cx<'_> {
+    fn waveform(&self, w: usize) -> Option<IrWaveform> {
+        let a: Vec<IrNum> = self
+            .all(w, Tag::Val)
+            .into_iter()
+            .map(|v| self.irnum(v))
+            .collect::<Option<_>>()?;
+        let g = |i: usize| a.get(i).cloned().unwrap_or(IrNum::Num(0.0));
+        Some(match self.tag(w) {
+            Tag::Sin => IrWaveform::Sin {
+                offset: g(0),
+                amplitude: g(1),
+                frequency: g(2),
+                delay: g(3),
+                damping: g(4),
+                phase: g(5),
+            },
+            Tag::Pulse => IrWaveform::Pulse {
+                initial: g(0),
+                pulsed: g(1),
+                delay: g(2),
+                rise_time: g(3),
+                fall_time: g(4),
+                pulse_width: g(5),
+                period: g(6),
+            },
+            Tag::Pwl if a.len().is_multiple_of(2) => IrWaveform::Pwl {
+                values: a.chunks(2).map(|p| (p[0].clone(), p[1].clone())).collect(),
+                repeat: None,
+                delay: None,
+            },
+            Tag::Exp => IrWaveform::Exp {
+                initial: g(0),
+                pulsed: g(1),
+                rise_delay: g(2),
+                rise_tau: g(3),
+                fall_delay: g(4),
+                fall_tau: g(5),
+            },
+            Tag::Sffm => IrWaveform::Sffm {
+                offset: g(0),
+                amplitude: g(1),
+                carrier_freq: g(2),
+                modulation_index: g(3),
+                signal_freq: g(4),
+            },
+            Tag::Am => IrWaveform::Am {
+                amplitude: g(0),
+                offset: g(1),
+                modulating_freq: g(2),
+                carrier_freq: g(3),
+                delay: g(4),
+            },
+            Tag::Trnoise => IrWaveform::TrNoise {
+                na: g(0),
+                nt: g(1),
+                nalpha: g(2),
+                namp: g(3),
+                rtsam: g(4),
+                rtscapt: g(5),
+                rtsemt: g(6),
+            },
+            // TYPE must be a number ngspice defines; PARAM1 defaults to 1
+            // (manual §4.1.8).
+            Tag::Trrandom => {
+                let kind = a
+                    .first()?
+                    .num()
+                    .filter(|t| t.fract() == 0.0 && (1.0..=4.0).contains(t))?
+                    as u8;
+                let p1 = a.get(3).cloned().unwrap_or(IrNum::Num(1.0));
+                IrWaveform::TrRandom {
+                    kind: RandomKind::try_from(kind).ok()?,
+                    ts: a.get(1)?.clone(),
+                    td: g(2),
+                    p1,
+                    p2: g(4),
                 }
             }
             _ => return None,

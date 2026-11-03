@@ -1,6 +1,22 @@
-use serde::{Deserialize, Serialize};
+//! Values and source waveforms: a component value (number, expression or
+//! raw text), one waveform parameter, and the waveforms an independent
+//! source carries, with the views passes and writers read.
+//!
+//! Cites: ngspice manual §4.1.4 (PWL `r=`/`td=`), §4.1.7 (TRNOISE), §4.1.8
+//! (TRRANDOM); Spectre Reference 5.0, `vsource` #17, #18, p.686 (`pwlperiod`).
+//!
+//! Contents:
+//! - `pub enum IrValue`, `pub enum IrNum`, `pub enum IrWaveform`, `pub enum RandomKind`
+//! - `IrNum::num(&self) -> Option<f64>`; `From<f64> for IrNum`, `From<&IrNum> for IrValue`,
+//!   `PartialEq<f64> for IrNum`
+//! - `RandomKind::ALL: [RandomKind; 4]`, `RandomKind::name(self) -> &'static str`;
+//!   `TryFrom<u8>`, `From<RandomKind> for u8`, `FromStr`
+//! - `IrWaveform::nums(&self) -> Vec<&IrNum>`, `IrWaveform::nums_mut(&mut self) -> Vec<&mut IrNum>`,
+//!   `IrWaveform::exprs_ref(&self) -> Vec<&str>`
+//! - `IrWaveform::spectre_pwl_period(values: &[(IrNum, IrNum)]) -> Option<f64>`
+//! - `IrWaveform::at_zero(&self) -> IrValue`
 
-// ── Value and waveform types ──
+use serde::{Deserialize, Serialize};
 
 /// Component value in the IR -- numeric, expression, or raw
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -18,37 +34,6 @@ pub enum IrValue {
 pub enum IrNum {
     Num(f64),
     Expr(String),
-}
-
-impl IrNum {
-    pub fn num(&self) -> Option<f64> {
-        match self {
-            IrNum::Num(v) => Some(*v),
-            IrNum::Expr(_) => None,
-        }
-    }
-}
-
-impl From<f64> for IrNum {
-    fn from(v: f64) -> Self {
-        IrNum::Num(v)
-    }
-}
-
-impl From<&IrNum> for IrValue {
-    fn from(n: &IrNum) -> Self {
-        match n {
-            IrNum::Num(value) => IrValue::Numeric { value: *value },
-            IrNum::Expr(expr) => IrValue::Expression { expr: expr.clone() },
-        }
-    }
-}
-
-/// `x == 0.0` reads as before; an expression equals no number.
-impl PartialEq<f64> for IrNum {
-    fn eq(&self, other: &f64) -> bool {
-        self.num() == Some(*other)
-    }
 }
 
 /// Waveform types
@@ -144,6 +129,37 @@ pub enum RandomKind {
     Gaussian = 2,
     Exponential = 3,
     Poisson = 4,
+}
+
+impl IrNum {
+    pub fn num(&self) -> Option<f64> {
+        match self {
+            IrNum::Num(v) => Some(*v),
+            IrNum::Expr(_) => None,
+        }
+    }
+}
+
+impl From<f64> for IrNum {
+    fn from(v: f64) -> Self {
+        IrNum::Num(v)
+    }
+}
+
+impl From<&IrNum> for IrValue {
+    fn from(n: &IrNum) -> Self {
+        match n {
+            IrNum::Num(value) => IrValue::Numeric { value: *value },
+            IrNum::Expr(expr) => IrValue::Expression { expr: expr.clone() },
+        }
+    }
+}
+
+/// `x == 0.0` reads as before; an expression equals no number.
+impl PartialEq<f64> for IrNum {
+    fn eq(&self, other: &f64) -> bool {
+        self.num() == Some(*other)
+    }
 }
 
 impl RandomKind {

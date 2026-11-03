@@ -1,3 +1,15 @@
+//! Two ngspice runs -> pass or the first difference: every plot's sweep grid
+//! and values, a transient through a time tube, and the reordered control
+//! deck a failed comparison is retried against.
+//!
+//! Cites: none (the oracle is ngspice itself, run on both decks).
+//!
+//! Contents:
+//! - `pub(super) fn in_tube(xs: &[f64], ys: &[f64], x: f64, dx: f64, y: f64, tol: f64) -> bool`
+//! - `pub(super) fn leaves_tube(xa: &[f64], ya: &[f64], xb: &[f64], yb: &[f64], dx: f64, tol: f64) -> Option<usize>`
+//! - `pub(super) fn compare(a: &Run, b: &Run) -> Result<(), String>`
+//! - `pub(super) fn reordered(deck: &str) -> String`
+
 use super::*;
 
 /// Whether `y` lies within `tol` of the band `ys` spans over `[x - dx, x + dx]`
@@ -68,10 +80,6 @@ pub(super) fn leaves_tube(
         }
     }
     None
-}
-
-fn close(x: f64, y: f64) -> bool {
-    (x - y).abs() <= 1e-9 * x.abs().max(y.abs())
 }
 
 /// Every plot of `b` must match `a`'s, in order. Op, dc and ac sweep grids
@@ -215,4 +223,10 @@ pub(super) fn reordered(deck: &str) -> String {
     out.extend(cards.into_iter().rev());
     out.extend(tail);
     out.join("\n") + "\n"
+}
+
+// ---- private ----
+
+fn close(x: f64, y: f64) -> bool {
+    (x - y).abs() <= 1e-9 * x.abs().max(y.abs())
 }

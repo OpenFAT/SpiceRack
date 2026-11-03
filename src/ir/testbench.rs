@@ -1,10 +1,23 @@
+//! The testbench: stimulus, analyses, options, saves, measures and the
+//! keyword sets the analyses take, each parsed once where it enters.
+//!
+//! Cites: ngspice manual p.353 (`.print` under a rawfile run), §11.3.6
+//! (`.pz`), §11.3.12 (`.pss`); Spectre Reference `[REF]` analysis statements.
+//!
+//! Contents:
+//! - `pub struct Testbench`, `pub struct PrintCard`, `pub struct StepParam`
+//! - `pub enum Analysis`, `pub struct DcSweep`, `pub struct FreqSweep`, `pub struct PssBase`,
+//!   `pub struct SimOptions`
+//! - keyword enums `Sweep`, `PzTransfer`, `PzKind`, `SpectreAnalysis`, each with
+//!   `::ALL: &[Self]`, `::name(self) -> &'static str`, `FromStr`, `TryFrom<String>`,
+//!   `From<Self> for &'static str`
+//! - `Analysis::kind_str(&self) -> &str`
+
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
 use super::*;
-
-// ── Testbench ──
 
 /// Testbench -- wraps a DUT with stimulus + analysis. The DUT is
 /// [`CircuitIR::top`]; JSON written before 0.1.3 also carries a `dut` name,
@@ -52,8 +65,6 @@ pub struct StepParam {
     /// `lin`, `dec`, `oct` (or Spectre's `log`); `None` is linear.
     pub sweep_type: Option<Sweep>,
 }
-
-// ── Analysis types ──
 
 /// Analysis types -- all supported analyses as a tagged union
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -189,35 +200,6 @@ pub enum Analysis {
     },
 }
 
-impl Analysis {
-    pub fn kind_str(&self) -> &str {
-        match self {
-            Analysis::Op => "op",
-            Analysis::Dc { .. } => "dc",
-            Analysis::Ac { .. } => "ac",
-            Analysis::Transient { .. } => "tran",
-            Analysis::Noise { .. } => "noise",
-            Analysis::Tf { .. } => "tf",
-            Analysis::Sensitivity { ac: Some(_), .. } => "sens_ac",
-            Analysis::Sensitivity { .. } => "sens",
-            Analysis::PoleZero { .. } => "pz",
-            Analysis::Distortion { .. } => "disto",
-            Analysis::Pss { .. } => "pss",
-            Analysis::HarmonicBalance { .. } => "hb",
-            Analysis::SPar { .. } => "sp",
-            Analysis::Stability { .. } => "stb",
-            Analysis::TransientNoise { .. } => "trannoise",
-            Analysis::Fourier { .. } => "tran",
-            Analysis::SpectreSweep { .. } => "tran",
-            Analysis::SpectreMonteCarlo { .. } => "tran",
-            Analysis::SpectrePac { .. } => "pac",
-            Analysis::SpectrePnoise { .. } => "pnoise",
-            Analysis::SpectrePxf { .. } => "pxf",
-            Analysis::SpectrePstb { .. } => "pstb",
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DcSweep {
     pub source: String,
@@ -235,6 +217,22 @@ pub struct FreqSweep {
     pub points: u32,
     pub start: f64,
     pub stop: f64,
+}
+
+/// The periodic steady state a SpectreRF small-signal analysis linearizes
+/// around (`pac`, `pnoise`, `pxf`, `pstb`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PssBase {
+    pub pss_fundamental: f64,
+    pub pss_stabilization: f64,
+    pub pss_harmonics: u32,
+}
+
+/// Simulation options -- portable + per-backend
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct SimOptions {
+    pub portable: Vec<(String, String)>,
+    pub backend_specific: BTreeMap<String, Vec<(String, String)>>,
 }
 
 /// A closed set of deck keywords: `name()` is the keyword, `FromStr` and
@@ -335,20 +333,31 @@ keywords! {
     }
 }
 
-/// The periodic steady state a SpectreRF small-signal analysis linearizes
-/// around (`pac`, `pnoise`, `pxf`, `pstb`).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct PssBase {
-    pub pss_fundamental: f64,
-    pub pss_stabilization: f64,
-    pub pss_harmonics: u32,
-}
-
-// ── Simulation options ──
-
-/// Simulation options -- portable + per-backend
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct SimOptions {
-    pub portable: Vec<(String, String)>,
-    pub backend_specific: BTreeMap<String, Vec<(String, String)>>,
+impl Analysis {
+    pub fn kind_str(&self) -> &str {
+        match self {
+            Analysis::Op => "op",
+            Analysis::Dc { .. } => "dc",
+            Analysis::Ac { .. } => "ac",
+            Analysis::Transient { .. } => "tran",
+            Analysis::Noise { .. } => "noise",
+            Analysis::Tf { .. } => "tf",
+            Analysis::Sensitivity { ac: Some(_), .. } => "sens_ac",
+            Analysis::Sensitivity { .. } => "sens",
+            Analysis::PoleZero { .. } => "pz",
+            Analysis::Distortion { .. } => "disto",
+            Analysis::Pss { .. } => "pss",
+            Analysis::HarmonicBalance { .. } => "hb",
+            Analysis::SPar { .. } => "sp",
+            Analysis::Stability { .. } => "stb",
+            Analysis::TransientNoise { .. } => "trannoise",
+            Analysis::Fourier { .. } => "tran",
+            Analysis::SpectreSweep { .. } => "tran",
+            Analysis::SpectreMonteCarlo { .. } => "tran",
+            Analysis::SpectrePac { .. } => "pac",
+            Analysis::SpectrePnoise { .. } => "pnoise",
+            Analysis::SpectrePxf { .. } => "pxf",
+            Analysis::SpectrePstb { .. } => "pstb",
+        }
+    }
 }

@@ -1,6 +1,14 @@
+//! Each analysis -> its documented Spectre statement (dc, ac, tran, noise,
+//! xf, sens, pss/hb/sp/stb, pac/pnoise/pxf/pstb, sweep, montecarlo, fourier),
+//! SI scale factors, and the analyses Spectre refuses.
+//!
+//! Cites: `[REF]`, `[CMP]` and `[KUN]` (see `main.rs`), per test.
+//!
+//! Contents: none (tests only).
+
 use super::*;
 
-// ── Analyses ──
+// ---- private ----
 
 /// `[REF]` p.20143 verbatim `dc1 dc` (a `dc` without a sweep parameter is the
 /// operating point).

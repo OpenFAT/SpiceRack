@@ -1,4 +1,14 @@
-// ── Spectre and VACASK: statements led by a name, read by master ──
+//! Spectre and VACASK statements (led by a name, read by master) -> the IR:
+//! the dispatch over statement kinds, the deck's model and subcircuit
+//! declarations, and `model` statements as `.model`s.
+//!
+//! Cites: ESPice `spectre.zig:433-451` (the Spectre master map, inverted);
+//! `codegen::vacask`'s `mos_module`/`model_type` (inverted).
+//!
+//! Contents:
+//! - `Cx::declarations(&self) -> (HashMap<String, String>, Vec<String>)`
+//! - `Cx::named_card(&mut self, card: usize, here: &mut Subcircuit, inside: bool,
+//!   kinds: &HashMap<String, String>, subckts: &[String]) -> bool`
 
 use super::Cx;
 use crate::codegen::Dialect;
@@ -19,71 +29,6 @@ const VACASK_BUILTINS: &[&str] = &[
     "ccvs",
     "mutual",
 ];
-
-/// A Spectre model master (and `type=`) -> SPICE `.model` kind and LEVEL;
-/// the inverse of `codegen::spectre`'s map (ESPice `spectre.zig:433-451`).
-/// A master not here is a Spectre-native model, kept as its kind.
-fn spectre_kind(master: &str, ty: Option<&str>) -> (String, Option<&'static str>) {
-    let ty = ty.map(str::to_ascii_lowercase);
-    let mos = |l: &'static str| {
-        (
-            if ty.as_deref() == Some("p") {
-                "pmos"
-            } else {
-                "nmos"
-            }
-            .to_string(),
-            Some(l),
-        )
-    };
-    match master {
-        "mos1" => mos("1"),
-        "mos2" => mos("2"),
-        "mos3" => mos("3"),
-        "bsim3v3" => mos("49"),
-        "bsim4" => mos("54"),
-        "bjt" => (
-            if ty.as_deref() == Some("pnp") {
-                "pnp"
-            } else {
-                "npn"
-            }
-            .to_string(),
-            None,
-        ),
-        "diode" => ("d".to_string(), None),
-        other => (other.to_string(), None),
-    }
-}
-
-/// `sp_<module>` (and `type=`) -> SPICE kind and LEVEL: the inverse of
-/// `codegen::vacask`'s `mos_module`/`model_type`.
-fn vacask_kind(module: &str, ty: Option<f64>) -> Option<(String, Option<&'static str>)> {
-    let neg = ty.is_some_and(|t| t < 0.0);
-    let mos = |l| Some((if neg { "pmos" } else { "nmos" }.to_string(), Some(l)));
-    match module.strip_prefix("sp_")? {
-        "mos1" => mos("1"),
-        "mos2" => mos("2"),
-        "mos3" => mos("3"),
-        "mos6" => mos("6"),
-        "mos9" => mos("9"),
-        "bsim3v3" => mos("49"),
-        "bsim4v8" => mos("54"),
-        "diode" => Some(("d".into(), None)),
-        "bjt" => Some((if neg { "pnp" } else { "npn" }.into(), None)),
-        "jfet1" => Some((if neg { "pjf" } else { "njf" }.into(), None)),
-        "mes1" => Some((if neg { "pmf" } else { "nmf" }.into(), None)),
-        "vdmos" => Some(("vdmos".into(), None)),
-        _ => None,
-    }
-}
-
-/// The built-in a VACASK `model NAME <module>` names, when it is one or a
-/// SPICE R/C/L: `vsource`, `sp_resistor` -> `resistor`.
-fn vacask_builtin(module: &str) -> Option<&'static str> {
-    let m = module.strip_prefix("sp_").unwrap_or(module);
-    VACASK_BUILTINS.iter().find(|a| **a == m).copied()
-}
 
 impl Cx<'_> {
     /// The deck's model kinds (`name -> kind`, or `=<builtin>` for a VACASK
@@ -118,40 +63,6 @@ impl Cx<'_> {
             }
         }
         (kinds, subckts)
-    }
-
-    /// A Spectre or VACASK `.model`; `false` if the IR holds no such model.
-    fn named_model(&mut self, card: usize, here: &mut Subcircuit) -> bool {
-        let k = self.kids(card);
-        let (name, master) = (self.name(k[0]), self.name(k[1]));
-        let p = self.pairs(card);
-        let (kind, level) = if self.d == Dialect::Vacask {
-            if vacask_builtin(&master).is_some() {
-                return true; // implied by the devices
-            }
-            match vacask_kind(&master, self.get(&p, "type").and_then(|t| self.number(t))) {
-                Some(kl) => kl,
-                None => return false,
-            }
-        } else {
-            spectre_kind(&master, self.get(&p, "type").map(|t| self.text(t)))
-        };
-        // `type=` is the master's polarity once a SPICE kind says it.
-        let drop_type = self.d == Dialect::Vacask || level.is_some() || kind != master;
-        let mut parameters: Vec<(String, String)> = p
-            .iter()
-            .filter(|(k, _)| !(drop_type && k == "type"))
-            .map(|(k, v)| (k.clone(), self.vtext(*v)))
-            .collect();
-        if let Some(l) = level {
-            parameters.insert(0, ("level".into(), l.into()));
-        }
-        here.models.push(ModelDef {
-            name,
-            kind,
-            parameters,
-        });
-        true
     }
 
     /// A Spectre or VACASK statement; `false` when the IR holds no such one.
@@ -232,4 +143,107 @@ impl Cx<'_> {
         }
         true
     }
+}
+
+// ---- private ----
+
+impl Cx<'_> {
+    /// A Spectre or VACASK `.model`; `false` if the IR holds no such model.
+    fn named_model(&mut self, card: usize, here: &mut Subcircuit) -> bool {
+        let k = self.kids(card);
+        let (name, master) = (self.name(k[0]), self.name(k[1]));
+        let p = self.pairs(card);
+        let (kind, level) = if self.d == Dialect::Vacask {
+            if vacask_builtin(&master).is_some() {
+                return true; // implied by the devices
+            }
+            match vacask_kind(&master, self.get(&p, "type").and_then(|t| self.number(t))) {
+                Some(kl) => kl,
+                None => return false,
+            }
+        } else {
+            spectre_kind(&master, self.get(&p, "type").map(|t| self.text(t)))
+        };
+        // `type=` is the master's polarity once a SPICE kind says it.
+        let drop_type = self.d == Dialect::Vacask || level.is_some() || kind != master;
+        let mut parameters: Vec<(String, String)> = p
+            .iter()
+            .filter(|(k, _)| !(drop_type && k == "type"))
+            .map(|(k, v)| (k.clone(), self.vtext(*v)))
+            .collect();
+        if let Some(l) = level {
+            parameters.insert(0, ("level".into(), l.into()));
+        }
+        here.models.push(ModelDef {
+            name,
+            kind,
+            parameters,
+        });
+        true
+    }
+}
+
+/// A Spectre model master (and `type=`) -> SPICE `.model` kind and LEVEL;
+/// the inverse of `codegen::spectre`'s map (ESPice `spectre.zig:433-451`).
+/// A master not here is a Spectre-native model, kept as its kind.
+fn spectre_kind(master: &str, ty: Option<&str>) -> (String, Option<&'static str>) {
+    let ty = ty.map(str::to_ascii_lowercase);
+    let mos = |l: &'static str| {
+        (
+            if ty.as_deref() == Some("p") {
+                "pmos"
+            } else {
+                "nmos"
+            }
+            .to_string(),
+            Some(l),
+        )
+    };
+    match master {
+        "mos1" => mos("1"),
+        "mos2" => mos("2"),
+        "mos3" => mos("3"),
+        "bsim3v3" => mos("49"),
+        "bsim4" => mos("54"),
+        "bjt" => (
+            if ty.as_deref() == Some("pnp") {
+                "pnp"
+            } else {
+                "npn"
+            }
+            .to_string(),
+            None,
+        ),
+        "diode" => ("d".to_string(), None),
+        other => (other.to_string(), None),
+    }
+}
+
+/// `sp_<module>` (and `type=`) -> SPICE kind and LEVEL: the inverse of
+/// `codegen::vacask`'s `mos_module`/`model_type`.
+fn vacask_kind(module: &str, ty: Option<f64>) -> Option<(String, Option<&'static str>)> {
+    let neg = ty.is_some_and(|t| t < 0.0);
+    let mos = |l| Some((if neg { "pmos" } else { "nmos" }.to_string(), Some(l)));
+    match module.strip_prefix("sp_")? {
+        "mos1" => mos("1"),
+        "mos2" => mos("2"),
+        "mos3" => mos("3"),
+        "mos6" => mos("6"),
+        "mos9" => mos("9"),
+        "bsim3v3" => mos("49"),
+        "bsim4v8" => mos("54"),
+        "diode" => Some(("d".into(), None)),
+        "bjt" => Some((if neg { "pnp" } else { "npn" }.into(), None)),
+        "jfet1" => Some((if neg { "pjf" } else { "njf" }.into(), None)),
+        "mes1" => Some((if neg { "pmf" } else { "nmf" }.into(), None)),
+        "vdmos" => Some(("vdmos".into(), None)),
+        _ => None,
+    }
+}
+
+/// The built-in a VACASK `model NAME <module>` names, when it is one or a
+/// SPICE R/C/L: `vsource`, `sp_resistor` -> `resistor`.
+fn vacask_builtin(module: &str) -> Option<&'static str> {
+    let m = module.strip_prefix("sp_").unwrap_or(module);
+    VACASK_BUILTINS.iter().find(|a| **a == m).copied()
 }

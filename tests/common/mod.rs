@@ -5,6 +5,17 @@
 //!
 //! Unsupported fails, never skips: a backend not on PATH fails every test;
 //! run them in `nix develop .#testing`.
+//!
+//! Cites: none (helpers; the oracles are in `suite.rs` and the test crates).
+//!
+//! Contents:
+//! - `pub fn run(d: Dialect, deck: &str) -> RawData`
+//! - `pub fn emitted(d: Dialect, deck: &str, edit: impl FnOnce(&mut CircuitIR)) -> String`
+//! - `pub fn measures(d: Dialect, raw: &RawData) -> Vec<MeasureResult>`
+//! - `pub fn index_of(raw: &RawData, name: &str) -> usize`
+//! - `pub fn scalar(raw: &RawData, name: &str) -> f64`
+//! - `pub fn column<'a>(raw: &'a RawData, name: &str) -> &'a [f64]`
+//! - `pub fn close(actual: f64, expected: f64, rel: f64) -> bool`
 
 use spicerack::backend::Dialect;
 use spicerack::measure_parse::parse_measures;

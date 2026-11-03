@@ -1,6 +1,13 @@
+//! The source waveforms VACASK does run (sine with delay and damping, a
+//! pulse train), emitted and checked against their closed forms.
+//!
+//! Cites: real VACASK; ngspice manual §4.1 for the waveform definitions.
+//!
+//! Contents: none (tests only).
+
 use super::*;
 
-// ── Waveforms that DO translate ──
+// ---- private ----
 
 #[test]
 fn a_sine_source_runs_with_delay_and_damping() {

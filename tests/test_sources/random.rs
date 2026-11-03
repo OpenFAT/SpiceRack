@@ -1,14 +1,21 @@
+//! TRNOISE and TRRANDOM -> ngspice runs whose samples have the stated
+//! distribution; every other dialect refuses; the importer lowers the cards.
+//!
+//! Cites: ngspice 45 manual §4.1.7, §4.1.8, §18.1; real ngspice.
+//!
+//! Statistical oracles. ngspice seeds its generator with 1 unless told
+//! otherwise (manual §18.1); the deck sets `seed=1` so the run is the same
+//! every time, and each tolerance below is five standard errors of the
+//! estimate for N independent samples, so a correct source fails with
+//! probability under 1e-6 whatever the seed.
+//!
+//! Contents: none (tests only).
+
 use super::*;
 
-// ── TRNOISE / TRRANDOM (manual §4.1.7, §4.1.8) ──
-//
-// Statistical oracles. ngspice seeds its generator with 1 unless told
-// otherwise (manual §18.1); the deck sets `seed=1` so the run is the same
-// every time, and each tolerance below is five standard errors of the
-// estimate for N independent samples, so a correct source fails with
-// probability under 1e-6 whatever the seed.
-
 const N: usize = 4000;
+
+// ---- private ----
 
 /// `.options seed=1`, and the source `src` alone into 1 Ω.
 fn seeded(src: Component, step: f64, stop: f64) -> CircuitIR {

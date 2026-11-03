@@ -1,4 +1,13 @@
+//! `spicerack::unit`: every row of `UNITS` scales and prints as Python's
+//! `v @ <name>` does, and the SI prefix chosen for a value.
+//!
+//! Cites: none (spec examples of SpiceRack's own unit table).
+//!
+//! Contents: none (tests only).
+
 use spicerack::unit::*;
+
+// ---- private ----
 
 /// `v @ <name>` as Python builds it.
 fn at(v: f64, name: &str) -> UnitValue {

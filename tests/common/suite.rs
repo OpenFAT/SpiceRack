@@ -1,3 +1,11 @@
+//! `analysis_suite!`: the analysis tests every ngspice-family backend runs,
+//! instantiated once per test crate for one `Dialect`.
+//!
+//! Cites: closed forms (divider ratio, RC corner and step response, Thevenin
+//! impedance, dV/dR); ngspice manual §11.3 for each analysis card.
+//!
+//! Contents: `macro_rules! analysis_suite` (`#[macro_use]`, not `pub`).
+
 /// The shared tests, plus `run` and `measures` for `$d`, at the calling
 /// crate's root. `.tf` names its impedance columns per backend: `$tf_out` at
 /// the output, `$tf_in` at the input.

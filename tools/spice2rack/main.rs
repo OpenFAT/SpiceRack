@@ -19,6 +19,10 @@
 //! `--check` also requires each deck to be a fixpoint: written in its own
 //! dialect and read back, it gives the same IR. `--dialect hspice` reads
 //! HSPICE decks (default ngspice).
+//!
+//! Cites: none (a CLI over `spicerack::import`, `codegen` and the Python API).
+//!
+//! Contents: none (a binary; `main` is its entry).
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -49,6 +53,8 @@ struct Opts {
     python: bool,
     check: bool,
 }
+
+// ---- private ----
 
 /// Converts one deck; returns the Python gaps it hit (empty without `--python`).
 fn convert(deck: &Path, o: &Opts) -> std::io::Result<Vec<&'static str>> {
@@ -187,7 +193,7 @@ fn main() {
     }
     if o.python {
         let mut rows: Vec<_> = tally.into_iter().collect();
-        rows.sort_by(|a, b| b.1.1.cmp(&a.1.1));
+        rows.sort_by_key(|r| std::cmp::Reverse(r.1.1));
         let mut report = format!(
             "Python API gaps over {} decks (cards, decks):\n",
             args.len()

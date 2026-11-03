@@ -1,6 +1,14 @@
+//! Each SPICE device VACASK runs through its `sp_*` modules (diode, BJT,
+//! level-1 MOSFET, JFET, coupled inductors, controlled sources), emitted and
+//! run.
+//!
+//! Cites: real VACASK; the closed forms named in each test.
+//!
+//! Contents: none (tests only).
+
 use super::*;
 
-// ── Devices ──
+// ---- private ----
 
 #[test]
 fn a_diode_runs_under_the_spice_device_set() {

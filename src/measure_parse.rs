@@ -14,6 +14,13 @@
 //!   rise_time: AVG=2.345e-09
 //! ```
 //! Or single-line: `rise_time: 2.345e-009 ...`
+//!
+//! Simulator text in, [`MeasureResult`] rows out.
+//!
+//! Cites: none (the formats above are the simulators' printed output).
+//!
+//! Contents:
+//! - `pub fn parse_measures(text: &str, backend: Option<Dialect>) -> Vec<MeasureResult>`
 
 use crate::ir::Dialect;
 use crate::result::MeasureResult;
@@ -45,6 +52,8 @@ pub fn parse_measures(text: &str, backend: Option<Dialect>) -> Vec<MeasureResult
         }
     }
 }
+
+// ---- private ----
 
 /// Parse NGSpice batch-mode stdout for .meas results.
 ///

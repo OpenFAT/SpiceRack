@@ -1,4 +1,12 @@
-// ── Raw file parser tests ──
+//! Raw files -> `spicerack::rawfile::parse_raw`: a truncated header is an
+//! error, not a panic; a complete ngspice ASCII raw file reads back its
+//! title, variables and values.
+//!
+//! Cites: the ngspice raw file format (manual §17.6), as a spec example.
+//!
+//! Contents: none (tests only).
+
+// ---- private ----
 
 #[test]
 fn test_rawfile_utf16_detection() {

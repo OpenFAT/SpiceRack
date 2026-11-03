@@ -1,6 +1,13 @@
+//! Deck structure on VACASK: subcircuits and instances, `.step` parameters,
+//! initial conditions, and several analyses in one deck in order.
+//!
+//! Cites: real VACASK.
+//!
+//! Contents: none (tests only).
+
 use super::*;
 
-// ── Structure ──
+// ---- private ----
 
 #[test]
 fn subcircuits_and_their_instances_run() {

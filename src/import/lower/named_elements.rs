@@ -1,3 +1,15 @@
+//! Spectre and VACASK instance statements -> `Component`s (by built-in
+//! master or model kind) or subcircuit `Instance`s, with their source
+//! waveforms.
+//!
+//! Cites: Spectre Circuit Simulator Reference 5.0 `[CMP]` (`vsource` #4, #17,
+//! #18, p.686); `codegen::spectre` and `codegen::vacask` (the key names,
+//! inverted).
+//!
+//! Contents:
+//! - `Cx::inst(&self, card: usize, kinds: &HashMap<String, String>, subckts: &[String])
+//!   -> Option<Result<Component, Instance>>`
+
 use super::{Cx, values::unquoted};
 use crate::codegen::Dialect;
 use crate::import::Tag;
@@ -69,157 +81,6 @@ const VACASK: Keys = Keys {
 };
 
 impl Cx<'_> {
-    fn keys(&self) -> &'static Keys {
-        if self.d == Dialect::Vacask {
-            &VACASK
-        } else {
-            &SPECTRE
-        }
-    }
-
-    /// `name`'s SPICE spelling: the letter `codegen` adds back is dropped
-    /// (`r1 resistor` reads as `1`, written `r1` again; `load resistor` stays
-    /// `load`). Spectre keeps case (`[KUN]` B.2); VACASK's names are lowered.
-    fn strip(&self, name: &str, letter: char) -> String {
-        let name = if self.d == Dialect::Vacask {
-            name.to_lowercase()
-        } else {
-            name.to_string()
-        };
-        match name.chars().next() {
-            Some(c) if c.eq_ignore_ascii_case(&letter) && name.len() > 1 => {
-                name[c.len_utf8()..].to_string()
-            }
-            _ => name,
-        }
-    }
-
-    fn named_waveform(&self, p: &[(String, usize)]) -> Option<Option<IrWaveform>> {
-        let keys = self.keys();
-        let f = |k: &str| {
-            self.get(p, k)
-                .map_or(Some(IrNum::Num(0.0)), |v| self.irnum(v))
-        };
-        let ty = self
-            .get(p, "type")
-            .map(|t| self.text(t).trim_matches('"').to_string());
-        // A waveform whose IR form has no delay field (SFFM; Spectre's exp,
-        // where `delay` is the general waveform delay, [CMP] #4) keeps a
-        // nonzero `delay` raw; `pwlperiod` belongs to PWL alone.
-        let fm = ty.as_deref() == Some("fm")
-            || (ty.as_deref() == Some("sine") && self.get(p, "fmmodindex").is_some());
-        let spectre_exp = self.d == Dialect::Spectre && ty.as_deref() == Some("exp");
-        if (fm || spectre_exp)
-            && self
-                .get(p, "delay")
-                .is_some_and(|v| self.number(v) != Some(0.0))
-        {
-            return None;
-        }
-        if ty.as_deref() != Some("pwl") && self.get(p, "pwlperiod").is_some() {
-            return None;
-        }
-        Some(Some(match ty.as_deref() {
-            None | Some("dc") => return Some(None),
-            Some("pulse") => IrWaveform::Pulse {
-                initial: f("val0")?,
-                pulsed: f("val1")?,
-                delay: f("delay")?,
-                rise_time: f("rise")?,
-                fall_time: f("fall")?,
-                pulse_width: f("width")?,
-                period: f("period")?,
-            },
-            Some("sine") if self.get(p, "fmmodindex").is_some() => IrWaveform::Sffm {
-                offset: f("sinedc")?,
-                amplitude: f("ampl")?,
-                carrier_freq: f("freq")?,
-                modulation_index: f("fmmodindex")?,
-                signal_freq: f("fmmodfreq")?,
-            },
-            Some("sine") => IrWaveform::Sin {
-                offset: f("sinedc")?,
-                amplitude: f("ampl")?,
-                frequency: f("freq")?,
-                delay: f("delay")?,
-                damping: f(keys.damp)?,
-                phase: f("sinephase")?,
-            },
-            // VACASK's td2 counts from `delay`; SPICE's is absolute, so the
-            // two delays must be numbers to add.
-            Some("exp") if self.d == Dialect::Vacask => {
-                let n = |k: &str| self.get(p, k).map_or(Some(0.0), |v| self.number(v));
-                IrWaveform::Exp {
-                    initial: f("val0")?,
-                    pulsed: f("val1")?,
-                    rise_delay: n("delay")?.into(),
-                    rise_tau: f("tau1")?,
-                    fall_delay: (n("delay")? + n("td2")?).into(),
-                    fall_tau: f("tau2")?,
-                }
-            }
-            Some("exp") => IrWaveform::Exp {
-                initial: f("val0")?,
-                pulsed: f("val1")?,
-                rise_delay: f("td1")?,
-                rise_tau: f("tau1")?,
-                fall_delay: f("td2")?,
-                fall_tau: f("tau2")?,
-            },
-            Some("fm") => IrWaveform::Sffm {
-                offset: f("sinedc")?,
-                amplitude: f("ampl")?,
-                carrier_freq: f("freq")?,
-                modulation_index: f("modindex")?,
-                signal_freq: f("modfreq")?,
-            },
-            Some("am") => IrWaveform::Am {
-                offset: f("sinedc")?,
-                amplitude: f("ampl")?,
-                carrier_freq: f("freq")?,
-                modulating_freq: f("modfreq")?,
-                delay: f("delay")?,
-            },
-            // `delay` is ngspice's `td=`; `pwlperiod` is its `r=0` only where
-            // `spectre_pwl_period` says the two repeat alike, else raw.
-            Some("pwl") if self.d == Dialect::Spectre => {
-                let w = self.get(p, "wave")?;
-                let xs: Vec<IrNum> = self
-                    .velems(w)
-                    .into_iter()
-                    .map(|x| self.irnum(x))
-                    .collect::<Option<_>>()?;
-                if !xs.len().is_multiple_of(2) {
-                    return None;
-                }
-                let values: Vec<(IrNum, IrNum)> =
-                    xs.chunks(2).map(|c| (c[0].clone(), c[1].clone())).collect();
-                let repeat = match self.get(p, "pwlperiod") {
-                    Some(v) if IrWaveform::spectre_pwl_period(&values)? == self.number(v)? => {
-                        Some(IrNum::Num(0.0))
-                    }
-                    Some(_) => return None,
-                    None => None,
-                };
-                let delay = match self.get(p, "delay") {
-                    Some(v) => Some(self.irnum(v)?).filter(|d| *d != 0.0),
-                    None => None,
-                };
-                IrWaveform::Pwl {
-                    values,
-                    repeat,
-                    delay,
-                }
-            }
-            Some(_) => return None,
-        }))
-    }
-
-    /// A vector value's elements: the rows directly under its `Val`.
-    fn velems(&self, v: usize) -> Vec<usize> {
-        self.kids(v)
-    }
-
     /// One instance statement as a component or subcircuit instance; `None`
     /// when the IR has no form for it.
     pub(super) fn inst(
@@ -476,5 +337,160 @@ impl Cx<'_> {
                 }
             }
         }))
+    }
+}
+
+// ---- private ----
+
+impl Cx<'_> {
+    fn keys(&self) -> &'static Keys {
+        if self.d == Dialect::Vacask {
+            &VACASK
+        } else {
+            &SPECTRE
+        }
+    }
+
+    /// `name`'s SPICE spelling: the letter `codegen` adds back is dropped
+    /// (`r1 resistor` reads as `1`, written `r1` again; `load resistor` stays
+    /// `load`). Spectre keeps case (`[KUN]` B.2); VACASK's names are lowered.
+    fn strip(&self, name: &str, letter: char) -> String {
+        let name = if self.d == Dialect::Vacask {
+            name.to_lowercase()
+        } else {
+            name.to_string()
+        };
+        match name.chars().next() {
+            Some(c) if c.eq_ignore_ascii_case(&letter) && name.len() > 1 => {
+                name[c.len_utf8()..].to_string()
+            }
+            _ => name,
+        }
+    }
+
+    fn named_waveform(&self, p: &[(String, usize)]) -> Option<Option<IrWaveform>> {
+        let keys = self.keys();
+        let f = |k: &str| {
+            self.get(p, k)
+                .map_or(Some(IrNum::Num(0.0)), |v| self.irnum(v))
+        };
+        let ty = self
+            .get(p, "type")
+            .map(|t| self.text(t).trim_matches('"').to_string());
+        // A waveform whose IR form has no delay field (SFFM; Spectre's exp,
+        // where `delay` is the general waveform delay, [CMP] #4) keeps a
+        // nonzero `delay` raw; `pwlperiod` belongs to PWL alone.
+        let fm = ty.as_deref() == Some("fm")
+            || (ty.as_deref() == Some("sine") && self.get(p, "fmmodindex").is_some());
+        let spectre_exp = self.d == Dialect::Spectre && ty.as_deref() == Some("exp");
+        if (fm || spectre_exp)
+            && self
+                .get(p, "delay")
+                .is_some_and(|v| self.number(v) != Some(0.0))
+        {
+            return None;
+        }
+        if ty.as_deref() != Some("pwl") && self.get(p, "pwlperiod").is_some() {
+            return None;
+        }
+        Some(Some(match ty.as_deref() {
+            None | Some("dc") => return Some(None),
+            Some("pulse") => IrWaveform::Pulse {
+                initial: f("val0")?,
+                pulsed: f("val1")?,
+                delay: f("delay")?,
+                rise_time: f("rise")?,
+                fall_time: f("fall")?,
+                pulse_width: f("width")?,
+                period: f("period")?,
+            },
+            Some("sine") if self.get(p, "fmmodindex").is_some() => IrWaveform::Sffm {
+                offset: f("sinedc")?,
+                amplitude: f("ampl")?,
+                carrier_freq: f("freq")?,
+                modulation_index: f("fmmodindex")?,
+                signal_freq: f("fmmodfreq")?,
+            },
+            Some("sine") => IrWaveform::Sin {
+                offset: f("sinedc")?,
+                amplitude: f("ampl")?,
+                frequency: f("freq")?,
+                delay: f("delay")?,
+                damping: f(keys.damp)?,
+                phase: f("sinephase")?,
+            },
+            // VACASK's td2 counts from `delay`; SPICE's is absolute, so the
+            // two delays must be numbers to add.
+            Some("exp") if self.d == Dialect::Vacask => {
+                let n = |k: &str| self.get(p, k).map_or(Some(0.0), |v| self.number(v));
+                IrWaveform::Exp {
+                    initial: f("val0")?,
+                    pulsed: f("val1")?,
+                    rise_delay: n("delay")?.into(),
+                    rise_tau: f("tau1")?,
+                    fall_delay: (n("delay")? + n("td2")?).into(),
+                    fall_tau: f("tau2")?,
+                }
+            }
+            Some("exp") => IrWaveform::Exp {
+                initial: f("val0")?,
+                pulsed: f("val1")?,
+                rise_delay: f("td1")?,
+                rise_tau: f("tau1")?,
+                fall_delay: f("td2")?,
+                fall_tau: f("tau2")?,
+            },
+            Some("fm") => IrWaveform::Sffm {
+                offset: f("sinedc")?,
+                amplitude: f("ampl")?,
+                carrier_freq: f("freq")?,
+                modulation_index: f("modindex")?,
+                signal_freq: f("modfreq")?,
+            },
+            Some("am") => IrWaveform::Am {
+                offset: f("sinedc")?,
+                amplitude: f("ampl")?,
+                carrier_freq: f("freq")?,
+                modulating_freq: f("modfreq")?,
+                delay: f("delay")?,
+            },
+            // `delay` is ngspice's `td=`; `pwlperiod` is its `r=0` only where
+            // `spectre_pwl_period` says the two repeat alike, else raw.
+            Some("pwl") if self.d == Dialect::Spectre => {
+                let w = self.get(p, "wave")?;
+                let xs: Vec<IrNum> = self
+                    .velems(w)
+                    .into_iter()
+                    .map(|x| self.irnum(x))
+                    .collect::<Option<_>>()?;
+                if !xs.len().is_multiple_of(2) {
+                    return None;
+                }
+                let values: Vec<(IrNum, IrNum)> =
+                    xs.chunks(2).map(|c| (c[0].clone(), c[1].clone())).collect();
+                let repeat = match self.get(p, "pwlperiod") {
+                    Some(v) if IrWaveform::spectre_pwl_period(&values)? == self.number(v)? => {
+                        Some(IrNum::Num(0.0))
+                    }
+                    Some(_) => return None,
+                    None => None,
+                };
+                let delay = match self.get(p, "delay") {
+                    Some(v) => Some(self.irnum(v)?).filter(|d| *d != 0.0),
+                    None => None,
+                };
+                IrWaveform::Pwl {
+                    values,
+                    repeat,
+                    delay,
+                }
+            }
+            Some(_) => return None,
+        }))
+    }
+
+    /// A vector value's elements: the rows directly under its `Val`.
+    fn velems(&self, v: usize) -> Vec<usize> {
+        self.kids(v)
     }
 }

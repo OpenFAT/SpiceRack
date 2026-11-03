@@ -6,6 +6,9 @@
 //! p.26 `-raw <dir>` saves results there; p.26 `-format nutbin` is the binary
 //! Nutmeg format `crate::rawfile` parses; p.494 a `.scs` file is read in
 //! Spectre input mode without a `simulator lang=spectre` line.
+//!
+//! Contents:
+//! - `pub(super) fn run(netlist: &str) -> Result<Vec<RawData>, BackendError>`
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -32,6 +35,8 @@ pub(super) fn run(netlist: &str) -> Result<Vec<RawData>, BackendError> {
         )),
     }
 }
+
+// ---- private ----
 
 /// The result file in Spectre's raw directory.
 ///

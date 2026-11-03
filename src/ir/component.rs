@@ -1,8 +1,18 @@
+//! One element card as data: every SPICE component kind the IR models, and
+//! the per-kind views passes run over them (names, parameters, expressions).
+//!
+//! Cites: ngspice manual §4.1.11 (RF ports); SPICE 2G6 `POLY` term order.
+//!
+//! Contents:
+//! - `pub enum Component`, `pub struct RfPort`
+//! - `Component::names_mut(&mut self) -> Vec<&mut String>`
+//! - `Component::params(&self) -> &[(String, String)]`
+//! - `Component::exprs(&self) -> Vec<&str>`, `Component::exprs_mut(&mut self) -> Vec<&mut String>`
+//! - `Component::name(&self) -> Option<&str>`
+
 use serde::{Deserialize, Serialize};
 
 use super::*;
-
-// ── Component types ──
 
 /// All SPICE component types as structured data
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -200,6 +210,15 @@ pub enum Component {
     RawSpice {
         line: String,
     },
+}
+
+/// A voltage source's RF port (ngspice manual §4.1.11): its number among
+/// the deck's ports, which count from 1 with no repeat, and its reference
+/// impedance in ohms (ngspice's default is 50).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct RfPort {
+    pub num: u32,
+    pub z0: f64,
 }
 
 impl Component {
@@ -460,13 +479,4 @@ impl Component {
             RawSpice { .. } => None,
         }
     }
-}
-
-/// A voltage source's RF port (ngspice manual §4.1.11): its number among
-/// the deck's ports, which count from 1 with no repeat, and its reference
-/// impedance in ohms (ngspice's default is 50).
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct RfPort {
-    pub num: u32,
-    pub z0: f64,
 }

@@ -1,6 +1,13 @@
+//! Each component and source waveform -> its documented Spectre instance
+//! form; a construct with no documented spelling is a codegen error.
+//!
+//! Cites: `[CMP]` component chapters and `[REF]` (see `main.rs`), per test.
+//!
+//! Contents: none (tests only).
+
 use super::*;
 
-// ── Components ──
+// ---- private ----
 
 /// Citations, one per line:
 /// `[CMP]` p.628 `r1 (1 2) resistor r=1.2K m=2`

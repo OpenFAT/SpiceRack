@@ -5,6 +5,11 @@
 //! - branch currents become `i(name)`: `I(V1)`, `v1#branch`, Spectre/VACASK `V1:p` -> `i(v1)`
 //! - LTspice's `:` hierarchy separator becomes `.`: `V(x1:internal)` -> `x1.internal`
 //! - anything else (`time`, `frequency`, `onoise_spectrum`, bare Spectre nodes) is lowercased
+//!
+//! Cites: none (each simulator's raw-file vector names).
+//!
+//! Contents:
+//! - `pub fn canonical(name: &str, backend: Option<Dialect>) -> (String, bool)`
 
 use crate::ir::Dialect;
 

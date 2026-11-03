@@ -1,6 +1,17 @@
-use super::*;
+//! `CircuitIR` -> `FeatureFlags` (what the deck needs from a simulator) and,
+//! with `backend`, -> the `Issue`s one backend raises against it.
+//!
+//! Cites: none (the capability masks are `backend::Dialect::capabilities`).
+//!
+//! Contents:
+//! - `pub mod feature`: `XSPICE`, `OSDI`, `MEASURES`, `STEP_PARAMS`, `CONTROL_BLOCKS`,
+//!   `LAPLACE`, `VERILOG_COSIM`, `ALL` (`u8` bits)
+//! - `pub struct FeatureFlags`, `FeatureFlags::has(&self, f: u8) -> bool`
+//! - `pub struct Issue`, `pub enum IssueSeverity`
+//! - `CircuitIR::compute_features(&self) -> FeatureFlags`
+//! - `CircuitIR::check_backend(&self, backend: &str) -> Vec<Issue>` (feature `backend`)
 
-// ── Feature flags ──
+use super::*;
 
 /// What a deck needs from its simulator, one bit per feature
 /// (`Dialect::capabilities`, in `backend`, is the same mask: what a simulator does).
@@ -17,9 +28,6 @@ pub mod feature {
         XSPICE | OSDI | MEASURES | STEP_PARAMS | CONTROL_BLOCKS | LAPLACE | VERILOG_COSIM;
 }
 
-// Seven features, one distinct bit each, inside the `u8`.
-const _: () = assert!(feature::ALL.count_ones() == 7);
-
 /// Feature flags computed from IR
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct FeatureFlags {
@@ -28,11 +36,21 @@ pub struct FeatureFlags {
     pub element_count: usize,
 }
 
-impl FeatureFlags {
-    pub fn has(&self, f: u8) -> bool {
-        self.needs & f != 0
-    }
+/// Issue found by check_backend
+#[derive(Debug, Clone, PartialEq)]
+pub struct Issue {
+    pub severity: IssueSeverity,
+    pub message: String,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum IssueSeverity {
+    Error,
+    Warning,
+}
+
+// Seven features, one distinct bit each, inside the `u8`.
+const _: () = assert!(feature::ALL.count_ones() == 7);
 
 /// Each feature a backend may lack, how bad that is, and what to say
 /// (`{}` is the backend).
@@ -92,19 +110,10 @@ const _: () = {
     assert!(seen == feature::ALL, "a feature has no MISSING row");
 };
 
-// ── Compatibility checking ──
-
-/// Issue found by check_backend
-#[derive(Debug, Clone, PartialEq)]
-pub struct Issue {
-    pub severity: IssueSeverity,
-    pub message: String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum IssueSeverity {
-    Error,
-    Warning,
+impl FeatureFlags {
+    pub fn has(&self, f: u8) -> bool {
+        self.needs & f != 0
+    }
 }
 
 impl CircuitIR {
@@ -128,45 +137,6 @@ impl CircuitIR {
         }
 
         flags
-    }
-
-    fn scan_subcircuit(&self, sub: &Subcircuit, flags: &mut FeatureFlags) {
-        if !sub.osdi_loads.is_empty() {
-            flags.needs |= feature::OSDI;
-        }
-
-        if sub
-            .verilog_blocks
-            .iter()
-            .any(|vb| matches!(vb.mode, VerilogMode::Simulate))
-        {
-            flags.needs |= feature::VERILOG_COSIM;
-        }
-
-        for line in &sub.raw_spice {
-            let trimmed = line.trim().to_lowercase();
-            if trimmed == ".control" || trimmed.starts_with(".control ") {
-                flags.needs |= feature::CONTROL_BLOCKS;
-            }
-        }
-
-        for comp in &sub.components {
-            flags.element_count += 1;
-            match comp {
-                Component::Xspice { .. } => {
-                    flags.needs |= feature::XSPICE;
-                }
-                Component::BehavioralVoltage { expression, .. }
-                | Component::BehavioralCurrent { expression, .. }
-                    if crate::codegen::laplace::is_laplace(expression) =>
-                {
-                    flags.needs |= feature::LAPLACE;
-                }
-                _ => {}
-            }
-        }
-
-        flags.element_count += sub.instances.len();
     }
 
     #[cfg(feature = "backend")]
@@ -208,5 +178,48 @@ impl CircuitIR {
         }
 
         issues
+    }
+}
+
+// ---- private ----
+
+impl CircuitIR {
+    fn scan_subcircuit(&self, sub: &Subcircuit, flags: &mut FeatureFlags) {
+        if !sub.osdi_loads.is_empty() {
+            flags.needs |= feature::OSDI;
+        }
+
+        if sub
+            .verilog_blocks
+            .iter()
+            .any(|vb| matches!(vb.mode, VerilogMode::Simulate))
+        {
+            flags.needs |= feature::VERILOG_COSIM;
+        }
+
+        for line in &sub.raw_spice {
+            let trimmed = line.trim().to_lowercase();
+            if trimmed == ".control" || trimmed.starts_with(".control ") {
+                flags.needs |= feature::CONTROL_BLOCKS;
+            }
+        }
+
+        for comp in &sub.components {
+            flags.element_count += 1;
+            match comp {
+                Component::Xspice { .. } => {
+                    flags.needs |= feature::XSPICE;
+                }
+                Component::BehavioralVoltage { expression, .. }
+                | Component::BehavioralCurrent { expression, .. }
+                    if crate::codegen::laplace::is_laplace(expression) =>
+                {
+                    flags.needs |= feature::LAPLACE;
+                }
+                _ => {}
+            }
+        }
+
+        flags.element_count += sub.instances.len();
     }
 }

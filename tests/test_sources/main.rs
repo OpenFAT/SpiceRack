@@ -1,4 +1,3 @@
-#![cfg(feature = "backend")]
 //! Waveform sources the IR carries beyond SPICE3's six: PWL `r=`/`td=`,
 //! TRNOISE and TRRANDOM, and what each dialect writes for them or refuses;
 //! the ngspice importer reading PWL `r=`/`td=`, RF ports and `.sp`, and the
@@ -12,6 +11,9 @@
 //! imported Spectre deck (no Spectre here): the Spectre Reference's
 //! semantics as the closed form, on ngspice running the deck written from
 //! its IR. A missing ngspice is a failure, not a skip.
+//!
+//! Contents: none (tests only).
+#![cfg(feature = "backend")]
 
 use spicerack::codegen::{Dialect, netlist};
 use spicerack::ir::*;
@@ -20,6 +22,8 @@ use spicerack::result::RawData;
 mod imported;
 mod pwl;
 mod random;
+
+// ---- private ----
 
 fn ms(x: f64) -> IrNum {
     IrNum::Num(x * 1e-3)

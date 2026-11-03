@@ -1,3 +1,13 @@
+//! SPICE testbench cards (analyses, options, outputs, `.control` analysis
+//! lines) -> `Testbench` rows; `false` when the IR cannot hold the card.
+//!
+//! Cites: Xyce Reference Guide p.96 (`.options <pkg>`); HSPICE `.tran START=`;
+//! LTspice `.tran Tstop`.
+//!
+//! Contents:
+//! - `Cx::control(&mut self, cmd: usize)`
+//! - `Cx::testbench_card(&mut self, card: usize) -> bool`
+
 use std::collections::{HashMap, HashSet};
 
 use super::Cx;
@@ -159,7 +169,11 @@ impl Cx<'_> {
         }
         true
     }
+}
 
+// ---- private ----
+
+impl Cx<'_> {
     fn analysis(&self, card: usize, tag: Tag) -> Option<Analysis> {
         let k = self.kids(card);
         let n = |i: usize| k.get(i).and_then(|&r| self.number(r));

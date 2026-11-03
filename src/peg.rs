@@ -15,25 +15,17 @@
 //! a capture no tag names fails the compile). Lowercase rules are lexical and
 //! leave nothing. Grammar texts layer: a rule in a later text replaces the
 //! earlier text's rule of that name (a dialect over `spice.peg`).
-
-/// Recursion past this depth fails the parse: input-controlled nesting is
-/// capped, not trusted.
-const DEPTH_MAX: u32 = 512;
-
-#[derive(Clone, Copy)]
-enum Node {
-    Seq(u32, u32), // kids[a..a+b]
-    Choice(u32, u32),
-    Star(u32),
-    Plus(u32),
-    Opt(u32),
-    And(u32),
-    Not(u32),
-    Lit(u32, u32, bool), // bytes[a..a+b], case-blind
-    Class(u32),
-    Any,
-    Ref(u32),
-}
+//!
+//! Cites: Ford, "Parsing Expression Grammars", POPL 2004; ESPice
+//! `tests/frontend/peg.zig`.
+//!
+//! Contents:
+//! - `pub struct Grammar`, `Grammar::compile(texts: &[&str], tag: impl Fn(&str) -> Option<u8>) -> Result<Grammar, String>`,
+//!   `Grammar::rule(&self, name: &str) -> Option<u32>`, `Grammar::name(&self, rule: u32) -> &str`,
+//!   `Grammar::parse<'s>(&self, start: u32, src: &'s str) -> Result<Tree<'s>, usize>`
+//! - `pub struct Row`
+//! - `pub struct Tree<'s>`, `Tree::tag(&self, i: usize) -> u8`, `Tree::text(&self, i: usize) -> &'s str`,
+//!   `Tree::children(&self, i: Option<usize>) -> impl Iterator<Item = usize>`
 
 pub struct Grammar {
     nodes: Vec<Node>,
@@ -60,6 +52,43 @@ pub struct Tree<'s> {
     pub rows: Vec<Row>,
     pub src: &'s str,
 }
+
+/// Recursion past this depth fails the parse: input-controlled nesting is
+/// capped, not trusted.
+const DEPTH_MAX: u32 = 512;
+
+#[derive(Clone, Copy)]
+enum Node {
+    Seq(u32, u32), // kids[a..a+b]
+    Choice(u32, u32),
+    Star(u32),
+    Plus(u32),
+    Opt(u32),
+    And(u32),
+    Not(u32),
+    Lit(u32, u32, bool), // bytes[a..a+b], case-blind
+    Class(u32),
+    Any,
+    Ref(u32),
+}
+
+struct Compiler<'a> {
+    src: &'a [u8],
+    pos: usize,
+    g: Grammar,
+    refs: Vec<String>,
+    seen: Vec<String>, // this text's rules
+}
+
+struct Parser<'g, 's> {
+    g: &'g Grammar,
+    src: &'s [u8],
+    rows: Vec<Row>,
+    depth: u32,
+    furthest: u32,
+}
+
+type Step = Result<Option<u32>, ()>; // Err: depth exceeded
 
 impl Grammar {
     /// Compiles grammar texts, each layered over the ones before it; `tag`
@@ -175,13 +204,7 @@ impl<'s> Tree<'s> {
     }
 }
 
-struct Compiler<'a> {
-    src: &'a [u8],
-    pos: usize,
-    g: Grammar,
-    refs: Vec<String>,
-    seen: Vec<String>, // this text's rules
-}
+// ---- private ----
 
 impl<'a> Compiler<'a> {
     fn err(&self, want: &str) -> String {
@@ -420,16 +443,6 @@ impl<'a> Compiler<'a> {
         Ok(self.add(Node::Class(self.g.classes.len() as u32 - 1)))
     }
 }
-
-struct Parser<'g, 's> {
-    g: &'g Grammar,
-    src: &'s [u8],
-    rows: Vec<Row>,
-    depth: u32,
-    furthest: u32,
-}
-
-type Step = Result<Option<u32>, ()>; // Err: depth exceeded
 
 impl Parser<'_, '_> {
     fn rule(&mut self, r: u32, pos: u32) -> Step {

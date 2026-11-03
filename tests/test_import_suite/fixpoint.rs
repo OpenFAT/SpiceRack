@@ -1,3 +1,12 @@
+//! A deck in one dialect -> emitted, read back and emitted again: the IR and
+//! the text must not change. No simulator.
+//!
+//! Cites: none (a round trip through SpiceRack's own reader and writer).
+//!
+//! Contents:
+//! - `pub(super) fn fixpoint(ir: &CircuitIR, d: Dialect) -> Result<String, String>`
+//! - `pub(super) fn corpus_fixpoint(var: &str, d: Dialect, ext: &str, keep: fn(&str) -> bool)`
+
 use super::*;
 
 /// Emitting `ir` in `d` and reading it back gives `ir` again, and emitting

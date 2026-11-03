@@ -8,9 +8,29 @@
 //!
 //! The ESPice runs need `espice` on PATH (`$ESPICE` overrides): unsupported
 //! fails, never skips, so outside `nix develop .#testing` they fail.
+//!
+//! Cites: real ESPice (`--tokenizer=<d>`) as the oracle for each dialect.
+//!
+//! Contents: none (tests only).
 
 use spicerack::codegen::{Dialect, netlist};
 use spicerack::ir::*;
+
+/// Known failures: the dialects whose deck is not written or not read, with
+/// the reason. A listed dialect that reads back fails the test until its
+/// line goes.
+const ESPICE_REFUSES: &[(Dialect, &str)] = &[
+    (
+        Dialect::Ngspice,
+        "ESPice has no XSPICE code models; ngspice spells the Laplace block as an `s_xfer` A element",
+    ),
+    (
+        Dialect::Spectre,
+        "codegen refuses a B source for Spectre (`v(mid)` has no safe Spectre spelling)",
+    ),
+];
+
+// ---- private ----
 
 fn sub(name: &str) -> Subcircuit {
     Subcircuit {
@@ -334,20 +354,6 @@ fn node(raw: &spicerack::result::RawData, name: &str) -> f64 {
         });
     raw.real_data[i][0]
 }
-
-/// Known failures: the dialects whose deck is not written or not read, with
-/// the reason. A listed dialect that reads back fails the test until its
-/// line goes.
-const ESPICE_REFUSES: &[(Dialect, &str)] = &[
-    (
-        Dialect::Ngspice,
-        "ESPice has no XSPICE code models; ngspice spells the Laplace block as an `s_xfer` A element",
-    ),
-    (
-        Dialect::Spectre,
-        "codegen refuses a B source for Spectre (`v(mid)` has no safe Spectre spelling)",
-    ),
-];
 
 #[test]
 fn espice_reads_each_dialect_to_the_same_op() {

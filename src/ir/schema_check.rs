@@ -7,6 +7,9 @@
 //! so a schema cannot pass by the checker skipping what it does not read.
 //! `jsonschema` is in neither the nix shell nor the lockfile; this is the
 //! ponytail size of one.
+//!
+//! Contents:
+//! - `pub(super) fn errors(root: &Value, doc: &Value) -> Vec<String>`
 
 use serde_json::Value;
 
@@ -31,6 +34,8 @@ pub(super) fn errors(root: &Value, doc: &Value) -> Vec<String> {
     check(root, root, doc, "$", 0, &mut out);
     out
 }
+
+// ---- private ----
 
 fn check(root: &Value, s: &Value, v: &Value, at: &str, depth: u32, out: &mut Vec<String>) {
     // The IR nests a few levels; a `$ref` cycle with no data under it would not end.

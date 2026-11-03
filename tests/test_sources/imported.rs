@@ -1,4 +1,23 @@
+//! Imported decks -> IR -> ngspice: ngspice PWL `r=`/`td=`, RF ports and
+//! `.sp`, and Spectre PWL `delay`/`pwlperiod`, each lowered into its IR field
+//! (or kept raw) and run against the original deck or the closed form.
+//!
+//! Cites: ngspice 45 manual §4.1.4, §4.1.11, §11.3.11; Spectre Reference 5.0
+//! `vsource` #4, #17, #18, p.686 (`[CMP]`); real ngspice.
+//!
+//! Contents: none (tests only).
+
 use super::*;
+
+/// The Spectre PWL sources the Spectre-cards tests below read.
+const SPECTRE_PWLS: &str = "// pwl\nsimulator lang=spectre\n\
+    v1 (a 0) vsource type=pwl wave=[0 0 1m 1 2m 0] delay=0.5m\n\
+    v2 (b 0) vsource type=pwl wave=[0 0 1m 1 2m 0] pwlperiod=2m\n\
+    v3 (c 0) vsource type=pwl wave=[0 0 1m 1 2m 0] pwlperiod=2m delay=0.5m\n\
+    r1 (a 0) resistor r=1\nr2 (b 0) resistor r=1\nr3 (c 0) resistor r=1\n\
+    tr tran step=10u stop=7m maxstep=10u\n";
+
+// ---- private ----
 
 // ── ngspice cards in: PWL r=/td= (§4.1.4), RF port (§4.1.11), .sp (§11.3.11) ──
 
@@ -122,13 +141,6 @@ fn an_imported_rf_port_runs_as_the_original_deck() {
 // value at 0. That is ngspice's `r=0` exactly when the points start at 0,
 // end at P on the first point's value, and the last segment is at least
 // twidth long (the ramp is then the segment itself); any other form stays raw.
-
-const SPECTRE_PWLS: &str = "// pwl\nsimulator lang=spectre\n\
-    v1 (a 0) vsource type=pwl wave=[0 0 1m 1 2m 0] delay=0.5m\n\
-    v2 (b 0) vsource type=pwl wave=[0 0 1m 1 2m 0] pwlperiod=2m\n\
-    v3 (c 0) vsource type=pwl wave=[0 0 1m 1 2m 0] pwlperiod=2m delay=0.5m\n\
-    r1 (a 0) resistor r=1\nr2 (b 0) resistor r=1\nr3 (c 0) resistor r=1\n\
-    tr tran step=10u stop=7m maxstep=10u\n";
 
 #[test]
 fn spectre_pwl_delay_and_an_exact_pwlperiod_lower_into_td_and_r() {

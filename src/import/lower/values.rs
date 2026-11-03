@@ -1,11 +1,27 @@
+//! Value rows -> IR values: numbers with their scale, expressions, `k=v`
+//! parameter lists, vectors, and the identifiers Spectre and VACASK spell
+//! with escapes or quotes.
+//!
+//! Cites: ngspice manual §2.1.3 (scale factors; ngspice's own arithmetic via
+//! `unit::ngspice_value`); ADI LTspice help (`µ`, `6K34`); Kundert, Appendix
+//! B.2 (Spectre names).
+//!
+//! Contents:
+//! - `Cx::num(&self, i: usize) -> Option<f64>`, `Cx::number(&self, i: usize) -> Option<f64>`,
+//!   `Cx::count(&self, i: usize) -> Option<u32>`
+//! - `Cx::value(&self, i: usize) -> IrValue`, `Cx::irnum(&self, i: usize) -> Option<IrNum>`
+//! - `Cx::params(&self, i: usize) -> Vec<(String, String)>`, `Cx::vtext(&self, v: usize) -> String`,
+//!   `Cx::body(&self, i: usize) -> String`, `Cx::name(&self, i: usize) -> String`
+//! - `Cx::pairs(&self, i: usize) -> Vec<(String, usize)>`,
+//!   `Cx::get(&self, p: &[(String, usize)], k: &str) -> Option<usize>`
+//! - `pub(super) fn unquoted(v: &str) -> Option<String>`
+
 use super::{Cx, trim};
 use crate::codegen::Dialect;
 use crate::import::Tag;
 use crate::ir::*;
 
 impl Cx<'_> {
-    // ── Values ──
-
     /// A `Num` row's value: its `Mag` (one decimal, `d` an exponent letter)
     /// scaled by its scale row, parsed once so `0.1n` is exactly 1e-10.
     pub(super) fn num(&self, i: usize) -> Option<f64> {
@@ -165,15 +181,6 @@ impl Cx<'_> {
         out
     }
 
-    /// LTspice's `µ` is `u` (XVII help) in the text a SPICE reader gets.
-    fn respell(&self, s: &str) -> String {
-        if self.d == Dialect::Ltspice {
-            s.replace('µ', "u")
-        } else {
-            s.to_string()
-        }
-    }
-
     /// A body kept whole (`B`, `.func`): its expression without delimiters.
     pub(super) fn body(&self, i: usize) -> String {
         match self.kid(i, Tag::Expr) {
@@ -234,4 +241,17 @@ impl Cx<'_> {
 /// `"text"` without its quotes.
 pub(super) fn unquoted(v: &str) -> Option<String> {
     Some(v.strip_prefix('"')?.strip_suffix('"')?.to_string())
+}
+
+// ---- private ----
+
+impl Cx<'_> {
+    /// LTspice's `µ` is `u` (XVII help) in the text a SPICE reader gets.
+    fn respell(&self, s: &str) -> String {
+        if self.d == Dialect::Ltspice {
+            s.replace('µ', "u")
+        } else {
+            s.to_string()
+        }
+    }
 }
