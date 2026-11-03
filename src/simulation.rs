@@ -1,5 +1,7 @@
 //! The one pipeline: `CircuitIR` → codegen in the selected backend's dialect
-//! → backend runs the text verbatim → `RawData`.
+//! → backend runs the text verbatim → `RawData`, one per plot or, matched
+//! by plot name (ngspice and ESPice `Plotname`s, checked on both), one per
+//! analysis.
 
 use crate::backend::{netlist, select, BackendError, Dialect};
 use crate::ir::{Analysis, CircuitIR};
@@ -31,4 +33,62 @@ pub fn run_all(ir: &CircuitIR, backend: Option<&str>) -> Result<Vec<RawData>, Ba
         p.measures.clone_from(&measures);
     }
     Ok(plots)
+}
+
+/// [`run_all`], one entry per analysis of `ir`'s testbench, in its order:
+/// that analysis's first plot, or `None` for a `Fourier`, which prints its
+/// table and writes none. ngspice runs a deck's analyses in its own order,
+/// so a plot is matched by its `Plotname` (ngspice's and ESPice's), not by
+/// position; VACASK's are in deck order, one per analysis. A lone analysis
+/// takes the first plot, as [`run`].
+///
+/// # Errors
+/// As [`run_all`], and `SimulationError` when an analysis's plot is not
+/// among those the run wrote, or it is an analysis whose plot is not
+/// matched here (`pss`, `hb`, `stb`, transient noise, the Spectre-only
+/// ones) run beside others.
+pub fn run_each(ir: &CircuitIR, backend: Option<&str>) -> Result<Vec<Option<RawData>>, BackendError> {
+    let analyses = ir.testbench.as_ref().map_or(&[][..], |tb| &tb.analyses);
+    let mut plots: Vec<Option<RawData>> = run_all(ir, backend)?.into_iter().map(Some).collect();
+    assert!(!plots.is_empty(), "a run returns at least one plot");
+    if analyses.len() <= 1 {
+        plots.truncate(1);
+        return Ok(plots);
+    }
+    let missing = |what: &str| BackendError::SimulationError(format!("no {what} plot among those the run wrote"));
+    if plots[0].as_ref().and_then(|p| p.backend_hint) == Some(Dialect::Vacask) {
+        if plots.len() != analyses.len() {
+            return Err(missing(&format!("one-per-analysis ({} plots, {} analyses)", plots.len(), analyses.len())));
+        }
+        return Ok(plots);
+    }
+    let mut out = Vec::with_capacity(analyses.len());
+    for a in analyses {
+        let name = match a {
+            Analysis::Fourier { .. } => {
+                out.push(None);
+                continue;
+            }
+            Analysis::Op => "Operating Point",
+            Analysis::Dc { .. } => "DC transfer characteristic",
+            Analysis::Ac { .. } => "AC Analysis",
+            Analysis::Transient { .. } => "Transient Analysis",
+            Analysis::Noise { .. } => "Noise Spectral Density Curves",
+            Analysis::Tf { .. } => "Transfer Function",
+            Analysis::Sensitivity { .. } => "Sensitivity Analysis",
+            Analysis::PoleZero { .. } => "Pole-Zero Analysis",
+            Analysis::Distortion { .. } => "DISTORTION",
+            Analysis::SPar { .. } => "SP Analysis",
+            Analysis::Pss { .. } | Analysis::HarmonicBalance { .. } | Analysis::Stability { .. } | Analysis::TransientNoise { .. }
+            | Analysis::SpectreSweep { .. } | Analysis::SpectreMonteCarlo { .. } | Analysis::SpectrePac { .. }
+            | Analysis::SpectrePnoise { .. } | Analysis::SpectrePxf { .. } | Analysis::SpectrePstb { .. } => {
+                let kind = format!("{a:?}");
+                return Err(missing(&format!("matchable {}", kind.split([' ', '{']).next().unwrap_or_default())));
+            }
+        };
+        let i = plots.iter().position(|p| p.as_ref().is_some_and(|p| p.plot_name.starts_with(name))).ok_or_else(|| missing(name))?;
+        out.push(plots[i].take());
+    }
+    assert_eq!(out.len(), analyses.len());
+    Ok(out)
 }

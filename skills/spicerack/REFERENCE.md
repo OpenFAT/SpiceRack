@@ -82,6 +82,11 @@ injection, propagation delay and pedestal all track them.
 ## Analyses
 
 Queue on a `Testbench` with `add_*`; run on a `Testbench` or `CircuitSimulator` directly.
+`tb.run()` runs everything queued as one deck and returns a list, one result per
+analysis in queue order, typed as the run method's (`None` for `add_fourier`):
+`op, tran = tb.run()`. Results are matched to analyses by plot name (ngspice
+reorders analyses); `pss`, `hb`, `stb`, transient noise and Spectre-only analyses
+queued beside others raise instead.
 
 | Run method | Queue method | Signature | Result |
 |---|---|---|---|

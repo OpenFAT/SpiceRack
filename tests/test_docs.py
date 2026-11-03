@@ -60,6 +60,18 @@ def test_promised_values():
     tb.V("in", "in", "0", 1.0)
     assert tb.operating_point()["out"] == pytest.approx(0.2, abs=1e-9)
 
+    # simulate.md, `tb.run()`: the RC's capacitor is open at DC.
+    rc = ps.Subcircuit("rc", ["vin", "vout"])
+    rc.R("1", "vin", "vout", 1e3)
+    rc.C("1", "vout", rc.gnd, 1e-9)
+    both = ps.Testbench(rc)
+    both.V("in", "vin", "0", 1.0)
+    both.add_transient(step_time=1e-8, end_time=5e-6, max_time=1e-8)
+    both.add_operating_point()
+    tran, op = both.run()
+    assert op["vout"] == pytest.approx(1.0, abs=1e-9)
+    assert tran.time[-1] == pytest.approx(5e-6, rel=1e-12)
+
 
 def test_skill_names_every_backend_name():
     """Regression: the skill listed the ngspice aliases but not `vacask-shared`.

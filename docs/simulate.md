@@ -92,6 +92,23 @@ To write a deck with several analyses, queue them with the `add_*` twins
 `add_fourier`, ...) and print `tb.netlist(...)`. HSPICE is netlist-only: there
 is no HSPICE runner.
 
+`tb.run()` runs the queued analyses as that one deck and returns one result per
+analysis, in the order they were queued, each the type its immediate twin
+returns (`None` for `add_fourier`, whose table goes to stdout). ngspice runs a
+deck's analyses in its own order, so results are matched to analyses by plot
+name, never by position. `pss`, `hb`, `stb`, transient noise and the Spectre
+analyses run alone; queued beside others, `run()` raises rather than guess
+which plot is theirs.
+
+```python
+both = ps.Testbench(rc)
+both.V("in", "vin", "0", 1.0)
+both.add_transient(step_time=1e-8, end_time=5e-6, max_time=1e-8)
+both.add_operating_point()
+tran, op = both.run()
+print(op["vout"], tran.time[-1])   # 1.0 5e-06
+```
+
 An ngspice deck with a `.meas` or a `.four` (from `measure`, `add_fourier`, or a
 raw or extra line) runs its first `ac`, `tran` or `dc` from a `.control` block,
 with a `fourier` command for each `.four`, because ngspice refuses `.measure` and

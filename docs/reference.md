@@ -87,6 +87,7 @@ Waveform sources, each a `...VoltageSource` and a `...CurrentSource`, also on
 | `global_nodes(*nodes)` | `.global` |
 | `extra_line(line)` | a raw line in the bench |
 | `add_operating_point()`, `add_dc(**sweeps)`, `add_ac(...)`, `add_transient(...)`, `add_noise(...)`, `add_tf(...)`, `add_fourier(f0, outputs)`, `add_spectre_sweep(...)`, `add_spectre_monte_carlo(...)`, ... | queue an analysis card instead of running it |
+| `run()` | runs every queued analysis as one deck: a list, one result per analysis in queue order (`None` for `add_fourier`) |
 
 ## Settings (`Testbench`, `CircuitSimulator`)
 

@@ -9,6 +9,8 @@ the Python binding layer and netlist generation.
 
 Run: maturin develop && pytest tests/test_python_simulator.py -v
 """
+import math
+
 import pytest
 
 
@@ -489,3 +491,76 @@ def test_noise_runs_when_saves_are_set():
     # Flat band is the 1k resistor's thermal noise, sqrt(4kTR).
     expected = math.sqrt(4 * 1.380649e-23 * 300.15 * 1000.0)
     assert spectrum[0] == pytest.approx(expected, rel=0.02)
+
+
+# ======================================================================
+# Testbench.run: every queued analysis in one deck
+# ======================================================================
+
+def _queued_bench(backend):
+    """1k/1k divider with 1 uF on its output, driven by a 0 -> 2 V step with
+    AC 1; a second 1k/1k divider off a 3 V rail. Closed forms: op b = 1.5 V
+    and out = 0 (the step is 0 at t = 0); tran out = 1 - exp(-t/0.5 ms);
+    ac out = 1 / |2 + j*2*pi*f*RC|. Queued tran, op, ac: ngspice runs its
+    own order (ac, dc, op, tran), so a positional match would misfile them."""
+    import spicerack as ps
+
+    dut = ps.Subcircuit("q", ["in", "out", "b"])
+    dut.R(name="1", positive="in", negative="out", value=1e3)
+    dut.R(name="2", positive="out", negative="0", value=1e3)
+    dut.C(name="1", positive="out", negative="0", value=1e-6)
+    dut.R(name="3", positive="rail", negative="b", value=1e3)
+    dut.R(name="4", positive="b", negative="0", value=1e3)
+    tb = ps.Testbench(dut)
+    tb.with_backend(backend)
+    tb.PulseVoltageSource(name="in", positive="in", negative="0", initial_value=0.0, pulsed_value=2.0,
+                          delay=0.0, rise_time=1e-9, fall_time=1e-9, pulse_width=1.0, period=2.0, ac=1.0)
+    tb.V(name="rail", positive="rail", negative="0", value=3.0)
+    tb.add_transient(step_time=1e-6, end_time=1e-3, max_time=1e-6)
+    tb.add_operating_point()
+    tb.add_ac(variation="dec", number_of_points=5, start_frequency=10.0, stop_frequency=1e4)
+    return tb
+
+
+def _check_queued(tran, op, ac):
+    import math
+
+    assert op["b"] == pytest.approx(1.5, abs=1e-9)
+    assert op["out"] == pytest.approx(0.0, abs=1e-9)
+    for t, v in zip(tran.time, tran["out"]):
+        assert v == pytest.approx(1.0 - math.exp(-t / 0.5e-3), abs=2e-3)
+    assert tran.time[-1] == pytest.approx(1e-3)
+    for f, mag in zip(ac.frequency, ac.magnitude("out")):
+        assert mag == pytest.approx(1.0 / abs(complex(2.0, 2 * math.pi * f * 1e-3)), rel=1e-6)
+
+
+@pytest.mark.parametrize("backend", ["ngspice", "espice", "vacask"])
+def test_run_returns_one_result_per_queued_analysis_in_queue_order(backend):
+    import spicerack as ps
+
+    tran, op, ac = _queued_bench(backend).run()
+    assert (type(tran), type(op), type(ac)) == (ps.TransientAnalysis, ps.OperatingPoint, ps.AcAnalysis)
+    _check_queued(tran, op, ac)
+
+
+def test_run_with_a_measure_runs_every_analysis_from_the_control_block():
+    """A `.meas` moves ngspice's analyses into a `.control` block, which runs
+    them in card order; the results still land on their own analyses."""
+    tb = _queued_bench("ngspice")
+    tb.measure("tran", "vend", "find", "v(out)", "at=1m")
+    tran, op, ac = tb.run()
+    _check_queued(tran, op, ac)
+    assert tran.measures["vend"] == pytest.approx(1.0 - math.exp(-2.0), abs=2e-3)
+
+
+def test_run_gives_none_for_a_fourier_and_refuses_an_empty_queue():
+    """`.four` prints its table to stdout and writes no plot."""
+    import spicerack as ps
+
+    tb = _queued_bench("ngspice")
+    tb.add_fourier(fundamental_frequency=1e3, outputs=["v(out)"])
+    *_, four = tb.run()
+    assert four is None
+    empty = ps.Testbench(ps.Subcircuit("e", ["a"]))
+    with pytest.raises(ValueError, match="add_"):
+        empty.run()
