@@ -536,6 +536,7 @@ impl Cx<'_> {
                 }).collect::<Option<_>>()?,
             },
             Tag::Ac => Analysis::Ac { sweep: FreqSweep { variation: word(0)?.parse().ok()?, points: self.count(k[1])?, start: n(2)?, stop: n(3)? } },
+            Tag::Sp => Analysis::SPar { sweep: FreqSweep { variation: word(0)?.parse().ok()?, points: self.count(k[1])?, start: n(2)?, stop: n(3)? } },
             Tag::Tran => {
                 let uic = self.kid(card, Tag::Uic).is_some();
                 let p: Vec<f64> = self.all(card, Tag::Num).into_iter().map(|r| self.num(r)).collect::<Option<_>>()?;
@@ -663,8 +664,22 @@ impl Cx<'_> {
             Tag::V | Tag::I => {
                 let (np, nm) = (node(0)?, node(1)?);
                 let (mut value, mut dc_given, mut ac_magnitude, mut ac_phase, mut wf) = (IrValue::Numeric { value: 0.0 }, false, None, None, None);
+                // ngspice's named fields (§4.1.4, §4.1.11), applied once the
+                // whole card is read: they may come before the PWL.
+                let (mut repeat, mut delay, mut portnum, mut z0) = (None, None, None, None);
                 for &f in &k[3..] {
                     match self.tag(f) {
+                        Tag::Pair => {
+                            let [key, val] = self.kids(f)[..] else { return None };
+                            let v = self.irnum(val)?;
+                            match self.text(key).to_ascii_lowercase().as_str() {
+                                "r" => repeat = Some(v),
+                                "td" => delay = Some(v),
+                                "portnum" => portnum = Some(self.count(val)?),
+                                "z0" => z0 = Some(v.num()?),
+                                _ => return None,
+                            }
+                        }
                         Tag::Val => (value, dc_given) = (self.value(f), true),
                         Tag::Sdc => {
                             if let Some(v) = self.kid(f, Tag::Val) {
@@ -686,8 +701,19 @@ impl Cx<'_> {
                 if !dc_given && let Some(w) = &wf {
                     value = w.at_zero();
                 }
+                if repeat.is_some() || delay.is_some() {
+                    let Some(IrWaveform::Pwl { repeat: r, delay: d, .. }) = &mut wf else { return None };
+                    (*r, *d) = (repeat, delay);
+                }
+                // A z0 with no port, or a port on an I source, has no IR field.
+                let port = match (portnum, z0) {
+                    (Some(num), z0) => Some(RfPort { num, z0: z0.unwrap_or(50.0) }),
+                    (None, None) => None,
+                    (None, Some(_)) => return None,
+                };
                 match tag {
-                    Tag::V => Component::VoltageSource { name, np, nm, value, ac_magnitude, ac_phase, waveform: wf, port: None },
+                    Tag::V => Component::VoltageSource { name, np, nm, value, ac_magnitude, ac_phase, waveform: wf, port },
+                    _ if port.is_some() => return None,
                     _ => Component::CurrentSource { name, np, nm, value, ac_magnitude, ac_phase, waveform: wf },
                 }
             }

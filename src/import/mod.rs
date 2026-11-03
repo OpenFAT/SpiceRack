@@ -39,7 +39,7 @@ tags! {
     Include, Lib, Path, Section, Model, MPair, MVal, More, Flag, Params, Assign, FuncDef, Func, Arg, Body,
     Load, Embed, Ground, Options, Pkg, Temp, Ic, Nodeset, NodeVal, Global, Save, Out, Print, PrintKind, Meas, Probe, Step, StepKind,
     // analyses
-    Op, Dc, Sweep, Ac, Tran, Uic, Noise, Tf, Sens, Pz, Four,
+    Op, Dc, Sweep, Ac, Tran, Uic, Noise, Tf, Sens, Pz, Four, Sp,
     // elements and their fields
     R, C, L, K, V, I, Sdc, Sac, Pulse, Sin, Pwl, Exp, Sffm, Am, Trnoise, Trrandom, Poly, E, G, F, H, B, D, Q, M, J, Z, S, W, T, X,
     Mname, Inst, Ana, Ctl,

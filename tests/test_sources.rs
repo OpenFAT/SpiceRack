@@ -1,11 +1,14 @@
 #![cfg(feature = "backend")]
 //! Waveform sources the IR carries beyond SPICE3's six: PWL `r=`/`td=`,
-//! TRNOISE and TRRANDOM, and what each dialect writes for them or refuses.
+//! TRNOISE and TRRANDOM, and what each dialect writes for them or refuses;
+//! and the ngspice importer reading PWL `r=`/`td=`, RF ports and `.sp`.
 //!
 //! Oracle: real ngspice running the deck the codegen wrote, checked against
 //! the waveform's closed form (ngspice 45 manual §4.1.4) or, for the random
 //! sources, against their distribution with a stated statistical tolerance
-//! (§4.1.7, §4.1.8). A missing ngspice is a failure, not a skip.
+//! (§4.1.7, §4.1.8). An imported deck: real ngspice on the original and on
+//! the deck written from its IR, every vector equal to 1e-12. A missing
+//! ngspice is a failure, not a skip.
 
 use spicerack::codegen::{netlist, Dialect};
 use spicerack::ir::*;
@@ -233,4 +236,82 @@ fn espice_reads_the_repeating_pwl_current_source() {
         assert!((first - want).abs() < tol, "{tau}: {first}, want {want}");
         assert!((third - first).abs() < tol, "{tau}: {third} vs {first}");
     }
+}
+
+// ── ngspice cards in: PWL r=/td= (§4.1.4), RF port (§4.1.11), .sp (§11.3.11) ──
+
+/// Each card form lowers into the IR's field; a form it has no field for
+/// stays raw (an `r=` off a PWL, a port on an I source, a z0 expression,
+/// `.sp`'s `donoise` flag).
+#[test]
+fn ngspice_pwl_repeat_delay_and_rf_port_cards_lower_into_the_ir() {
+    let deck = "t\nV1 a 0 pwl(0 0 1m 1 2m 0) r=0 td=0.5m\nV2 b 0 PWL(0 0 1m 1) TD=1m\nV3 c 0 pwl 0 0 1m 1 2m 0 r=1m\n\
+                I1 d 0 pwl(0 0 1m 1) r=0\nV4 e 0 dc 0 ac 1 portnum 1 z0 100\nV5 f 0 ac 1 portnum=2\nV6 j 0 pwl(0 0 1m 1) r={rr}\n\
+                V7 g 0 sin(0 1 1k) r=0\nI2 h 0 ac 1 portnum 1\nV8 i 0 ac 1 portnum 1 z0 {zz}\n.sp lin 3 1k 3k\n.sp dec 10 1k 1g 1\n.end\n";
+    let (ir, report) = spicerack::import::parse(deck, "t", Dialect::Ngspice).unwrap();
+    let n = |s: &str| IrNum::Num(spicerack::unit::ngspice_value(s).unwrap());
+    let pwl = |i: usize| match &ir.top.components[i] {
+        Component::VoltageSource { waveform: Some(IrWaveform::Pwl { repeat, delay, .. }), .. }
+        | Component::CurrentSource { waveform: Some(IrWaveform::Pwl { repeat, delay, .. }), .. } => (repeat.clone(), delay.clone()),
+        other => panic!("{other:?}"),
+    };
+    let port = |i: usize| match &ir.top.components[i] {
+        Component::VoltageSource { port, .. } => *port,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(pwl(0), (Some(n("0")), Some(n("0.5m"))));
+    assert_eq!(pwl(1), (None, Some(n("1m"))));
+    assert_eq!(pwl(2), (Some(n("1m")), None));
+    assert_eq!(pwl(3), (Some(n("0")), None));
+    assert_eq!(port(4), Some(RfPort { num: 1, z0: 100.0 }));
+    assert_eq!(port(5), Some(RfPort { num: 2, z0: 50.0 }));
+    assert_eq!(pwl(6), (Some(IrNum::Expr("rr".into())), None));
+    for i in 7..10 {
+        assert!(matches!(&ir.top.components[i], Component::RawSpice { .. }), "{:?}", ir.top.components[i]);
+    }
+    let sweep = FreqSweep { variation: Sweep::Lin, points: 3, start: 1e3, stop: 3e3 };
+    assert_eq!(ir.testbench.unwrap().analyses, [Analysis::SPar { sweep }]);
+    assert_eq!(report.raw, 4);
+}
+
+/// `deck` on real ngspice, and the deck the importer and codegen make of
+/// it: every vector of every plot the same, to 1e-12 relative. Every card
+/// must have lowered, so the second deck is the IR's.
+fn ngspice_round_trip(deck: &str) {
+    let (ir, report) = spicerack::import::parse(deck, "rt", Dialect::Ngspice).unwrap();
+    assert_eq!((report.raw, report.unparsed.len()), (0, 0), "{report:?}");
+    let emitted = netlist(&ir, Dialect::Ngspice).unwrap();
+    let run = |d: &str| Dialect::Ngspice.run_all(d).unwrap_or_else(|e| panic!("ngspice: {e}\n{d}"));
+    let (want, got) = (run(deck), run(&emitted));
+    assert_eq!(want.len(), got.len(), "{emitted}");
+    let same = |a: f64, b: f64| (a - b).abs() <= 1e-12 * a.abs().max(b.abs()).max(1e-30);
+    for (w, g) in want.iter().zip(&got) {
+        assert_eq!(w.plot_name, g.plot_name);
+        for v in &w.variables {
+            let gi = g.variables.iter().position(|x| x.name == v.name).unwrap_or_else(|| panic!("{} missing\n{emitted}", v.name));
+            let (a, b) = (&w.re(v.index), &g.re(gi));
+            assert_eq!(a.len(), b.len(), "{} in {}", v.name, w.plot_name);
+            assert!(a.iter().zip(b.iter()).all(|(&a, &b)| same(a, b)), "{} in {}\n{emitted}", v.name, w.plot_name);
+            let (a, b) = (w.complex(v.index).unwrap_or_default(), g.complex(gi).unwrap_or_default());
+            assert!(a.len() == b.len() && a.iter().zip(b).all(|(a, b)| same(a.im, b.im)), "{} in {}", v.name, w.plot_name);
+        }
+    }
+}
+
+#[test]
+fn an_imported_repeating_pwl_runs_as_the_original_deck() {
+    ngspice_round_trip(
+        "pwl round trip\nV1 a 0 pwl(0 0 1m 1 2m 0) r=0 td=0.5m\nR1 a 0 1\nV2 b 0 PWL(0 0 1m 1 1.5m 0.2) TD=1m\nR2 b 0 1\n\
+         V3 c 0 pwl(0 0 0.5m 1 1m 0.5 2m 0) r 0.5m\nR3 c 0 1\n.tran 10u 7m 0 10u\n.end\n",
+    );
+}
+
+#[test]
+fn an_imported_rf_port_runs_as_the_original_deck() {
+    // A T pad between ports 1 (z0 given) and 2 (z0 by default, `=` form):
+    // the .op sees each port's z0 in series, the .sp its S-parameters.
+    ngspice_round_trip(
+        "port round trip\nV1 in 0 dc 1 ac 1 portnum 1 z0 50\nV2 out 0 dc 0 ac 1 portnum=2\nR1 in mid 16.666666666666668\n\
+         R2 mid out 16.666666666666668\nR3 mid 0 66.66666666666667\n.op\n.sp lin 3 1k 3k\n.end\n",
+    );
 }
