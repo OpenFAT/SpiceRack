@@ -196,6 +196,9 @@ pub enum Tag {
     Equal,
     /// `'`, an expression quote where the lexicon says so.
     Quote,
+    /// `"`, an expression quote (HSPICE, `Lexicon::string_expr`); else a
+    /// `"` starts a [`Tag::String`].
+    DoubleQuote,
     /// `:`.
     Colon,
     /// `;`.
@@ -302,6 +305,7 @@ impl Tag {
             Comma => ",",
             Equal => "=",
             Quote => "'",
+            DoubleQuote => "\"",
             Colon => ":",
             Semicolon => ";",
             Question => "?",

@@ -82,6 +82,7 @@ impl<'a> Cx<'a> {
                 }
                 Tag::Index => return a.extra(a.rhs(n) + 1),
                 Tag::Paren | Tag::Delimited => return a.rhs(n),
+                Tag::Str if a.lhs(n) != NONE => return a.lhs(n),
                 Tag::Ident => return a.rhs(n),
                 Tag::Seq => {
                     let parts = a.list(a.lhs(n));

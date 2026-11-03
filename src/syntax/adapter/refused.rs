@@ -133,6 +133,7 @@ impl<'a> Cx<'a> {
                     | T::LParen
                     | T::RParen
                     | T::Quote
+                    | T::DoubleQuote
                     | T::String
                     | T::LBrace
                     | T::RBrace

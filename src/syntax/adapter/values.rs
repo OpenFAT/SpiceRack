@@ -143,10 +143,6 @@ impl Cx<'_> {
     pub(super) fn inner(&self, n: u32) -> String {
         let a = self.ast;
         let (open, close) = (a.main_token(Node(n)), a.rhs(Node(n)));
-        if self.ttag(open) == T::String {
-            let t = self.t.text(open);
-            return t[1..t.len() - 1].trim().to_string();
-        }
         let e = a.lhs(Node(n));
         if e != NONE && self.tag(e) == Tag::Str && self.ttag(open) == T::LBrace {
             let t = self.t.text(self.main(e));
@@ -163,7 +159,7 @@ impl Cx<'_> {
     pub(super) fn expr_ok(&self, n: u32) -> bool {
         self.tag(n) == Tag::Delimited && {
             let e = self.ast.lhs(Node(n));
-            let hspice = self.ttag(self.main(n)) == T::String;
+            let hspice = self.ttag(self.main(n)) == T::DoubleQuote;
             hspice || (e != NONE && self.tag(e) != Tag::Bad && !self.nests_delimiter(e))
         }
     }

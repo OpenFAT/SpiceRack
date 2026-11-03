@@ -18,7 +18,6 @@
 //! - `Parser::expr_all(&mut self) -> Node`
 //! - `Parser::expr_bp(&mut self, min_bp: u8) -> Result<Node, ()>`
 //! - `Parser::continue_expr(&mut self, left: Node) -> Node`
-//! - `Parser::quoted_expression(&mut self, open: u32) -> Node`
 
 use crate::syntax::ast::{NONE, Node, Tag};
 use crate::syntax::diag::Code;
@@ -81,28 +80,6 @@ impl Parser<'_, '_> {
             }
         }
     }
-
-    /// HSPICE `"expr"` (the `String` token `open`): its inside re-tokenized
-    /// by the same lexicon and checked as one expression. A `Delimited`
-    /// whose expression is not kept (its tokens are not the file's), or a
-    /// `Bad` with a `P0002`.
-    pub(super) fn quoted_expression(&mut self, open: u32) -> Node {
-        let text = self.t.text(open);
-        let inner = text
-            .strip_prefix('"')
-            .and_then(|r| r.strip_suffix('"'))
-            .unwrap_or("");
-        let lex = self.t.lexicon_at(open);
-        let src = format!("\n{inner}\n");
-        let sub = crate::syntax::tokenize(&src, lex);
-        let tree = crate::syntax::parse::parse_expression(&sub, lex);
-        if tree {
-            self.ast.push(Tag::Delimited, open, NONE, open)
-        } else {
-            self.ast.diag(Code::P0002, open);
-            self.ast.push(Tag::Bad, open, open, NONE)
-        }
-    }
 }
 
 // ---- private ----
@@ -159,7 +136,7 @@ impl Parser<'_, '_> {
                 self.i += 1;
                 Ok(self.ast.push(Tag::Num, at, NONE, NONE))
             }
-            T::String if !lex.string_expr => {
+            T::String => {
                 self.i += 1;
                 Ok(self.ast.push(Tag::Str, at, NONE, NONE))
             }
@@ -175,7 +152,7 @@ impl Parser<'_, '_> {
             }
             T::LBrace if lex.expr_braces => Ok(self.delimited()),
             T::Quote if matches!(lex.quote, Quote::Expr(_)) => Ok(self.delimited()),
-            T::String => Ok(self.delimited()),
+            T::DoubleQuote => Ok(self.delimited()),
             T::LBracket => self.vector(Tag::Vector, T::RBracket),
             T::LBrace => self.vector(Tag::List, T::RBrace),
             _ => Err(()),

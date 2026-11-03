@@ -445,14 +445,21 @@ fn element_comma_vector_is_a_seq() {
 
 #[test]
 fn hspice_string_is_an_expression() {
-    // HSPICE UG08 T2, X1: `"expr"` delimits an expression; a broken one is
-    // P0002. Checks: 2.
-    let (top, codes) = read("t\n.param a=\"1+2\" b=\"1+\"\n", &HSPICE);
+    // HSPICE UG08 T2, X1: `"expr"` delimits an expression, its tree kept as
+    // `'expr'`'s is; a broken one is one `Bad` and P0002; T2: `$` inside is
+    // text; a path `"…"` is a string. Checks: 3.
+    let src = "t\n.param a=\"1+2\" b=\"1+\" c=\"x$y\"\n.include \"a b.sp\"\n";
+    let (top, codes) = read(src, &HSPICE);
     assert_eq!(
         top,
-        ["Param\".param\"[w\"a\"=Delimited\"\\\"1+2\\\"\"[-] w\"b\"=Bad\"\\\"1+\\\"\"]"]
+        [
+            "Param\".param\"[w\"a\"=Delimited\"\\\"\"[(+ n\"1\" n\"2\")] w\"b\"=Bad\"\\\"\" w\"c\"=Delimited\"\\\"\"[i\"x$y\"]]",
+            "Include\".include\"[s\"\\\"\"]"
+        ]
     );
     assert_eq!(codes, [Code::P0002]);
+    let t = tokenize(src, &HSPICE);
+    assert!(t.tags().contains(&crate::syntax::token::Tag::DoubleQuote));
 }
 
 #[test]

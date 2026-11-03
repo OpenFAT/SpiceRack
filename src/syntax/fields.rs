@@ -87,7 +87,7 @@ impl Parser<'_, '_> {
         match self.t.tags()[self.i as usize] {
             T::LBrace => self.t.lexicon_at(self.i).expr_braces,
             T::Quote => matches!(self.t.lexicon_at(self.i).quote, Quote::Expr(_)),
-            T::String => self.t.lexicon_at(self.i).string_expr,
+            T::DoubleQuote => true,
             _ => false,
         }
     }
@@ -95,10 +95,6 @@ impl Parser<'_, '_> {
     /// `{expr}`, `'expr'` or HSPICE `"expr"` at the cursor.
     pub(super) fn delimited(&mut self) -> Node {
         let open = self.i;
-        if self.t.tags()[open as usize] == T::String {
-            self.i += 1;
-            return self.quoted_expression(open);
-        }
         let Some(close) = self.closer_of(open) else {
             self.ast.diag(Code::P0008, open);
             let last = self.end - 1;
@@ -108,6 +104,7 @@ impl Parser<'_, '_> {
         let saved = self.end;
         self.end = close;
         self.i = open + 1;
+        let mark = self.ast.mark();
         let inner = if self.i == close {
             self.ast.diag(Code::P0002, open);
             NONE
@@ -116,6 +113,14 @@ impl Parser<'_, '_> {
         };
         self.end = saved;
         self.i = close + 1;
+        let tag = self.t.tags()[open as usize];
+        if tag == T::DoubleQuote && (inner == NONE || self.ast.tag(Node(inner)) == Tag::Bad) {
+            // HSPICE reads a `"…"` that holds no expression as one bad
+            // value, not as a delimiter around one.
+            self.ast.reset(mark);
+            self.ast.diag(Code::P0002, open);
+            return self.ast.push(Tag::Bad, open, close, NONE);
+        }
         self.ast.push(Tag::Delimited, open, inner, close)
     }
 
@@ -141,6 +146,7 @@ impl Parser<'_, '_> {
             | T::LParen
             | T::RParen
             | T::Quote
+            | T::DoubleQuote
             | T::String
             | T::EndOfStatement
             | T::Title
@@ -236,11 +242,19 @@ impl Parser<'_, '_> {
             self.i += 1;
             return self.ast.push(Tag::Str, a, NONE, NONE);
         }
-        let mut b = a;
-        if tags[a as usize] == T::Quote
-            && let Some(q) = (a + 1..self.end).find(|&k| tags[k as usize] == T::Quote)
+        let q = tags[a as usize];
+        if q == T::DoubleQuote
+            && let Some(c) = (a + 1..self.end).find(|&k| tags[k as usize] == q)
         {
-            b = q;
+            // HSPICE's `"path"`: a string, its tokens inside.
+            self.i = c + 1;
+            return self.ast.push(Tag::Str, a, c, NONE);
+        }
+        let mut b = a;
+        if q == T::Quote
+            && let Some(c) = (a + 1..self.end).find(|&k| tags[k as usize] == q)
+        {
+            b = c;
         }
         while b + 1 < self.end && self.touches(b, b + 1) {
             b += 1;
@@ -256,7 +270,7 @@ impl Parser<'_, '_> {
         let (o, c) = match tags[open as usize] {
             T::LBrace => (T::LBrace, T::RBrace),
             T::LParen => (T::LParen, T::RParen),
-            _ => return (open + 1..self.end).find(|&k| tags[k as usize] == T::Quote),
+            q => return (open + 1..self.end).find(|&k| tags[k as usize] == q),
         };
         let mut depth = 0u32;
         for k in open..self.end {

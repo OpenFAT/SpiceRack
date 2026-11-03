@@ -15,8 +15,8 @@
 //! The tokenizer's open points are settled here
 //! (`docs/research/transpiler-architecture.md` §5, phase 2): gapless tokens
 //! in a name or value position are one `Word` (an HSPICE `\\` glue counts
-//! as no gap); an HSPICE `"expr"` is re-tokenized and checked as an
-//! expression; keywords are looked up only at heads; an end of statement
+//! as no gap); an HSPICE `"expr"` is a delimited expression like `'expr'`
+//! (its tokens are the file's); keywords are looked up only at heads; an end of statement
 //! inside open brackets is whitespace (the VACASK lexicon already joins
 //! such lines, and Spectre `if (a &&⏎ b) {` is joined here); `.end` is a
 //! node; a NaN number is a `P0005`.
@@ -39,7 +39,6 @@
 //!   `Parser::span_text(&self, a: u32, b: u32) -> Cow<'s, str>`,
 //!   `Parser::push_word(&mut self, a: u32, b: u32) -> Node`, `Parser::verbatim(&mut self, first: u32) -> Node`
 //! - `pub const DEPTH_MAX: u32`
-//! - `pub(super) fn parse_expression(t: &Tokens<'_>, lex: &'static Lexicon) -> bool`
 
 use crate::syntax::ast::{Ast, NONE, Node, Tag};
 use crate::syntax::diag::Code;
@@ -151,32 +150,6 @@ pub fn parse<'s>(t: &Tokens<'s>, lex: &'static Lexicon) -> Ast<'s> {
     let list = p.ast.push_list(&root.items);
     p.ast.set_root(list);
     p.ast
-}
-
-/// Whether the first statement of `t` (after its title) is one expression
-/// and nothing else: HSPICE's `"expr"` check.
-pub(super) fn parse_expression(t: &Tokens<'_>, lex: &'static Lexicon) -> bool {
-    let mut p = Parser {
-        t,
-        lex,
-        ast: Ast::new(t.len()),
-        i: 0,
-        end: 0,
-        depth: 0,
-        first: 0,
-        capped: false,
-    };
-    let mut s = 0u32;
-    let mut stmt = p.next_statement(&mut s);
-    if stmt.is_some_and(|(f, _)| t.tags()[f as usize] == T::Title) {
-        stmt = p.next_statement(&mut s);
-    }
-    let Some((first, eos)) = stmt else {
-        return false;
-    };
-    (p.i, p.end) = (first, eos);
-    let e = p.expr_all();
-    e.0 != NONE && p.ast.tag(e) != Tag::Bad && p.next_statement(&mut s).is_none()
 }
 
 /// hspice.peg `l_glue_break`: blanks, `\\`, blanks, the newline, blanks.

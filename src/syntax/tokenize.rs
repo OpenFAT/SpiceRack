@@ -189,6 +189,7 @@ impl Lexer<'_> {
         self.pos += blanks(self.src, self.pos);
         let mut piece = self.pos;
         let mut quote = false;
+        let mut dquote = false;
         let mut depth = 0u32;
         let mut head = true;
         loop {
@@ -201,7 +202,7 @@ impl Lexer<'_> {
                     self.pos += 1;
                     continue;
                 }
-                quote = false;
+                (quote, dquote) = (false, false);
                 if let Some(plus) = self.plus_line(p) {
                     self.pos = plus + 1;
                     piece = self.pos;
@@ -212,7 +213,7 @@ impl Lexer<'_> {
             let protected = match self.lex.quote {
                 Quote::Expr(q) => quote && q.protects,
                 Quote::Plain | Quote::Name => false,
-            };
+            } || (dquote && self.lex.string.protects);
             if !protected && let Some(next) = self.comment_at(p, piece) {
                 self.pos = next;
                 continue;
@@ -223,6 +224,7 @@ impl Lexer<'_> {
                 if !matches!(self.lex.quote, Quote::Expr(q) if q.across_breaks) {
                     quote = false;
                 }
+                dquote &= self.lex.string.across_breaks;
                 continue;
             }
             let (tag, end) = token_at(self.src, p, self.lex);
@@ -236,6 +238,7 @@ impl Lexer<'_> {
             if tag == Tag::Quote && matches!(self.lex.quote, Quote::Expr(_)) {
                 quote = !quote;
             }
+            dquote ^= tag == Tag::DoubleQuote;
             if self.lex.brackets_join {
                 match tag {
                     Tag::LParen | Tag::LBracket | Tag::LBrace => depth += 1,

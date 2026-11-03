@@ -90,8 +90,9 @@ pub struct Lexicon {
     pub quote: Quote,
     /// How a `"…"` string reads.
     pub string: Quoting,
-    /// A `"…"` string in a value position delimits an expression (HSPICE
-    /// T2, X1).
+    /// `"` delimits an expression as `'` does (HSPICE T2, X1): a
+    /// [`Tag::DoubleQuote`] at each end around ordinary tokens, read by
+    /// [`Lexicon::string`]'s rules; else `"…"` is one [`Tag::String`].
     pub string_expr: bool,
     /// `\` before a printable byte is part of a name (`\2N2222`).
     pub name_escape: bool,

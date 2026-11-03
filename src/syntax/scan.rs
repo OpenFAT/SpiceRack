@@ -26,6 +26,9 @@ pub(super) fn token_at(src: &[u8], p: usize, lex: &Lexicon) -> (Tag, usize) {
     if c.is_ascii_digit() || (c == b'.' && next.is_ascii_digit()) {
         return (Tag::Number, number_end(src, p, lex));
     }
+    if c == b'"' && lex.string_expr {
+        return (Tag::DoubleQuote, p + 1);
+    }
     if c == b'"' {
         return (Tag::String, string_end(src, p, lex));
     }

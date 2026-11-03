@@ -191,9 +191,9 @@ pub enum Tag {
     /// list of its parts.
     Seq,
     /// `{expr}`, `'expr'`, HSPICE `"expr"`. `main_token`: the opening
-    /// delimiter (the `String` token for HSPICE); `lhs`: the expression
-    /// (`NONE` for HSPICE's `"…"`, whose tokens are not the file's); `rhs`:
-    /// the closing delimiter.
+    /// delimiter; `lhs`: the expression (`NONE` for an empty `{}` or
+    /// `''`); `rhs`: the closing delimiter. An HSPICE `"…"` holding no
+    /// expression is a `Bad` instead.
     Delimited,
 
     // ── expressions ──
@@ -202,7 +202,9 @@ pub enum Tag {
     Num,
     /// A name in an expression. `lhs`: its [`Name`].
     Ident,
-    /// `"…"`. `main_token`: the `String` token.
+    /// `"…"`. `main_token`: the `String` token, or an HSPICE path's
+    /// opening `"` ([`token::Tag::DoubleQuote`]); `lhs`: that path's
+    /// closing `"`, else `NONE`.
     Str,
     /// `op x`. `main_token`: the operator; `lhs`: the operand.
     Unary,
