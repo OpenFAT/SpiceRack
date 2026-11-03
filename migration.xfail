@@ -1,0 +1,9 @@
+# The transpiler rewrite's strict xfail list (TESTING.md, "Golden gate";
+# docs/research/transpiler-architecture.md §5).
+#
+#   <input-set>/<relpath> <target> <reason>
+#
+# <target> is a dialect name, or `ir`, `report` or `parse` (the output file's
+# stem under the input's golden directory). `golden diff --xfail` fails on
+# any difference not listed here, and on a listed line that is now identical
+# (XPASS): delete the line then. Every line is a reviewed, intended change.

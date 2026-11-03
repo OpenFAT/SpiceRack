@@ -12,6 +12,7 @@ trusts. The rules behind it are in `AGENTS.md` (Testing).
 | docs | the site builds strictly; every Python example in it runs | `nix develop .#docs -c mkdocs build --strict`; `tests/test_docs.py` | `.github/workflows/docs.yaml`; pytest |
 | release | tag matches `Cargo.toml` and `pyproject.toml`, wheels for every target, sdist | `tools/bump_version.py`, then the release workflow | `.github/workflows/tags.yaml`, `publish.yaml` |
 | nightly | the spice-bench and corpus import suite (`--features corpus`) | `nix develop .#testing -c cargo test --no-default-features --features corpus --release --test test_import_suite` | `.github/workflows/nightly.yaml`, 03:17 UTC daily and on demand |
+| golden | the transpiler rewrite's byte-identical gate against `daa0ad0` ("Golden gate" below) | `golden record`, then `golden diff <baseline> <new> --xfail migration.xfail` | local, before each rewrite phase lands |
 
 `tools/check_style.py` is vendored from the `code-style` skill
 (https://github.com/OmarSiwy/NixOSConfig/tree/main/skills, sha256 `55f417592f6e7ec3…`).
@@ -55,6 +56,61 @@ provenance, never by re-deriving it the way codegen does.
 | `test_python_simulator.py::TestNgbehavior` | ngspice's own "Compatibility modes selected" note (Rust: `test_ngspice_analyses.rs`); a `.spiceinit` whose `shell touch` marks it read, in the working and home directories |
 | `test_python_*.py`, `test_design_testbenches.py` | API contract: spec examples per method |
 | `test_bump_version.py` | a copy of the manifests, each bump kind and each refusal |
+
+## Golden gate
+
+The transpiler rewrite (`docs/research/transpiler-architecture.md` §5) is
+gated byte for byte against today's pipeline. `tools/golden` records, for
+every input and every target dialect, the text `codegen::netlist(parse(file))`
+writes or the exact refusal, plus the IR JSON and the `Report`; a later phase
+records again and diffs. Each difference is a line in `migration.xfail`, which
+is strict: an unlisted difference fails, and so does a listed one that is now
+identical (XPASS). The oracle is `daa0ad0`.
+
+```sh
+export CARGO_BUILD_JOBS=4
+cargo build -j 4 --release --no-default-features --features json --bin golden
+G=${CARGO_TARGET_DIR:-target}/release/golden
+nix develop .#testing -c env IHP_PDK=<IHP-Open-PDK checkout> $G record <out_dir>
+$G diff <baseline> <out_dir> --xfail migration.xfail
+nix develop .#testing -c env IHP_PDK=<...> $G check-determinism --xfail migration.xfail
+```
+
+Inputs (the `MANIFEST` of each record lists them, with content hashes):
+
+| Set | Read as | Inputs | Source |
+|---|---|---|---|
+| `spice-bench` | ngspice | 6,050 | `$SPICE_BENCH`; also the ngspice corpus (`NGSPICE_CORPUS` is the same path, the walks keep the same decks) |
+| `hspice` | HSPICE | 75 | `$HSPICE_CORPUS` (ESPice conformance) |
+| `xyce` | Xyce | 4,068 | `$XYCE_CORPUS` (Xyce_Regression) |
+| `vacask` | VACASK | 151 | `$VACASK_CORPUS` |
+| `ltspice` | LTspice | 4,342 | `$LTSPICE_CORPUS` (spice-datasets) |
+| `pdk-sky130A` | ngspice | 194 | `$PDK_ROOT/sky130A`, entry `libs.tech/combined/sky130.lib.spice` |
+| `pdk-gf180mcuD` | ngspice | 3 | `$PDK_ROOT/gf180mcuD`, entry `libs.tech/ngspice/sm141064.ngspice` |
+| `pdk-ihp-sg13g2` | ngspice | 36 | `$IHP_PDK/ihp-sg13g2` (not pinned; the baseline used `5e6d592`), entries the 7 `corner*.lib` |
+| `pdk-vacask` | VACASK | 1 | `$VACASK_CORPUS/demo/cmos180n.lib` |
+| `fixtures` | by extension | 18 | `tests/**/*.{sp,lib,spice,cir,scs,sim,net}`, with `tests/fixtures/transpiler/` |
+
+A kit is walked like Interop's `pdk-models`: the entries, then breadth first
+through includes, `.lib` calls and Verilog-A sources. The read order is in
+the manifest. Each kit file is still parsed alone, with an empty title line
+prepended, because that is the oracle's behaviour. Every target is written for every
+input. The manifest's `skip` lines name the input dialects no set reads
+(ESPice reads ngspice text; CDL and Verilog have no reader).
+
+Not covered: the inline expectations in `tests/test_spectre_golden` (they
+build IR in Rust and assert output text, so they have no input deck; the
+merge tier runs them); Spectre PDK files (none of the local kits has one).
+
+Measured on a 32-thread, 31 GB development machine, 2026-11-03, at `daa0ad0`:
+- `golden record`, all 14,938 inputs with 4 workers (`GOLDEN_JOBS`): 37.8 s
+  wall, 69.7 s user, peak RSS 2.3 GB (`command time -v`, nixpkgs `time`).
+  It writes 164,318 files, 3.7 GB on disk (3.1 GB apparent).
+- `check-determinism` (two records in two processes, then a diff): 1 min 46 s.
+- The simulator-free tier, the corpus fixpoints alone:
+  `nix develop .#testing -c cargo test -j 4 --no-default-features --features corpus --release --test test_import_suite -- fixpoint --test-threads=4`
+  runs in 64.0 s wall, peak RSS 2.1 GB, once built. `ngspice_corpus_fixpoint`
+  sets the wall time.
 
 ## Known gaps
 

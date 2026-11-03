@@ -50,3 +50,9 @@ required-features = ["corpus"]
 name = "spice2rack"
 path = "tools/spice2rack/main.rs"
 required-features = ["json"]
+
+# The transpiler rewrite's golden gate (TESTING.md, "Golden gate").
+[[bin]]
+name = "golden"
+path = "tools/golden/main.rs"
+required-features = ["json"]
