@@ -241,6 +241,10 @@ fn kits_resolve() {
             );
             for d in &file.diags {
                 *c.entry(format!("diag {:?}", d.code)).or_default() += 1;
+                if d.code == Code::R0003 {
+                    let shown = file.path.strip_prefix(kroot).unwrap_or(&file.path);
+                    println!("{kset}: R0003 {} at {:?}", shown.display(), t.text(d.token));
+                }
             }
         }
     }

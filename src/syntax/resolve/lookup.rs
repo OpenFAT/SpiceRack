@@ -58,6 +58,12 @@ enum Found {
     Ambiguous(DefId),
 }
 
+/// What a SPICE `D`, `Q`, `M` … card's model word names: a model, or else
+/// a subcircuit (HSPICE lets an `M` card name one); sky130 declares
+/// `sky130_fd_pr__diode_pw2nd_11v0` as both, and its `D` cards mean the
+/// model.
+const DEVICE: &[Want] = &[Want::Model, Want::Subckt];
+
 /// Which declarations a lookup wants.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Want {
@@ -65,6 +71,8 @@ enum Want {
     Master,
     /// A model: what an element's model word names.
     Model,
+    /// A subcircuit: what a SPICE `X` card names.
+    Subckt,
     /// A parameter or a function: a master that names one is wrong.
     Value,
 }
@@ -140,7 +148,7 @@ impl Site<'_, '_> {
             if let Some(p) = Primitive::from_u32(h.code) {
                 return Some((Binding::Primitive(p), None, None));
             }
-            let (b, d) = self.master(ast, h.master, h.nodes.len(), n);
+            let (b, d) = self.master(ast, h.master, h.nodes.len(), n, &[Want::Master]);
             return Some((b, None, d));
         }
         let name = word_text(ast, h.name)?;
@@ -171,7 +179,7 @@ impl Site<'_, '_> {
                 let parsed = h.nodes.len();
                 if h.master != NONE
                     && let Found::One(id) | Found::Ambiguous(id) =
-                        self.find(word_text(ast, h.master), Want::Master)
+                        self.find_in(word_text(ast, h.master), &[Want::Model, Want::Subckt])
                 {
                     let (b, d) = self.bound(id, false, ast, h.master, parsed, n);
                     return Some((b, None, d));
@@ -198,27 +206,40 @@ impl Site<'_, '_> {
                         None,
                     ),
                     None => {
-                        let (b, d) = self.master(ast, h.master, parsed, n);
+                        let (b, d) = self.master(ast, h.master, parsed, n, DEVICE);
                         (b, None, d)
                     }
                 })
             }
-            (Model::AfterNodes | Model::Subckt, _) => {
-                let (b, d) = self.master(ast, h.master, h.nodes.len(), n);
+            (Model::AfterNodes, _) => {
+                let (b, d) = self.master(ast, h.master, h.nodes.len(), n, DEVICE);
+                Some((b, None, d))
+            }
+            // An `X` card names a subcircuit, never a model of that name.
+            (Model::Subckt, _) => {
+                let (b, d) = self.master(ast, h.master, h.nodes.len(), n, &[Want::Subckt]);
                 Some((b, None, d))
             }
         }
     }
 
     /// Master word `m` (`NONE`: the card names none) of instance `n`, with
-    /// `nodes` nodes → its binding and `R` row.
-    fn master(&self, ast: &Ast, m: u32, nodes: usize, n: Node) -> (Binding, Option<Diag>) {
+    /// `nodes` nodes, naming what the first of `wants` that finds one takes
+    /// → its binding and `R` row.
+    fn master(
+        &self,
+        ast: &Ast,
+        m: u32,
+        nodes: usize,
+        n: Node,
+        wants: &[Want],
+    ) -> (Binding, Option<Diag>) {
         let anchor = |m: u32| match m {
             NONE => ast.main_token(n),
             m => ast.main_token(Node(m)),
         };
         let name = word_text(ast, m);
-        match self.find(name, Want::Master) {
+        match self.find_in(name, wants) {
             Found::One(id) => self.bound(id, false, ast, m, nodes, n),
             Found::Ambiguous(id) => self.bound(id, true, ast, m, nodes, n),
             Found::None => match self.find(name, Want::Value) {
@@ -272,6 +293,15 @@ impl Site<'_, '_> {
         }
     }
 
+    /// The first of `wants` that finds a declaration named `name`.
+    fn find_in(&self, name: Option<&str>, wants: &[Want]) -> Found {
+        wants
+            .iter()
+            .map(|&w| self.find(name, w))
+            .find(|f| !matches!(f, Found::None))
+            .unwrap_or(Found::None)
+    }
+
     /// The nearest declaration named `name` that `want` accepts.
     fn find(&self, name: Option<&str>, want: Want) -> Found {
         let Some(name) = name else {
@@ -287,7 +317,7 @@ impl Site<'_, '_> {
         for &id in ids {
             let d = &defs[id.0 as usize];
             let accepts = match (&d.kind, want) {
-                (DefKind::Subckt { .. }, Want::Master)
+                (DefKind::Subckt { .. }, Want::Master | Want::Subckt)
                 | (DefKind::Model { .. }, Want::Master | Want::Model)
                 | (DefKind::Param | DefKind::Func, Want::Value) => true,
                 // else: the kind is not one `want` takes.

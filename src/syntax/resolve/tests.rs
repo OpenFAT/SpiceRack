@@ -350,6 +350,20 @@ fn duplicates_ambiguity_arity_and_values() {
 }
 
 #[test]
+fn a_spice_letter_picks_a_subckt_or_a_model() {
+    // ngspice manual §2.4.3: `XYYYYYYY N1 <N2 N3 ...> SUBNAM`, a subcircuit;
+    // sky130's res.model.spice declares both `.model short r` and `.subckt
+    // short`, which SPICE keeps apart.
+    let src = "t\n.model short r r=0.01\n.subckt short 1 2\nR0 1 2 short\n.ends\nX1 a b short\n";
+    let k = kit(&[("/a.sp", src)], "/a.sp", Form::Deck, Dialect::Ngspice);
+    assert!(matches!(
+        def_name(&k, bound(&k, 0, "X1")).1,
+        DefKind::Subckt { .. }
+    ));
+    assert!(codes(&k, 0).is_empty());
+}
+
+#[test]
 fn vacask_masters_are_models() {
     // VACASK `share/doc/vacask/demo`: `model nmos sp_bsim4v8 type=1`, an
     // instance's master is a model; `type=-1` is a PMOS. Checks: 3.
