@@ -577,4 +577,41 @@ mod tests {
                     + min(max(x, 1), 2) + rack_agauss(1,2,1, rack_r1_r_3)";
         assert!(out.contains(want), "no `{want}` in\n{out}");
     }
+
+    #[test]
+    fn the_decks_spectre_ran_are_written_byte_for_byte() {
+        // The oracle is `tests/spectre/`: the T-S1 to T-S3 decks real
+        // Spectre 21.1 ran (monte-carlo-spectre.md §11), written from these
+        // SPICE sources. A `montecarlo` statement has no SPICE source: the
+        // committed deck is the written one and its `mc1` statement.
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/spectre");
+        let divider =
+            |r: &str| format!("t\nv1 in 0 1\nr1 in out r='{r}'\nr2 out 0 1k\n.op\n.end\n");
+        let pair = "t\n.param g_r='agauss(0,100,1)'\n.param g=g_r\n.subckt s a b\n.param rl='agauss(1k,100,1)'\nr1 a b {rl+g}\nr2 b 0 1k\n.ends s\nv1 in 0 1\nx1 in o1 s\nx2 in o2 s\n.op\n.end\n";
+        let nested = "t\n.subckt leaf a b\n.param rl='agauss(1k,100,1)'\nr1 a b {rl}\nr2 b 0 1k\n.ends leaf\n.subckt two a b c\nxa a b leaf\nxb a c leaf\n.ends two\nv1 in 0 1\nx1 in o1 o2 two\nx2 in o3 o4 two\n.op\n.end\n";
+        let decks = [
+            (
+                "t_s1_nominal.scs",
+                divider("agauss(1k,100,3)+aunif(0,100)+limit(0,50)"),
+                None,
+            ),
+            ("t_s2_agauss.scs", divider("agauss(1k,100,3)"), Some("all")),
+            ("t_s2_aunif.scs", divider("aunif(1k,100)"), Some("all")),
+            ("t_s2_limit.scs", divider("limit(1k,50)"), Some("all")),
+            ("t_s3_mismatch.scs", pair.to_string(), Some("mismatch")),
+            ("t_s3_nested.scs", nested.to_string(), Some("mismatch")),
+        ];
+        for (file, deck, variations) in decks {
+            let mut text =
+                render_text(&deck, Dialect::Ngspice, file, Dialect::Spectre).expect(file);
+            text.push('\n');
+            if let Some(v) = variations {
+                text.push_str(&format!(
+                    "mc1 montecarlo numruns=2000 seed=1 variations={v} {{\n  dcmc dc\n}}\n"
+                ));
+            }
+            let want = std::fs::read_to_string(dir.join(file)).expect(file);
+            assert_eq!(text, want, "{file}");
+        }
+    }
 }
