@@ -1,0 +1,6 @@
+// lib
+simulator lang=spectre
+subckt leaf (p n)
+r0 (p n) resistor r=1k
+ends leaf
+model nch_mod bsim4 type=n

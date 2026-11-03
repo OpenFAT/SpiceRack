@@ -1,0 +1,11 @@
+// sky130 tt NMOS through a 1k load, on the sky130 combined library as
+// SpiceRack writes it for Spectre (tests/test_kits.rs keeps the tree with
+// SPICERACK_KEEP_SPECTRE=<dir>; run.py runs this deck from <dir>).
+// Reference: ngspice 45 on the PDK's own files, v(d) in expected.json.
+simulator lang=spectre
+include "sky130A/libs.tech/combined/sky130.lib.spice" section=tt
+xn (d g 0 0) sky130_fd_pr__nfet_01v8 w=1 l=0.15
+rl (vdd d) resistor r=1k
+vdd (vdd 0) vsource dc=1.8
+vg (g 0) vsource dc=1.2
+op1 dc

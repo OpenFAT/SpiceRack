@@ -1,0 +1,26 @@
+// made-up
+simulator lang=spectre
+model nch bsim4 type=n
+subckt cell (a b)
+parameters m=1 w=1u
+r1 (a b) resistor r=1k
+r2 a b resistor r=2k
+x1 (a b) othercell w=w
+x2 a b othercell w=w
+m1 (a b 0 0) nch w=w l=1u
+m2 (a b 0 0) extnch w=w l=1u
+m3 a b 0 0 nch w=w
+m4 (a b 0 0 t) nch w=w
+f1 (a b) cccs probe=v1 gain=2
+f2 (a b) cccs probe=v1 gain=2*m
+f3 a b cccs probe=v1 gain=2
+f4 (a b) cccs probe=v1 gain=2 m=2
+b1 (a b) bsource v=v(a,b)*2
+b2 (a b) bsource i=v(a)/1k
+b3 a b bsource v=v(a)
+e1 (a b a 0) vcvs gain=w*1e6
+c1 (a b) capacitor c=w>1u ? 1p : 2p
+c2 (a b) capacitor c=[1p 2p]
+r3 (a b) resistor r=1k*(w/1u)
+v1 (a b) vsource dc=0
+ends

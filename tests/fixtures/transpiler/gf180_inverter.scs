@@ -1,0 +1,13 @@
+// gf180mcu typical inverter into 10k, on gf180mcuD's model files as
+// SpiceRack writes them for Spectre (tests/test_kits.rs keeps the tree with
+// SPICERACK_KEEP_SPECTRE=<dir>; run.py runs this deck from <dir>).
+// Reference: ngspice 45 on the PDK's own files, v(vout) in expected.json.
+simulator lang=spectre
+include "gf180mcuD/libs.tech/ngspice/design.ngspice"
+include "gf180mcuD/libs.tech/ngspice/sm141064.ngspice" section=typical
+xp (vout vin vdd vdd) pfet_03v3 w=2e-6 l=0.28e-6
+xn (vout vin 0 0) nfet_03v3 w=1e-6 l=0.28e-6
+vdd (vdd 0) vsource dc=3.3
+vin (vin 0) vsource dc=1.5
+rl (vout 0) resistor r=10k
+op1 dc
