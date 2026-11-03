@@ -9,6 +9,18 @@
 //!
 //! A digital Verilog block ([`lower`]) is either co-simulated (Icarus `.vvp`
 //! under ngspice `d_cosim`) or synthesized by Yosys into standard cells.
+//!
+//! Cites: none (OpenVAF, Icarus and Yosys command lines; ngspice `d_cosim`).
+//!
+//! Contents:
+//! - `pub fn is_source(path: &str) -> bool`
+//! - `pub fn osdi_loads(loads: &[String]) -> Result<Vec<String>, String>` (without `backend`: the paths
+//!   as given, or an error for a `.va` source)
+//! - feature `backend`, from `mod run`: `pub fn resolve(source_or_path: &str) -> Result<PathBuf, String>`,
+//!   `pub fn compile_osdi(va: &Path) -> Result<String, String>`,
+//!   `pub fn osdi_loads(loads: &[String]) -> Result<Vec<String>, String>`, `pub enum Lowered`,
+//!   `pub struct Cell`, `pub fn lower(vb: &VerilogBlock) -> Result<Lowered, String>`,
+//!   `pub(super) fn gate_instances(netlist: &str) -> Vec<(String, String, Vec<String>)>`
 
 #[cfg(feature = "backend")]
 pub use run::{Cell, Lowered, compile_osdi, lower, osdi_loads, resolve};

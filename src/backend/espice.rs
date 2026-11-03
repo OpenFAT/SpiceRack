@@ -3,6 +3,11 @@
 //! ESPice compiles Verilog-A through VerA at run time (`.hdl`), so a deck with
 //! `veriloga()` models needs no OpenVAF. Its first load of a model builds a
 //! shared library, cached under `$ESPICE_CACHE` (else `~/.cache/espice`).
+//!
+//! Cites: none (ESPice's own CLI).
+//!
+//! Contents:
+//! - `pub(super) fn run(netlist: &str) -> Result<Vec<RawData>, BackendError>`
 
 use std::process::Command;
 

@@ -1,4 +1,9 @@
 //! ngspice: `ngspice -b` as a subprocess.
+//!
+//! Cites: ngspice manual §13.5.107 (`appendwrite`), §13.5.92 (`strcmp`).
+//!
+//! Contents:
+//! - `pub(super) fn run(netlist: &str) -> Result<Vec<RawData>, BackendError>`
 
 use std::fmt::Write as _;
 use std::path::Path;
@@ -62,6 +67,8 @@ pub(super) fn run(netlist: &str) -> Result<Vec<RawData>, BackendError> {
     }
     read_results(&raw_path, stdout)
 }
+
+// ---- private ----
 
 /// The compatibility mode on the deck's [`NGBEHAVIOR`] line, if it has one.
 fn ngbehavior(netlist: &str) -> Option<&str> {

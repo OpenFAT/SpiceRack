@@ -37,7 +37,7 @@ backend = ["dep:tempfile", "dep:regex"]
 # `json`: IR <-> JSON (float_roundtrip: an f64 reads back as written).
 json = ["dep:serde_json"]
 python = ["dep:pyo3", "json", "backend"]
-# `corpus`: the nightly tier. Builds `tests/test_import_suite.rs`, which runs
+# `corpus`: the nightly tier. Builds `tests/test_import_suite/`, which runs
 # every spice-bench deck and corpus `nix develop .#testing` pins (about 20 min
 # on a 4-vCPU runner), so the merge tier leaves it out. See TESTING.md.
 corpus = ["json"]
@@ -48,5 +48,5 @@ required-features = ["corpus"]
 
 [[bin]]
 name = "spice2rack"
-path = "tools/spice2rack.rs"
+path = "tools/spice2rack/main.rs"
 required-features = ["json"]

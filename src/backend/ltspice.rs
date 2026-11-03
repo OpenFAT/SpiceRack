@@ -2,6 +2,12 @@
 //!
 //! UNVERIFIED: no LTspice binary is installed here, so every claim in this
 //! file comes from LTspice's documented syntax, not from a run.
+//!
+//! Cites: none (LTspice's command-line help, unverified).
+//!
+//! Contents:
+//! - `pub(super) fn run(netlist: &str) -> Result<Vec<RawData>, BackendError>`
+//! - `pub fn find() -> Option<(PathBuf, bool)>`
 
 use std::path::PathBuf;
 use std::process::Command;

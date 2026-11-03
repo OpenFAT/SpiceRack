@@ -1,3 +1,12 @@
+//! Tests of `import`: one ngspice deck with every card family lowered into
+//! the IR field by field, the ngspice round trip on real ngspice, LTspice's
+//! implicit inductor `Rser`, and every dialect grammar compiling.
+//!
+//! Cites: ngspice manual (card forms); ADI LTspice help, CIRCUIT-ELEMENTS-REFERENCE
+//! (inductor `Rser=1m`).
+//!
+//! Contents: none (tests only).
+
 use super::*;
 use crate::codegen::{Dialect, netlist};
 
@@ -26,6 +35,8 @@ Rp p 0 1k
 .op
 .end
 ";
+
+// ---- private ----
 
 #[test]
 fn deck_to_ir() {

@@ -2,6 +2,15 @@
 //! `key: value` header lines, a `Variables:` block, then `Binary:` or `Values:` and the data.
 //! [`parse_raw`] reads the first plot; [`parse_raw_all`] reads every plot
 //! (ngspice writes one per analysis, not in card order).
+//!
+//! Raw-file bytes in, [`RawData`] plots out.
+//!
+//! Cites: none (the nutmeg raw format as ngspice, VACASK and LTspice write it).
+//!
+//! Contents:
+//! - `pub enum RawFileError`
+//! - `pub fn parse_raw(data: &[u8]) -> Result<RawData, RawFileError>`
+//! - `pub fn parse_raw_all(data: &[u8]) -> Result<Vec<RawData>, RawFileError>`
 
 use crate::result::{RawData, VarInfo, VarType};
 use num_complex::Complex64;
@@ -40,6 +49,8 @@ pub fn parse_raw_all(data: &[u8]) -> Result<Vec<RawData>, RawFileError> {
     }
     Ok(plots)
 }
+
+// ---- private ----
 
 /// LTspice header text is UTF-16-LE (ASCII in the low byte); binary data after
 /// `Binary:` is copied through untouched.

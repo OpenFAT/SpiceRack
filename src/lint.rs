@@ -1,6 +1,14 @@
 //! SPICE netlist linter: common mistakes plus backend-specific card warnings.
 //!
 //! The netlist is tokenised once into [`Row`]s; every check is a pass over them.
+//! Netlist text in, [`LintResult`] out.
+//!
+//! Cites: none (the backend card table names each simulator's missing analyses).
+//!
+//! Contents:
+//! - `pub struct LintResult`
+//! - `pub struct Finding`
+//! - `pub fn lint_netlist(netlist: &str, backend: Option<&str>) -> LintResult`
 
 use std::collections::{HashMap, HashSet};
 
@@ -25,22 +33,6 @@ struct Row<'a> {
     no: usize,
     text: &'a str,
     toks: Vec<&'a str>,
-}
-
-impl Row<'_> {
-    /// Element card: not blank, comment, dot-card or `+` continuation.
-    fn is_elem(&self) -> bool {
-        !self.text.is_empty() && !self.text.starts_with(['*', '.', '+'])
-    }
-    fn kind(&self) -> char {
-        self.text.chars().next().unwrap_or(' ').to_ascii_uppercase()
-    }
-    /// Case-insensitive prefix match on a dot-card (`.MODEL`, `.PZ`, ...).
-    fn card(&self, card: &str) -> bool {
-        self.text
-            .get(..card.len())
-            .is_some_and(|p| p.eq_ignore_ascii_case(card))
-    }
 }
 
 /// Backend family, card prefix, message, suggestion (`None` = error).
@@ -100,14 +92,6 @@ const BACKEND_CARDS: &[BackendCard] = &[
         Some("Use HB (harmonic balance) analysis for distortion"),
     ),
 ];
-
-fn is_ground(t: &str) -> bool {
-    t == "0" || t.eq_ignore_ascii_case("gnd")
-}
-
-fn is_zero_value(s: &str) -> bool {
-    s.parse::<f64>() == Ok(0.0)
-}
 
 /// Lint a SPICE netlist; `backend` adds that simulator's card checks.
 pub fn lint_netlist(netlist: &str, backend: Option<&str>) -> LintResult {
@@ -336,4 +320,30 @@ pub fn lint_netlist(netlist: &str, backend: Option<&str>) -> LintResult {
         }
     }
     out
+}
+
+// ---- private ----
+
+fn is_ground(t: &str) -> bool {
+    t == "0" || t.eq_ignore_ascii_case("gnd")
+}
+
+fn is_zero_value(s: &str) -> bool {
+    s.parse::<f64>() == Ok(0.0)
+}
+
+impl Row<'_> {
+    /// Element card: not blank, comment, dot-card or `+` continuation.
+    fn is_elem(&self) -> bool {
+        !self.text.is_empty() && !self.text.starts_with(['*', '.', '+'])
+    }
+    fn kind(&self) -> char {
+        self.text.chars().next().unwrap_or(' ').to_ascii_uppercase()
+    }
+    /// Case-insensitive prefix match on a dot-card (`.MODEL`, `.PZ`, ...).
+    fn card(&self, card: &str) -> bool {
+        self.text
+            .get(..card.len())
+            .is_some_and(|p| p.eq_ignore_ascii_case(card))
+    }
 }

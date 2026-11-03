@@ -1,7 +1,23 @@
 //! Simulator backends: the [`RUNNABLE`] dialects, one `match` per question.
 //!
 //! A backend executes netlist text verbatim, in its own [`Dialect`]. Turning
-//! IR into that text is the codegen's job.
+//! IR into that text is the codegen's job. Netlist text in, [`RawData`] plots
+//! out, through one subprocess per run.
+//!
+//! Cites: Spectre Reference 19.1 p.17 (`.measure`); each simulator's file
+//! cites its own CLI.
+//!
+//! Contents:
+//! - `pub enum BackendError`
+//! - `pub const RUNNABLE: [Dialect; 5]`
+//! - `pub use crate::codegen::{Dialect, netlist}`
+//! - `pub(crate) fn runs(d: Dialect, needs: u8) -> bool`
+//! - `pub fn parse(name: &str) -> Option<Dialect>`
+//! - `Dialect::capabilities(self) -> u8`, `Dialect::run(self, netlist: &str) -> Result<RawData, BackendError>`,
+//!   `Dialect::run_all(self, netlist: &str) -> Result<Vec<RawData>, BackendError>`
+//! - `pub fn available() -> &'static [Dialect]`
+//! - `pub fn select(analysis: &Analysis, override_backend: Option<&str>, features: &FeatureFlags) -> Result<Dialect, BackendError>`
+//! - `pub mod espice`, `ltspice`, `ngspice`, `spectre`, `vacask`
 
 pub mod espice;
 pub mod ltspice;
@@ -13,6 +29,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 
+pub use crate::codegen::{Dialect, netlist};
+use crate::ir::feature::*;
 use crate::ir::{Analysis, FeatureFlags};
 use crate::rawfile;
 use crate::result::RawData;
@@ -45,8 +63,6 @@ pub enum BackendError {
     Io(#[from] std::io::Error),
 }
 
-pub use crate::codegen::{Dialect, netlist};
-
 /// The dialects a simulator here runs; a universal analysis runs on each, in
 /// this order of preference.
 pub const RUNNABLE: [Dialect; 5] = [
@@ -56,8 +72,6 @@ pub const RUNNABLE: [Dialect; 5] = [
     Dialect::Spectre,
     Dialect::Espice,
 ];
-
-use crate::ir::feature::*;
 
 // What each simulator can do, as `ir::feature` bits.
 const NGSPICE_CAPS: u8 = XSPICE | OSDI | MEASURES | CONTROL_BLOCKS | LAPLACE | VERILOG_COSIM;
@@ -71,40 +85,6 @@ const SPECTRE_CAPS: u8 = OSDI | MEASURES | STEP_PARAMS | VERILOG_COSIM;
 // point as a separate plot in one raw file, which parse_raw does not split.
 // Laplace: its own `E/G … LAPLACE` card (codegen `spice3::laplace_source`).
 const ESPICE_CAPS: u8 = OSDI | MEASURES | LAPLACE;
-
-/// The dialects that run `a`, in preference order, and the workaround to
-/// suggest without one. A universal analysis runs on every [`RUNNABLE`].
-fn route(a: &Analysis) -> (&'static [Dialect], &'static str) {
-    use Dialect::*;
-    match a {
-        // `tf` runs everywhere, so its old ".dc() with small-signal sweep"
-        // workaround could never be shown.
-        Analysis::Op
-        | Analysis::Dc { .. }
-        | Analysis::Ac { .. }
-        | Analysis::Transient { .. }
-        | Analysis::Noise { .. }
-        | Analysis::Tf { .. }
-        | Analysis::Fourier { .. }
-        | Analysis::SpectreSweep { .. }
-        | Analysis::SpectreMonteCarlo { .. } => (&RUNNABLE, "N/A"),
-        Analysis::PoleZero { .. } => (&[Ngspice], ".ac() + post-process for poles/zeros"),
-        Analysis::Distortion { .. } => (&[Ngspice], ".transient() + FFT post-processing"),
-        Analysis::Sensitivity { ac: None, .. } => (&[Ngspice, Spectre, Espice], "N/A"),
-        Analysis::Sensitivity { ac: Some(_), .. } => (&[Ngspice, Spectre], "N/A"),
-        Analysis::HarmonicBalance { .. } => {
-            (&[Vacask, Spectre], "long .tran() + discard startup + FFT")
-        }
-        Analysis::SPar { .. } => (&[Vacask, Spectre, Ngspice], "N/A"),
-        Analysis::Stability { .. } => (&[Vacask, Spectre], ".ac() + Middlebrook method"),
-        Analysis::Pss { .. } => (&[Spectre, Ngspice], "long .tran() + discard startup"),
-        Analysis::TransientNoise { .. } => (&[Vacask], ".tran() with trnoise sources"),
-        Analysis::SpectrePac { .. }
-        | Analysis::SpectrePnoise { .. }
-        | Analysis::SpectrePxf { .. }
-        | Analysis::SpectrePstb { .. } => (&[Spectre], "N/A"),
-    }
-}
 
 /// True when `d`'s simulator has every feature in `needs` (`ir::feature`
 /// bits); `CircuitIR::check_backend` reports each bit this finds missing.
@@ -232,6 +212,42 @@ pub fn select(
     // ponytail: universal analysis, no backend matches the features — run on
     // the first one and let the simulator report what it cannot do.
     Ok(available[0])
+}
+
+// ---- private ----
+
+/// The dialects that run `a`, in preference order, and the workaround to
+/// suggest without one. A universal analysis runs on every [`RUNNABLE`].
+fn route(a: &Analysis) -> (&'static [Dialect], &'static str) {
+    use Dialect::*;
+    match a {
+        // `tf` runs everywhere, so its old ".dc() with small-signal sweep"
+        // workaround could never be shown.
+        Analysis::Op
+        | Analysis::Dc { .. }
+        | Analysis::Ac { .. }
+        | Analysis::Transient { .. }
+        | Analysis::Noise { .. }
+        | Analysis::Tf { .. }
+        | Analysis::Fourier { .. }
+        | Analysis::SpectreSweep { .. }
+        | Analysis::SpectreMonteCarlo { .. } => (&RUNNABLE, "N/A"),
+        Analysis::PoleZero { .. } => (&[Ngspice], ".ac() + post-process for poles/zeros"),
+        Analysis::Distortion { .. } => (&[Ngspice], ".transient() + FFT post-processing"),
+        Analysis::Sensitivity { ac: None, .. } => (&[Ngspice, Spectre, Espice], "N/A"),
+        Analysis::Sensitivity { ac: Some(_), .. } => (&[Ngspice, Spectre], "N/A"),
+        Analysis::HarmonicBalance { .. } => {
+            (&[Vacask, Spectre], "long .tran() + discard startup + FFT")
+        }
+        Analysis::SPar { .. } => (&[Vacask, Spectre, Ngspice], "N/A"),
+        Analysis::Stability { .. } => (&[Vacask, Spectre], ".ac() + Middlebrook method"),
+        Analysis::Pss { .. } => (&[Spectre, Ngspice], "long .tran() + discard startup"),
+        Analysis::TransientNoise { .. } => (&[Vacask], ".tran() with trnoise sources"),
+        Analysis::SpectrePac { .. }
+        | Analysis::SpectrePnoise { .. }
+        | Analysis::SpectrePxf { .. }
+        | Analysis::SpectrePstb { .. } => (&[Spectre], "N/A"),
+    }
 }
 
 fn unsupported(

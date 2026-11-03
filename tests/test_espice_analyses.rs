@@ -1,11 +1,16 @@
-#![cfg(feature = "backend")]
 //! End-to-end coverage of the analyses the ESPice backend exposes: the
-//! shared suite in `common/mod.rs`, run on `Dialect::Espice`.
+//! shared suite in `common/suite.rs`, run on `Dialect::Espice`.
 //!
-//! Skipped automatically when espice is not on PATH. Not covered: XSPICE and
-//! `.control` (not ESPice features; Laplace is in `test_laplace_ngspice.rs`), `.disto`/`.pz`/`.noise`
-//! (their result layouts are not mapped by this backend yet), `.four`
-//! (ESPice writes the table as a raw plot, not to stdout).
+//! Unsupported fails, never skips: no espice on PATH fails every test. Not
+//! covered: XSPICE and `.control` (not ESPice features; Laplace is in
+//! `test_laplace_ngspice.rs`), `.disto`/`.pz`/`.noise` (their result layouts
+//! are not mapped by this backend yet), `.four` (ESPice writes the table as a
+//! raw plot, not to stdout).
+//!
+//! Cites: the closed forms in `common/suite.rs`; real ESPice.
+//!
+//! Contents: none (tests only).
+#![cfg(feature = "backend")]
 
 #[macro_use]
 mod common;

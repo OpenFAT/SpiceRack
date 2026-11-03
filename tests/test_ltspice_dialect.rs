@@ -4,12 +4,18 @@
 //! present, LTspice is not). Every assertion here checks the emitted text
 //! against LTspice's *documented* syntax. Nothing below was run through
 //! LTspice.
+//!
+//! Cites: the LTspice help, per test.
+//!
+//! Contents: none (tests only).
 
 use spicerack::codegen::{CodeGenError, Dialect, netlist};
 use spicerack::ir::*;
 
 /// One dialect, probed one piece at a time through a minimal deck.
 struct Cg(Dialect);
+
+// ---- private ----
 
 fn lt() -> Cg {
     Cg(Dialect::Ltspice)

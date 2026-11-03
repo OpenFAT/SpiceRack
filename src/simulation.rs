@@ -2,6 +2,13 @@
 //! → backend runs the text verbatim → `RawData`, one per plot or, matched
 //! by plot name (ngspice and ESPice `Plotname`s, checked on both), one per
 //! analysis.
+//!
+//! Cites: none (plot names are ngspice's and ESPice's `Plotname` lines).
+//!
+//! Contents:
+//! - `pub fn run(ir: &CircuitIR, backend: Option<&str>) -> Result<RawData, BackendError>`
+//! - `pub fn run_all(ir: &CircuitIR, backend: Option<&str>) -> Result<Vec<RawData>, BackendError>`
+//! - `pub fn run_each(ir: &CircuitIR, backend: Option<&str>) -> Result<Vec<Option<RawData>>, BackendError>`
 
 use crate::backend::{BackendError, Dialect, netlist, select};
 use crate::ir::{Analysis, CircuitIR};

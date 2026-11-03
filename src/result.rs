@@ -1,3 +1,21 @@
+//! Simulator output as tables: one [`RawData`] per plot (column-major, as
+//! `rawfile` reads it) and [`Results`], the same plot with its vectors looked
+//! up by canonical name (`normalize::canonical`).
+//!
+//! Cites: none (the raw-file layout is `rawfile`'s).
+//!
+//! Contents:
+//! - `pub struct RawData`, `RawData::complex(&self, i: usize) -> Option<&[Complex64]>`,
+//!   `RawData::re(&self, i: usize) -> Cow<'_, [f64]>`
+//! - `pub struct VarInfo`
+//! - `pub enum VarType`, `VarType::parse(word: &str) -> VarType`
+//! - `pub struct MeasureResult`
+//! - `pub struct Results`, `Results::from_raw(raw: RawData) -> Results`,
+//!   `Results::column(&self, name: &str) -> Option<usize>`,
+//!   `Results::get(&self, name: &str) -> Option<Cow<'_, [f64]>>`,
+//!   `Results::complex(&self, name: &str) -> Option<&[Complex64]>`,
+//!   `Results::axis(&self) -> Cow<'_, [f64]>`
+
 use num_complex::Complex64;
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -46,6 +64,22 @@ pub enum VarType {
     Other,
 }
 
+#[derive(Debug, Clone)]
+pub struct MeasureResult {
+    pub name: String,
+    pub value: f64,
+}
+
+/// Any analysis result: the plot plus normalized-name -> column lookup.
+/// Every analysis kind is this one type; the sweep axis (time, frequency, DC sweep)
+/// is column 0.
+#[derive(Debug, Clone)]
+pub struct Results {
+    pub raw: RawData,
+    pub nodes: HashMap<String, usize>,
+    pub branches: HashMap<String, usize>,
+}
+
 impl VarType {
     /// The type a raw file's type word names, spelled exactly as ngspice
     /// writes it.
@@ -58,12 +92,6 @@ impl VarType {
             _ => VarType::Other,
         }
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct MeasureResult {
-    pub name: String,
-    pub value: f64,
 }
 
 impl RawData {
@@ -83,16 +111,6 @@ impl RawData {
             None => Cow::Borrowed(self.real_data.get(i).map_or(&[][..], Vec::as_slice)),
         }
     }
-}
-
-/// Any analysis result: the plot plus normalized-name -> column lookup.
-/// Every analysis kind is this one type; the sweep axis (time, frequency, DC sweep)
-/// is column 0.
-#[derive(Debug, Clone)]
-pub struct Results {
-    pub raw: RawData,
-    pub nodes: HashMap<String, usize>,
-    pub branches: HashMap<String, usize>,
 }
 
 impl Results {
