@@ -4,8 +4,9 @@
 //! Corpora come from the variables `nix develop .#testing` sets, walked and
 //! filtered the way `tests/test_import_suite` walks them. A kit is its entry
 //! files plus every file their includes and `.lib` calls reach, breadth first,
-//! the way Interop's `pdk-models` walks one; each file is still parsed alone,
-//! as the `daa0ad0` reader did, and the read order goes into the manifest.
+//! the way Interop's `pdk-models` walks one, and the read order goes into the
+//! manifest. Each kit file, and each fixture, is read in its
+//! `syntax::resolve::Kit` (phase 3); a corpus deck is read alone.
 //!
 //! Cites: `tests/test_import_suite/main.rs` (`files`, `decks`, the corpus
 //! filters); Interop `src/pdk_models.rs` (`references`, `convert`: the walk
@@ -13,19 +14,18 @@
 //!
 //! Contents:
 //! - `pub(super) enum Form { Deck, Library }`
-//! - `pub(super) struct Input { pub(super) set: &'static str, pub(super) rel: String, pub(super) path: PathBuf, pub(super) dialect: Dialect, pub(super) form: Form }`
+//! - `pub(super) struct Input { pub(super) set: &'static str, pub(super) rel: String, pub(super) path: PathBuf, pub(super) dialect: Dialect, pub(super) form: Form, pub(super) kit: Option<(Arc<resolve::Kit>, FileId)> }`
 //! - `pub(super) fn inputs(repo: &Path, manifest: &mut Vec<String>) -> Vec<Input>`
 //! - `pub(super) fn source(text: &str, form: Form, path: &Path) -> (String, String)`
-//! - `pub(super) struct KitSet { pub(super) set: &'static str, pub(super) root: PathBuf, pub(super) kit: resolve::Kit }`
-//! - `pub(super) fn kits(repo: &Path) -> Vec<KitSet>`
 
 use std::collections::{BTreeSet, VecDeque};
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 
 use spicerack::codegen::Dialect;
 use spicerack::import::{decode, parse};
 use spicerack::ir::CircuitIR;
-use spicerack::syntax::resolve::{self, LoadError};
+use spicerack::syntax::resolve::{self, FileId, LoadError};
 
 /// How a file is read: a deck (line 1 is its title, the IR is named for the
 /// file's stem) or a kit's library file (an empty title line is prepended
@@ -45,16 +45,10 @@ pub(super) struct Input {
     pub(super) path: PathBuf,
     pub(super) dialect: Dialect,
     pub(super) form: Form,
-}
-
-// `test_syntax` reads these; `record` does not yet (phase 3's behaviour commits).
-#[allow(dead_code)]
-/// One kit as `syntax::resolve` reads it: a PDK kit from its entries, or a
-/// fixture deck from itself; `root` is what its paths are shown against.
-pub(super) struct KitSet {
-    pub(super) set: &'static str,
-    pub(super) root: PathBuf,
-    pub(super) kit: resolve::Kit,
+    /// The kit it is read in (`syntax::resolve`): its kit's for a PDK file,
+    /// its own (it and what it includes) for a fixture; `None` for a corpus
+    /// deck, read alone.
+    pub(super) kit: Option<(Arc<resolve::Kit>, FileId)>,
 }
 
 /// A corpus: every `*.<ext>` under `$<var>` whose full path passes `keep`.
@@ -192,6 +186,7 @@ pub(super) fn inputs(repo: &Path, manifest: &mut Vec<String>) -> Vec<Input> {
             path,
             dialect: c.dialect,
             form: Form::Deck,
+            kit: None,
         }));
     }
     for k in &KITS {
@@ -205,12 +200,20 @@ pub(super) fn inputs(repo: &Path, manifest: &mut Vec<String>) -> Vec<Input> {
     all.extend(found.into_iter().filter_map(|path| {
         let ext = path.extension()?.to_str()?;
         let &(_, dialect) = FIXTURES.iter().find(|f| f.0 == ext)?;
+        let tests = repo.join("tests");
+        let kit = resolve::Kit::load(
+            std::slice::from_ref(&path),
+            resolve::Form::Deck,
+            dialect,
+            &mut loader(&tests),
+        );
         Some(Input {
             set: "fixtures",
             rel: rel(repo, &path),
             path,
             dialect,
             form: Form::Deck,
+            kit: Some((Arc::new(kit), FileId(0))),
         })
     }));
     manifest.push(format!(
@@ -232,54 +235,8 @@ pub(super) fn source(text: &str, form: Form, path: &Path) -> (String, String) {
     }
 }
 
-#[allow(dead_code)]
-/// Every PDK kit (entered at its entries, read as libraries) and every
-/// fixture deck (entered at itself, read as a deck, its includes followed
-/// under `tests/`) as a [`resolve::Kit`]. An absent kit is left out.
-pub(super) fn kits(repo: &Path) -> Vec<KitSet> {
-    let mut out = Vec::new();
-    for k in &KITS {
-        let Some(root) = root(k.set, k.var, k.sub, &mut Vec::new()) else {
-            continue;
-        };
-        let entries: Vec<PathBuf> = (k.entries)(&root).iter().map(|e| root.join(e)).collect();
-        let kit = resolve::Kit::load(
-            &entries,
-            resolve::Form::Library,
-            k.dialect,
-            &mut loader(&root),
-        );
-        out.push(KitSet {
-            set: k.set,
-            root,
-            kit,
-        });
-    }
-    let tests = repo.join("tests");
-    let mut found = Vec::new();
-    files(&tests, &mut found);
-    found.sort();
-    for path in found {
-        let Some(&(_, d)) = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .and_then(|e| FIXTURES.iter().find(|f| f.0 == e))
-        else {
-            continue;
-        };
-        let kit = resolve::Kit::load(&[path], resolve::Form::Deck, d, &mut loader(&tests));
-        out.push(KitSet {
-            set: "fixtures",
-            root: repo.to_path_buf(),
-            kit,
-        });
-    }
-    out
-}
-
 // ---- private ----
 
-#[allow(dead_code)]
 /// Reads a file under `root` (decoded as `import::decode` does); refuses
 /// any other path.
 fn loader(root: &Path) -> impl FnMut(&Path) -> Result<String, LoadError> + '_ {
@@ -403,7 +360,23 @@ fn kit(k: &Kit, root: &Path, manifest: &mut Vec<String>) -> Vec<Input> {
             path: p,
             dialect: k.dialect,
             form: Form::Library,
+            kit: None,
         });
+    }
+    // The kit `syntax::resolve` reads from the same entries: every file
+    // above is one of its files (it also follows includes this walk skips,
+    // inside a subckt or an `.if` branch; those are no inputs).
+    let entries: Vec<PathBuf> = entries.iter().map(|e| root.join(e)).collect();
+    let kit = Arc::new(resolve::Kit::load(
+        &entries,
+        resolve::Form::Library,
+        k.dialect,
+        &mut loader(root),
+    ));
+    for input in &mut out {
+        let f = kit.files().iter().position(|f| f.path == input.path);
+        let f = f.expect("the kit reads every file the walk reads");
+        input.kit = Some((Arc::clone(&kit), FileId(f as u32)));
     }
     out
 }

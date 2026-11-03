@@ -27,3 +27,28 @@ xyce/INVALID_CHARS/double_quote_fails_node_name.cir ltspice the refusal quotes t
 xyce/INVALID_CHARS/double_quote_fails_node_name.cir ngspice the refusal quotes the first raw line, which is now one card
 xyce/INVALID_CHARS/double_quote_fails_node_name.cir spectre the refusal quotes the first raw line, which is now one card
 xyce/INVALID_CHARS/double_quote_fails_node_name.cir vacask the refusal quotes the first raw line, which is now one card
+
+# Phase 3 behaviour (syntax::resolve; golden reads each kit file in its
+# kit and each fixture with what it includes): masters, model words and
+# node splits the file alone leaves open now resolve across the kit. Per
+# set: fixtures 11 lines (one input), pdk-sky130A 7 (one input); every
+# other set is identical (single-file decks are read alone, and no kit file
+# but these two changes).
+fixtures/tests/fixtures/transpiler/top.scs ir x1, x2 now instances of subckt leaf from lib.scs and m1 a MOSFET of model nch_mod from lib.scs; were 3 raw lines
+fixtures/tests/fixtures/transpiler/top.scs report the raw count follows: 3 -> 0 (x1, x2, m1 resolve in lib.scs)
+fixtures/tests/fixtures/transpiler/top.scs ngspice now written (X1, X2 of leaf, M1 of nch_mod from lib.scs); was refused for the raw Spectre line x1
+fixtures/tests/fixtures/transpiler/top.scs espice now written (X1, X2 of leaf, M1 of nch_mod from lib.scs); was refused for the raw Spectre line x1
+fixtures/tests/fixtures/transpiler/top.scs hspice now written (X1, X2 of leaf, M1 of nch_mod from lib.scs); was refused for the raw Spectre line x1
+fixtures/tests/fixtures/transpiler/top.scs xyce now written (X1, X2 of leaf, M1 of nch_mod from lib.scs); was refused for the raw Spectre line x1
+fixtures/tests/fixtures/transpiler/top.scs ltspice now written (X1, X2 of leaf, M1 of nch_mod from lib.scs); was refused for the raw Spectre line x1
+fixtures/tests/fixtures/transpiler/top.scs vacask now written (X1, X2 of leaf, M1 of nch_mod from lib.scs); was refused for the raw Spectre line x1
+fixtures/tests/fixtures/transpiler/top.scs spectre x1, x2, m1 now IR (x2 written with parentheses, f1 after them as the writer orders components); were raw lines
+fixtures/tests/fixtures/transpiler/top.scs cdl the IR above holds x1, x2, m1 (leaf and nch_mod from lib.scs), no raw lines, so the xschem layout lists them
+fixtures/tests/fixtures/transpiler/top.scs verilog the IR above holds x1, x2, m1 (leaf and nch_mod from lib.scs), no raw lines, so the xschem layout lists them
+pdk-sky130A/libs.tech/combined/rescap/sky130_fd_pr__model__res.model.spice ir R0 of sky130_fd_pr__res_generic_nd__hv / __pd__hv: rndiff_v5, rpdiff_v5 now the model (declared in continuous/models_resistors.spice); was the value expression {rndiff_v5}
+pdk-sky130A/libs.tech/combined/rescap/sky130_fd_pr__model__res.model.spice ngspice R0 t1 t2 rndiff_v5 (and rpdiff_v5): the model from models_resistors.spice; was the value {rndiff_v5}, which names no parameter
+pdk-sky130A/libs.tech/combined/rescap/sky130_fd_pr__model__res.model.spice espice R0 t1 t2 rndiff_v5 (and rpdiff_v5): the model from models_resistors.spice; was the value {rndiff_v5}, which names no parameter
+pdk-sky130A/libs.tech/combined/rescap/sky130_fd_pr__model__res.model.spice hspice R0 t1 t2 rndiff_v5 (and rpdiff_v5): the model from models_resistors.spice; was the value {rndiff_v5}, which names no parameter
+pdk-sky130A/libs.tech/combined/rescap/sky130_fd_pr__model__res.model.spice xyce R0 t1 t2 rndiff_v5 (and rpdiff_v5): the model from models_resistors.spice; was the value {rndiff_v5}, which names no parameter
+pdk-sky130A/libs.tech/combined/rescap/sky130_fd_pr__model__res.model.spice cdl the IR above: R0's model rndiff_v5 / rpdiff_v5 from models_resistors.spice, its value empty; was the expression {rndiff_v5}
+pdk-sky130A/libs.tech/combined/rescap/sky130_fd_pr__model__res.model.spice verilog the IR above: R0's model rndiff_v5 / rpdiff_v5 from models_resistors.spice, its value empty; was the expression {rndiff_v5}

@@ -17,9 +17,10 @@
 //! - `parse.refused` instead of all of these when `parse` refuses the file;
 //! - `<name>.panicked`, the panic message, when a call panics.
 //!
-//! The reader is `import::parse`, which is the transpiler's front end since
-//! phase 2b; a record of `daa0ad0` (the PEG reader it replaced) is the
-//! oracle a new record is diffed against.
+//! The reader is the transpiler's front end (phase 2b): `import::parse` for
+//! a corpus deck, `import::parse_kit` for a PDK kit file or a fixture, read
+//! in its `syntax::resolve::Kit` (phase 3). A record of `daa0ad0` (the PEG
+//! reader it replaced) is the oracle a new record is diffed against.
 //!
 //! `MANIFEST` lists the sets, each kit's read order, each input's content
 //! hash and each output file's. `diff` prints `IDENTICAL` or every differing
@@ -39,7 +40,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use spicerack::codegen::{Dialect, netlist};
-use spicerack::import::{decode, parse};
+use spicerack::import::{decode, parse, parse_kit};
 
 mod diff;
 mod inputs;
@@ -167,7 +168,14 @@ fn record_one(out: &Path, input: &Input) -> std::io::Result<Vec<String>> {
         Ok(())
     };
     let (src, name) = source(&decode(&bytes), input.form, &input.path);
-    let (ir, report) = match catch_unwind(|| parse(&src, &name, input.dialect)) {
+    let read = || match &input.kit {
+        Some((kit, f)) => {
+            assert_eq!(kit.file(*f).text, src, "the kit read this text");
+            Ok(parse_kit(kit, *f, &name))
+        }
+        None => parse(&src, &name, input.dialect),
+    };
+    let (ir, report) = match catch_unwind(AssertUnwindSafe(read)) {
         Ok(Ok(parsed)) => parsed,
         Ok(Err(e)) => {
             put("parse.refused", &format!("{e}\n"))?;

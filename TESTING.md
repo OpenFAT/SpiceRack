@@ -41,8 +41,8 @@ provenance, never by re-deriving it the way codegen does.
 | `test_sections_pdk.rs` | real PDK files: section names against a line scan, fixpoints; real ngspice on gf180mcu's `sm141064.ngspice` (nothing raw: subcircuit `.param`s are locals) and real VACASK on its `demo/cmos180n.lib`, written by SpiceRack, bit-identical to the original's run; gf180mcu's sections SPICE -> Spectre -> IR by meaning or refused by named reason; sky130's combined library and the ~190 files it reaches, nothing unparsed or raw, written back as ngspice and as HSPICE and run on `tt` by ngspice bit-identical to the PDK's own files; ESPice `--tokenizer=hspice` on the HSPICE tree, a named known gap (+5.1%) |
 | `test_spectre_golden/` | goldens; Spectre is licence-gated, so the text is checked against the Spectre reference manual |
 | `test_ltspice_dialect.rs` | emitted text against the LTspice help; no LTspice binary, so unverified by execution |
-| `test_syntax.rs` | the hand-read `simulator lang=spice` region of `tests/fixtures/pdk_sections/bare.scs`, and one region marker per such line in every Spectre fixture; `throughput` (`--ignored`) times the front end's stages over every golden-gate input |
-| `src/syntax` (`#[cfg(test)]`) | one test per node tag and per header shape, each against its manual clause with the tree derived by hand (`src/syntax/tests/`); the device tables read and written back (`device.rs`); a 10⁴-deep nested `.subckt` deck through the parser and the adapter in Debug |
+| `test_syntax.rs` | the hand-read `simulator lang=spice` region of `tests/fixtures/pdk_sections/bare.scs`, and one region marker per such line in every Spectre fixture; `kits_resolve`: every PDK kit and fixture as a `resolve::Kit`, its read order the golden walk's, every instance master bound or carrying its `R0001`, the counts printed; `throughput` (`--ignored`) times the front end's stages over every golden-gate input |
+| `src/syntax` (`#[cfg(test)]`) | one test per node tag and per header shape, each against its manual clause with the tree derived by hand (`src/syntax/tests/`); the device tables read and written back (`device.rs`); resolve, one test per answer against its clause, from an in-memory loader (`src/syntax/resolve/tests.rs`); 10⁴-deep `.subckt` and `.if` decks through the parser, resolve and the adapter in Debug (`src/syntax/tests/adapter.rs`) |
 | `test_backends.rs`, `test_unit.rs` | spec examples |
 | `src/ir` (`schema_check.rs`) | the JSON Schema 2020-12 spec: an IR with every field set, every component and analysis variant, the shipped example and decks imported from ngspice, Spectre and VACASK validate against `schema/circuit-ir.schema.json`; the checker panics on any keyword it does not implement, and rejects one counterexample per keyword |
 
@@ -95,8 +95,13 @@ Inputs (the `MANIFEST` of each record lists them, with content hashes):
 
 A kit is walked like Interop's `pdk-models`: the entries, then breadth first
 through includes, `.lib` calls and Verilog-A sources. The read order is in
-the manifest. Each kit file is still parsed alone, with an empty title line
-prepended, because that is the oracle's behaviour. Every target is written for every
+the manifest. Since phase 3, each kit file is read in its kit
+(`syntax::resolve::Kit`, loaded from the same entries; `import::parse_kit`),
+still behind an empty title line as the oracle read it, and each fixture in
+its own kit (itself and the files it includes under `tests/`); a corpus deck
+is read alone. The kit also follows includes the walk skips (inside a
+`.subckt` or an `.if` branch: IHP's three `*_parm.lib`), which are no inputs,
+so the manifest stays the baseline's. Every target is written for every
 input. The manifest's `skip` lines name the input dialects no set reads
 (ESPice reads ngspice text; CDL and Verilog have no reader).
 

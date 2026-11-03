@@ -28,7 +28,8 @@
 //!
 //! Contents: none (tests only).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Instant;
 
 use std::collections::BTreeMap;
@@ -38,7 +39,7 @@ use spicerack::import::decode;
 use spicerack::syntax::ast::{self, NONE, Node};
 use spicerack::syntax::diag::Code;
 use spicerack::syntax::lexicon::{self, HSPICE, SPECTRE};
-use spicerack::syntax::resolve::{Binding, DefKind, FileId, LoadError, Role};
+use spicerack::syntax::resolve::{Binding, DefKind, FileId, Kit, LoadError, Role};
 use spicerack::syntax::token::Tag;
 use spicerack::syntax::{ast_to_ir, parse, tokenize};
 
@@ -109,15 +110,26 @@ fn kits_resolve() {
     // kit reads its files in the order the golden walk records.
     let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut manifest = Vec::new();
-    inputs::inputs(repo, &mut manifest);
+    let all = inputs::inputs(repo, &mut manifest);
     assert!(
         !manifest.iter().any(|l| l.starts_with("absent")),
         "run in `nix develop .#testing` with $IHP_PDK"
     );
+    // Each kit once, with its set and the root its paths are shown against.
+    let mut kits: Vec<(&str, PathBuf, Arc<Kit>)> = Vec::new();
+    for i in &all {
+        if let Some((k, _)) = &i.kit
+            && !kits.iter().any(|(_, _, x)| Arc::ptr_eq(x, k))
+        {
+            let path = i.path.to_string_lossy();
+            let root = path.strip_suffix(&i.rel).expect("rel ends the path");
+            kits.push((i.set, PathBuf::from(root), Arc::clone(k)));
+        }
+    }
     let mut counts: BTreeMap<&str, BTreeMap<String, usize>> = BTreeMap::new();
-    for ks in inputs::kits(repo) {
-        let kit = &ks.kit;
-        if ks.set != "fixtures" {
+    for (kset, kroot, kit) in &kits {
+        let (kset, kroot): (&str, &Path) = (kset, kroot);
+        if kset != "fixtures" {
             // The walk's files are the kit's, in the kit's order; the kit
             // also follows includes the walk skips (inside a subckt or an
             // `.if` branch), which are no golden inputs.
@@ -125,7 +137,7 @@ fn kits_resolve() {
                 .files()
                 .iter()
                 .map(|f| {
-                    let shown = f.path.strip_prefix(&ks.root).unwrap_or(&f.path);
+                    let shown = f.path.strip_prefix(kroot).unwrap_or(&f.path);
                     let what = match f.role {
                         Role::Unread(LoadError::Refused) => "outside",
                         Role::Unread(LoadError::NotFound) => "missing",
@@ -139,10 +151,10 @@ fn kits_resolve() {
                 .filter_map(|l| {
                     let w: Vec<&str> = l.split(' ').collect();
                     match w.as_slice() {
-                        ["order", set, _, path, ..] if *set == ks.set => {
+                        ["order", set, _, path, ..] if *set == kset => {
                             Some((path.to_string(), "order"))
                         }
-                        [what @ ("missing" | "outside"), set, path] if *set == ks.set => Some((
+                        [what @ ("missing" | "outside"), set, path] if *set == kset => Some((
                             path.to_string(),
                             if *what == "missing" {
                                 "missing"
@@ -160,7 +172,7 @@ fn kits_resolve() {
                 shared,
                 walked.iter().collect::<Vec<_>>(),
                 "{}: read order",
-                ks.set
+                kset
             );
             let extra: Vec<&String> = kit_files
                 .iter()
@@ -169,12 +181,12 @@ fn kits_resolve() {
                 .collect();
             println!(
                 "{}: {} files, {} past the walk: {extra:?}",
-                ks.set,
+                kset,
                 kit_files.len(),
                 extra.len()
             );
         }
-        let c = counts.entry(ks.set).or_default();
+        let c = counts.entry(kset).or_default();
         let lex = lexicon::of(kit.dialect()).expect("a reader");
         for (k, file) in kit.files().iter().enumerate() {
             if !matches!(file.role, Role::Deck | Role::Library) {
