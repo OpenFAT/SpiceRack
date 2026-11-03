@@ -6,7 +6,7 @@
 //! names: the last bare word before its parameters, or the one after them
 //! (sky130's `special_pfet_latch`).
 //!
-//! Cites: `grammar/spice.peg` (`card`, `dotcard`, `element`, `X`, `LibDef`,
+//! Cites: the old SPICE grammar (`card`, `dotcard`, `element`, `X`, `LibDef`,
 //! `If`, `Block`) and the dialect overlays; ngspice manual §2.5 (`.subckt`),
 //! §2.7 (`.lib`), §2.15 (`.if`), §3.1 (element letters), ch.13 (`.control`).
 //!

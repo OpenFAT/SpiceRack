@@ -24,7 +24,7 @@
 //! Cites: `transpiler-architecture.md` §2.2, §2.3; Zig `Parse.zig`
 //! (`compiler-architecture-reference.md` §2.1-§2.6: never fails, scratch
 //! lists, recovery at the next member); the card structure of
-//! `grammar/spice.peg`, `spectre.peg`, `vacask.peg` (ngspice manual §2.5
+//! the old SPICE grammar, the old Spectre grammar, the old VACASK grammar (ngspice manual §2.5
 //! `.subckt`, §2.7 `.lib`, §2.15 `.if`; Spectre Reference 19.1 p.491 `if`,
 //! p.498 `library`; VACASK `lib/dflparser.y` P324-P509).
 //!
@@ -152,7 +152,7 @@ pub fn parse<'s>(t: &Tokens<'s>, lex: &'static Lexicon) -> Ast<'s> {
     p.ast
 }
 
-/// hspice.peg `l_glue_break`: blanks, `\\`, blanks, the newline, blanks.
+/// the old HSPICE grammar's `l_glue_break`: blanks, `\\`, blanks, the newline, blanks.
 pub(super) fn is_glue(gap: &str) -> bool {
     gap.trim_matches([' ', '\t'])
         .strip_prefix("\\\\")
@@ -320,7 +320,7 @@ impl<'s> Parser<'_, 's> {
         let in_tag = self.ast.tag(top.node);
         let first = self.i;
         if in_tag == Tag::Region {
-            // spectre.peg `SpiceRegion`: a region ends at the switch back, or
+            // the old Spectre grammar's `SpiceRegion`: a region ends at the switch back, or
             // where its section or library ends.
             let word = self.t.text(first);
             if word == "endsection" || word == "endlibrary" {

@@ -11,9 +11,9 @@
 //! ⏎ `r0 (a b) resistor r=1`) waits on the stack ([`Wait`]); a completed
 //! branch waits for an `else`.
 //!
-//! Cites: `grammar/spectre.peg` (`card`, `If`, `Branch`, `bbody`, `Func`,
+//! Cites: the old Spectre grammar (`card`, `If`, `Branch`, `bbody`, `Func`,
 //! `Model_group`, `Statistics`, `Library`, `LibDef`, `Inst`, `SpiceRegion`)
-//! and `grammar/vacask.peg` (`Inst`, `ControlBlock`, `If`); Spectre
+//! and the old VACASK grammar (`Inst`, `ControlBlock`, `If`); Spectre
 //! Reference 19.1 p.491 (`if`), p.498 (`library`), pp.175-179
 //! (`statistics`); Spectre UG p.92 (`real` functions), p.94 (`subckt`), p.66
 //! (instances), p.108 (model groups); VACASK `lib/dflparser.y` P324-P509,
@@ -329,7 +329,7 @@ impl Parser<'_, '_> {
     }
 
     /// `name [(nodes)] master params`, or `name nodes... master params`
-    /// (spectre.peg `Inst`: without parentheses the master is the last bare
+    /// (the old Spectre grammar's `Inst`: without parentheses the master is the last bare
     /// word before the first `key=`); VACASK's master may be absent.
     fn instance(&mut self) -> Node {
         let first = self.i;

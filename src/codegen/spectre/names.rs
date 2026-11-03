@@ -64,8 +64,8 @@ impl std::fmt::Display for Name<'_> {
             return f.write_str(&name);
         }
         let plain = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '!';
-        // A name that starts with a digit is read as digits only (`spectre.peg`
-        // Node), so one needing escapes escapes its first digit too: `\15\+`.
+        // A name that starts with a digit is read as digits only (the old
+        // Spectre grammar's `Node`), so one needing escapes escapes its first digit too: `\15\+`.
         if !name.chars().all(plain) && name.starts_with(|c: char| c.is_ascii_digit()) {
             f.write_char('\\')?;
         }

@@ -1,6 +1,6 @@
 //! Xyce's lexicon.
 //!
-//! Cites (as `grammar/xyce.peg` does; RG = Xyce Reference Guide 7.9, checked
+//! Cites (as the old Xyce grammar did; RG = Xyce Reference Guide 7.9, checked
 //! on Xyce 7.10): §2.1.39 p.163 (line 1 the title); §2.1.39.1 (`*` comment
 //! lines, a blank-led line is a comment); §2.1.39.2 (`;` anywhere, quotes
 //! and braces included); §2.1.39.3 (`+` continuation); §2.1.6 (`.END`);

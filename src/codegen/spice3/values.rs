@@ -62,7 +62,7 @@ pub(super) fn value(d: Dialect, x: bool, v: &IrValue) -> Cow<'_, str> {
 /// How `d` spells a parameter value kept as SPICE text: as written, but for
 /// HSPICE, which reads braces as name bytes (#203) and an unquoted value as
 /// one word (blanks only inside parentheses) starting with a letter, or a
-/// number (hspice.peg X1, CR10 p.238), any other expression is quoted (`{a*2}` is `'a*2'`, `{a} + b` is
+/// number (the old HSPICE grammar's X1, CR10 p.238), any other expression is quoted (`{a*2}` is `'a*2'`, `{a} + b` is
 /// `'(a) + b'`, `a * b` is `'a * b'`); a run of numbers (a matrix) is not.
 pub(super) fn spelled(d: Dialect) -> fn(&str) -> Cow<'_, str> {
     if d == Dialect::Hspice {

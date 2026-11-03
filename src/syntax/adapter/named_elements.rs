@@ -1,8 +1,8 @@
 //! Spectre and VACASK instance statements → IR components (by built-in
 //! master or model kind) or subcircuit `Instance`s, with their source
-//! waveforms, as `import/lower/named_elements.rs` builds them.
+//! waveforms, as the old lowering builds them.
 //!
-//! Cites: `import/lower/named_elements.rs`, `named_analyses.rs` (ported);
+//! Cites: the old lowering (its named elements and analyses, ported);
 //! Spectre Circuit Simulator Reference 5.0 `[CMP]` (`vsource` #4, #17, #18,
 //! p.686); `codegen::spectre`, `codegen::vacask` (the key names, inverted).
 //!
@@ -17,7 +17,7 @@ use crate::codegen::Dialect;
 use crate::ir::*;
 use crate::syntax::ast::{NONE, Node, Tag};
 
-/// The keys one dialect's built-in masters use (lower/named_elements.rs).
+/// The keys one dialect's built-in masters use (the old lowering).
 struct Keys {
     source: &'static [&'static str],
     damp: &'static str,
@@ -83,7 +83,7 @@ pub(super) fn unquoted(v: &str) -> Option<String> {
 
 impl<'a> Cx<'a> {
     /// One instance statement as a component or subcircuit instance; `None`
-    /// when the IR has no form for it (lower/named_elements.rs `inst`).
+    /// when the IR has no form for it (the old lowering's `inst`).
     pub(super) fn inst(
         &self,
         n: u32,
@@ -355,7 +355,7 @@ impl<'a> Cx<'a> {
     }
 
     /// `name`'s SPICE spelling: the letter `codegen` adds back is dropped
-    /// (lower/named_elements.rs `strip`).
+    /// (the old lowering's `strip`).
     fn strip(&self, name: &str, letter: char) -> String {
         let name = if self.d == Dialect::Vacask {
             name.to_lowercase()
@@ -370,7 +370,7 @@ impl<'a> Cx<'a> {
         }
     }
 
-    /// lower/named_elements.rs `named_waveform`.
+    /// the old lowering's `named_waveform`.
     fn named_waveform(&self, p: &[(String, u32)]) -> Option<Option<IrWaveform>> {
         let keys = self.keys();
         let f = |k: &str| {
@@ -485,8 +485,8 @@ impl<'a> Cx<'a> {
         }))
     }
 
-    /// quirk: lower/named_elements.rs `velems`: a vector's element rows;
-    /// spectre.peg `s_unary2` captures no sign, so `-1` reads as `1`.
+    /// quirk: the old lowering's `velems`: a vector's element rows; the old
+    /// Spectre grammar's `s_unary2` captures no sign, so `-1` reads as `1`.
     fn velems(&self, v: u32) -> Vec<u32> {
         if self.tag(v) != Tag::Vector {
             return vec![v];

@@ -14,9 +14,9 @@
 //! `simulator lang=spice` switch (`switch_at`), which swaps the lexicon for
 //! the statements up to `simulator lang=spectre`.
 //!
-//! Cites: the line stages of `grammar/{ngspice,hspice,ltspice,xyce,spectre,
-//! vacask}.peg` (today's reader, which this reproduces; each lexicon file
-//! cites the manual clauses); ESPice `src/frontend/lines_hspice.zig:88-106`
+//! Cites: the old PEG grammars' line stages (the old reader, which this
+//! reproduced at the switch, phase 2b; each lexicon file cites the manual
+//! clauses); ESPice `src/frontend/lines_hspice.zig:88-106`
 //! (the `$` rule); Zig `tokenizer.zig:389` (never fails).
 //!
 //! Contents:
@@ -135,7 +135,7 @@ impl Lexer<'_> {
         if lex.stop == Some(rest[0]) {
             return Line::Stop;
         }
-        // A SPICE region of a Spectre file has no `.end` (spectre.peg's
+        // A SPICE region of a Spectre file has no `.end` (the old Spectre grammar's
         // `Line_spice`).
         if let Some(end) = lex.end
             && self.home.is_none()
@@ -183,7 +183,7 @@ impl Lexer<'_> {
             return false;
         };
         // ngspice: a `//` line whose comment ends at a `\\` break is a
-        // statement, joined to the next line (ngspice.peg `l_skip`).
+        // statement, joined to the next line (the old ngspice grammar's `l_skip`).
         !(*s == "//" && lex.backslash == Backslash::Glue && glue_at_end(rest))
     }
 
@@ -295,7 +295,7 @@ impl Lexer<'_> {
     }
 
     /// Spectre's hook: the switch the statement at `at` makes, read off the
-    /// raw line as `spectre.peg` does (`l_to_spice` in lowercase only,
+    /// raw line as the old Spectre grammar did (`l_to_spice` in lowercase only,
     /// `l_to_spectre` in any case).
     fn switch_at(&self, at: usize) -> Option<Tag> {
         let (to, tag) = match self.home {
@@ -361,7 +361,7 @@ impl Lexer<'_> {
         let to_eol = || {
             let end = line_end(src, p);
             if lex.backslash == Backslash::Glue {
-                // ngspice.peg `l_comment`: a `\\` break still continues.
+                // the old ngspice grammar's `l_comment`: a `\\` break still continues.
                 (p..end)
                     .find(|&q| backslash_break(src, q, lex).is_some())
                     .unwrap_or(end)
@@ -389,7 +389,7 @@ impl Lexer<'_> {
             Dollar::AfterBlank => after_sep(p, b" \t\r,"),
             Dollar::Hspice => {
                 const SEPS: &[u8] = b" \t\r,=()'\"";
-                // hspice.peg `l_numtok`: a signed number with letters only
+                // the old HSPICE grammar's `l_numtok`: a signed number with letters only
                 // after its digits, a chunk of its own.
                 let number = self.out.tags.last() == Some(&Tag::Number)
                     && self.out.starts.last().is_some_and(|&s| {

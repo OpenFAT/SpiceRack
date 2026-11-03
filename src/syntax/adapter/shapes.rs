@@ -1,9 +1,9 @@
-//! SPICE element items → whether `grammar/spice.peg`'s field rules read
+//! SPICE element items → whether the old SPICE grammar's field rules read
 //! them: a `field`, a `Val`, a `Pair`, `Pair_i`'s run-on value, the `s`
 //! between fields, a closed group; the helpers every element rule shares.
 //!
-//! Cites: spice.peg `element_any`, `field`, `Pair`, `Pair_i`, `Val_i`,
-//! `inst`, `value`, `group`; xyce.peg `blob`.
+//! Cites: the old SPICE grammar's `element_any`, `field`, `Pair`, `Pair_i`, `Val_i`,
+//! `inst`, `value`, `group`; the old Xyce grammar's `blob`.
 //!
 //! Contents:
 //! - `Cx::items(&self, n: u32) -> Vec<u32>`
@@ -38,9 +38,10 @@ impl<'a> Cx<'a> {
         items
     }
 
-    /// quirk: spice.peg `element_any <- &[a-z] Name (s? field)+`, the card's
-    /// end: every item after the name a `field` (a word, group, string,
-    /// readable expression, `k=v`, or one of `, ( ) =`).
+    /// quirk: the old SPICE grammar's `element_any <- &[a-z] Name (s?
+    /// field)+`, the card's end: every item after the name a `field` (a
+    /// word, group, string, readable expression, `k=v`, or one of `, ( )
+    /// =`).
     pub(super) fn fields_ok(&self, n: u32) -> bool {
         let items = &self.items(n)[..];
         let name = self.ast.header(Node(n)).name;
@@ -88,7 +89,7 @@ impl<'a> Cx<'a> {
         any && (covered..=last).all(stray)
     }
 
-    /// spice.peg's `s` before each item (`commas`: or `s? ','`s as `inst`
+    /// the old SPICE grammar's `s` before each item (`commas`: or `s? ','`s as `inst`
     /// allows, a blank still before the item).
     pub(super) fn spaced_items(&self, prev: u32, items: &[u32], commas: bool) -> bool {
         let mut prev = prev;
@@ -110,7 +111,7 @@ impl<'a> Cx<'a> {
         self.last(self.ast.header(Node(n)).name)
     }
 
-    /// The element's name after its letter (spice.peg `Name_e`).
+    /// The element's name after its letter (the old SPICE grammar's `Name_e`).
     pub(super) fn elem_name(&self, n: u32) -> String {
         let w = self.ast.header(Node(n)).name;
         let t = self.text(w);
@@ -166,14 +167,14 @@ impl<'a> Cx<'a> {
         }
     }
 
-    /// spice.peg `inst`: flags and `Pair_i`s; `None` when another item
+    /// the old SPICE grammar's `inst`: flags and `Pair_i`s; `None` when another item
     /// stands among them.
     pub(super) fn inst_ok(&self, rest: &[u32]) -> bool {
         rest.iter().all(|&k| self.is_word(k) || self.pair_i_ok(k))
     }
 
-    /// quirk: whether group `g` ends at its `)` (spice.peg `group`; an unclosed one runs to the
-    /// card's end).
+    /// quirk: whether group `g` ends at its `)` (the old SPICE grammar's
+    /// `group`; an unclosed one runs to the card's end).
     pub(super) fn group_closed(&self, g: u32) -> bool {
         self.ttag(self.ast.extra(self.ast.rhs(Node(g)))) == T::RParen
     }

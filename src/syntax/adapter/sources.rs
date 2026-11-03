@@ -1,10 +1,10 @@
 //! SPICE V and I cards → `VoltageSource`/`CurrentSource` components with
-//! their waveforms (`import/lower/elements.rs`), each card's fields read by
-//! `grammar/spice.peg`'s `spec` rules: `dc`, `ac`, a waveform with or
+//! their waveforms (the old lowering), each card's fields read by
+//! the old SPICE grammar's `spec` rules: `dc`, `ac`, a waveform with or
 //! without parentheses, ngspice's named fields.
 //!
-//! Cites: `import/lower/elements.rs` (ported); spice.peg `V`, `I`, `spec`,
-//! `Sdc`, `Sac`, `wave`, `wargs`; ngspice.peg `Pair_src`, `Trnoise`,
+//! Cites: the old lowering (ported); the old SPICE grammar's `V`, `I`, `spec`,
+//! `Sdc`, `Sac`, `wave`, `wargs`; the old ngspice grammar's `Pair_src`, `Trnoise`,
 //! `Trrandom`; ngspice manual §4.1.4-§4.1.11.
 //!
 //! Contents:
@@ -42,7 +42,7 @@ enum Spec {
 }
 
 impl<'a> Cx<'a> {
-    /// A V or I card (spice.peg `V`, `spec`; lower/elements.rs:133-219).
+    /// A V or I card (the old SPICE grammar's `V`, `spec`; the old lowering).
     pub(super) fn source(&self, n: u32, e: Element, name: String) -> Option<Component> {
         let items = &self.items(n)[..];
         if items.len() < 2 || !self.is_word(items[0]) || !self.is_word(items[1]) {
@@ -253,7 +253,7 @@ impl<'a> Cx<'a> {
         })
     }
 
-    /// A waveform's values → its IR form (lower/elements.rs `waveform`).
+    /// A waveform's values → its IR form (the old lowering's `waveform`).
     fn waveform(&self, w: Wave, vals: &[u32]) -> Option<IrWaveform> {
         let a: Vec<IrNum> = vals.iter().map(|&v| self.irnum(v)).collect::<Option<_>>()?;
         let g = |i: usize| a.get(i).cloned().unwrap_or(IrNum::Num(0.0));

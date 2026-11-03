@@ -222,7 +222,7 @@ pub(super) fn netlist(d: Dialect, ir: &CircuitIR) -> Result<String, CodeGenError
     }
 
     // HSPICE's `.END` ends the run, even in a file read by `.include` or
-    // `.lib` (hspice.peg L9; ESPice stops there): a deck with no analysis is
+    // `.lib` (the old HSPICE grammar's L9; ESPice stops there): a deck with no analysis is
     // a library, and ends without one.
     let runs = ir
         .testbench

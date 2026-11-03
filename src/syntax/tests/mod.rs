@@ -324,7 +324,7 @@ fn spectre_real_function_over_three_lines() {
 #[test]
 fn model_matrix_is_a_seq() {
     // ngspice manual §2.3 `.model name type (p=v ...)`; a CPL model's matrix
-    // `c=1e-10 -6e-11` is two numbers (spice.peg `MVal`). Checks: 2.
+    // `c=1e-10 -6e-11` is two numbers (the old SPICE grammar's `MVal`). Checks: 2.
     let (top, codes) = read("t\n.model m cpl (c=1e-10 -6e-11 r=1)\n", &NGSPICE);
     assert_eq!(
         top,
@@ -546,7 +546,7 @@ fn unclosed_and_stray_blocks() {
 #[test]
 fn nested_subckts_ten_thousand_deep_reach_the_ir() {
     // ngspice manual §2.5: definitions nest; the adapter hoists each as
-    // `<parent>__<name>` (today's lowering), walking the nesting on a heap
+    // `<parent>__<name>` (as the old lowering did), walking the nesting on a heap
     // stack (rule 7 of the compiler-construction skill), so this runs in
     // Debug on a test thread's 2 MiB stack. Checks: 3.
     let n = 10_000;

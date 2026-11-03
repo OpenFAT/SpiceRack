@@ -1,12 +1,12 @@
 //! SPICE dot cards → the IR rows they place: includes and `.lib` calls,
 //! `.global`, `.model`, `.param`, `.func`, a `.subckt`'s head, and the
 //! testbench cards (analyses, options, outputs, `.control` commands), as
-//! `import/lower/mod.rs` and `import/lower/analyses.rs` place them; each
-//! card first checked against its `grammar/spice.peg` rule (a card no rule
-//! reads is `Raw` or `Unparsed` by its word, `Cx::refused`).
+//! the old lowering placed them; each card first checked against its rule
+//! in the old SPICE grammar (a card no rule reads is `Raw` or `Unparsed` by
+//! its word, `Cx::refused`).
 //!
-//! Cites: `import/lower/mod.rs`, `import/lower/analyses.rs` (ported);
-//! spice.peg `dotcard` and its overlays (`Include`, `Lib`, `Model`,
+//! Cites: the old lowering (ported);
+//! the old SPICE grammar's `dotcard` and its overlays (`Include`, `Lib`, `Model`,
 //! `Params`, `Func`, `Options`, `Temp`, `Ic`, `Save`, `Out`, `Print`, `Op`
 //! … `Four`, ngspice `Sp`, HSPICE `Tran`/`Probe`, LTspice `Tran`/`Lib`/
 //! `Step`/`Params_lt`, Xyce `Include`/`Options`/`Step`); Xyce RG p.96.
@@ -25,8 +25,9 @@ use crate::syntax::token::Tag as T;
 impl Cx<'_> {
     /// A dot card at `scope` (`inside` a `.subckt`).
     pub(super) fn dot_card(&mut self, n: u32, here: &mut Subcircuit, scope: Scope, inside: bool) {
-        // quirk: the overlays' `dialect` rule (ltspice.peg `Raw_lt`,
-        // xyce.peg `Raw_xy`) is tried before the shared dot cards.
+        // quirk: the old overlays' `dialect` rule (the old LTspice grammar's
+        // `Raw_lt`, the old Xyce grammar's `Raw_xy`) is tried before the
+        // shared dot cards.
         let word = self.head_word(n);
         if self.dialect_raw(&word) {
             return self.keep(n, here, Kept::Raw);
@@ -54,7 +55,7 @@ impl Cx<'_> {
         }
     }
 
-    /// The head of `.subckt name ports [params:] k=v`, when spice.peg's
+    /// The head of `.subckt name ports [params:] k=v`, when the old SPICE grammar's
     /// `Subckt` reads it.
     pub(super) fn subckt_head(&self, n: u32) -> Option<SubcktHead> {
         let items = self.fields(n);
@@ -108,7 +109,7 @@ impl Cx<'_> {
         })
     }
 
-    /// A `.model` card's name item, when spice.peg's `Model` reads the card.
+    /// A `.model` card's name item, when the old SPICE grammar's `Model` reads the card.
     pub(super) fn model_head(&self, n: u32) -> Option<Node> {
         let items = self.fields(n);
         let [name, kind, rest @ ..] = items else {
@@ -117,7 +118,8 @@ impl Cx<'_> {
         if !self.is_word_item(*name) || !self.is_word_item(*kind) {
             return None;
         }
-        // quirk: spice.peg `mbody`: parentheses and commas separate, nothing else.
+        // quirk: the old SPICE grammar's `mbody`: parentheses and commas
+        // separate, nothing else.
         let mut prev = self.last(*kind);
         for &k in rest {
             if !(prev + 1..self.first(k))
@@ -157,7 +159,7 @@ impl Cx<'_> {
     }
 
     /// A `.control` analysis command, read as its dot card
-    /// (lower/analyses.rs `control`).
+    /// (the old lowering's `control`).
     pub(super) fn control(&mut self, n: u32) {
         if self.testbench_peg(n) {
             self.testbench_card(n);
@@ -182,7 +184,7 @@ impl Cx<'_> {
         w.strip_prefix('.').unwrap_or(&w).to_string()
     }
 
-    /// A path item without its quotes (lower/mod.rs `path`).
+    /// A path item without its quotes (the old lowering's `path`).
     fn path_of(&self, p: u32) -> String {
         let t = self.text(p);
         let p = t.trim();
@@ -197,8 +199,8 @@ impl Cx<'_> {
         let items = self.fields(n);
         let first = *items.first().ok_or_else(|| self.refused(n))?;
         let path = if self.d == Dialect::Xyce && self.head_word(n) == "incl" {
-            // quirk: xyce.peg `Path_xy`: a quoted path alone, else all of the
-            // rest of the card.
+            // quirk: the old Xyce grammar's `Path_xy`: a quoted path alone,
+            // else all of the rest of the card.
             match items {
                 [p] if self.tag(*p) == Tag::Str => self.path_of(*p),
                 _ => self.span(self.main(first), self.line_last(self.main(n))),
@@ -264,9 +266,9 @@ impl Cx<'_> {
         Ok(())
     }
 
-    /// quirk: whether `a` is a `.param` function definition the grammar reads
-    /// (spice.peg `FuncDef`: a body that is delimited or one blank- and
-    /// comma-free run).
+    /// quirk: whether `a` is a `.param` function definition the old reader
+    /// read (the old SPICE grammar's `FuncDef`: a body that is delimited or
+    /// one blank- and comma-free run).
     fn funcdef_ok(&self, a: u32) -> bool {
         let g = self.ast.lhs(Node(a));
         let v = self.ast.rhs(Node(a));
@@ -281,7 +283,7 @@ impl Cx<'_> {
             && (a..=b).all(|k| self.ttag(k) != T::Comma)
     }
 
-    /// spice.peg `Key s? '(' s? (Arg (s? ',' s? Arg)*)? s? ')'`: a key and
+    /// the old SPICE grammar's `Key s? '(' s? (Arg (s? ',' s? Arg)*)? s? ')'`: a key and
     /// keys, closed.
     fn func_head_ok(&self, g: u32) -> bool {
         let name = self.ast.lhs(Node(g));
@@ -297,7 +299,7 @@ impl Cx<'_> {
             && self.group_items(g).iter().all(|&k| key(k))
     }
 
-    /// A function definition (lower/mod.rs `funcdef`) from its `name(args)`
+    /// A function definition (the old lowering's `funcdef`) from its `name(args)`
     /// group and body text.
     fn funcdef(&self, g: u32, body: String) -> FuncDef {
         FuncDef {
@@ -307,7 +309,7 @@ impl Cx<'_> {
         }
     }
 
-    /// `.param a=1 f(x)=…` (spice.peg `Params`).
+    /// `.param a=1 f(x)=…` (the old SPICE grammar's `Params`).
     fn param_card(&mut self, n: u32, here: &mut Subcircuit, inside: bool) -> Result<(), Kept> {
         let items = self.fields(n).to_vec();
         let ngspice = self.d == Dialect::Ngspice;
@@ -370,7 +372,7 @@ impl Cx<'_> {
         Ok(())
     }
 
-    /// quirk: ngspice.peg `Val_p`: a braced group, an operator, an
+    /// quirk: the old ngspice grammar's `Val_p`: a braced group, an operator, an
     /// expression (`{1+x} + x*AGAUSS(0,1,1)`).
     fn val_p_ok(&self, a: u32) -> bool {
         let v = self.ast.rhs(Node(a));
@@ -380,7 +382,7 @@ impl Cx<'_> {
             && self.ttag(self.first(v)) == T::LBrace
     }
 
-    /// `.func name(args) [=] body` (spice.peg `Func`).
+    /// `.func name(args) [=] body` (the old SPICE grammar's `Func`).
     fn func(&mut self, n: u32, inside: bool) -> Result<(), Kept> {
         let items = self.fields(n);
         let Some(&first) = items.first() else {
@@ -397,7 +399,7 @@ impl Cx<'_> {
             return Err(Kept::Unparsed);
         }
         // The body: after `)` and an optional `=`, to the card's end or a
-        // ` key=` (spice.peg `Body`).
+        // ` key=` (the old SPICE grammar's `Body`).
         let close = self.last(g);
         let mut start = close + 1;
         if start <= self.line_last(self.main(n)) && self.ttag(start) == T::Equal {
@@ -421,8 +423,8 @@ impl Cx<'_> {
         if end != last {
             return Err(Kept::Unparsed);
         }
-        // quirk: spice.peg `Body`: an `expr` to the end, a braced body to the end,
-        // else the text.
+        // quirk: the old SPICE grammar's `Body`: an `expr` to the end, a
+        // braced body to the end, else the text.
         let expr = items
             .iter()
             .copied()

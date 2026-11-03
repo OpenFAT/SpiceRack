@@ -4,7 +4,7 @@
 //! depends only on its first byte's position, never on the line it is in.
 //! Also the byte classes both share: blanks and backslash breaks.
 //!
-//! Cites: the word, number and string rules of `grammar/*.peg` (`l_word`,
+//! Cites: the word, number and string rules of the old PEG grammars (`l_word`,
 //! `l_quoted`, `l_string`, `l_dstring`, `l_longstr`, `l_sqname`, `Name`,
 //! `Num`); Zig `Ast.zig:279-295` (re-lexing a token from its start).
 //!

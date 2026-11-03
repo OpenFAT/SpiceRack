@@ -41,7 +41,7 @@ pub enum Analysis {
     Dcmatch,
     Hbnoise,
     Qpnoise,
-    /// Spectre `fourier` (`[CMP]` p.323 calls it a component; today's
+    /// Spectre `fourier` (`[CMP]` p.323 calls it a component; the old
     /// reader took it for an analysis, and so does this table).
     Fourier,
     Pdisto,

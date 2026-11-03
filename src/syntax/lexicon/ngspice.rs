@@ -1,7 +1,7 @@
 //! ngspice's lexicon (ESPice reads the same text).
 //!
 //! Cites (the § are `dev/research/ngspice-syntax.md`'s, as
-//! `grammar/ngspice.peg` cites them): §1.2 title; §1.3 `@` ends the file,
+//! the old ngspice grammar cites them): §1.2 title; §1.3 `@` ends the file,
 //! blank lines; §1.5 comment lines and `$` `;` `//` tails; §1.6 `+` and `\\`
 //! continuation; §1.7 `.end`; §1.9 quotes; §1.10 numbers (`INPevaluate`,
 //! inpeval.c); §2.2 operators; ngspice manual §2.1.3 (scale factors). ESPice
@@ -61,7 +61,7 @@ pub const NGSPICE: Lexicon = Lexicon {
     expr_braces: true,
     caret: Caret::Pow,
     ops: Ops {
-        // §2.2, numparam precedence (ngspice.peg x_ternary .. x_unary).
+        // §2.2, numparam precedence (the old ngspice grammar x_ternary .. x_unary).
         infix: &[
             (Tag::PipePipe, 2),
             (Tag::AmpAmp, 3),
@@ -125,7 +125,7 @@ const SCALES: &[(&str, Scale)] = &[
     ("a", Scale::Exp(-18)),
 ];
 
-/// ngspice's own dot cards (`grammar/ngspice.peg`).
+/// ngspice's own dot cards (the old ngspice grammar).
 const OWN_KEYWORDS: &[(&str, Tag)] = &[
     (".control", Tag::KwControl),
     (".endc", Tag::KwEndc),

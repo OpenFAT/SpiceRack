@@ -1,10 +1,10 @@
-//! Value items → IR values, as `import/lower/values.rs` reads value rows:
+//! Value items → IR values, as the old lowering reads value rows:
 //! numbers by the dialect's `Num` rule over a word's whole text,
 //! expressions without their delimiters, `k=v` lists, a model's or an
 //! element's number sequence, names unescaped.
 //!
-//! Cites: `import/lower/values.rs` (ported); each dialect's `Num` rule in
-//! `grammar/*.peg`; ngspice manual §2.1.3; ADI LTspice help (`µ`).
+//! Cites: the old lowering (ported); each dialect's `Num` rule in its
+//! old PEG grammar; ngspice manual §2.1.3; ADI LTspice help (`µ`).
 //!
 //! Contents:
 //! - `Cx::number(&self, n: u32) -> Option<f64>`, `Cx::count(&self, n: u32) -> Option<u32>`
@@ -41,7 +41,7 @@ impl Cx<'_> {
             .map(|v| v as u32)
     }
 
-    /// A value field (lower/values.rs `value`): a number, an expression, or
+    /// A value field (the old lowering's `value`): a number, an expression, or
     /// text kept raw.
     pub(super) fn value(&self, n: u32) -> IrValue {
         if let Some(value) = self.number(n) {
@@ -91,7 +91,7 @@ impl Cx<'_> {
         }
     }
 
-    /// A value's text (lower/values.rs `vtext`); a `Seq`'s numbers joined to
+    /// A value's text (the old lowering's `vtext`); a `Seq`'s numbers joined to
     /// it by a comma where one stood, else by `blank`'s choice.
     pub(super) fn vtext(&self, n: u32) -> String {
         if self.tag(n) == Tag::Seq {
@@ -164,7 +164,7 @@ impl Cx<'_> {
         }
     }
 
-    /// quirk: the grammars' `x_atom` has no `{…}` or `'…'`: an expression
+    /// quirk: the old grammars' expression atom (`x_atom`) has no `{…}` or `'…'`: an expression
     /// holding one is no `Expr` (`(t<1 ? {a} : {b})`).
     pub(super) fn nests_delimiter(&self, e: u32) -> bool {
         let a = self.ast;
@@ -189,7 +189,7 @@ impl Cx<'_> {
     }
 
     /// A name item's identifier: Spectre's `\x` escapes and VACASK's `'…'`
-    /// parts are the bytes they spell (lower/values.rs `name`).
+    /// parts are the bytes they spell (the old lowering's `name`).
     pub(super) fn name_of(&self, n: u32) -> String {
         let t = self.text(n);
         match self.d {
@@ -256,7 +256,7 @@ impl Cx<'_> {
         self.respell(text)
     }
 
-    /// quirk: lower/values.rs `vtext` with `More` rows: the first value's
+    /// quirk: the old lowering's `vtext` with `More` rows: the first value's
     /// text, then each further number after `,` where the gap held a comma,
     /// else after `blank`.
     fn seq_text(&self, n: u32, blank: &str) -> String {
@@ -273,10 +273,10 @@ impl Cx<'_> {
     }
 
     /// quirk: the dialect's `Num` rule over all of `s` (SPICE's sign
-    /// included), with today's arithmetic (lower/values.rs `num_value`).
+    /// included), with the old lowering's arithmetic (`num_value`).
     fn num_text(&self, s: &str, lex: &crate::syntax::lexicon::Lexicon) -> Option<f64> {
         if lex.named {
-            // A signed literal where the sign is an operator (lower/values.rs
+            // A signed literal where the sign is an operator (the old lowering
             // `number`): `-1.5`, `- 1.5`.
             let (neg, body) = match s.as_bytes().first() {
                 Some(b'-') => (true, s[1..].trim_start()),
@@ -305,7 +305,7 @@ impl Cx<'_> {
     }
 }
 
-/// ngspice.peg `Num <- Mag scale? [a-z0-9_.%\\]*` over all of `s`, case
+/// the old ngspice grammar's `Num <- Mag scale? [a-z0-9_.%\\]*` over all of `s`, case
 /// folded.
 fn ngspice_num(s: &str) -> bool {
     let b = s.to_ascii_lowercase().into_bytes();
@@ -334,7 +334,7 @@ fn ngspice_num(s: &str) -> bool {
         .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || b"_.%\\".contains(c))
 }
 
-/// An ngspice value as one expression (lower/values.rs `one_group`).
+/// An ngspice value as one expression (the old lowering's `one_group`).
 fn one_group(v: &str) -> String {
     if let Some(inner) = v
         .strip_prefix('{')

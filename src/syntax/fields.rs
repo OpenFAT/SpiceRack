@@ -9,7 +9,7 @@
 //! b`, `{1+x} + x*AGAUSS(0,1,1)`), but an operator followed by `key =` is a
 //! separator (sky130's `a = '-1*x' + b = '0 - 2.5'`).
 //!
-//! Cites: `grammar/spice.peg` §1.8 fields (`field`, `group`, `Pair`,
+//! Cites: the old SPICE grammar's §1.8 fields (`field`, `group`, `Pair`,
 //! `value`), `MVal` (a model's blank-separated matrix), `Val_i` (SPICE's
 //! comma vector), `Path`; ngspice manual §2.1 (`{expr}`, `'expr'`),
 //! §2.4.1; HSPICE UG08 T2 (`'…'`, `"…"`).
@@ -124,7 +124,7 @@ impl Parser<'_, '_> {
         self.ast.push(Tag::Delimited, open, inner, close)
     }
 
-    /// Whether token `i` separates words (spice.peg `namechar`): blanks are
+    /// Whether token `i` separates words (the old SPICE grammar's `namechar`): blanks are
     /// gaps, and `,` `=` `(` `)` `'` `"` are never name bytes; nor are
     /// braces where they delimit expressions.
     pub(super) fn separates(&self, i: u32) -> bool {
@@ -177,7 +177,7 @@ impl Parser<'_, '_> {
             return Some(self.chunk());
         }
         match tag {
-            // spice.peg `field`: a stray `, ( ) =` only separates.
+            // the old SPICE grammar's `field`: a stray `, ( ) =` only separates.
             T::Comma
             | T::Equal
             | T::RParen
@@ -224,7 +224,7 @@ impl Parser<'_, '_> {
         self.i < self.end && self.t.tags()[self.i as usize] == tag
     }
 
-    /// A key starts with a letter or `_` (spice.peg `Key`).
+    /// A key starts with a letter or `_` (the old SPICE grammar's `Key`).
     /// Spectre's and VACASK's keys are names (`$mfactor`, `'a b'`, `\x`).
     fn key_shaped(&self, i: u32) -> bool {
         let named = self.t.lexicon_at(i).named;
@@ -447,7 +447,7 @@ impl Parser<'_, '_> {
             .push(Tag::Seq, self.ast.main_token(first), list, NONE)
     }
 
-    /// A word starting with `+ - .` or a digit (spice.peg `mnum`).
+    /// A word starting with `+ - .` or a digit (the old SPICE grammar's `mnum`).
     fn numberish(&self, k: u32) -> bool {
         self.t
             .text(k)

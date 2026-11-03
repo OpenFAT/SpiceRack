@@ -5,7 +5,7 @@
 //! filtered the way `tests/test_import_suite` walks them. A kit is its entry
 //! files plus every file their includes and `.lib` calls reach, breadth first,
 //! the way Interop's `pdk-models` walks one; each file is still parsed alone,
-//! as today's reader does, and the read order goes into the manifest.
+//! as the `daa0ad0` reader did, and the read order goes into the manifest.
 //!
 //! Cites: `tests/test_import_suite/main.rs` (`files`, `decks`, the corpus
 //! filters); Interop `src/pdk_models.rs` (`references`, `convert`: the walk

@@ -1,6 +1,6 @@
 //! Spectre's lexicon, with the `simulator lang=spice` hook.
 //!
-//! Cites (as `grammar/spectre.peg` does; § = `dev/research/spectre-syntax.md`,
+//! Cites (as the old Spectre grammar did; § = `dev/research/spectre-syntax.md`,
 //! UG = Spectre User Guide 5.1.41, R19 = Spectre Reference 19.1): §1.2 title
 //! (UG p.29, p.50); §1.3 `*` in column 1 and `//` comments (UG p.59); §1.4
 //! `\` and `+` continuation (UG p.59); §2.1 case kept; §2.2 names (`\`
@@ -126,7 +126,7 @@ const SCALES: &[(&str, Scale)] = &[
     ("a", Scale::Exp(-18)),
 ];
 
-/// The statement words of `grammar/spectre.peg` (R19 pp.175-179, p.491,
+/// The statement words of the old Spectre grammar (R19 pp.175-179, p.491,
 /// p.498, p.506; UG p.92, p.94).
 const KEYWORDS: &[(&str, Tag)] = &[
     ("simulator", Tag::KwSimulator),
@@ -158,7 +158,7 @@ const KEYWORDS: &[(&str, Tag)] = &[
 ];
 
 /// The analysis and control-statement masters (`statement.rs` cites the
-/// `[REF]` pages), in today's reader's order.
+/// `[REF]` pages), in the old reader's order.
 const MASTERS: &[(&str, Statement)] = {
     use Analysis as A;
     use Statement::{Analysis as An, Command as C};

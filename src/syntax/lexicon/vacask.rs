@@ -1,6 +1,6 @@
 //! VACASK's lexicon.
 //!
-//! Cites (as `grammar/vacask.peg` does; L = `lib/dfllexer.l` line, P =
+//! Cites (as the old VACASK grammar did; L = `lib/dfllexer.l` line, P =
 //! `lib/dflparser.y` line): L159 title; L176-L187 `//` and `/* */`
 //! comments; L913-L921 a newline inside brackets is no statement end, `\`
 //! before the newline joins; L594-L693 numbers (`M` `x` `X` `meg` mega, `m`
@@ -111,7 +111,7 @@ pub const VACASK: Lexicon = Lexicon {
     lang_spice: None,
 };
 
-/// L594-L693, in `vacask.peg`'s order.
+/// L594-L693, in the old VACASK grammar's order.
 const SCALES: &[(&str, Scale)] = &[
     ("meg", Scale::Exp(6)),
     ("M", Scale::Exp(6)),

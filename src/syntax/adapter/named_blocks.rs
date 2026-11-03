@@ -3,7 +3,7 @@
 //! and `@if` blocks, VACASK `control` blocks (options and analyses, the
 //! rest kept as lines).
 //!
-//! Cites: `import/lower/named.rs` (`named_model`, `one_model`,
+//! Cites: the old lowering (`named_model`, `one_model`,
 //! `ControlBlock`), `statistics.rs`, `conditionals.rs` (ported); Spectre
 //! Reference 19.1 pp.175-179, p.491; Spectre UG p.92, p.108.
 //!
@@ -22,7 +22,7 @@ use crate::syntax::ast::{Node, Tag};
 use crate::syntax::token::Tag as T;
 
 impl<'a> Cx<'a> {
-    /// A `model` statement, a model group one model per bin (lower/named.rs
+    /// A `model` statement, a model group one model per bin (the old lowering
     /// `named_model`).
     pub(super) fn named_model(&mut self, n: u32, here: &mut Subcircuit) -> bool {
         let f = self.fields(n);
@@ -43,7 +43,7 @@ impl<'a> Cx<'a> {
         })
     }
 
-    /// A Spectre `statistics` block (lower/statistics.rs).
+    /// A Spectre `statistics` block (the old lowering).
     pub(super) fn statistics(&self, n: u32) -> Statistics {
         let mut st = Statistics::default();
         for &k in self.body(n) {
@@ -116,7 +116,7 @@ impl<'a> Cx<'a> {
         }
     }
 
-    /// A Spectre `if` chain or a VACASK `@if` block (lower/conditionals.rs).
+    /// A Spectre `if` chain or a VACASK `@if` block (the old lowering).
     pub(super) fn named_conditional(&mut self, n: u32, scope: Scope) -> Conditional {
         let mut c = Conditional::default();
         let mut branch = Some(Node(n));
@@ -135,7 +135,7 @@ impl<'a> Cx<'a> {
     }
 
     /// A VACASK `control` block: its options and analyses, the rest kept as
-    /// lines (lower/named.rs `ControlBlock`).
+    /// lines (the old lowering's `ControlBlock`).
     pub(super) fn vacask_control_block(&mut self, n: u32) {
         let body = self.body(n).to_vec();
         let mut sweeps: Vec<u32> = Vec::new();
@@ -176,7 +176,7 @@ impl<'a> Cx<'a> {
 // ---- private ----
 
 impl<'a> Cx<'a> {
-    /// The model `name` of `master` with the parameters `p` (lower/named.rs
+    /// The model `name` of `master` with the parameters `p` (the old lowering
     /// `one_model`).
     fn one_model(
         &mut self,

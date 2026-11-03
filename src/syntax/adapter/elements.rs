@@ -1,13 +1,13 @@
 //! SPICE element `Instance`s → `Component`s and `Instance`s, as
-//! `import/lower/elements.rs` builds them, each card first checked against
-//! the shape its letter's rule in `grammar/spice.peg` reads (a card that
+//! the old lowering builds them, each card first checked against
+//! the shape its letter's rule in the old SPICE grammar reads (a card that
 //! fails it was `Raw_element`, kept raw; one with no field after its name
 //! was `Unparsed`). Two-terminal and linear controlled elements here; POLY,
 //! `B`, semiconductors and `X` in `devices`, V and I in `sources`.
 //!
-//! Cites: `import/lower/elements.rs` (ported); spice.peg §3.1 element rules
+//! Cites: the old lowering (ported); the old SPICE grammar's §3.1 element rules
 //! (`R` … `X`, `inst`, `nodes`, `spec`, `wargs`, `Poly`, `behave`, `B`);
-//! ngspice.peg `Pair_src`, `Trnoise`, `Trrandom`; ngspice manual §4.1.4,
+//! the old ngspice grammar's `Pair_src`, `Trnoise`, `Trrandom`; ngspice manual §4.1.4,
 //! §4.1.7, §4.1.8, §4.1.11.
 //!
 //! Contents:
@@ -28,7 +28,9 @@ impl<'a> Cx<'a> {
             .text(self.main(n))
             .starts_with(|c: char| c.is_ascii_alphabetic())
         {
-            // quirk: spice.peg `element_any <- &[a-z] Name`.
+            // quirk: the old SPICE grammar's `element_any <- &[a-z] Name`:
+            // an element's name starts with a letter; any other line is
+            // `Unparsed`.
             return self.unparsed(n, here);
         }
         let has_fields = self.fields_ok(n);
@@ -108,7 +110,7 @@ impl<'a> Cx<'a> {
                 {
                     return None;
                 }
-                // A flag before the parameters (lower/elements.rs:38-51).
+                // A flag before the parameters (the old lowering).
                 let first_pair = inst.iter().position(|&x| self.tag(x) == Tag::Assign);
                 if inst
                     .iter()
@@ -345,7 +347,7 @@ impl<'a> Cx<'a> {
                     td: get("td")?,
                 }
             }
-            // else: the ngspice letters today's reader had no rule for.
+            // else: the ngspice letters the old reader had no rule for.
             Element::Subckt
             | Element::LossyLine
             | Element::RcLine

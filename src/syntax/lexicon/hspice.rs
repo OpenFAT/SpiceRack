@@ -2,7 +2,7 @@
 //! region.
 //!
 //! Cites (rule ids of `dev/research/hspice-syntax.md`, as
-//! `grammar/hspice.peg` cites them; UG08 = HSPICE User Guide 2008, CR10 =
+//! the old HSPICE grammar cites them; UG08 = HSPICE User Guide 2008, CR10 =
 //! Command Reference 2010): L1 title; L2 comment lines; L3 the `$` rule; L5
 //! `+` continuation; L6 `\` and `\\` breaks; L9 `.END`; T1 separators; T2
 //! quotes (`$` is text inside); T3 numbers (`X` is mega, `D` an exponent);

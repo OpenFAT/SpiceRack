@@ -2,12 +2,11 @@
 //! table: the one place a number is decoded (`transpiler-architecture.md`
 //! §2.1). The tokenizer calls it once per [`Tag::Number`] token.
 //!
-//! The grammar each [`Tail`] reads is today's `Num` rule of that dialect's
-//! `grammar/*.peg`; the arithmetic is today's lowering
-//! (`import/lower/values.rs` `num_value`): ngspice's `INPevaluate`
-//! ([`crate::unit::ngspice_value`]), or the mantissa and shifted exponent
-//! read as one decimal. `tests/test_syntax_tokenize.rs` checks every number
-//! in the corpora against that oracle.
+//! The grammar each [`Tail`] reads is the old reader's `Num` rule for that
+//! dialect; the arithmetic is the old lowering's (`num_value`): ngspice's
+//! `INPevaluate` ([`crate::unit::ngspice_value`]), or the mantissa and
+//! shifted exponent read as one decimal. Until the switch (phase 2b) every
+//! number token in the corpora was checked against that oracle to the bit.
 //!
 //! Contents:
 //! - `pub(super) fn value(text: &str, lex: &Lexicon) -> f64`
@@ -98,7 +97,7 @@ fn decode(text: &str, n: &Numbers, fold: bool) -> Option<f64> {
         Arithmetic::Ngspice => crate::unit::ngspice_value(text),
         Arithmetic::Decimal => {
             // values.rs `num_value`, step for step: so `0.1n` is exactly
-            // 1e-10 and a decoded number equals today's to the bit.
+            // 1e-10 and a decoded number equals the old reader's to the bit.
             let mut m = text[..mag].to_ascii_lowercase().replace('d', "e");
             if let Some(f) = frac {
                 m = format!("{m}.{f}");

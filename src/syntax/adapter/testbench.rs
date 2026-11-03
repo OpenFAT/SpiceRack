@@ -1,12 +1,12 @@
 //! SPICE testbench cards (analyses, options, outputs, `.control`
-//! commands) → `Testbench` rows, as `import/lower/analyses.rs` applies
-//! them, each card first checked against its `grammar/spice.peg` rule
+//! commands) → `Testbench` rows, as the old lowering applies
+//! them, each card first checked against its rule in the old SPICE grammar
 //! (`Cx::testbench_peg`).
 //!
-//! Cites: `import/lower/analyses.rs` (ported); spice.peg `Options`, `Temp`,
-//! `Ic`, `Nodeset`, `Save`, `Out`, `Print`, `Meas`, `Op` … `Four`; ngspice.peg
-//! `Sp`; hspice.peg `Tran`, `Probe`, `Out`; ltspice.peg `Tran`, `Step`;
-//! xyce.peg `Options`, `Step`; Xyce Reference Guide p.96.
+//! Cites: the old lowering (ported); the old SPICE grammar's `Options`, `Temp`,
+//! `Ic`, `Nodeset`, `Save`, `Out`, `Print`, `Meas`, `Op` … `Four`; the old ngspice grammar
+//! `Sp`; the old HSPICE grammar's `Tran`, `Probe`, `Out`; the old LTspice grammar's `Tran`, `Step`;
+//! the old Xyce grammar's `Options`, `Step`; Xyce Reference Guide p.96.
 //!
 //! Contents:
 //! - `Cx::testbench_peg(&self, n: u32) -> bool`
@@ -60,7 +60,7 @@ impl<'a> Cx<'a> {
     }
 
     /// The card applied to the testbench; `false` when the IR cannot hold
-    /// it (lower/analyses.rs `testbench_card`).
+    /// it (the old lowering's `testbench_card`).
     pub(super) fn testbench_card(&mut self, n: u32) -> bool {
         let Some(card) = self.read_card(n) else {
             return false;
@@ -111,7 +111,7 @@ impl<'a> Cx<'a> {
             Card::Print(analysis, outputs) => self.tb.prints.push(PrintCard { analysis, outputs }),
             Card::Meas => {
                 let line = self.line(n);
-                // A `.control` `meas` line was read as `.meas` (lower/analyses.rs:21).
+                // A `.control` `meas` line was read as `.meas` (the old lowering).
                 let line = if self.ttag(self.main(n)) == T::Ident {
                     format!(".{line}")
                 } else {
@@ -144,7 +144,7 @@ impl<'a> Cx<'a> {
 
 impl<'a> Cx<'a> {
     /// quirk: whether every item follows the one before it (or the head) after
-    /// blanks only: the grammar's `s` between fields.
+    /// blanks only: the old grammars' `s` between fields.
     fn spaced(&self, n: u32, items: &[u32]) -> bool {
         let mut prev = self.main(n);
         for &k in items {
@@ -374,7 +374,7 @@ impl<'a> Cx<'a> {
         }
     }
 
-    /// An analysis card's IR form (lower/analyses.rs `analysis`).
+    /// An analysis card's IR form (the old lowering's `analysis`).
     fn analysis(&self, card: &Card) -> Option<Analysis> {
         let num = |k: u32| self.number(k);
         let sweep = |f: &[u32; 4]| -> Option<FreqSweep> {

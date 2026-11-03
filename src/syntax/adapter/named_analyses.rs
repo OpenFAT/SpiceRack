@@ -1,8 +1,8 @@
 //! Spectre analysis and `options` statements and VACASK `control`
-//! statements → `Testbench` rows, as `import/lower/named_analyses.rs`
+//! statements → `Testbench` rows, as the old lowering
 //! applies them; `false`/`None` when the IR cannot hold one.
 //!
-//! Cites: `import/lower/named_analyses.rs` (ported); Spectre Circuit
+//! Cites: the old lowering (ported); Spectre Circuit
 //! Simulator Reference `[REF]` analysis statements;
 //! `codegen::spectre::map_option_name` (inverted).
 //!
@@ -19,7 +19,7 @@ use crate::syntax::ast::{NONE, Node, Tag};
 
 impl<'a> Cx<'a> {
     /// `name [(p n)] kind k=v`: the analyses `codegen::spectre` writes
-    /// (lower/named_analyses.rs `spectre_analysis`).
+    /// (the old lowering's `spectre_analysis`).
     pub(super) fn spectre_analysis(&self, n: u32) -> Option<Analysis> {
         let h = self.ast.header(Node(n));
         let kind = self.text(h.master);
@@ -86,7 +86,7 @@ impl<'a> Cx<'a> {
         })
     }
 
-    /// `name options k=v` (lower/named_analyses.rs `spectre_options`).
+    /// `name options k=v` (the old lowering's `spectre_options`).
     pub(super) fn spectre_options(&mut self, n: u32) {
         for (k, v) in self.pairs(n) {
             match (k.as_str(), self.number(v)) {
@@ -107,7 +107,7 @@ impl<'a> Cx<'a> {
     }
 
     /// A VACASK `options` statement in a `control` block
-    /// (lower/named_analyses.rs `vacask_control`, `Ctl`).
+    /// (the old lowering's `vacask_control`, `Ctl`).
     pub(super) fn vacask_options(&mut self, st: u32) -> bool {
         if self.tag(st) != Tag::Options {
             return false;
@@ -132,7 +132,7 @@ impl<'a> Cx<'a> {
     }
 
     /// `sweep …` lines and the `analysis NAME KIND k=v` they belong to
-    /// (lower/named_analyses.rs `vacask_control`, `Ana`); `false` when the
+    /// (the old lowering's `vacask_control`, `Ana`); `false` when the
     /// IR has no such analysis.
     pub(super) fn vacask_analysis(&mut self, sweeps: &[u32], st: u32) -> bool {
         let p = self.pairs(st);
@@ -227,7 +227,7 @@ impl<'a> Cx<'a> {
 
 impl<'a> Cx<'a> {
     /// `ic=["n"; v; ...]` (or `{"n", v, ...}`) → node values
-    /// (lower/named_analyses.rs `node_list`).
+    /// (the old lowering's `node_list`).
     fn node_list(&self, v: u32) -> Option<Vec<(String, f64)>> {
         let items: Vec<u32> = match self.tag(v) {
             Tag::Vector | Tag::List => self.ast.list(self.ast.rhs(Node(v)) + 1).to_vec(),

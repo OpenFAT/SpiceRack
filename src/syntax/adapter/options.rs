@@ -1,9 +1,9 @@
-//! SPICE `.options` → testbench options (`import/lower/analyses.rs`): the
+//! SPICE `.options` → testbench options (the old lowering): the
 //! portable `k=v` list, Xyce's per-package form (`.options <pkg> k=v`, `k v`,
 //! comma lists), and `DEVICE TEMP`/`TNOM`.
 //!
-//! Cites: `import/lower/analyses.rs:581-629` (ported); spice.peg `Options`,
-//! `oitem`; xyce.peg `Options`, `Pkg`, `xopt`, `Pair_x`, `MVal_x`,
+//! Cites: the old lowering (ported); the old SPICE grammar's `Options`,
+//! `oitem`; the old Xyce grammar's `Options`, `Pkg`, `xopt`, `Pair_x`, `MVal_x`,
 //! `Flag_x`; Xyce Reference Guide p.96.
 //!
 //! Contents:
@@ -17,7 +17,7 @@ use crate::syntax::ast::{NONE, Node, Tag};
 use crate::syntax::token::Tag as T;
 
 impl<'a> Cx<'a> {
-    /// `.options` items (spice.peg `oitem`, xyce.peg `Options`).
+    /// `.options` items (the old SPICE grammar's `oitem`, the old Xyce grammar's `Options`).
     pub(super) fn options_ok(&self, n: u32) -> bool {
         let items = self.fields(n);
         if self.d == Dialect::Xyce && self.xyce_pkg(n).is_some() {
@@ -32,7 +32,7 @@ impl<'a> Cx<'a> {
             })
     }
 
-    /// `.options` applied (lower/analyses.rs:581-629).
+    /// `.options` applied (the old lowering).
     pub(super) fn options(&mut self, n: u32) {
         let items = self.fields(n);
         match (self.d, self.xyce_pkg(n)) {
@@ -78,7 +78,7 @@ impl<'a> Cx<'a> {
 
 impl<'a> Cx<'a> {
     /// quirk: whether the only tokens between the card's items (and after them)
-    /// are commas: spice.peg `oitem` reads no stray `( ) =`.
+    /// are commas: the old SPICE grammar's `oitem` reads no stray `( ) =`.
     fn only_commas_between(&self, n: u32, items: &[u32]) -> bool {
         let mut prev = self.main(n);
         for &k in items.iter() {
@@ -90,7 +90,8 @@ impl<'a> Cx<'a> {
         (prev + 1..=self.line_last(self.main(n))).all(|x| self.ttag(x) == T::Comma)
     }
 
-    /// quirk: xyce.peg `xopt`: `Pair_x` (`k=v` or `k v`, the value run on
+    /// quirk: the old Xyce grammar's `xopt`: `Pair_x` (`k=v` or `k v`, the
+    /// value run on
     /// by comma-separated words or blank-separated numbers, `MVal_x`) or
     /// `Flag_x` (a word or a brace): `(key, value text, its number)`.
     fn xyce_pairs(&self, rest: &[u32]) -> Option<Vec<(String, String, Option<f64>)>> {
@@ -160,7 +161,7 @@ impl<'a> Cx<'a> {
         (self.last(a) + 1..self.first(b)).any(|k| self.ttag(k) == T::Comma)
     }
 
-    /// xyce.peg `Pkg`: a first word that is no `key=`.
+    /// the old Xyce grammar's `Pkg`: a first word that is no `key=`.
     fn xyce_pkg(&self, n: u32) -> Option<u32> {
         self.fields(n).first().copied().filter(|&k| self.wordw(k))
     }

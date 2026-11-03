@@ -1,13 +1,13 @@
-//! Spectre and VACASK statements → the IR, as `import/lower/mod.rs`'s
+//! Spectre and VACASK statements → the IR, as the old lowering's
 //! `card` (the `named` branches), `named.rs`, `statistics.rs`,
 //! `sections.rs` and `conditionals.rs` lower them: the deck's declarations,
 //! the dispatch over statement kinds, models and model groups, `statistics`
 //! blocks, libraries and sections, `real` functions, `if` chains, `simulator
 //! lang=spice` regions and VACASK `control` blocks.
 //!
-//! Cites: `import/lower/named.rs`, `statistics.rs`, `sections.rs`,
-//! `conditionals.rs` (ported); `grammar/spectre.peg` (`stmt`, `named`, `Ana`,
-//! `Ctl`, `Block`, `SpiceRegion`), `grammar/vacask.peg` (`stmt`,
+//! Cites: the old lowering (its named, statistics, sections and
+//! conditionals files, ported); the old Spectre grammar (`stmt`, `named`, `Ana`,
+//! `Ctl`, `Block`, `SpiceRegion`), the old VACASK grammar (`stmt`,
 //! `ControlBlock`, `Ana`); ESPice `spectre.zig:433-451` (the master map);
 //! Spectre Reference 19.1 pp.175-179.
 //!
@@ -30,7 +30,7 @@ use crate::syntax::ast::{Header, NONE, Node, Tag};
 use crate::syntax::statement::Statement;
 use crate::syntax::token::Tag as T;
 
-/// The module names `codegen::vacask` declares itself (lower/named.rs).
+/// The module names `codegen::vacask` declares itself (the old lowering).
 const VACASK_BUILTINS: &[&str] = &[
     "resistor",
     "capacitor",
@@ -45,7 +45,7 @@ const VACASK_BUILTINS: &[&str] = &[
 ];
 
 /// A Spectre model master (and `type=`) → SPICE `.model` kind and LEVEL
-/// (lower/named.rs `spectre_kind`).
+/// (the old lowering's `spectre_kind`).
 pub(super) fn spectre_kind(master: &str, ty: Option<&str>) -> (String, Option<&'static str>) {
     let ty = ty.map(str::to_ascii_lowercase);
     let mos = |l: &'static str| {
@@ -75,7 +75,7 @@ pub(super) fn spectre_kind(master: &str, ty: Option<&str>) -> (String, Option<&'
     }
 }
 
-/// `sp_<module>` (and `type=`) → SPICE kind and LEVEL (lower/named.rs
+/// `sp_<module>` (and `type=`) → SPICE kind and LEVEL (the old lowering
 /// `vacask_kind`).
 pub(super) fn vacask_kind(module: &str, ty: Option<f64>) -> Option<(String, Option<&'static str>)> {
     let neg = ty.is_some_and(|t| t < 0.0);
@@ -97,7 +97,7 @@ pub(super) fn vacask_kind(module: &str, ty: Option<f64>) -> Option<(String, Opti
     }
 }
 
-/// The built-in a VACASK `model NAME <module>` names (lower/named.rs
+/// The built-in a VACASK `model NAME <module>` names (the old lowering
 /// `vacask_builtin`).
 pub(super) fn vacask_builtin(module: &str) -> Option<&'static str> {
     let m = module.strip_prefix("sp_").unwrap_or(module);
@@ -106,7 +106,7 @@ pub(super) fn vacask_builtin(module: &str) -> Option<&'static str> {
 
 impl<'a> Cx<'a> {
     /// The deck's model kinds (`name -> kind`, `=<builtin>` for a VACASK
-    /// alias) and subcircuit names, wherever they sit (lower/named.rs
+    /// alias) and subcircuit names, wherever they sit (the old lowering
     /// `declarations`).
     pub(super) fn declarations(&self, stmts: &[u32]) -> (HashMap<String, String>, Vec<String>) {
         let (mut kinds, mut subckts) = (HashMap::new(), Vec::new());
@@ -159,12 +159,12 @@ impl<'a> Cx<'a> {
         (kinds, subckts)
     }
 
-    /// One Spectre or VACASK statement (lower/mod.rs `card`, named).
+    /// One Spectre or VACASK statement (the old lowering's `card`, named).
     pub(super) fn named_card_spine(&mut self, n: u32, here: &mut Subcircuit, scope: Scope) {
         let tag = self.tag(n);
         if tag.has_header() && self.ast.rhs(Node(n)) != NONE {
-            // quirk: spectre.peg `Block`: a `name master … {` statement is
-            // kept whole, its body unread.
+            // quirk: the old Spectre grammar's `Block`: a `name master … {`
+            // statement is kept whole, its body unread.
             return self.raw(n, here, true);
         }
         if scope == Scope::Section && self.named_leaks(n) {
@@ -180,8 +180,8 @@ impl<'a> Cx<'a> {
             {
                 self.unparsed(n, here)
             }
-            // quirk: vacask.peg `stmt`: `save`, `analysis`, `sweep`, `options`
-            // are statements only inside `control`.
+            // quirk: the old VACASK grammar's `stmt`: `save`, `analysis`,
+            // `sweep`, `options` are statements only inside `control`.
             Tag::Save | Tag::Card | Tag::Analysis | Tag::Options
                 if self.d == Dialect::Vacask && !self.vacask_top_ok(n) =>
             {
@@ -294,9 +294,9 @@ impl<'a> Cx<'a> {
         p.iter().find(|(n, _)| n == k).map(|(_, v)| *v)
     }
 
-    /// quirk: lower/named.rs read spectre.peg's `Word_kind` for VACASK
-    /// too: a VACASK instance whose master is a Spectre analysis word is an
-    /// analysis (Spectre's are `Analysis` nodes already).
+    /// quirk: the old lowering read the old Spectre grammar's `Word_kind`
+    /// for VACASK too: a VACASK instance whose master is a Spectre analysis
+    /// word is an analysis (Spectre's are `Analysis` nodes already).
     pub(super) fn analysis_kind(&self, n: u32) -> bool {
         self.tag(n) == Tag::Instance
             && self.master(n).is_some_and(|m| {
@@ -320,9 +320,10 @@ impl<'a> Cx<'a> {
         (m != NONE).then(|| self.text(m))
     }
 
-    /// quirk: spectre.peg `Inst`/`Ana`/`Ctl`, vacask.peg `Inst`: a name, its
-    /// nodes (in parentheses for VACASK), a master (VACASK: optional), then
-    /// only `key=value` parameters; else the line is `Unparsed`.
+    /// quirk: the old Spectre grammar's `Inst`/`Ana`/`Ctl` and the old
+    /// VACASK grammar's `Inst`: a name, its nodes (in parentheses for
+    /// VACASK), a master (VACASK: optional), then only `key=value`
+    /// parameters; else the line is `Unparsed`.
     fn inst_peg_ok(&self, n: u32) -> bool {
         let Header { name, master, .. } = self.ast.header(Node(n));
         let parens = self.last(name) < self.line_last(self.main(n))
@@ -339,7 +340,7 @@ impl<'a> Cx<'a> {
         })
     }
 
-    /// Whether a VACASK keyword statement is one `vacask.peg`'s `stmt` reads
+    /// Whether a VACASK keyword statement is one the old VACASK grammar's `stmt` reads
     /// outside `control`.
     fn vacask_top_ok(&self, n: u32) -> bool {
         matches!(
@@ -348,7 +349,7 @@ impl<'a> Cx<'a> {
         )
     }
 
-    /// lower/sections.rs `leaks`, named: control, output and analysis
+    /// the old lowering's `leaks`, named: control, output and analysis
     /// statements, and `global`.
     fn named_leaks(&self, n: u32) -> bool {
         match self.tag(n) {
@@ -369,7 +370,7 @@ impl<'a> Cx<'a> {
         }
     }
 
-    /// lower/named.rs `named_card`; `false` when the IR holds no such
+    /// the old lowering's `named_card`; `false` when the IR holds no such
     /// statement.
     fn named_card(&mut self, n: u32, here: &mut Subcircuit, top: bool) -> bool {
         let head = self.ttag(self.main(n));
@@ -454,7 +455,7 @@ impl<'a> Cx<'a> {
         }
     }
 
-    /// A Spectre `ic`/`nodeset` at the top (lower/analyses.rs).
+    /// A Spectre `ic`/`nodeset` at the top (the old lowering).
     fn named_testbench(&mut self, n: u32) -> bool {
         if !matches!(self.tag(n), Tag::Ic | Tag::Nodeset) {
             return false;

@@ -1,9 +1,9 @@
 //! POLY sources, `B` sources, semiconductors and `X` cards → `Component`s
-//! and `Instance`s (`import/lower/elements.rs`), each checked against its
-//! `grammar/spice.peg` rule: `Poly`, `B` and its `Body` (the text after
+//! and `Instance`s (the old lowering), each checked against its
+//! the old SPICE grammar rule: `Poly`, `B` and its `Body` (the text after
 //! `key =` to the card's end), `nodes`/`inst`, `X`.
 //!
-//! Cites: `import/lower/elements.rs` (ported); spice.peg `Poly`, `B`,
+//! Cites: the old lowering (ported); the old SPICE grammar's `Poly`, `B`,
 //! `Body`, `D` … `Z`, `nodes`, `inst`, `X`.
 //!
 //! Contents:
@@ -77,7 +77,7 @@ impl<'a> Cx<'a> {
         Some(card)
     }
 
-    /// `B1 n p V=expr`: the expression to the card's end (spice.peg `B`,
+    /// `B1 n p V=expr`: the expression to the card's end (the old SPICE grammar's `B`,
     /// `Body`).
     pub(super) fn behavioural(&self, n: u32, name: String) -> Option<Component> {
         let items = &self.items(n)[..];
@@ -108,9 +108,9 @@ impl<'a> Cx<'a> {
         }
     }
 
-    /// quirk: spice.peg `Body`: the text after `key =` to the card's end,
-    /// unless a ` key=` follows; braces (or a readable expression) around
-    /// all of it are dropped.
+    /// quirk: the old SPICE grammar's `Body`: the text after `key =` to the
+    /// card's end, unless a ` key=` follows; braces (or a readable
+    /// expression) around all of it are dropped.
     pub(super) fn body_to_end(&self, kv: u32) -> Option<String> {
         let eq = self.last(self.ast.lhs(Node(kv))) + 1;
         let first = eq + 1;
@@ -143,7 +143,7 @@ impl<'a> Cx<'a> {
         Some(self.span(first, last).trim().to_string())
     }
 
-    /// `D/Q/M/J/Z name nodes... model [flags] [k=v...]` (spice.peg `nodes`,
+    /// `D/Q/M/J/Z name nodes... model [flags] [k=v...]` (the old SPICE grammar's `nodes`,
     /// `inst`).
     pub(super) fn semiconductor(&self, n: u32, e: Element, name: String) -> Option<Component> {
         let items = &self.items(n)[..];
@@ -210,7 +210,7 @@ impl<'a> Cx<'a> {
         })
     }
 
-    /// An `X` card (spice.peg `X`, lower/elements.rs `instance`).
+    /// An `X` card (the old SPICE grammar's `X`, the old lowering's `instance`).
     pub(super) fn instance(&self, n: u32) -> Option<Instance> {
         let h = self.ast.header(Node(n));
         let (master, nodes) = (h.master, h.nodes);

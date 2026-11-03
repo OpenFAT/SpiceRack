@@ -1,15 +1,21 @@
-//! [`Ast`] → today's [`CircuitIR`] and [`Report`], exactly as
-//! `import::parse` builds them: the temporary bridge of the rewrite's phase
-//! 2 (`docs/research/transpiler-architecture.md` §5), so the new front end
-//! feeds the old writers while they still run.
+//! [`Ast`] → the [`CircuitIR`] and [`Report`] the old reader built: the
+//! temporary bridge of the rewrite (`docs/research/transpiler-architecture.md`
+//! §5), so the new front end feeds the old writers while they still run.
 //!
-//! It is a port of `import/lower/*` onto AST nodes, plus what the old
-//! grammars decided and the AST does not: which card shapes `grammar/*.peg`
-//! accepted, which refusals were `Raw` and which `Unparsed`, the text of a
-//! logical line as `import::logical` joined it. Each such rule is marked
-//! `// quirk:` with the grammar rule or lowering line it mirrors; that list
-//! is the inventory of the old reader, and phase 7 turns the wrong ones into
-//! behaviour changes (`migration.xfail` lists what this cannot reproduce).
+//! **The old reader** is the PEG grammars and the lowering this front end
+//! replaced, as they stood at `daa0ad0`, the golden gate's oracle
+//! (`git show daa0ad0:grammar/spice.peg`, `daa0ad0:src/import/lower/`); they
+//! are gone from the tree. A citation "the old SPICE grammar's `card`" names
+//! a rule there; "the old lowering's `raw`" a function.
+//!
+//! This is a port of the old lowering onto AST nodes, plus what the old
+//! grammars decided and the AST does not: which card shapes they accepted,
+//! which refusals were `Raw` and which `Unparsed`, the text of a logical
+//! line as the old line stage joined it. Each such rule is marked
+//! `// quirk:` and states what the old reader read, so the comment stands
+//! without the file; that list is the inventory of the old reader, and
+//! phase 7 turns the wrong ones into behaviour changes (`migration.xfail`
+//! lists what this cannot reproduce).
 //!
 //! This file is the spine: the per-deck state and the walk over statements
 //! and blocks (`.subckt`, sections, `.if`). `text` joins tokens as the line
@@ -19,8 +25,8 @@
 //! `options` SPICE dot cards, `named`, `named_blocks`, `named_elements` and
 //! `named_analyses` Spectre and VACASK statements.
 //!
-//! Cites: `import/lower/mod.rs` (the lowering ported), `import/mod.rs`
-//! `logical`; `grammar/spice.peg` `card`, `Raw`, `Unparsed`.
+//! Cites: the old lowering (ported) and line stage (`logical`); the old
+//! SPICE grammar's `card`, `Raw`, `Unparsed`.
 //!
 //! Contents:
 //! - `fn ast_to_ir(ast: &Ast, t: &Tokens, d: Dialect, name: &str) -> (CircuitIR, Report)`
@@ -68,7 +74,7 @@ struct Cx<'a> {
     ast: &'a Ast<'a>,
     t: &'a Tokens<'a>,
     d: Dialect,
-    /// The deck's `.model` names, lowercased (lower/mod.rs:82-86).
+    /// The deck's `.model` names, lowercased (the old lowering).
     models: HashSet<String>,
     report: Report,
     tb: Testbench,
@@ -81,7 +87,7 @@ struct Cx<'a> {
     subckts: Vec<String>,
 }
 
-/// Where a card sits (lower/mod.rs:66-73).
+/// Where a card sits (the old lowering).
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Scope {
     Top,
@@ -160,7 +166,7 @@ pub fn ast_to_ir(ast: &Ast, t: &Tokens, d: Dialect, name: &str) -> (CircuitIR, R
         sections,
         ..
     } = cx;
-    // LTspice inductors carry an implicit Rser=1m (lower/mod.rs:118-125).
+    // LTspice inductors carry an implicit Rser=1m (the old lowering).
     if d == Dialect::Ltspice {
         for sc in std::iter::once(&mut top).chain(defs.iter_mut()) {
             implicit_rser(&mut sc.components);
@@ -217,7 +223,7 @@ impl<'a> Cx<'a> {
         }
     }
 
-    /// A card kept as text (lower/mod.rs `raw`): a block one raw line per
+    /// A card kept as text (the old lowering's `raw`): a block one raw line per
     /// line, a SPICE element in its place among the components.
     pub(super) fn raw(&mut self, n: u32, here: &mut Subcircuit, block: bool) {
         self.report.raw += 1;
@@ -255,7 +261,7 @@ impl<'a> Cx<'a> {
         let inside = scope == Scope::Subckt;
         if scope == Scope::Section && self.leaks(n) {
             // A `.control` kept raw is one line holding its newlines
-            // (quirk: lower/mod.rs `raw` splits only `Block`-like rows).
+            // (quirk: the old lowering's `raw` splits only `Block`-like rows).
             return match self.tag(n) {
                 Tag::Control => {
                     self.report.raw += 1;
@@ -272,7 +278,7 @@ impl<'a> Cx<'a> {
                     let sc = self.subckt(n, head);
                     self.defs.push(sc);
                 }
-                // quirk: a `.subckt` head spice.peg does not read is
+                // quirk: a `.subckt` head the old SPICE grammar does not read is
                 // `Unparsed`; its body then reads as cards here, and its
                 // `.ends` is a `Raw` card.
                 None => self.dissolve(n, here, scope),
@@ -290,8 +296,8 @@ impl<'a> Cx<'a> {
                     };
                     here.conditionals.push(c);
                 }
-                // quirk: spice.peg `ifblock`: an `.if` with no condition in
-                // parentheses is a `Block`, kept whole.
+                // quirk: the old SPICE grammar's `ifblock`: an `.if` with no
+                // condition in parentheses is a `Block`, kept whole.
                 false => self.raw(n, here, true),
             },
             Tag::Data => self.raw(n, here, true),
@@ -308,7 +314,7 @@ impl<'a> Cx<'a> {
     }
 
     /// `.lib name` … `.endl`: its cards lowered as at the top, into the
-    /// section's own body and definitions (lower/sections.rs `section`).
+    /// section's own body and definitions (the old lowering's `section`).
     pub(super) fn section(&mut self, n: u32, library: Option<String>) -> LibSection {
         let name_item = self.fields(n)[0];
         let mut body = sub(&self.name_of(name_item));
@@ -325,8 +331,8 @@ impl<'a> Cx<'a> {
         }
     }
 
-    /// quirk: spice.peg `Branch <- '.if' s? Cond s? nl`: the condition is
-    /// one parenthesized group ending the line.
+    /// quirk: the old SPICE grammar's `Branch <- '.if' s? Cond s? nl`: the
+    /// condition is one parenthesized group ending the line.
     pub(super) fn if_head_ok(&self, n: u32) -> bool {
         let first = self.main(n);
         let last = self.line_last(first);
@@ -335,7 +341,7 @@ impl<'a> Cx<'a> {
             && self.paren_close(first + 1) == Some(last)
     }
 
-    /// `.subckt` … `.ends` (lower/mod.rs `subckt`): nested definitions
+    /// `.subckt` … `.ends` (the old lowering's `subckt`): nested definitions
     /// hoisted as `<parent>__<name>`, the parent's references renamed. The
     /// nesting is walked on a heap stack of open definitions, so a deck
     /// nested 10⁴ deep needs no deeper native stack than a flat one.
@@ -421,7 +427,7 @@ impl<'a> Cx<'a> {
         }
     }
 
-    /// Whether a card in a section would reach past it (lower/sections.rs
+    /// Whether a card in a section would reach past it (the old lowering's
     /// `leaks`).
     fn leaks(&self, n: u32) -> bool {
         match self.tag(n) {
@@ -450,7 +456,7 @@ impl<'a> Cx<'a> {
         None
     }
 
-    /// A `.if` chain → a `Conditional` (lower/conditionals.rs).
+    /// A `.if` chain → a `Conditional` (the old lowering).
     fn conditional(&mut self, n: u32, scope: Scope) -> Conditional {
         let mut c = Conditional::default();
         let mut branch = Some(Node(n));
@@ -529,7 +535,7 @@ fn sub(name: &str) -> Subcircuit {
 }
 
 /// A condition without the parentheses around it, blanks folded
-/// (lower/conditionals.rs `unwrapped`).
+/// (the old lowering's `unwrapped`).
 fn unwrapped(t: &str) -> String {
     let t = t.trim();
     let inner = t

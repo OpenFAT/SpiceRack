@@ -8,7 +8,7 @@
 //! The climb recurses once per nesting level and stops at
 //! [`DEPTH_MAX`](crate::syntax::parse::DEPTH_MAX) with a `P0006`.
 //!
-//! Cites: ngspice manual §2.8.5 and numparam's levels (`grammar/ngspice.peg`
+//! Cites: ngspice manual §2.8.5 and numparam's levels (the old ngspice grammar
 //! `x_ternary` … `x_atom`, `x_probe` §2.6); HSPICE UG08 pp.279-283; ADI
 //! LTspice CIRCUIT-ELEMENTS-REFERENCE "Supported Operators"; Xyce RG Table
 //! 2-32 (levels measured on 7.10); Spectre UG p.87 (§6.1, vectors §5);

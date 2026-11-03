@@ -1,10 +1,10 @@
 //! SPICE output lists (`.save`, `.print`, `.four`, `.tf`, `.sens`, HSPICE
-//! `.probe`) → their outputs' texts, as `grammar/spice.peg`'s `osep`/`Out`
+//! `.probe`) → their outputs' texts, as the old SPICE grammar's `osep`/`Out`
 //! cut them: a group (`v(a)`), braces, a quoted run, `=`, or name bytes, cut
 //! at blanks and commas (HSPICE: any blank-free run).
 //!
-//! Cites: spice.peg `Save`, `osep`, `Out`, `group`, `gfield`, `Print`,
-//! `PrintKind`; hspice.peg `Out`, `Probe`.
+//! Cites: the old SPICE grammar's `Save`, `osep`, `Out`, `group`, `gfield`, `Print`,
+//! `PrintKind`; the old HSPICE grammar's `Out`, `Probe`.
 //!
 //! Contents:
 //! - `fn print_kind(rest: &str) -> (&str, &str)`
@@ -17,7 +17,7 @@
 use super::Cx;
 use crate::codegen::Dialect;
 
-/// spice.peg `(s PrintKind)?`: the analysis word after `.print`, and the
+/// the old SPICE grammar's `(s PrintKind)?`: the analysis word after `.print`, and the
 /// text after it.
 pub(super) fn print_kind(rest: &str) -> (&str, &str) {
     const KINDS: &[&str] = &[
@@ -56,15 +56,15 @@ impl<'a> Cx<'a> {
         s[self.t.text(first).len()..].to_string()
     }
 
-    /// The outputs after the head and `skip` items: spice.peg `osep* s?`.
+    /// The outputs after the head and `skip` items: the old SPICE grammar's `osep* s?`.
     pub(super) fn outs_after(&self, n: u32, skip: usize) -> Option<Vec<String>> {
         debug_assert_eq!(skip, 0);
         self.outs_text(&self.rest_text(n))
     }
 
-    /// quirk: spice.peg `osep* s?` over `rest`: outputs after a blank or a
-    /// comma, each a spice.peg `Out` (hspice.peg: any blank-free run), and
-    /// nothing else.
+    /// quirk: the old SPICE grammar's `osep* s?` over `rest`: outputs after
+    /// a blank or a comma, each an `Out` of the old SPICE grammar (of the
+    /// old HSPICE grammar: any blank-free run), and nothing else.
     pub(super) fn outs_text(&self, rest: &str) -> Option<Vec<String>> {
         let b = rest.as_bytes();
         let mut i = 0;
@@ -115,7 +115,7 @@ impl<'a> Cx<'a> {
         Some((rest[blanks..e].to_string(), &rest[e..]))
     }
 
-    /// hspice.peg `Probe`: analysis words and blank-free outputs.
+    /// the old HSPICE grammar's `Probe`: analysis words and blank-free outputs.
     pub(super) fn probe_outs(&self, n: u32) -> Option<Vec<String>> {
         let rest = self.rest_text(n);
         let mut outs = Vec::new();
@@ -173,7 +173,7 @@ impl<'a> Cx<'a> {
     }
 }
 
-/// spice.peg `group <- word s? '(' s? (gfield (s? gfield)*)? s? ')'` at
+/// the old SPICE grammar's `group <- word s? '(' s? (gfield (s? gfield)*)? s? ')'` at
 /// `i`: its end. A `gfield` is a group, a braced or quoted expression, a
 /// string, a word, `,` or `=`.
 fn group_end(b: &[u8], i: usize) -> Option<usize> {

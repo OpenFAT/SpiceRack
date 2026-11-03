@@ -1,9 +1,9 @@
 //! A card the old grammar refused → `Raw` or `Unparsed`, as
-//! `grammar/spice.peg` sorted them: a dot card whose word is a `rawkind`
+//! the old SPICE grammar sorted them: a dot card whose word is a `rawkind`
 //! (or an overlay's own raw word) was `Raw`, any other `Unparsed`.
 //!
-//! Cites: spice.peg `Raw`, `rawkind`, `Unparsed`; ltspice.peg `Raw_lt`;
-//! xyce.peg `Raw_xy`.
+//! Cites: the old SPICE grammar's `Raw`, `rawkind`, `Unparsed`; the old LTspice grammar's `Raw_lt`;
+//! the old Xyce grammar's `Raw_xy`.
 //!
 //! Contents:
 //! - `Cx::refused(&self, n: u32) -> Kept`
@@ -13,7 +13,7 @@ use super::{Cx, Kept};
 use crate::codegen::Dialect;
 use crate::syntax::token::Tag as T;
 
-/// spice.peg `rawkind`: the dot words whose card, when no rule reads it,
+/// the old SPICE grammar's `rawkind`: the dot words whose card, when no rule reads it,
 /// is `Raw`; any other dot card no rule reads is `Unparsed`.
 const RAWKIND: &[&str] = &[
     "acphasenoise",
@@ -111,11 +111,11 @@ const RAWKIND: &[&str] = &[
 ];
 
 impl<'a> Cx<'a> {
-    /// quirk: spice.peg `Raw <- '.' rawkind !namechar rest / ends rest`: a
-    /// dot card no rule reads is `Raw` when its word is a `rawkind` (or
+    /// quirk: the old SPICE grammar's `Raw <- '.' rawkind !namechar rest /
+    /// ends rest`: a dot card no rule reads is `Raw` when its word is a `rawkind` (or
     /// `.ends`/`.eom`), else `Unparsed` (and so are non-dot lines).
     pub(super) fn refused(&self, n: u32) -> Kept {
-        // The dot word as spice.peg's `!namechar` reads it: the head token
+        // The dot word as the old SPICE grammar's `!namechar` reads it: the head token
         // and the name bytes touching it (`.probe/csd` is no `.probe`).
         let first = self.main(n);
         let last = self.line_last(first);
@@ -152,8 +152,9 @@ impl<'a> Cx<'a> {
         }
     }
 
-    /// quirk: the overlays' own raw dot words: ltspice.peg `Raw_lt`,
-    /// xyce.peg `Raw_xy`.
+    /// quirk: whether `w` is one of the old dialect overlays' own raw dot
+    /// words (the old LTspice grammar's `Raw_lt`, the old Xyce grammar's
+    /// `Raw_xy`), listed below: such a card the grammar read and kept raw.
     pub(super) fn dialect_raw(&self, w: &str) -> bool {
         const LT: &[&str] = &[
             "endmachine",

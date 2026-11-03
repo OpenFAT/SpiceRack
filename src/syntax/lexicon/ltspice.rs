@@ -1,6 +1,6 @@
 //! LTspice's lexicon.
 //!
-//! Cites (as `grammar/ltspice.peg` does): ADI ltspice-reference `ai_ref/`
+//! Cites (as the old LTspice grammar did): ADI ltspice-reference `ai_ref/`
 //! SPICE-SYNTAX-REFERENCE.md (SSR) "Netlist Structure" (title), "Comments"
 //! (`*` lines, `;` anywhere), "Engineering Multipliers" (T G Meg K mil m u
 //! n p f, `µ`, `6K34`); SIMULATION-COMMANDS-REFERENCE.md `.END`;

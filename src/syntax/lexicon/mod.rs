@@ -10,7 +10,7 @@
 //! Cites: `docs/research/transpiler-architecture.md` §2.1;
 //! `compiler-architecture-reference.md` §7 and §12.1 (ESPice's per-dialect
 //! constants, `ESPice/src/frontend/lines.zig:45-51`); the line stage and the
-//! `Num` rule of each `grammar/*.peg`, which this replaces and whose manual
+//! `Num` rule of each old PEG grammar, which this replaced and whose manual
 //! citations each dialect file repeats.
 //!
 //! Contents:
@@ -303,7 +303,7 @@ pub enum Arithmetic {
 }
 
 /// The dot cards every SPICE dialect shares, with their aliases: the
-/// spellings `grammar/spice.peg` reads (`.macro`/`.eom` are HSPICE's
+/// spellings the old SPICE grammar reads (`.macro`/`.eom` are HSPICE's
 /// `.subckt`/`.ends`, `.dcvolt` its `.ic`).
 const SPICE_KEYWORDS: &[(&str, Tag)] = &[
     (".param", Tag::KwParam),

@@ -1,10 +1,10 @@
-//! Tokens → the text `import::logical` gave them: the source inside one
+//! Tokens → the text the old line stage gave them: the source inside one
 //! physical piece, one blank between pieces, nothing across an HSPICE `\\`
 //! glue, VACASK's brackets glued to what precedes them; and the token
 //! extent of every statement, item and expression.
 //!
-//! Cites: `import/mod.rs` `logical` and the line stage of each
-//! `grammar/*.peg` (`Line`, `Piece`, `Glue`).
+//! Cites: the old line stage's `logical` and each old PEG grammar's line
+//! rules (`Line`, `Piece`, `Glue`).
 //!
 //! Contents:
 //! - `Cx::line_last(&self, first: u32) -> u32`
@@ -83,7 +83,7 @@ impl<'a> Cx<'a> {
         self.span(self.first(n), self.last(n))
     }
 
-    /// Tokens `a..=b` as `import::logical` joined them: the source inside
+    /// Tokens `a..=b` as the old line stage joined them: the source inside
     /// one physical piece, one blank between pieces (a continuation, a
     /// comment), nothing across an HSPICE `\\` glue; VACASK glues a bracket
     /// to what precedes it and puts a blank after it.
@@ -141,8 +141,9 @@ impl<'a> Cx<'a> {
         let g = &src[self.t.end(p) as usize..self.t.start(k) as usize];
         let lex = self.t.lexicon_at(k);
         if lex.join == crate::syntax::lexicon::Join::Brackets {
-            // quirk: vacask.peg `Glue`, a bracket, is joined with nothing;
-            // the `Piece` after one gets a blank (import/mod.rs `logical`).
+            // quirk: the old VACASK grammar's `Glue`, a bracket, is joined
+            // with nothing; the `Piece` after one gets a blank (the old line
+            // stage's `logical`).
             let bracket = |t: T| {
                 matches!(
                     t,
