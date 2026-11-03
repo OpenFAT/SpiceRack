@@ -22,7 +22,7 @@
 //! Contents:
 //! - `Parser::named_statement(&mut self, stack: &mut Vec<Frame>)`
 
-use crate::syntax::ast::{NONE, Node, Tag};
+use crate::syntax::ast::{NONE, Name, Node, Tag};
 use crate::syntax::diag::Code;
 use crate::syntax::fields::Mode;
 use crate::syntax::parse::{Frame, Head, Parser, Wait};
@@ -354,10 +354,16 @@ impl Parser<'_, '_> {
             }
             master = nodes.pop().unwrap_or(NONE);
         }
-        let fields = self.fields(Mode::Fields);
-        let mut words = vec![name.0, master, nodes.len() as u32];
-        words.extend(nodes);
-        let at = self.ast.push_extra(&words);
-        self.ast.push(Tag::Instance, first, fields, at)
+        let args = self.items(Mode::Fields);
+        let code = match master {
+            NONE => NONE,
+            m => {
+                let word = self.ast.name(Name(self.ast.rhs(Node(m))));
+                let lex = self.t.lexicon_at(first);
+                lex.device(word).map_or(NONE, |d| d.primitive as u32)
+            }
+        };
+        let h = self.ast.push_header(name.0, master, code, &nodes, &args);
+        self.ast.push(Tag::Instance, first, h, NONE)
     }
 }

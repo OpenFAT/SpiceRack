@@ -16,7 +16,7 @@
 //!
 //! Contents:
 //! - `pub(super) enum Mode`
-//! - `Parser::fields(&mut self, mode: Mode) -> u32`
+//! - `Parser::fields(&mut self, mode: Mode) -> u32`, `Parser::items(&mut self, mode: Mode) -> Vec<u32>`
 //! - `Parser::word(&mut self) -> Node`, `Parser::word_end(&self, i: u32) -> u32`
 //! - `Parser::delimited(&mut self) -> Node`, `Parser::starts_delimited(&self) -> bool`
 //! - `Parser::pairstart(&self, i: u32) -> bool`, `Parser::separates(&self, i: u32) -> bool`
@@ -49,13 +49,19 @@ impl Parser<'_, '_> {
     /// Reads the items from the cursor to the statement's end; returns the
     /// fields list.
     pub(super) fn fields(&mut self, mode: Mode) -> u32 {
+        let items = self.items(mode);
+        self.ast.push_list(&items)
+    }
+
+    /// The items from the cursor to the statement's end, not yet a list.
+    pub(super) fn items(&mut self, mode: Mode) -> Vec<u32> {
         let mut items = Vec::new();
         while self.i < self.end {
             if let Some(n) = self.item(mode) {
                 items.push(n.0);
             }
         }
-        self.ast.push_list(&items)
+        items
     }
 
     /// The last token of the word starting at `i`: tokens that touch, up to
@@ -119,7 +125,7 @@ impl Parser<'_, '_> {
     pub(super) fn separates(&self, i: u32) -> bool {
         // Spectre and VACASK: a name is letters, digits, escapes and quoted
         // parts (one token), joined by `.` and `:` (`X1.n3`, `x1:p`).
-        if self.t.lexicon_at(i).letters.is_empty() {
+        if self.t.lexicon_at(i).named {
             return !matches!(
                 self.t.tags()[i as usize],
                 T::Ident | T::Number | T::Dot | T::Colon
@@ -191,7 +197,7 @@ impl Parser<'_, '_> {
                 let w = self.word();
                 // Spectre's and VACASK's parentheses only bracket a node or
                 // parameter list (`(r=1)`, `sp_diode ( is=1 )`).
-                let named = self.t.lexicon_at(self.i - 1).letters.is_empty();
+                let named = self.t.lexicon_at(self.i - 1).named;
                 let grouped =
                     matches!(mode, Mode::Fields | Mode::Element) && self.at(T::LParen) && !named;
                 let key = if grouped { self.group(w.0) } else { w };
@@ -215,7 +221,7 @@ impl Parser<'_, '_> {
     /// A key starts with a letter or `_` (spice.peg `Key`).
     /// Spectre's and VACASK's keys are names (`$mfactor`, `'a b'`, `\x`).
     fn key_shaped(&self, i: u32) -> bool {
-        let named = self.t.lexicon_at(i).letters.is_empty();
+        let named = self.t.lexicon_at(i).named;
         self.t.text(i).bytes().next().is_some_and(|b| {
             b.is_ascii_alphabetic() || b == b'_' || named && matches!(b, b'$' | b'\'' | b'\\')
         })

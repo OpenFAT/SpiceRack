@@ -186,7 +186,7 @@ impl Parser<'_, '_> {
     fn name_or_call(&mut self) -> Result<Node, ()> {
         let a = self.i;
         let mut b = a;
-        let named = self.t.lexicon_at(a).letters.is_empty();
+        let named = self.t.lexicon_at(a).named;
         while named
             && self.tag_at(b + 1) == Some(T::Dot)
             && self.tag_at(b + 2) == Some(T::Ident)
@@ -302,9 +302,7 @@ impl Parser<'_, '_> {
             };
             // An operator before `key =` separates two assignments (sky130's
             // `a = '-1*x' + b = '0 - 2.5'`).
-            if bp < min_bp
-                || (!self.t.lexicon_at(self.i).letters.is_empty() && self.pairstart(self.i + 1))
-            {
+            if bp < min_bp || (!self.t.lexicon_at(self.i).named && self.pairstart(self.i + 1)) {
                 break;
             }
             let op = self.i;

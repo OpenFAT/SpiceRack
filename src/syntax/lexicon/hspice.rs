@@ -14,9 +14,10 @@
 
 use super::{
     Arithmetic, Backslash, Caret, Dollar, End, Lexicon, Numbers, Ops, Quote, Quoting,
-    SPICE_KEYWORDS, SPICE_LETTERS, Scale, Tail,
+    SPICE_KEYWORDS, Scale, Tail,
 };
 use crate::codegen::Dialect;
+use crate::syntax::device;
 use crate::syntax::token::Tag;
 
 /// HSPICE: case-blind, `*`/`$` comment lines, the `$` hook, `+`, `\` and
@@ -87,7 +88,8 @@ pub const HSPICE: Lexicon = Lexicon {
         arithmetic: Arithmetic::Decimal,
     },
     keywords: &[SPICE_KEYWORDS, OWN_KEYWORDS],
-    letters: SPICE_LETTERS,
+    named: false,
+    devices: &[device::SPICE],
     lang_spice: None,
 };
 

@@ -1,6 +1,6 @@
 //! A dialect's lexical facts as one `const` table: what the tokenizer
 //! (`syntax::tokenize`) reads per dialect, and what the parser looks up after
-//! it (keywords, element letters, operator meaning). One file per dialect
+//! it (keywords, the device table, operator meaning). One file per dialect
 //! holds its table and the tests that pin each rule to its source.
 //!
 //! The table is data. The two rules data cannot say are the hooks of
@@ -15,15 +15,15 @@
 //!
 //! Contents:
 //! - `pub struct Lexicon`, `Lexicon::keyword(&self, word: &str) -> Option<Tag>`,
-//!   `Lexicon::element(&self, letter: u8) -> Option<Element>`
+//!   `Lexicon::device(&self, word: &str) -> Option<&'static Device>`
 //! - `pub enum Dollar`, `pub enum Backslash`, `pub struct End`, `pub enum Quote`,
 //!   `pub struct Quoting`, `pub enum Caret`, `pub struct Ops`, `Ops::TERNARY: u8`
 //! - `pub struct Numbers`, `pub enum Scale`, `pub enum Tail`, `pub enum Arithmetic`
-//! - `pub enum Element`
 //! - `pub const NGSPICE`, `HSPICE`, `LTSPICE`, `XYCE`, `SPECTRE`, `VACASK: Lexicon`
 //! - `pub fn of(d: Dialect) -> Option<&'static Lexicon>`
 
 use crate::codegen::Dialect;
+use crate::syntax::device::{self, Device};
 use crate::syntax::token::Tag;
 
 mod hspice;
@@ -122,8 +122,13 @@ pub struct Lexicon {
     /// Keyword spellings, lowercase where [`Lexicon::fold_case`]; the first
     /// table holding a word wins.
     pub keywords: &'static [&'static [(&'static str, Tag)]],
-    /// The SPICE element letters, lowercase; empty for named dialects.
-    pub letters: &'static [(u8, Element)],
+    /// Statements are `name [(nodes)] master params` (Spectre, VACASK);
+    /// else SPICE cards, led by an element letter or a dot word.
+    pub named: bool,
+    /// The device tables ([`device`](crate::syntax::device)), the first
+    /// holding a word wins: the element letters, or the masters an instance
+    /// names directly.
+    pub devices: &'static [&'static [Device]],
     /// The lexicon a `simulator lang=spice` statement switches to, and the
     /// one `simulator lang=spectre` switches back from: Spectre's hook.
     pub lang_spice: Option<&'static Lexicon>,
@@ -274,51 +279,6 @@ pub enum Arithmetic {
     Decimal,
 }
 
-/// The element a SPICE card's first letter names.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Element {
-    /// `R`.
-    Resistor,
-    /// `C`.
-    Capacitor,
-    /// `L`.
-    Inductor,
-    /// `K`, mutual inductance.
-    Coupling,
-    /// `V`.
-    VoltageSource,
-    /// `I`.
-    CurrentSource,
-    /// `E`.
-    Vcvs,
-    /// `G`.
-    Vccs,
-    /// `F`.
-    Cccs,
-    /// `H`.
-    Ccvs,
-    /// `B`, the behavioural source.
-    Behavioural,
-    /// `D`.
-    Diode,
-    /// `Q`.
-    Bjt,
-    /// `M`.
-    Mosfet,
-    /// `J`.
-    Jfet,
-    /// `Z`.
-    Mesfet,
-    /// `S`.
-    VoltageSwitch,
-    /// `W`.
-    CurrentSwitch,
-    /// `T`.
-    TransmissionLine,
-    /// `X`, a subcircuit instance.
-    Instance,
-}
-
 /// The dot cards every SPICE dialect shares, with their aliases: the
 /// spellings `grammar/spice.peg` reads (`.macro`/`.eom` are HSPICE's
 /// `.subckt`/`.ends`, `.dcvolt` its `.ic`).
@@ -372,31 +332,6 @@ const SPICE_KEYWORDS: &[(&str, Tag)] = &[
     (".endif", Tag::KwEndif),
 ];
 
-/// The element letters `grammar/spice.peg` reads (`element`, its §3.1
-/// rules), shared by the SPICE dialects.
-const SPICE_LETTERS: &[(u8, Element)] = &[
-    (b'r', Element::Resistor),
-    (b'c', Element::Capacitor),
-    (b'l', Element::Inductor),
-    (b'k', Element::Coupling),
-    (b'v', Element::VoltageSource),
-    (b'i', Element::CurrentSource),
-    (b'e', Element::Vcvs),
-    (b'g', Element::Vccs),
-    (b'f', Element::Cccs),
-    (b'h', Element::Ccvs),
-    (b'b', Element::Behavioural),
-    (b'd', Element::Diode),
-    (b'q', Element::Bjt),
-    (b'm', Element::Mosfet),
-    (b'j', Element::Jfet),
-    (b'z', Element::Mesfet),
-    (b's', Element::VoltageSwitch),
-    (b'w', Element::CurrentSwitch),
-    (b't', Element::TransmissionLine),
-    (b'x', Element::Instance),
-];
-
 /// The SPICE comparison and logic operators.
 const SPICE_OPERATORS: &[(&str, Tag)] = &[
     ("**", Tag::StarStar),
@@ -430,12 +365,10 @@ impl Lexicon {
         })
     }
 
-    /// The element a SPICE card starting with `letter` names, either case.
-    pub fn element(&self, letter: u8) -> Option<Element> {
-        let letter = letter.to_ascii_lowercase();
-        self.letters
-            .iter()
-            .find_map(|&(l, e)| (l == letter).then_some(e))
+    /// The device row spelled `word` (a SPICE letter, a Spectre master),
+    /// case-blind where the dialect folds case.
+    pub fn device(&self, word: &str) -> Option<&'static Device> {
+        device::find(self.devices, word, self.fold_case)
     }
 }
 

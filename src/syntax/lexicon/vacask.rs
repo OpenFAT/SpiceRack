@@ -101,7 +101,10 @@ pub const VACASK: Lexicon = Lexicon {
         arithmetic: Arithmetic::Decimal,
     },
     keywords: &[KEYWORDS],
-    letters: &[],
+    named: true,
+    // An instance's master is a model or a subcircuit, never a device word;
+    // the modules a `model` names are `device::VACASK`, which resolve reads.
+    devices: &[],
     lang_spice: None,
 };
 

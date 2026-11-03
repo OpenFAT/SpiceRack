@@ -26,7 +26,7 @@ impl<'a> Cx<'a> {
     /// joins it).
     pub(super) fn line_last(&self, first: u32) -> u32 {
         let tags = self.t.tags();
-        let named = self.t.lexicon_at(first).letters.is_empty();
+        let named = self.t.lexicon_at(first).named;
         let mut depth = 0i32;
         let mut k = first as usize;
         loop {
@@ -126,7 +126,7 @@ impl<'a> Cx<'a> {
                 continue;
             }
             out.push(self.line(s));
-            if self.ast.rhs(Node(s)) == NONE || self.tag(s) == Tag::Instance {
+            if self.ast.rhs(Node(s)) == NONE {
                 continue;
             }
             // Push in reverse: the closer, the chained branch, the body.

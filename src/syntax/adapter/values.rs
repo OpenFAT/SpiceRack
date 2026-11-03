@@ -279,7 +279,7 @@ impl Cx<'_> {
     /// quirk: the dialect's `Num` rule over all of `s` (SPICE's sign
     /// included), with today's arithmetic (lower/values.rs `num_value`).
     fn num_text(&self, s: &str, lex: &crate::syntax::lexicon::Lexicon) -> Option<f64> {
-        if lex.letters.is_empty() {
+        if lex.named {
             // A signed literal where the sign is an operator (lower/values.rs
             // `number`): `-1.5`, `- 1.5`.
             let (neg, body) = match s.as_bytes().first() {

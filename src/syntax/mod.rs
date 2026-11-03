@@ -8,12 +8,13 @@
 //! `import::parse`.
 //!
 //! Contents:
-//! - `pub mod ast`, `pub mod diag`, `pub mod lexicon`, `pub mod token`
+//! - `pub mod ast`, `pub mod device`, `pub mod diag`, `pub mod lexicon`, `pub mod token`
 //! - `pub use tokenize::tokenize`, `pub use parse::{parse, DEPTH_MAX}`,
 //!   `pub use adapter::ast_to_ir`
 
 mod adapter;
 pub mod ast;
+pub mod device;
 pub mod diag;
 mod expr;
 mod fields;

@@ -21,14 +21,9 @@ impl<'a> Cx<'a> {
     /// `name [(p n)] kind k=v`: the analyses `codegen::spectre` writes
     /// (lower/named_analyses.rs `spectre_analysis`).
     pub(super) fn spectre_analysis(&self, n: u32) -> Option<Analysis> {
-        let words = self.ast.rhs(Node(n));
-        let kind = self.text(self.ast.extra(words + 1));
-        let ns: Vec<String> = self
-            .ast
-            .list(words + 2)
-            .iter()
-            .map(|&k| self.name_of(k))
-            .collect();
+        let h = self.ast.header(Node(n));
+        let kind = self.text(h.master);
+        let ns: Vec<String> = h.nodes.iter().map(|&k| self.name_of(k)).collect();
         let p = self.pairs(n);
         let num = |k: &str| self.get(&p, k).and_then(|v| self.number(v));
         let s = |k: &str| self.get(&p, k).map(|v| self.text(v));

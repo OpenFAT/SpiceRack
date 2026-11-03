@@ -9,7 +9,11 @@
 //! - **list at `k`**: `extra_data[k]` is a length `n`, then `n` node ids;
 //! - **fields**: `lhs` is a list at `lhs`, the statement's items after its
 //!   head, in source order (words, groups, delimited expressions, strings,
-//!   `key=value` assignments);
+//!   `key=value` assignments); a header statement's fields follow its
+//!   header;
+//! - **header**: `lhs` is extra `[name, master, code, n, node0 .. node(n-1),
+//!   m, arg0 .. arg(m-1)]`, the statement's [`Header`] then its fields list
+//!   (a [`Tag::has_header`] statement: `name [(nodes)] master args`);
 //! - **body**: `rhs` is [`NONE`] for a statement with no body, else
 //!   `extra_data[rhs..]` is `[next, closer, n, s0 .. s(n-1)]`: the chained
 //!   branch (an `If`'s `else`, else `NONE`), the statement that closed the
@@ -24,8 +28,8 @@
 //! `extra_data`, `errors`, tag docs).
 //!
 //! Contents:
-//! - `pub enum Tag`, `pub struct Node(pub u32)`, `pub const NONE: u32`,
-//!   `pub const PRIMITIVE: u32`
+//! - `pub enum Tag`, `Tag::has_header(self) -> bool`, `pub struct Node(pub u32)`,
+//!   `pub const NONE: u32`, `pub struct Header<'a>`
 //! - `pub struct Name(pub u32)`, `pub struct Mark`
 //! - `pub struct Ast<'s>`
 //! - `Ast::tag(&self, n: Node) -> Tag`, `Ast::main_token(&self, n: Node) -> u32`,
@@ -33,11 +37,13 @@
 //!   `Ast::len(&self) -> usize`, `Ast::is_empty(&self) -> bool`,
 //!   `Ast::root(&self) -> Node`, `Ast::list(&self, at: u32) -> &[u32]`,
 //!   `Ast::extra(&self, at: u32) -> u32`, `Ast::fields(&self, n: Node) -> &[u32]`,
+//!   `Ast::header(&self, n: Node) -> Header<'_>`,
 //!   `Ast::body(&self, n: Node) -> &[u32]`, `Ast::next(&self, n: Node) -> Option<Node>`,
 //!   `Ast::closer(&self, n: Node) -> Option<Node>`, `Ast::name(&self, id: Name) -> &str`,
 //!   `Ast::diags(&self) -> &[Diag]`, `Ast::push(&mut self, ..) -> Node`,
 //!   `Ast::push_list(&mut self, items: &[u32]) -> u32`, `Ast::push_extra(&mut self, words: &[u32]) -> u32`,
 //!   `Ast::push_body(&mut self, next: u32, closer: u32, items: &[u32]) -> u32`,
+//!   `Ast::push_header(&mut self, name: u32, master: u32, code: u32, nodes: &[u32], args: &[u32]) -> u32`,
 //!   `Ast::set_extra(&mut self, at: u32, word: u32)`, `Ast::set_root(&mut self, list: u32)`,
 //!   `Ast::set_rhs(&mut self, n: Node, rhs: u32)`, `Ast::new(tokens_len: usize) -> Ast<'s>`,
 //!   `Ast::intern(&mut self, text: Cow<'s, str>) -> Name`, `Ast::diag(&mut self, code: Code, token: u32)`,
@@ -140,12 +146,16 @@ pub enum Tag {
     /// `.backanno`, `load`, `vary`, a Spectre `} ` closer, a bin `1: …`):
     /// its head's token tag says which. Fields; a Spectre `{` block's body.
     Card,
-    /// An element: SPICE `R1 a b 1k`, Spectre `r1 (a b) resistor r=1k`.
-    /// Fields: the arguments (for SPICE every item after the name; for
-    /// Spectre and VACASK the parameters). `rhs`: extra `[name, master,
-    /// n, node0 .. node(n-1)]`, `name` a `Word`, `master` a `Word` or
-    /// `PRIMITIVE | Element as u32` (a SPICE letter), the nodes `Word`s
-    /// (Spectre and VACASK, and SPICE `X`, whose master is its subckt word).
+    /// An element: SPICE `R1 a b 1k`, Spectre `r1 (a b) resistor r=1k`,
+    /// split by its dialect's device row (`syntax::device`). A header:
+    /// `name` its name `Word`, `master` the model, subcircuit or master
+    /// `Word` (`NONE` when the card names none, as `R1 a b 1k`), `code` the
+    /// [`Primitive`] (`NONE` when the parser cannot know it: a Spectre master
+    /// that is a model or a subcircuit, a VACASK model), the nodes `Word`s;
+    /// fields: the arguments after the nodes and master, positional values
+    /// and `key=value`s, in source order.
+    ///
+    /// [`Primitive`]: crate::syntax::device::Primitive
     Instance,
 
     // ── items ──
@@ -216,9 +226,19 @@ pub struct Name(pub u32);
 /// No node, no token: an absent optional word.
 pub const NONE: u32 = u32::MAX;
 
-/// An `Instance`'s master word with this bit set is a SPICE element letter
-/// (`syntax::lexicon::Element as u32`), not a node.
-pub const PRIMITIVE: u32 = 1 << 31;
+/// A header statement's head (`Tag::has_header`): `name [(nodes)] master`.
+#[derive(Clone, Copy, Debug)]
+pub struct Header<'a> {
+    /// The name `Word`, or `NONE`.
+    pub name: u32,
+    /// The master `Word`, or `NONE`.
+    pub master: u32,
+    /// What the master names, by the tag: a `Primitive` for an `Instance`;
+    /// `NONE` when unknown.
+    pub code: u32,
+    /// The node `Word`s.
+    pub nodes: &'a [u32],
+}
 
 /// A point to undo appends back to: a speculative parse that lost.
 #[derive(Clone, Copy, Debug)]
@@ -242,6 +262,13 @@ pub struct Ast<'s> {
     names: Vec<Cow<'s, str>>,
     name_ids: HashMap<Cow<'s, str>, Name>,
     diags: Vec<Diag>,
+}
+
+impl Tag {
+    /// Whether the statement's `lhs` is a [`Header`] and its fields.
+    pub fn has_header(self) -> bool {
+        matches!(self, Tag::Instance)
+    }
 }
 
 impl<'s> Ast<'s> {
@@ -316,7 +343,26 @@ impl<'s> Ast<'s> {
     /// # Panics
     /// When `n` is no node.
     pub fn fields(&self, n: Node) -> &[u32] {
-        self.list(self.lhs(n))
+        if !self.tag(n).has_header() {
+            return self.list(self.lhs(n));
+        }
+        let h = self.lhs(n);
+        self.list(h + 4 + self.extra(h + 3))
+    }
+
+    /// A header statement's head.
+    ///
+    /// # Panics
+    /// When `n`'s tag has no header.
+    pub fn header(&self, n: Node) -> Header<'_> {
+        assert!(self.tag(n).has_header(), "a header statement");
+        let h = self.lhs(n);
+        Header {
+            name: self.extra(h),
+            master: self.extra(h + 1),
+            code: self.extra(h + 2),
+            nodes: self.list(h + 3),
+        }
     }
 
     /// A block statement's body; empty for a statement with none.
@@ -351,7 +397,7 @@ impl<'s> Ast<'s> {
     /// Appends a node and returns its id.
     pub fn push(&mut self, tag: Tag, main_token: u32, lhs: u32, rhs: u32) -> Node {
         let id = u32::try_from(self.tags.len()).expect("fewer than u32::MAX nodes");
-        assert!(id < PRIMITIVE, "node ids stay clear of the PRIMITIVE bit");
+        assert!(id != NONE, "a node id is never NONE");
         self.tags.push(tag);
         self.main_tokens.push(main_token);
         self.lhs.push(lhs);
@@ -379,6 +425,22 @@ impl<'s> Ast<'s> {
     pub fn push_body(&mut self, next: u32, closer: u32, items: &[u32]) -> u32 {
         let at = self.push_extra(&[next, closer]);
         self.push_list(items);
+        at
+    }
+
+    /// Appends a header and the fields after it; returns its offset (the
+    /// statement's `lhs`).
+    pub fn push_header(
+        &mut self,
+        name: u32,
+        master: u32,
+        code: u32,
+        nodes: &[u32],
+        args: &[u32],
+    ) -> u32 {
+        let at = self.push_extra(&[name, master, code]);
+        self.push_list(nodes);
+        self.push_list(args);
         at
     }
 

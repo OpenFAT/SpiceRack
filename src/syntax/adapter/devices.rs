@@ -16,14 +16,14 @@
 use super::Cx;
 use crate::ir::*;
 use crate::syntax::ast::{NONE, Node, Tag};
-use crate::syntax::lexicon::Element;
+use crate::syntax::device::Primitive as Element;
 use crate::syntax::token::Tag as T;
 
 impl<'a> Cx<'a> {
     /// `E o 0 POLY(n) controls... coeffs...` (and G, F, H); `None` when the
     /// card is no POLY card, `Some(None)` when it is one the IR cannot hold.
     pub(super) fn poly(&self, n: u32, name: String) -> Option<Option<Component>> {
-        let items = self.items(n);
+        let items = &self.items(n)[..];
         let [a, b, p, rest @ ..] = items else {
             return None;
         };
@@ -80,7 +80,7 @@ impl<'a> Cx<'a> {
     /// `B1 n p V=expr`: the expression to the card's end (spice.peg `B`,
     /// `Body`).
     pub(super) fn behavioural(&self, n: u32, name: String) -> Option<Component> {
-        let items = self.items(n);
+        let items = &self.items(n)[..];
         let [a, b, kv, ..] = items else { return None };
         if !self.is_word(*a)
             || !self.is_word(*b)
@@ -146,7 +146,7 @@ impl<'a> Cx<'a> {
     /// `D/Q/M/J/Z name nodes... model [flags] [k=v...]` (spice.peg `nodes`,
     /// `inst`).
     pub(super) fn semiconductor(&self, n: u32, e: Element, name: String) -> Option<Component> {
-        let items = self.items(n);
+        let items = &self.items(n)[..];
         let iflag = |k: u32| ["thermal", "off", "on"].iter().any(|f| self.word_is(k, f));
         // Nodes while another word (no flag, no pair) follows; then the model.
         let mut m = 0;
@@ -212,10 +212,9 @@ impl<'a> Cx<'a> {
 
     /// An `X` card (spice.peg `X`, lower/elements.rs `instance`).
     pub(super) fn instance(&self, n: u32) -> Option<Instance> {
-        let words = self.ast.rhs(Node(n));
-        let master = self.ast.extra(words + 1);
-        let nodes = self.ast.list(words + 2);
-        let items = self.items(n);
+        let h = self.ast.header(Node(n));
+        let (master, nodes) = (h.master, h.nodes);
+        let items = &self.items(n)[..];
         if !self.spaced_items(self.name_last(n), items, false) {
             return None;
         }

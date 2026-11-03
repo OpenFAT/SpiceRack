@@ -12,9 +12,10 @@
 
 use super::{
     Arithmetic, Backslash, Caret, Dollar, End, Lexicon, Numbers, Ops, Quote, Quoting,
-    SPICE_KEYWORDS, SPICE_LETTERS, Scale, Tail,
+    SPICE_KEYWORDS, Scale, Tail,
 };
 use crate::codegen::Dialect;
+use crate::syntax::device;
 use crate::syntax::token::Tag;
 
 /// LTspice: case-blind, `*`/`;` comments, `+` continuation, `{…}`
@@ -92,7 +93,8 @@ pub const LTSPICE: Lexicon = Lexicon {
     },
     // `.fourier` is LTspice's own card, not `.four`.
     keywords: &[OWN_KEYWORDS, SPICE_KEYWORDS],
-    letters: SPICE_LETTERS,
+    named: false,
+    devices: &[device::SPICE],
     lang_spice: None,
 };
 

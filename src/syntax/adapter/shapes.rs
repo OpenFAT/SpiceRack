@@ -6,7 +6,7 @@
 //! `inst`, `value`, `group`; xyce.peg `blob`.
 //!
 //! Contents:
-//! - `Cx::items(&self, n: u32) -> &[u32]`
+//! - `Cx::items(&self, n: u32) -> Vec<u32>`
 //! - `Cx::fields_ok(&self, n: u32) -> bool`
 //! - `Cx::spaced_items(&self, prev: u32, items: &[u32], commas: bool) -> bool`
 //! - `Cx::name_last(&self, n: u32) -> u32`
@@ -26,16 +26,24 @@ use crate::syntax::ast::{NONE, Node, Tag};
 use crate::syntax::token::Tag as T;
 
 impl<'a> Cx<'a> {
-    pub(super) fn items(&self, n: u32) -> &[u32] {
-        self.fields(n)
+    /// An element card's items after its name, in source order: its
+    /// nodes, master and arguments merged back.
+    pub(super) fn items(&self, n: u32) -> Vec<u32> {
+        let h = self.ast.header(Node(n));
+        let mut items: Vec<u32> = h.nodes.iter().chain(self.fields(n)).copied().collect();
+        if h.master != NONE {
+            items.push(h.master);
+        }
+        items.sort_unstable_by_key(|&k| self.main(k));
+        items
     }
 
     /// quirk: spice.peg `element_any <- &[a-z] Name (s? field)+`, the card's
     /// end: every item after the name a `field` (a word, group, string,
     /// readable expression, `k=v`, or one of `, ( ) =`).
     pub(super) fn fields_ok(&self, n: u32) -> bool {
-        let items = self.items(n);
-        let name = self.ast.extra(self.ast.rhs(Node(n)));
+        let items = &self.items(n)[..];
+        let name = self.ast.header(Node(n)).name;
         let last = self.line_last(self.main(n));
         let mut covered = self.last(name) + 1;
         let mut any = false;
@@ -99,12 +107,12 @@ impl<'a> Cx<'a> {
 
     /// The element's name word's last token.
     pub(super) fn name_last(&self, n: u32) -> u32 {
-        self.last(self.ast.extra(self.ast.rhs(Node(n))))
+        self.last(self.ast.header(Node(n)).name)
     }
 
     /// The element's name after its letter (spice.peg `Name_e`).
     pub(super) fn elem_name(&self, n: u32) -> String {
-        let w = self.ast.extra(self.ast.rhs(Node(n)));
+        let w = self.ast.header(Node(n)).name;
         let t = self.text(w);
         t[1..].to_string()
     }

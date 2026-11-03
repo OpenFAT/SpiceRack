@@ -91,15 +91,10 @@ impl<'a> Cx<'a> {
         subckts: &[String],
     ) -> Option<Result<Component, Instance>> {
         let keys = self.keys();
-        let words = self.ast.rhs(Node(n));
-        let name = self.name_of(self.ast.extra(words));
-        let ns: Vec<String> = self
-            .ast
-            .list(words + 2)
-            .iter()
-            .map(|&k| self.name_of(k))
-            .collect();
-        let m = self.ast.extra(words + 1);
+        let h = self.ast.header(Node(n));
+        let name = self.name_of(h.name);
+        let ns: Vec<String> = h.nodes.iter().map(|&k| self.name_of(k)).collect();
+        let m = h.master;
         if m == NONE {
             return None;
         }

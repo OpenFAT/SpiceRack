@@ -327,7 +327,7 @@ impl<'s> Parser<'_, 's> {
             .expect("every statement ends with an EndOfStatement");
         // Spectre: an end of statement inside open parentheses is a blank
         // (`if (a &&` ⏎ `b) {`); VACASK's lexicon already joins such lines.
-        if self.t.lexicon_at(first as u32).letters.is_empty() {
+        if self.t.lexicon_at(first as u32).named {
             let mut depth = 0i32;
             let mut k = first;
             loop {
@@ -388,7 +388,7 @@ impl<'s> Parser<'_, 's> {
                 return self.apply(Head::Close(Tag::Region, card), stack);
             }
         }
-        let named = self.t.lexicon_at(first).letters.is_empty();
+        let named = self.t.lexicon_at(first).named;
         let head = match in_tag {
             Tag::Data => self.script_line(top.node),
             Tag::Control if !named => self.script_line(top.node),
@@ -532,7 +532,7 @@ mod tests {
         let t = tokenize("t\nR1 ab\\\\\ncd 0 1\n", &HSPICE);
         let a = parse(&t, &HSPICE);
         let inst = Node(a.fields(a.root())[1]);
-        let w = Node(a.fields(inst)[0]);
+        let w = Node(a.header(inst).nodes[0]);
         assert_eq!(a.name(crate::syntax::ast::Name(a.rhs(w))), "abcd");
     }
 }

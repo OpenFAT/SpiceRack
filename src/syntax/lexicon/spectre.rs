@@ -16,6 +16,7 @@ use super::{
     Tail,
 };
 use crate::codegen::Dialect;
+use crate::syntax::device;
 use crate::syntax::token::Tag;
 
 /// Spectre: case kept, `*` (column 1) and `//` comments, `\` and `+`
@@ -98,7 +99,8 @@ pub const SPECTRE: Lexicon = Lexicon {
         arithmetic: Arithmetic::Decimal,
     },
     keywords: &[KEYWORDS],
-    letters: &[],
+    named: true,
+    devices: &[device::SPECTRE],
     lang_spice: Some(&HSPICE),
 };
 

@@ -26,7 +26,7 @@ use std::collections::HashMap;
 use super::{Cx, Scope};
 use crate::codegen::Dialect;
 use crate::ir::*;
-use crate::syntax::ast::{NONE, Node, Tag};
+use crate::syntax::ast::{Header, NONE, Node, Tag};
 use crate::syntax::token::Tag as T;
 
 /// spectre.peg `Word_kind`: the masters that make a statement an analysis.
@@ -342,7 +342,7 @@ impl<'a> Cx<'a> {
         if self.tag(n) != Tag::Instance {
             return None;
         }
-        let m = self.ast.extra(self.ast.rhs(Node(n)) + 1);
+        let m = self.ast.header(Node(n)).master;
         (m != NONE).then(|| self.text(m))
     }
 
@@ -350,9 +350,7 @@ impl<'a> Cx<'a> {
     /// nodes (in parentheses for VACASK), a master (VACASK: optional), then
     /// only `key=value` parameters; else the line is `Unparsed`.
     fn inst_peg_ok(&self, n: u32) -> bool {
-        let words = self.ast.rhs(Node(n));
-        let name = self.ast.extra(words);
-        let master = self.ast.extra(words + 1);
+        let Header { name, master, .. } = self.ast.header(Node(n));
         let parens = self.last(name) < self.line_last(self.main(n))
             && self.ttag(self.last(name) + 1) == T::LParen;
         if self.d == Dialect::Vacask && !parens {
@@ -378,7 +376,7 @@ impl<'a> Cx<'a> {
 
     /// Whether the statement is a Spectre control statement (`Ctl`).
     fn is_ctl(&self, n: u32) -> bool {
-        let nodes = self.ast.list(self.ast.rhs(Node(n)) + 2);
+        let nodes = self.ast.header(Node(n)).nodes;
         self.d == Dialect::Spectre
             && nodes.is_empty()
             && self

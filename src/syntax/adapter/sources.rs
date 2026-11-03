@@ -14,7 +14,7 @@ use super::Cx;
 use crate::codegen::Dialect;
 use crate::ir::*;
 use crate::syntax::ast::{NONE, Node, Tag};
-use crate::syntax::lexicon::Element;
+use crate::syntax::device::Primitive as Element;
 
 /// A waveform's kind, by its keyword.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -44,7 +44,7 @@ enum Spec {
 impl<'a> Cx<'a> {
     /// A V or I card (spice.peg `V`, `spec`; lower/elements.rs:133-219).
     pub(super) fn source(&self, n: u32, e: Element, name: String) -> Option<Component> {
-        let items = self.items(n);
+        let items = &self.items(n)[..];
         if items.len() < 2 || !self.is_word(items[0]) || !self.is_word(items[1]) {
             return None;
         }

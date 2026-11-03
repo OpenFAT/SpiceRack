@@ -15,38 +15,14 @@
 
 use super::Cx;
 use crate::ir::*;
-use crate::syntax::ast::{NONE, Node, PRIMITIVE, Tag};
-use crate::syntax::lexicon::Element;
-
-const ELEMENTS: [Element; 20] = [
-    Element::Resistor,
-    Element::Capacitor,
-    Element::Inductor,
-    Element::Coupling,
-    Element::VoltageSource,
-    Element::CurrentSource,
-    Element::Vcvs,
-    Element::Vccs,
-    Element::Cccs,
-    Element::Ccvs,
-    Element::Behavioural,
-    Element::Diode,
-    Element::Bjt,
-    Element::Mosfet,
-    Element::Jfet,
-    Element::Mesfet,
-    Element::VoltageSwitch,
-    Element::CurrentSwitch,
-    Element::TransmissionLine,
-    Element::Instance,
-];
+use crate::syntax::ast::{NONE, Node, Tag};
+use crate::syntax::device::Primitive as Element;
 
 impl<'a> Cx<'a> {
     /// An element card onto `here`: a component, a subcircuit instance, or
     /// a raw line.
     pub(super) fn element(&mut self, n: u32, here: &mut Subcircuit) {
-        let words = self.ast.rhs(Node(n));
-        let master = self.ast.extra(words + 1);
+        let h = self.ast.header(Node(n));
         if !self
             .t
             .text(self.main(n))
@@ -56,17 +32,11 @@ impl<'a> Cx<'a> {
             return self.unparsed(n, here);
         }
         let has_fields = self.fields_ok(n);
-        let got = if master == NONE {
-            None
-        } else if master & PRIMITIVE != 0 {
-            let e = ELEMENTS
-                .iter()
-                .find(|&&e| e as u32 == master & !PRIMITIVE)
-                .copied()
-                .expect("an Element discriminant");
-            self.component(n, e).map(Ok)
-        } else {
-            self.instance(n).map(Err)
+        let got = match Element::from_u32(h.code) {
+            None => None,
+            Some(Element::Subckt) if h.master == NONE => None,
+            Some(Element::Subckt) => self.instance(n).map(Err),
+            Some(e) => self.component(n, e).map(Ok),
         };
         match got {
             Some(Ok(c)) => here.components.push(c),
@@ -84,7 +54,7 @@ impl<'a> Cx<'a> {
 
 impl<'a> Cx<'a> {
     fn component(&self, n: u32, e: Element) -> Option<Component> {
-        let items = self.items(n);
+        let items = &self.items(n)[..];
         let name = self.elem_name(n);
         // quirk: every element rule reads `s` between its fields; only an
         // `inst` tail and a waveform's values take commas.
@@ -375,7 +345,14 @@ impl<'a> Cx<'a> {
                     td: get("td")?,
                 }
             }
-            Element::Instance => return None,
+            // else: the ngspice letters today's reader had no rule for.
+            Element::Subckt
+            | Element::LossyLine
+            | Element::RcLine
+            | Element::Txl
+            | Element::CoupledLines
+            | Element::CodeModel
+            | Element::Osdi => return None,
         })
     }
 }

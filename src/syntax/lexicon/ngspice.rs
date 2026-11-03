@@ -12,9 +12,10 @@
 
 use super::{
     Arithmetic, Backslash, Caret, Dollar, End, Lexicon, Numbers, Ops, Quote, Quoting,
-    SPICE_KEYWORDS, SPICE_LETTERS, SPICE_OPERATORS, Scale, Tail,
+    SPICE_KEYWORDS, SPICE_OPERATORS, Scale, Tail,
 };
 use crate::codegen::Dialect;
+use crate::syntax::device;
 use crate::syntax::token::Tag;
 
 /// ngspice: case-blind, `*`/`$`/`;`/`//` comments, `+` and `\\` continuation,
@@ -94,7 +95,8 @@ pub const NGSPICE: Lexicon = Lexicon {
         arithmetic: Arithmetic::Ngspice,
     },
     keywords: &[SPICE_KEYWORDS, OWN_KEYWORDS],
-    letters: SPICE_LETTERS,
+    named: false,
+    devices: &[device::SPICE, device::NGSPICE_OWN],
     lang_spice: None,
 };
 
@@ -193,9 +195,7 @@ mod tests {
         let t = tokenize("t\n.PARAM a=1\n.Control\n", &NGSPICE);
         assert_eq!(t.tags()[2], Tag::KwParam);
         assert_eq!(t.tags()[7], Tag::KwControl);
-        assert_eq!(
-            NGSPICE.element(b'X'),
-            Some(crate::syntax::lexicon::Element::Instance)
-        );
+        let x = NGSPICE.device("X").map(|d| d.primitive);
+        assert_eq!(x, Some(crate::syntax::device::Primitive::Subckt));
     }
 }
