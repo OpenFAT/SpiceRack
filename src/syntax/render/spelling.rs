@@ -50,6 +50,8 @@ pub enum FuncForm {
     Func,
     /// `.param f(a, b)='body'` (HSPICE).
     Param,
+    /// `real f(real a, real b) { return body; }` (Spectre, R5 pp.870-871).
+    Real,
 }
 
 /// The writer's scale ladder, largest first: (multiplier, exponent). The
@@ -115,6 +117,17 @@ const LTSPICE: Spelling = Spelling {
     ..NGSPICE
 };
 
+const SPECTRE: Spelling = Spelling {
+    target: Dialect::Spectre,
+    lexicon: &lexicon::SPECTRE,
+    comment: "//",
+    path_quote: "\"",
+    expr: ("", ""),
+    func: FuncForm::Real,
+    subckt_params: None,
+    ngspice_numbers: false,
+};
+
 /// Target `target`'s row.
 ///
 /// # Panics
@@ -127,7 +140,8 @@ pub const fn spelling(target: Dialect) -> &'static Spelling {
         Dialect::Xyce => &XYCE,
         Dialect::Ltspice => &LTSPICE,
         Dialect::Cdl => &CDL,
-        Dialect::Spectre | Dialect::Vacask | Dialect::Verilog => {
+        Dialect::Spectre => &SPECTRE,
+        Dialect::Vacask | Dialect::Verilog => {
             panic!("spelling: no row yet for this target")
         }
     }
@@ -278,6 +292,32 @@ mod tests {
                 assert_eq!(got, v, "{d:?} wrote {v} as {text}");
                 assert_eq!(s.format(v), crate::codegen::format_spice_number(v), "{d:?}");
             }
+        }
+    }
+
+    #[test]
+    fn spectre_numbers_read_back_with_si_suffixes() {
+        // The oracle is Spectre's own suffix table (`M` mega, `k` kilo):
+        // what is written reads back as `v`, and is the old writer's
+        // `format_spice_number` with SPICE's `meg`/`g`/`t` as `M`/`G`/`T`.
+        let s = spelling(Dialect::Spectre);
+        for v in [
+            0.0, 1e3, 1e6, 2.4e9, 1e12, 1e-9, 1e-15, 30e-3, -4.7e-6, 0.1, 123456.789,
+        ] {
+            let text = s.format(v);
+            let (sign, body) = text
+                .strip_prefix('-')
+                .map_or((1.0, &text[..]), |b| (-1.0, b));
+            assert_eq!(sign * crate::syntax::number::value(body, s.lexicon), v);
+            let old = crate::codegen::format_spice_number(v);
+            let old = match old.strip_suffix("meg") {
+                Some(h) => format!("{h}M"),
+                None => match old.strip_suffix(['g', 't']) {
+                    Some(h) => format!("{h}{}", old[h.len()..].to_ascii_uppercase()),
+                    None => old,
+                },
+            };
+            assert_eq!(text, old, "{v}");
         }
     }
 

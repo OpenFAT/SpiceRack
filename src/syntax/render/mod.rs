@@ -2,7 +2,7 @@
 //! last stage (`docs/research/transpiler-architecture.md` §2.5). Two
 //! structural writers, because there are two statement shapes: the SPICE
 //! family (`spice`: ngspice, ESPice, HSPICE, Xyce, LTspice, CDL) and the named
-//! family (Spectre, VACASK; not yet ported). Each reads the reader's plan
+//! family (`named`: Spectre; VACASK not yet ported). Each reads the reader's plan
 //! (`read`: which statement is written where, and its views), spells
 //! through the target's [`spelling::Spelling`] row, asks
 //! [`capability::action`] for everything a target may not say, and writes
@@ -25,6 +25,7 @@
 //! - `pub fn writes(target: Dialect) -> bool`
 
 pub mod capability;
+mod named;
 mod out;
 mod read;
 mod role;
@@ -58,7 +59,10 @@ pub struct Source<'a> {
 pub fn render(src: &Source, target: Dialect) -> Result<String, Vec<Diag>> {
     assert!(writes(target), "render: a target with a writer");
     let (mut rd, deck) = read::read(src.ast, src.tokens, src.dialect, src.name, src.kit);
-    spice::write(&mut rd, &deck, target)
+    match target {
+        Dialect::Spectre | Dialect::Vacask => named::write(&mut rd, &deck, target),
+        _ => spice::write(&mut rd, &deck, target),
+    }
 }
 
 /// File `file` of `kit` written for `target`, its deck named `name`.
@@ -112,8 +116,8 @@ pub fn render_text(
     render(&src, target)
 }
 
-/// Whether [`render`] writes `target`: the SPICE family and CDL, for now
-/// (the named writer is not ported yet; Verilog stays on the old layout
+/// Whether [`render`] writes `target`: the SPICE family, CDL and Spectre,
+/// for now (VACASK is not ported yet; Verilog stays on the old layout
 /// writer, whose element lines are the old IR's own text).
 pub fn writes(target: Dialect) -> bool {
     matches!(
@@ -124,5 +128,6 @@ pub fn writes(target: Dialect) -> bool {
             | Dialect::Xyce
             | Dialect::Ltspice
             | Dialect::Cdl
+            | Dialect::Spectre
     )
 }

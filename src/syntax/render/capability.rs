@@ -7,14 +7,15 @@
 //!
 //! `Spell` and `Lift` keep the meaning: a named alternative form, or a
 //! rewrite into extra statements recorded as fixups. Anything that cannot
-//! keep its meaning is `Refuse` with a `W` code. Two cells answer as the
-//! old writers behaved, where that drops something: each is marked
-//! `// quirk:` (the golden gate holds them until phase 7 decides).
+//! keep its meaning is `Refuse` with a `W` code. Four cells answer as the
+//! old writers behaved, where that drops or garbles something: each is
+//! marked `// quirk:` (the golden gate holds them until phase 7 decides).
 //!
 //! CDL's row is the SPICE writer's (its elements are ngspice cards in the
-//! xschem layout). The rows for Spectre, VACASK and Verilog answer what
-//! their old writers did where the construct reaches them; their writers
-//! are not yet ported (`tests/fixtures/transpiler/PHASE4-STATUS.md`).
+//! xschem layout). The rows for VACASK and Verilog answer what their old
+//! writers did where the construct reaches them; their writers are not yet
+//! ported (`tests/fixtures/transpiler/PHASE4-STATUS.md`). Spectre's is the
+//! named writer's (`render::named`).
 //!
 //! Cites: `docs/research/transpiler-architecture.md` §2.5 (`Capability`);
 //! `compiler-architecture-reference.md` §9.1 (LLVM `LegalizeAction`),
@@ -125,6 +126,11 @@ pub enum Alt {
     /// Not written, with no loss: an LTspice or Xyce run saves every
     /// vector and has no stdout print.
     Omit,
+    /// `c1 (a b) bsource q=expr` (Spectre Reference 19.1 p.459).
+    BsourceCharge,
+    /// PWL `r=0` as `pwlperiod=` where it repeats exactly, `td=` as
+    /// `delay=` (Spectre Reference 5.0 `vsource` #4, #17, #18, p.686).
+    PwlPeriod,
 }
 
 /// A rewrite rule.
@@ -138,6 +144,10 @@ pub enum Rule {
     LaplaceAttr,
     /// A `statistics` block → two-layer `.param` draws (SPICE).
     StatisticsDraws,
+    /// A statistical call → its `rack_*` function of a normalized variable
+    /// declared `parameters v=0` and varied in a `statistics` block
+    /// (Spectre; monte-carlo-spectre.md §5.1-§5.2).
+    RackVars,
 }
 
 /// What `target` does with `c`.
@@ -156,7 +166,8 @@ pub const fn action(target: Dialect, c: Construct) -> Action {
         Construct::StatisticalCall => match target {
             D::Ltspice => Refuse(Code::W0003),
             D::Ngspice | D::Espice | D::Hspice | D::Xyce => Native,
-            D::Spectre | D::Vacask | D::Cdl | D::Verilog => Native,
+            D::Spectre => Lift(Rule::RackVars),
+            D::Vacask | D::Cdl | D::Verilog => Native,
         },
         Construct::VerilogALoad => match target {
             D::Ngspice => Spell(Alt::PreOsdi),
@@ -177,7 +188,10 @@ pub const fn action(target: Dialect, c: Construct) -> Action {
         Construct::LibWholeFile => match target {
             D::Ltspice => Native,
             D::Ngspice | D::Espice | D::Hspice | D::Xyce => Refuse(Code::W0005),
-            D::Spectre | D::Vacask | D::Cdl | D::Verilog => Refuse(Code::W0005),
+            // quirk: the old Spectre writer wrote `include "file" section=`
+            // (no section); phase 7 refuses it.
+            D::Spectre => Native,
+            D::Vacask | D::Cdl | D::Verilog => Refuse(Code::W0005),
         },
         Construct::LibSection => match target {
             D::Ltspice => Refuse(Code::W0012),
@@ -193,13 +207,15 @@ pub const fn action(target: Dialect, c: Construct) -> Action {
             D::Ngspice | D::Espice | D::Hspice => Spell(Alt::ChargeQuoted),
             D::Xyce => Spell(Alt::ChargeBraced),
             D::Ltspice => Spell(Alt::ChargeBare),
-            D::Spectre | D::Vacask | D::Cdl | D::Verilog => Native,
+            D::Spectre => Spell(Alt::BsourceCharge),
+            D::Vacask | D::Cdl | D::Verilog => Native,
         },
         Construct::BehaviouralSource => match target {
             D::Hspice => Spell(Alt::VolCur),
             D::Xyce => Spell(Alt::BracedBehaviour),
             D::Ngspice | D::Espice | D::Ltspice => Native,
-            D::Spectre | D::Vacask | D::Cdl | D::Verilog => Native,
+            D::Spectre => Refuse(Code::W0102),
+            D::Vacask | D::Cdl | D::Verilog => Native,
         },
         Construct::Laplace => match target {
             // CDL writes an element as its ngspice card.
@@ -212,17 +228,22 @@ pub const fn action(target: Dialect, c: Construct) -> Action {
         Construct::RfPort => match target {
             D::Ngspice | D::Espice => Native,
             D::Hspice | D::Xyce | D::Ltspice => Refuse(Code::W0007),
-            D::Spectre | D::Vacask | D::Cdl | D::Verilog => Native,
+            // Spectre's `port` instance; the mapping from `portnum`/`z0`
+            // is unverified.
+            D::Spectre => Refuse(Code::W0007),
+            D::Vacask | D::Cdl | D::Verilog => Native,
         },
         Construct::PwlRepeatV => match target {
             D::Ngspice | D::Espice | D::Cdl => Native,
             D::Hspice | D::Xyce | D::Ltspice => Refuse(Code::W0008),
-            D::Spectre | D::Vacask | D::Verilog => Refuse(Code::W0008),
+            D::Spectre => Spell(Alt::PwlPeriod),
+            D::Vacask | D::Verilog => Refuse(Code::W0008),
         },
         Construct::PwlRepeatI => match target {
             D::Espice => Native,
             D::Ngspice | D::Hspice | D::Xyce | D::Ltspice => Refuse(Code::W0008),
-            D::Spectre | D::Vacask | D::Cdl | D::Verilog => Refuse(Code::W0008),
+            D::Spectre => Spell(Alt::PwlPeriod),
+            D::Vacask | D::Cdl | D::Verilog => Refuse(Code::W0008),
         },
         Construct::NoiseWave => match target {
             D::Ngspice | D::Cdl => Native,
@@ -258,15 +279,24 @@ pub const fn action(target: Dialect, c: Construct) -> Action {
             D::Xyce | D::Ltspice => Refuse(Code::W0015),
             D::Spectre | D::Vacask | D::Cdl | D::Verilog => Native,
         },
-        Construct::SensAc | Construct::PoleZero | Construct::SParameter => match target {
+        Construct::SensAc | Construct::SParameter => match target {
             D::Ngspice | D::Espice => Native,
             D::Hspice | D::Xyce | D::Ltspice => Refuse(Code::W0015),
             D::Spectre | D::Vacask | D::Cdl | D::Verilog => Native,
         },
+        Construct::PoleZero => match target {
+            D::Ngspice | D::Espice => Native,
+            D::Hspice | D::Xyce | D::Ltspice => Refuse(Code::W0015),
+            D::Spectre => Refuse(Code::W0015),
+            D::Vacask | D::Cdl | D::Verilog => Native,
+        },
         Construct::Print => match target {
             D::Ltspice => Spell(Alt::Omit),
             D::Ngspice | D::Espice | D::Hspice | D::Xyce => Native,
-            D::Spectre | D::Vacask | D::Cdl | D::Verilog => Native,
+            // quirk: the old Spectre writer drops a `.print` (its `print`
+            // statement was never mapped); phase 7 decides.
+            D::Spectre => Spell(Alt::Omit),
+            D::Vacask | D::Cdl | D::Verilog => Native,
         },
         Construct::Save => match target {
             D::Hspice => Spell(Alt::Probe),
