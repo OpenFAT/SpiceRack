@@ -1,5 +1,13 @@
 //! IR numbers, values and source waveforms -> their Spectre spelling, and the
 //! two refusals every Spectre writer returns. Sources as in `spectre/mod.rs`.
+//!
+//! Contents:
+//! - `pub(super) fn spectre_value(v: &str) -> Cow<'_, str>`
+//! - `pub(super) fn spectre_num(v: f64) -> String`
+//! - `pub(super) fn emit_value(v: &IrValue) -> Cow<'_, str>`
+//! - `pub(super) fn emit_waveform_params(wf: &IrWaveform) -> Result<String, CodeGenError>`
+//! - `pub(super) fn unsupported_component(what: &str) -> CodeGenError`
+//! - `pub(super) fn unsupported_analysis(what: &str) -> CodeGenError`
 
 use crate::ir::*;
 use std::borrow::Cow;
@@ -40,6 +48,8 @@ pub(super) fn spectre_num(v: f64) -> String {
     }
 }
 
+/// An IR value: a number in Spectre's scale factors, an expression or raw
+/// text as written.
 pub(super) fn emit_value(v: &IrValue) -> Cow<'_, str> {
     match v {
         IrValue::Numeric { value } => spectre_num(*value).into(),
@@ -208,6 +218,7 @@ pub(super) fn emit_waveform_params(wf: &IrWaveform) -> Result<String, CodeGenErr
     Ok(s)
 }
 
+/// The refusal of a component (or model, source, line) Spectre cannot spell.
 pub(super) fn unsupported_component(what: &str) -> CodeGenError {
     CodeGenError::UnsupportedComponent {
         backend: "spectre".into(),
@@ -215,6 +226,7 @@ pub(super) fn unsupported_component(what: &str) -> CodeGenError {
     }
 }
 
+/// The refusal of an analysis (or sweep) Spectre cannot spell.
 pub(super) fn unsupported_analysis(what: &str) -> CodeGenError {
     CodeGenError::UnsupportedAnalysis {
         backend: "spectre".into(),

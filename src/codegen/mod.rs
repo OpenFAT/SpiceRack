@@ -1,4 +1,14 @@
-//! `CircuitIR` -> netlist text, one dialect per simulator.
+//! `CircuitIR` -> netlist text, one dialect per simulator: the dispatch
+//! (`netlist`, `card`) and the helpers more than one dialect writer shares.
+//! Cites: none here; each dialect module cites its simulator's manual.
+//!
+//! Contents:
+//! - `pub enum CodeGenError`
+//! - `pub use crate::ir::Dialect`
+//! - `pub fn netlist(ir: &CircuitIR, d: Dialect) -> Result<String, CodeGenError>`
+//! - `pub fn card(comp: &Component, d: Dialect) -> Result<String, CodeGenError>`
+//! - `pub fn format_spice_number(v: f64) -> String`
+//! - `pub(crate) fn model_refuse(backend: &str, name: &str, model: &Option<String>) -> Result<(), CodeGenError>`
 
 #[macro_use]
 mod append;
@@ -13,12 +23,19 @@ use std::borrow::Cow;
 pub use crate::ir::Dialect;
 use crate::ir::*;
 
+/// Why no deck was written: every variant names what the target cannot
+/// spell, never a silently different deck.
 #[derive(Debug, thiserror::Error)]
 pub enum CodeGenError {
+    /// A component, model, flag or raw line `backend` has no spelling for; no
+    /// deck is written.
     #[error("Unsupported component for backend {backend}: {component}")]
     UnsupportedComponent { backend: String, component: String },
+    /// An analysis or option `backend` cannot run or spell; no deck is written.
     #[error("Unsupported analysis for backend {backend}: {analysis}")]
     UnsupportedAnalysis { backend: String, analysis: String },
+    /// Any other refusal (an unreadable Laplace expression, a card the target
+    /// dialect would misread), with its reason; no deck is written.
     #[error("Code generation error: {0}")]
     Other(String),
 }

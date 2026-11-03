@@ -1,5 +1,10 @@
 //! `.model` cards and devices -> the VACASK modules they need loaded and the
 //! `model` lines naming them.
+//!
+//! Contents:
+//! - `pub(super) enum Need`, `Need::auto_model(&self) -> &'static str`
+//! - `pub(super) fn need(comp: &Component) -> Option<Need>`
+//! - `pub(super) fn emit_model(m: &ModelDef, loads: &mut BTreeSet<String>, low: bool) -> Result<String, CodeGenError>`
 
 use std::collections::BTreeSet;
 
@@ -23,6 +28,7 @@ pub(super) enum Need {
 }
 
 impl Need {
+    /// The synthesised model's name, which is also the module's.
     pub(super) fn auto_model(&self) -> &'static str {
         match self {
             Need::Sp(m) | Need::Builtin(m) => m,
@@ -47,6 +53,8 @@ pub(super) fn need(comp: &Component) -> Option<Need> {
     })
 }
 
+/// `m`'s `model` line, adding the OSDI file its module needs to `loads`.
+/// LEVEL picks the module; a type or level with no VACASK module is refused.
 pub(super) fn emit_model(
     m: &ModelDef,
     loads: &mut BTreeSet<String>,

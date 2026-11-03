@@ -30,6 +30,15 @@
 //!    exist over there is a loud failure, never a silent substitution.
 //!
 //! Everything is lowercased: SPICE is case-insensitive, VACASK is not.
+//!
+//! This file is the deck spine (`netlist`), subcircuits and the options
+//! line; `values` spells numbers, expressions and names, `models` the loads
+//! and `model` lines, `components` instance lines, `analyses` the control
+//! block's `analysis` and `sweep` statements.
+//!
+//! Contents:
+//! - `pub(super) fn netlist(ir: &CircuitIR) -> Result<String, CodeGenError>`
+//! - re-exported for Spectre's number respelling: `values::parse_spice_num`
 
 mod analyses;
 mod components;
@@ -72,6 +81,7 @@ const NUMERIC_OPTIONS: &[&str] = &[
     "reltol", "abstol", "vntol", "chgtol", "gmin", "temp", "tnom",
 ];
 
+/// The whole VACASK deck, ending in a newline.
 pub(super) fn netlist(ir: &CircuitIR) -> Result<String, CodeGenError> {
     super::refuse_raw_spice(ir, "vacask")?;
     if let Some(f) = ir.functions.first() {

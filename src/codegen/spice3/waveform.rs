@@ -1,5 +1,9 @@
 //! A source's `IrWaveform` -> its SPICE3-family waveform spelling
 //! (`SIN(...)`, `PULSE(...)`, ...), or the refusal of one a dialect lacks.
+//!
+//! Contents:
+//! - `pub(super) fn refuse_wave(d: Dialect, letter: char, name: &str, wf: &IrWaveform) -> Result<(), CodeGenError>`
+//! - `pub(super) fn waveform(out: &mut String, d: Dialect, x: bool, wf: &IrWaveform)`
 
 use super::values::{dec, value};
 use crate::codegen::{CodeGenError, Dialect};
@@ -34,9 +38,10 @@ pub(super) fn refuse_wave(
     })
 }
 
+/// `wf`'s spelling, written onto `out`; [`refuse_wave`] has already passed it.
 pub(super) fn waveform(out: &mut String, d: Dialect, x: bool, wf: &IrWaveform) {
     let w = |n: &IrNum| match n {
-        IrNum::Num(v) => dec(d, x, *v).into(),
+        IrNum::Num(v) => dec(d, x, *v),
         n => value(d, x, &n.into()).into_owned(),
     };
     match wf {

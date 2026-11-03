@@ -1,5 +1,12 @@
 //! The types a caller fills to lay a deck out the xschem way: [`Deck`] and
 //! its [`Lines`] and [`SetupLine`]s.
+//!
+//! Contents:
+//! - `pub struct Lines`, `Lines::push(&mut self, line: &str)`, `Lines::end_line(&mut self)`,
+//!   `Lines::len(&self) -> usize`, `Lines::is_empty(&self) -> bool`,
+//!   `Lines::whole(&self) -> bool` (`pub(super)`), `Lines::get(&self, i: usize) -> &str`
+//! - `pub enum SetupLine`
+//! - `pub struct Deck<'a>`, `Deck::new(ir: &'a CircuitIR) -> Deck<'a>`
 
 use crate::ir::*;
 
@@ -13,7 +20,7 @@ pub struct Lines {
     /// End offset of each line in `text`, ascending.
     pub ends: Vec<u32>,
     /// The producer vouches that the lines are in element-name order (it read every
-    /// name already, e.g. for a name map), so [`write`] compares only the run's first
+    /// name already, e.g. for a name map), so [`write`](super::write) compares only the run's first
     /// and last names with its neighbours instead of scanning every line. A wrong
     /// `true` writes the run unsorted (checked by a debug assert); `false` is always
     /// correct.
@@ -71,10 +78,12 @@ impl Lines {
         self.ends.push(end);
     }
 
+    /// The number of lines (ended ones; text after the last end is not one).
     pub fn len(&self) -> usize {
         self.ends.len()
     }
 
+    /// Whether no line has been ended.
     pub fn is_empty(&self) -> bool {
         self.ends.is_empty()
     }

@@ -1,5 +1,12 @@
 //! Raw and extra lines -> whether an ngspice deck runs from a `.control`
 //! block, and the `fourier` commands it runs there.
+//!
+//! Contents:
+//! - `pub(crate) fn runs_in_control<'a>(lines: impl IntoIterator<Item = &'a str>) -> bool`
+//! - `pub(crate) fn is_meas(line: &str) -> bool`
+//! - `pub(crate) fn is_four(line: &str) -> bool`
+//! - `pub(super) fn control_run(x: bool, ir: &CircuitIR, tb: &Testbench) -> Option<Vec<String>>`
+//! - `pub(super) fn raw_lines(out: &mut String, lines: &[String], drop_four: bool)`
 
 use super::values::num;
 use crate::codegen::Dialect;

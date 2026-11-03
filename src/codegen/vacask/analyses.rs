@@ -1,5 +1,10 @@
 //! Analyses, `.step` sweeps and initial conditions -> VACASK `analysis` and
 //! `sweep` statements.
+//!
+//! Contents:
+//! - `pub(super) fn analysis_block(idx: usize, a: &Analysis, native: bool) -> Result<Vec<String>, CodeGenError>`
+//! - `pub(super) fn step_sweep(sp: &StepParam) -> Result<String, CodeGenError>`
+//! - `pub(super) fn node_list(key: &str, items: &[(String, f64)]) -> String`
 
 use super::values::{num, sanitize, unsupported_analysis};
 use crate::codegen::{CodeGenError, bare_node};

@@ -1,6 +1,6 @@
 //! Decks laid out the way xschem writes them.
 //!
-//! [`write`] lays a [`Deck`] (a [`CircuitIR`] plus what an xschem deck carries beside
+//! [`write`](fn@write) lays a [`Deck`] (a [`CircuitIR`] plus what an xschem deck carries beside
 //! it) out in the order and spelling of xschem's netlister, so a schematic tool keeps
 //! byte-for-byte parity with xschem's golden netlists while SpiceRack writes the text:
 //!
@@ -25,6 +25,16 @@
 //! reads its own language and has no xschem layout). A component a dialect cannot
 //! spell becomes a comment naming it. Only the testbench's `extra_lines` are
 //! written; an xschem deck carries its analyses as text.
+//!
+//! This file is the spine ([`write`](fn@write)); `deck` holds the caller's types, `spell`
+//! the spelling of names and instances, `sections` the deck's sections other
+//! than its blocks, `block` the sorted blocks.
+//!
+//! Contents:
+//! - `pub fn write(deck: &Deck<'_>, d: Dialect) -> Result<String, CodeGenError>`
+//! - re-exported from `deck`: `pub struct Deck<'a>`, `pub struct Lines`, `pub enum SetupLine`
+//! - re-exported from `spell`: `word`, `is_spice`, `comment`, `push_ident`, `element_name`,
+//!   `push_element_name`, `push_instance`
 
 mod block;
 mod deck;

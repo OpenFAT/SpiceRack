@@ -1,9 +1,15 @@
 //! Analyses and `.step` sweeps -> SPICE3-family analysis cards.
+//!
+//! Contents:
+//! - `pub(super) fn analysis(d: Dialect, x: bool, a: &Analysis) -> Result<String, CodeGenError>`
+//! - `pub(super) fn step_param(d: Dialect, sp: &StepParam) -> Result<String, CodeGenError>`
 
 use super::values::{key, ngspice, num};
 use crate::codegen::{CodeGenError, Dialect};
 use crate::ir::*;
 
+/// `a`'s card for `d` (HSPICE's `.tran` with a step cap and `.noise` take
+/// two lines), or the refusal of one `d` has no card for.
 pub(super) fn analysis(d: Dialect, x: bool, a: &Analysis) -> Result<String, CodeGenError> {
     let (lt, ng, hs) = (d == Dialect::Ltspice, ngspice(d), d == Dialect::Hspice);
     Ok(match a {

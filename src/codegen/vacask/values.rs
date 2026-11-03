@@ -1,5 +1,21 @@
 //! IR numbers, expressions and names -> their VACASK spelling, and the two
 //! refusals every VACASK writer returns.
+//!
+//! Contents:
+//! - `pub(super) struct Q<'a>(pub(super) &'a str, pub(super) bool)` (its `Display` is the spelling)
+//! - `pub(super) fn num(v: f64) -> String`
+//! - `pub(crate) fn parse_spice_num(t: &str) -> Option<(f64, String)>`
+//! - `pub(super) fn respell(s: &str) -> String`
+//! - `pub(super) fn value_of(s: &str) -> Option<f64>`
+//! - `pub(super) fn expr(s: &str, low: bool) -> String`
+//! - `pub(super) fn val(v: &IrValue, low: bool) -> String`
+//! - `pub(super) fn wave_num(x: &IrNum, low: bool) -> String`
+//! - `pub(super) fn inst_params(out: &mut String, params: &[(String, String)], low: bool)`
+//! - `pub(super) fn ac_spec(out: &mut String, mag: &Option<f64>, phase: &Option<f64>)`
+//! - `pub(super) fn sanitize(s: &str) -> String`
+//! - `pub(super) fn q(name: &str) -> Q<'_>`
+//! - `pub(super) fn unsupported_comp(what: impl Into<String>) -> CodeGenError`
+//! - `pub(super) fn unsupported_analysis(what: impl Into<String>) -> CodeGenError`
 
 use crate::codegen::CodeGenError;
 use crate::ir::*;
@@ -87,6 +103,8 @@ pub(super) fn expr(s: &str, low: bool) -> String {
     }
 }
 
+/// An IR value: a number through [`num`], an expression through [`expr`],
+/// raw text [`respell`]ed.
 pub(super) fn val(v: &IrValue, low: bool) -> String {
     match v {
         IrValue::Numeric { value } => num(*value),
@@ -167,6 +185,7 @@ impl std::fmt::Display for Q<'_> {
     }
 }
 
+/// The refusal of a component (or model, source, line) VACASK cannot spell.
 pub(super) fn unsupported_comp(what: impl Into<String>) -> CodeGenError {
     CodeGenError::UnsupportedComponent {
         backend: "vacask".into(),
@@ -174,6 +193,7 @@ pub(super) fn unsupported_comp(what: impl Into<String>) -> CodeGenError {
     }
 }
 
+/// The refusal of an analysis, sweep or option VACASK cannot spell.
 pub(super) fn unsupported_analysis(what: impl Into<String>) -> CodeGenError {
     CodeGenError::UnsupportedAnalysis {
         backend: "vacask".into(),

@@ -1,5 +1,8 @@
-//! One block of a [`Deck`] -> its xschem text: opening, elements sorted by
+//! One block of a [`Deck`](super::Deck) -> its xschem text: opening, elements sorted by
 //! element name, raw lines, closing.
+//!
+//! Contents:
+//! - `Writer::block(&self, out: &mut String, k: usize, sc: &Subcircuit, wrap: bool)` (`pub(super)`)
 
 use super::deck::Lines;
 use super::sections::Writer;

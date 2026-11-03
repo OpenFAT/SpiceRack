@@ -1,4 +1,7 @@
 //! One `Component` -> its VACASK instance line, its source waveform included.
+//!
+//! Contents:
+//! - `pub(super) fn emit_component(out: &mut String, comp: &Component, low: bool) -> Result<(), CodeGenError>`
 
 use super::models::Need;
 use super::values::{Q, ac_spec, inst_params, num, q, unsupported_comp, val, wave_num};

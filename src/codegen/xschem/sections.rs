@@ -1,5 +1,10 @@
 //! A [`Deck`]'s sections other than its blocks -> xschem text: title, globals,
 //! parameters, setup, Verilog-A loads.
+//!
+//! Contents:
+//! - `pub(super) struct Writer<'d, 'a>`
+//! - `Writer::header(&self, out: &mut String)`, `Writer::globals(..)`, `Writer::params(..)`,
+//!   `Writer::setup(..)`, `Writer::loads(..)` (all `pub(super)`, same signature)
 
 use std::collections::BTreeMap;
 
@@ -8,6 +13,8 @@ use super::spell::{comment, push_ident, word};
 use crate::codegen::Dialect;
 use crate::ir::*;
 
+/// What every section and block writer reads: the dialect, the caller's deck,
+/// and (Verilog) each definition's ports.
 pub(super) struct Writer<'d, 'a> {
     pub(super) d: Dialect,
     pub(super) deck: &'d Deck<'a>,
@@ -16,6 +23,8 @@ pub(super) struct Writer<'d, 'a> {
 }
 
 impl Writer<'_, '_> {
+    /// The title comment, then Spectre's language line or LTspice's
+    /// full-precision options. Asserts `out` is empty.
     pub(super) fn header(&self, out: &mut String) {
         assert!(out.is_empty(), "the title is the first line");
         out.push_str(comment(self.d));
@@ -86,6 +95,7 @@ impl Writer<'_, '_> {
         }
     }
 
+    /// The deck's setup lines in order (none for CDL and Verilog).
     pub(super) fn setup(&self, out: &mut String) {
         let d = self.d;
         if matches!(d, Dialect::Cdl | Dialect::Verilog) {

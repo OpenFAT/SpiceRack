@@ -1,4 +1,13 @@
 //! Names, nets and instances -> their spelling in one xschem dialect.
+//!
+//! Contents:
+//! - `pub fn word(d: Dialect) -> &'static str`
+//! - `pub fn is_spice(d: Dialect) -> bool`
+//! - `pub fn comment(d: Dialect) -> &'static str`
+//! - `pub fn push_ident(out: &mut String, name: &str, d: Dialect)`
+//! - `pub fn element_name(line: &str, d: Dialect) -> &str`
+//! - `pub fn push_element_name(out: &mut String, name: &str, d: Dialect)`
+//! - `pub fn push_instance<'a>(out: &mut String, name: &str, subcircuit: &str, nets: impl IntoIterator<Item = &'a str>, ports: impl IntoIterator<Item = &'a str>, parameters: impl IntoIterator<Item = (&'a str, &'a str)>, d: Dialect)`
 
 use crate::codegen::Dialect;
 
@@ -75,13 +84,13 @@ pub fn push_element_name(out: &mut String, name: &str, d: Dialect) {
     out.push_str(name);
 }
 
-/// Appends a subcircuit instance as [`write`] spells an [`Instance`], without one:
+/// Appends a subcircuit instance as [`write`](super::write) spells an [`Instance`](crate::ir::Instance), without one:
 /// `X<name> <nets> <subckt>` (SPICE), `<name> (<nets>) <subckt>` (Spectre),
 /// `<subckt> <name> (.<port>(<net>), …);` (Verilog, pairing `ports`, the definition's
 /// port names, with `nets`; the other dialects ignore `ports`); parameters as ` k=v`
 /// (none for Verilog). A net `?` (an unconnected pin) is written as is. No newline.
 ///
-/// For a caller that renders its rows into [`Lines`]: no `String` per connection.
+/// For a caller that renders its rows into [`Lines`](super::Lines): no `String` per connection.
 pub fn push_instance<'a>(
     out: &mut String,
     name: &str,

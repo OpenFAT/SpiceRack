@@ -29,6 +29,18 @@
 //! syntax is not Spectre's lowercase `v(x)`/`i("x:0")` — see `[CMP]` bsource),
 //! current-controlled switches, `AM` sources, and transient noise (Spectre
 //! spells it `tran ... noisefmax=` and the IR carries no bandwidth).
+//!
+//! # Layout
+//!
+//! This file is the deck spine (`netlist`) and the deck-level statements
+//! (models, subcircuits, options, measures); `values` spells numbers and
+//! waveforms, `names` identifiers, `components` instance statements,
+//! `analyses` analysis statements and sweeps. The citations above cover all
+//! of them.
+//!
+//! Contents:
+//! - `pub(super) fn netlist(ir: &CircuitIR) -> Result<String, CodeGenError>`
+//! - re-exported for the xschem layout: `components::emit_component`, `names::Names`
 
 mod analyses;
 mod components;
@@ -59,6 +71,7 @@ const SPICE_MODEL_TYPES: &[&str] = &[
     "vdmos", "ltra", "txl", "cpl", "urc",
 ];
 
+/// The whole Spectre deck, with no line end after its last line.
 pub(super) fn netlist(ir: &CircuitIR) -> Result<String, CodeGenError> {
     super::refuse_raw_spice(ir, "spectre")?;
     let keep_case = ir.raw_dialect == Some(Dialect::Spectre);

@@ -1,5 +1,17 @@
 //! SPICE3-family netlists: ngspice, LTspice, HSPICE, and ESPice (ngspice
-//! text with Verilog-A loaded as `.hdl`).
+//! text with Verilog-A loaded as `.hdl`), and the analysis cards of a Xyce
+//! deck. Cites the ngspice manual, the Xyce Reference Guide (RG) and the
+//! behaviour of the simulators named beside each card.
+//!
+//! This file is the deck spine (`netlist`) and the block-level cards (loads,
+//! libraries, models, subcircuits, options); `values` spells numbers,
+//! `waveform` source waveforms, `components` cards, `analyses` analysis and
+//! `.step` cards, `control` the ngspice `.control` block.
+//!
+//! Contents:
+//! - `pub(crate) const NGBEHAVIOR: &str`
+//! - `pub(super) fn netlist(d: Dialect, ir: &CircuitIR) -> Result<String, CodeGenError>`
+//! - re-exported: `components::component`, `control::{is_four, is_meas, runs_in_control}`
 
 mod analyses;
 mod components;
@@ -13,6 +25,8 @@ use super::{CodeGenError, Dialect, param_defs, params, verbatim};
 use analyses::{analysis, step_param};
 pub(crate) use components::component;
 use control::{control_run, raw_lines};
+// The ngspice backend reads its own deck back with these.
+#[cfg(feature = "backend")]
 pub(crate) use control::{is_four, is_meas, runs_in_control};
 use values::{dec, key, ngspice, num};
 
@@ -22,6 +36,7 @@ use values::{dec, key, ngspice, num};
 /// text stays the whole input of a run.
 pub(crate) const NGBEHAVIOR: &str = "*spicerack ngbehavior=";
 
+/// The whole deck for `d`, ending in `.end` with no line end after it.
 pub(super) fn netlist(d: Dialect, ir: &CircuitIR) -> Result<String, CodeGenError> {
     check_raw_dialect(d, ir)?;
     // Numbers read from an ngspice deck carry ngspice's arithmetic: written

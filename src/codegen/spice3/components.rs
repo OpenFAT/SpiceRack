@@ -1,5 +1,8 @@
 //! One `Component` -> its SPICE3-family card (a Laplace source is rewritten
 //! into a card the dialect parses).
+//!
+//! Contents:
+//! - `pub(crate) fn component(out: &mut String, d: Dialect, x: bool, comp: &Component) -> Result<(), CodeGenError>`
 
 use super::values::{dec, key, ngspice, num, value};
 use super::waveform::{refuse_wave, waveform};

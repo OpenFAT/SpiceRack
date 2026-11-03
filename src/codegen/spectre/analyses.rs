@@ -1,5 +1,9 @@
 //! Analyses and `.step` sweeps -> Spectre analysis statements and the `sweep`
 //! blocks around them. Sources as in `spectre/mod.rs`.
+//!
+//! Contents:
+//! - `pub(super) fn emit_analysis_block(analyses: &[Analysis], step_params: &[StepParam], keep_case: bool) -> Result<Vec<String>, CodeGenError>`
+//! - `pub(super) fn emit_analysis(analysis: &Analysis, keep_case: bool) -> Result<String, CodeGenError>`
 
 use crate::ir::*;
 
@@ -7,6 +11,8 @@ use super::names::inst_ref;
 use super::values::{spectre_num, unsupported_analysis};
 use crate::codegen::{CodeGenError, bare_node};
 
+/// Every analysis statement, nested inside one `sweep` block per step
+/// parameter (the first parameter outermost), one entry per line.
 pub(super) fn emit_analysis_block(
     analyses: &[Analysis],
     step_params: &[StepParam],
@@ -30,6 +36,9 @@ pub(super) fn emit_analysis_block(
     Ok(block)
 }
 
+/// `analysis`'s statement; several lines (`\n`-joined) where Spectre needs a
+/// companion analysis first (`sens`, the SpectreRF family) or one statement
+/// per output (`fourier`).
 pub(super) fn emit_analysis(analysis: &Analysis, keep_case: bool) -> Result<String, CodeGenError> {
     let s = match analysis {
         // `[REF]` p.20143 verbatim: `dc1 dc`. A `dc` with no sweep

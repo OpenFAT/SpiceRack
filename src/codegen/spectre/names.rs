@@ -1,5 +1,12 @@
 //! IR identifiers -> Spectre identifiers: case folding, `\` escapes, signal
 //! wrappers. Sources as in `spectre/mod.rs`.
+//!
+//! Contents:
+//! - `pub(crate) struct Names`, `Names::VERBATIM`, `Names::n(self, s: &str) -> Name<'_>`,
+//!   `Names::d(self, s: &str) -> Name<'_>`
+//! - `pub(super) struct Name<'a>` (its `Display` is the spelling)
+//! - `pub(super) fn signal(s: &str, n: Names) -> String`
+//! - `pub(super) fn inst_ref(name: &str, keep_case: bool) -> String`
 
 use std::borrow::Cow;
 use std::fmt::Write as _;

@@ -44,9 +44,13 @@
 //! claim about it here is documentation, not observation. The expression is
 //! still routed through the parser below, so LTspice can only ever receive a
 //! rational function we have fully understood — never an unparsed string.
-
-/// Scale suffixes SPICE allows on a literal. `meg`/`mil` must be matched
-/// before `m` or a megohm becomes a milliohm.
+//!
+//! Contents:
+//! - `pub enum Laplace`, `Laplace::input(&self) -> &(String, String)`
+//! - `pub fn is_laplace(expr: &str) -> bool`
+//! - `pub fn parse(expr: &str) -> Result<Laplace, String>`
+//! - `pub fn coeff_array(c: &[f64]) -> String`
+//! - `pub fn horner(c: &[f64]) -> String`
 
 /// What a `Laplace(...)` source turns into.
 #[derive(Debug, Clone, PartialEq)]
@@ -89,6 +93,7 @@ struct Parser<'a> {
 }
 
 impl Laplace {
+    /// The controlling pair `(a, b)` of `V(a, b)`; `b` is `"0"` for `V(a)`.
     pub fn input(&self) -> &(String, String) {
         match self {
             Self::Gain { input, .. } | Self::Xfer { input, .. } => input,

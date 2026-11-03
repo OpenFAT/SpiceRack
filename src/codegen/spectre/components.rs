@@ -1,5 +1,8 @@
 //! One `Component` -> its Spectre instance statement. Sources as in
 //! `spectre/mod.rs`.
+//!
+//! Contents:
+//! - `pub(crate) fn emit_component(out: &mut String, comp: &Component, n: Names) -> Result<(), CodeGenError>`
 
 use crate::ir::*;
 

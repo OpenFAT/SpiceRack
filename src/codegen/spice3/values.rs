@@ -1,5 +1,12 @@
 //! IR numbers and values -> their spelling in one SPICE3-family dialect, and
 //! the dialect predicates every spice3 writer shares.
+//!
+//! Contents:
+//! - `pub(super) fn num(d: Dialect, x: bool, v: f64) -> String`
+//! - `pub(super) fn dec(d: Dialect, x: bool, v: f64) -> String`
+//! - `pub(super) fn key(d: Dialect) -> &'static str`
+//! - `pub(super) fn ngspice(d: Dialect) -> bool`
+//! - `pub(super) fn value(d: Dialect, x: bool, v: &IrValue) -> Cow<'_, str>`
 
 use std::borrow::Cow;
 
@@ -39,6 +46,8 @@ pub(super) fn ngspice(d: Dialect) -> bool {
     matches!(d, Dialect::Ngspice | Dialect::Espice)
 }
 
+/// An IR value as `d` reads it: a number through [`num`], an expression in
+/// `d`'s brackets (`{..}`, HSPICE `'..'`), raw text as written.
 pub(super) fn value(d: Dialect, x: bool, v: &IrValue) -> Cow<'_, str> {
     match v {
         IrValue::Numeric { value } => num(d, x, *value).into(),
