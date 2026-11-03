@@ -104,6 +104,22 @@ pub enum Code {
     W0019,
     /// A Spectre `correlate` whose correlation matrix is not positive definite.
     W0020,
+    // The named family's writer (Spectre, VACASK) numbers from W0101, so
+    // the two writers' codes never collide while they land apart.
+    /// A flag (a parameter with no value) a target taking only `name=value` cannot spell.
+    W0101,
+    /// A behavioural source whose SPICE expression the target's grammar cannot be trusted to read.
+    W0102,
+    /// A charge expression reading a branch current, a braced value, `time`, `temper` or `hertz`.
+    W0103,
+    /// A `.model` whose kind (and level) has no master in the target.
+    W0104,
+    /// A device the target has no master or terminal list for (a MOSFET without its bulk or with extra nodes, a current-controlled switch, an AM source).
+    W0105,
+    /// A function the target cannot define (a body over `v()`/`i()`; VACASK has none).
+    W0106,
+    /// A statistical call with no Spectre form (HSPICE's multiplier, a wrong argument count, a call inside a function).
+    W0107,
 }
 
 /// A code's fixed text.
@@ -272,6 +288,34 @@ pub const fn info(c: Code) -> Info {
             "a correlation matrix that is not positive definite",
             "Spectre Reference 19.1 p.177 (correlate); docs/research/monte-carlo-spectre.md §6b",
         ),
+        Code::W0101 => (
+            "a flag the target has no spelling for",
+            "Spectre Reference 19.1 p.506 (`name=value`); VACASK docs/input-instances.md",
+        ),
+        Code::W0102 => (
+            "a behavioural source the target cannot spell",
+            "Spectre Reference 5.0 p.856 (bsource: `v(a,b)`, `i(\"inst:idx\")`, `$time`)",
+        ),
+        Code::W0103 => (
+            "a charge expression the target cannot spell",
+            "Spectre Reference 19.1 p.459 (bsource `q=`)",
+        ),
+        Code::W0104 => (
+            "a model kind with no master in the target",
+            "Spectre Reference 19.1 p.498 (model masters); VACASK spice/*.osdi",
+        ),
+        Code::W0105 => (
+            "a device the target has no master or terminals for",
+            "Spectre Reference 5.0 (mos, relay, vsource chapters)",
+        ),
+        Code::W0106 => (
+            "a function the target cannot define",
+            "Spectre Reference R5 pp.870-871 (`real f(real x)`); VACASK has no user functions",
+        ),
+        Code::W0107 => (
+            "a statistical call with no Spectre form",
+            "docs/research/monte-carlo-spectre.md §5.3, §10.2",
+        ),
     };
     Info { title, cite }
 }
@@ -287,7 +331,7 @@ mod tests {
             P0001, P0002, P0003, P0004, P0005, P0006, P0007, P0008, P0009, R0001, R0002, R0003,
             R0004, R0005, R0006, R0007, R0008, R0009, R0010, W0001, W0002, W0003, W0004, W0005,
             W0006, W0007, W0008, W0009, W0010, W0011, W0012, W0013, W0014, W0015, W0016, W0017,
-            W0018, W0019, W0020,
+            W0018, W0019, W0020, W0101, W0102, W0103, W0104, W0105, W0106, W0107,
         ] {
             let i = info(c);
             assert!(!i.title.is_empty());
