@@ -115,7 +115,7 @@ impl Rd<'_> {
             {
                 return None;
             }
-            params.push((self.key(a), self.text(v).trim().to_string()));
+            params.push((self.key(a), self.etext(v).trim().to_string()));
         }
         Some(Head { ports, params })
     }

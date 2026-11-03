@@ -7,16 +7,21 @@
 //! the token where its last argument starts), the variables it used (their
 //! `parameters` and `vary` rows go), and the `rack_*` functions nothing
 //! calls any more (they go). [`Rd::etext`] spells a value with them, and
-//! with the tokens a writer's `Lift` rule respells ([`Rd::respell_token`]).
+//! with a writer's `Lift` fixups ([`Fix`]: a token respelled,
+//! [`Rd::respell_token`]; a statistical call rewritten, [`Rd::lift_call`]),
+//! one table keyed by token, recorded before the writer writes.
 //!
 //! Cites: monte-carlo-spectre.md §5.2 (the `rack_*` functions), §6a; the
 //! old writer's `statistics::unlift`, which did this over the IR's text.
 //!
 //! Contents:
-//! - `pub(super) struct Unlift`
+//! - `pub(super) struct Unlift`, `pub(in crate::syntax::render) enum Fix`, `enum Lift`
 //! - `Rd::unlift(&mut self, deck: &mut Deck)`
-//! - `Rd::etext(&self, n: u32) -> String`, `Rd::unlifted_var(&self, p: &str) -> bool`
-//! - `Rd::respell_token(&mut self, k: u32, text: String)`, `Rd::value_roots(&self, b: &Block, out: &mut Vec<u32>)`
+//! - `Rd::etext(&self, n: u32) -> String`, `Rd::espan(&self, a: u32, b: u32) -> String`,
+//!   `Rd::unlifted_var(&self, p: &str) -> bool`
+//! - `Rd::respell_token(&mut self, k: u32, text: String)`, `Rd::lift_call(&mut self, name: u32, l: Lift)`,
+//!   `Rd::unlifted_call(&self, name: u32) -> Option<(&'static str, u32)>`,
+//!   `Rd::value_roots(&self, b: &Block, out: &mut Vec<u32>)`
 
 use std::collections::{HashMap, HashSet};
 
@@ -32,6 +37,37 @@ pub(super) struct Unlift {
     calls: HashMap<u32, (&'static str, u32)>,
     /// The variables the rewritten calls used.
     used: HashSet<String>,
+}
+
+/// A writer's fixup of one token (`Rd::fixes`).
+#[derive(Clone, Debug)]
+pub(in crate::syntax::render) enum Fix {
+    /// The token is spelled as this text (a reference renamed with its
+    /// declaration).
+    Respell(String),
+    /// The call whose name is the token is rewritten.
+    Lift(Lift),
+}
+
+/// A statistical call a writer rewrites (monte-carlo-spectre.md §5.2,
+/// §7), by the `Call` node's name token.
+#[derive(Clone, Debug)]
+pub(in crate::syntax::render) enum Lift {
+    /// `f(args)` → `rack_f(args, var)` (Spectre); `sigma` appends Xyce's
+    /// default sigma (`,1`) to a two-argument `agauss`/`gauss`.
+    Call {
+        f: &'static str,
+        sigma: bool,
+        var: String,
+    },
+    /// `f(nom, var)` → `f(nom, var,1)`: Xyce's two-argument `agauss`/`gauss`
+    /// with its sigma (VACASK).
+    Sigma(&'static str),
+    /// `limit(nom, avar)` → `((aunif(0, 1) > 0) ? (nom) + (avar) : (nom) -
+    /// (avar))` (VACASK has no `limit`).
+    Limit,
+    /// Xyce's three-argument `limit(x, lo, hi)` → `min(max(x, lo), hi)`.
+    Clamp,
 }
 
 /// The five statistical functions (ngspice §2.11.5).
@@ -167,7 +203,7 @@ impl<'a> Rd<'a> {
     /// the statistical call (`rack_agauss(1k, 100, 3, v)` is
     /// `agauss(1k, 100, 3)`).
     pub(in crate::syntax::render) fn etext(&self, n: u32) -> String {
-        if self.unlifted.calls.is_empty() && self.respelled.is_empty() {
+        if self.unlifted.calls.is_empty() && self.fixes.is_empty() {
             return self.text(n);
         }
         self.espan(self.first(n), self.last(n))
@@ -190,7 +226,63 @@ impl<'a> Rd<'a> {
             "an identifier"
         );
         assert!(!text.is_empty(), "a token spelled as something");
-        self.respelled.insert(k, text);
+        self.fixes.insert(k, Fix::Respell(text));
+    }
+
+    /// The call whose name is token `name` is spelled as `l` wherever
+    /// [`Rd::etext`] spells it: a writer's `Lift` fixup, recorded before it
+    /// writes.
+    pub(in crate::syntax::render) fn lift_call(&mut self, name: u32, l: Lift) {
+        self.fixes.insert(name, Fix::Lift(l));
+    }
+
+    /// The read-back of the call whose name is token `name`: the
+    /// statistical function it reads as, and the comma before the
+    /// variable it drops.
+    pub(in crate::syntax::render) fn unlifted_call(
+        &self,
+        name: u32,
+    ) -> Option<(&'static str, u32)> {
+        self.unlifted.calls.get(&name).copied()
+    }
+
+    /// Tokens `a..=b` as [`Rd::span`] joins them, the read-back's calls
+    /// spelled as their statistical call and a writer's fixups applied.
+    pub(in crate::syntax::render) fn espan(&self, a: u32, b: u32) -> String {
+        let mut out = String::new();
+        let mut k = a;
+        while k <= b {
+            if k > a {
+                out.push_str(&self.gap(k - 1, k));
+            }
+            let unlifted = self.unlifted.calls.get(&k).copied();
+            match (unlifted, self.fixes.get(&k)) {
+                (_, Some(Fix::Lift(l))) => {
+                    let close = self.call_close(k);
+                    // The arguments' text, the read-back's variable left out.
+                    let end = unlifted.map_or(close, |(_, cut)| cut);
+                    out.push_str(&self.lifted(k, end, l));
+                    k = close + 1;
+                }
+                (Some((f, cut)), _) => {
+                    let close = self.call_close(k);
+                    out.push_str(f);
+                    out.push_str(&self.espan(k + 1, cut - 1));
+                    out.push_str(&self.gap(cut - 1, cut));
+                    out.push(')');
+                    k = close + 1;
+                }
+                (None, Some(Fix::Respell(t))) => {
+                    out.push_str(t);
+                    k += 1;
+                }
+                (None, None) => {
+                    out.push_str(self.t.text(k));
+                    k += 1;
+                }
+            }
+        }
+        out
     }
 
     /// The value nodes of block `b` the old IR held as expressions:
@@ -221,37 +313,6 @@ impl<'a> Rd<'a> {
 // ---- private ----
 
 impl<'a> Rd<'a> {
-    /// Tokens `a..=b` as [`Rd::span`] joins them, the rewritten calls
-    /// spelled as their statistical call.
-    fn espan(&self, a: u32, b: u32) -> String {
-        let mut out = String::new();
-        let mut k = a;
-        while k <= b {
-            if k > a {
-                out.push_str(&self.gap(k - 1, k));
-            }
-            match self.unlifted.calls.get(&k) {
-                Some(&(f, cut)) => {
-                    let close = self.call_close(k);
-                    out.push_str(f);
-                    out.push_str(&self.espan(k + 1, cut - 1));
-                    out.push_str(&self.gap(cut - 1, cut));
-                    out.push(')');
-                    k = close + 1;
-                }
-                None => {
-                    let t = self
-                        .respelled
-                        .get(&k)
-                        .map_or(self.t.text(k), String::as_str);
-                    out.push_str(t);
-                    k += 1;
-                }
-            }
-        }
-        out
-    }
-
     /// The `)` closing the call whose name is token `name`.
     fn call_close(&self, name: u32) -> u32 {
         let mut depth = 0i32;
@@ -268,6 +329,58 @@ impl<'a> Rd<'a> {
                 _ => {}
             }
             k += 1;
+        }
+    }
+    /// The lifted spelling of the call named at token `name`, its
+    /// arguments the tokens between `name + 1` (its `(`) and `end` (its
+    /// `)`, or the read-back's comma), each as the old writer's
+    /// `rewrite_calls` joined them: the text between the delimiters kept.
+    fn lifted(&self, name: u32, end: u32, l: &Lift) -> String {
+        let open = name + 1;
+        let between = |a: u32, b: u32| match b - a {
+            1 => self.gap(a, b).into_owned(),
+            _ => {
+                let inner = self.espan(a + 1, b - 1);
+                format!("{}{inner}{}", self.gap(a, a + 1), self.gap(b - 1, b))
+            }
+        };
+        // Each argument's text, the blanks around it kept.
+        let args = || {
+            let mut depth = 0i32;
+            let mut cuts = vec![open];
+            for k in open..end {
+                match self.ttag(k) {
+                    crate::syntax::token::Tag::LParen => depth += 1,
+                    crate::syntax::token::Tag::RParen => depth -= 1,
+                    crate::syntax::token::Tag::Comma if depth == 1 => cuts.push(k),
+                    _ => {}
+                }
+            }
+            cuts.push(end);
+            cuts.windows(2)
+                .map(|w| between(w[0], w[1]))
+                .collect::<Vec<String>>()
+        };
+        match l {
+            Lift::Call { f, sigma, var } => {
+                let one = if *sigma { ",1" } else { "" };
+                format!("rack_{f}({}{one}, {var})", between(open, end))
+            }
+            Lift::Sigma(f) => {
+                let a = args();
+                format!("{f}({},{},1)", a[0], a[1])
+            }
+            Lift::Limit => {
+                let a = args();
+                format!(
+                    "((aunif(0, 1) > 0) ? ({}) + ({}) : ({}) - ({}))",
+                    a[0], a[1], a[0], a[1]
+                )
+            }
+            Lift::Clamp => {
+                let a = args();
+                format!("min(max({}, {}), {})", a[0], a[1], a[2])
+            }
         }
     }
 }

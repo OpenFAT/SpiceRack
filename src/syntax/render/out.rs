@@ -74,13 +74,11 @@ impl Out {
     }
 
     /// Opens an indentation level for the lines after this one.
-    #[cfg_attr(not(test), expect(dead_code, reason = "the named writer indents"))]
     pub(super) fn indent(&mut self) {
         self.depth += 1;
     }
 
     /// Closes the innermost indentation level.
-    #[cfg_attr(not(test), expect(dead_code, reason = "the named writer indents"))]
     pub(super) fn dedent(&mut self) {
         assert!(self.depth > 0, "a level is open");
         self.depth -= 1;

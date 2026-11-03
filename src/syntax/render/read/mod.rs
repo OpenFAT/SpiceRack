@@ -26,7 +26,8 @@
 //!
 //! Contents:
 //! - `pub(in crate::syntax::render) struct Rd`, `enum Kept`, `struct Deck`, `struct Block`, `enum Comp`,
-//!   `enum Raw`, `struct Cond`, `struct Section`, `enum Func`
+//!   `enum Elem`, `enum Raw`, `struct Cond`, `struct Section`, `enum Func`
+//! - `Block::elements(&self) -> Vec<Elem>`
 //! - `fn read(ast: &Ast, t: &Tokens, d: Dialect, name: &str, kit: Option<(&Kit, FileId)>) -> (Rd, Deck)`
 //! - `Rd::role`, `Rd::kit_split`, `Rd::master_name`, `Rd::named`, `Rd::tag`, `Rd::main`, `Rd::fields`, `Rd::body`,
 //!   `Rd::ttag`, `Rd::raw`, `Rd::unparsed`, `Rd::keep`, `Rd::card`, `Rd::section`, `Rd::if_head_ok`
@@ -58,11 +59,13 @@ mod text;
 mod unlift;
 mod values;
 
+pub(in crate::syntax::render) use cards::Model;
 pub(in crate::syntax::render) use elements::Card;
 pub(in crate::syntax::render) use named_blocks::{Stats, Vary};
 pub(in crate::syntax::render) use options::Opt;
 pub(in crate::syntax::render) use sources::{Num, Wave, WaveKind};
 pub(in crate::syntax::render) use testbench::{Ana, BenchCard, Sweep};
+pub(in crate::syntax::render) use unlift::Lift;
 pub(in crate::syntax::render) use values::Val;
 
 /// The reader: the file, its kit, and the deck-wide facts every statement's
@@ -83,9 +86,8 @@ pub(in crate::syntax::render) struct Rd<'a> {
     masters: HashMap<u32, String>,
     /// The Monte Carlo read-back rule's fixups (`unlift`).
     unlifted: unlift::Unlift,
-    /// A writer's `Lift` fixups: a token of a value spelled as other text
-    /// (a reference renamed with its declaration).
-    respelled: HashMap<u32, String>,
+    /// A writer's `Lift` fixups, by token (`unlift::Fix`).
+    fixes: HashMap<u32, unlift::Fix>,
 }
 
 /// What the reader made of a file: every block and the deck-wide lists, in
@@ -164,6 +166,15 @@ pub(in crate::syntax::render) enum Comp {
     Raw(u32),
 }
 
+/// One entry of a block's element order ([`Block::elements`]).
+#[derive(Clone, Copy)]
+pub(in crate::syntax::render) enum Elem {
+    Comp(Comp),
+    Inst(u32),
+    /// The index of the block's conditional.
+    Cond(usize),
+}
+
 /// A statement kept as text.
 #[derive(Clone, Copy)]
 pub(in crate::syntax::render) enum Raw {
@@ -183,7 +194,6 @@ pub(in crate::syntax::render) struct Cond {
 /// A `.lib name` … `.endl` section.
 pub(in crate::syntax::render) struct Section {
     /// The Spectre `library` it sits in.
-    #[expect(dead_code, reason = "the named writer reads it")]
     pub(in crate::syntax::render) library: Option<String>,
     pub(in crate::syntax::render) body: Block,
     pub(in crate::syntax::render) defs: Vec<Block>,
@@ -275,7 +285,7 @@ pub(in crate::syntax::render) fn read<'a>(
         kit,
         masters: HashMap::new(),
         unlifted: unlift::Unlift::default(),
-        respelled: HashMap::new(),
+        fixes: HashMap::new(),
     };
     let top_stmts = ast.fields(ast.root()).to_vec();
     if rd.named() {
@@ -351,6 +361,38 @@ impl<'a> Rd<'a> {
             Some(m) => m.clone(),
             None => self.name_of(self.ast.header(Node(n)).master),
         }
+    }
+}
+
+impl Block {
+    /// The block's elements in the order the old writers gave them: each
+    /// instance, then each conditional, before the element it was read
+    /// before (a stable sort by place, instances first).
+    pub(in crate::syntax::render) fn elements(&self) -> Vec<Elem> {
+        let n = self.comps.len();
+        let at = |a: u32| (a as usize).min(n);
+        let mut placed: Vec<(usize, Elem)> = self
+            .insts
+            .iter()
+            .map(|&(a, i)| (at(a), Elem::Inst(i)))
+            .collect();
+        placed.extend(
+            self.conds
+                .iter()
+                .enumerate()
+                .map(|(k, &(a, _))| (at(a), Elem::Cond(k))),
+        );
+        placed.sort_by_key(|(k, e)| (*k, matches!(e, Elem::Cond(_))));
+        let mut placed = placed.into_iter().peekable();
+        let mut out = Vec::with_capacity(n + self.insts.len() + self.conds.len());
+        for (k, &c) in self.comps.iter().enumerate() {
+            while let Some((_, e)) = placed.next_if(|(p, _)| *p <= k) {
+                out.push(e);
+            }
+            out.push(Elem::Comp(c));
+        }
+        out.extend(placed.map(|(_, e)| e));
+        out
     }
 }
 

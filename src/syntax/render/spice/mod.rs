@@ -30,7 +30,7 @@ mod names;
 
 use super::capability::{Action, Alt, Construct, Rule, action};
 use super::out::{Out, Space};
-use super::read::{Block, Comp, Deck, Func, Raw, Rd, Section};
+use super::read::{Block, Comp, Deck, Elem, Func, Raw, Rd, Section};
 use super::role::{self, Frame};
 use super::spelling::{FuncForm, Spelling, spelling};
 use crate::codegen::Dialect;
@@ -60,15 +60,6 @@ struct W<'a, 'r> {
     drop_four: bool,
     /// A section's definitions are being written.
     in_section: bool,
-}
-
-/// One entry of a block's element order.
-#[derive(Clone, Copy)]
-enum Elem {
-    Comp(Comp),
-    Inst(u32),
-    /// The index of the block's conditional.
-    Cond(usize),
 }
 
 /// The deck `rd` read, written for `target`; the refusals when any
@@ -417,7 +408,7 @@ impl W<'_, '_> {
             true => Some(self.coupled(b)),
             false => None,
         };
-        for e in elements(b) {
+        for e in b.elements() {
             match e {
                 Elem::Comp(Comp::Card(n)) => self.card(n, coupled.as_deref()),
                 Elem::Comp(Comp::Raw(n)) => {
@@ -499,34 +490,4 @@ impl W<'_, '_> {
             }
         }
     }
-}
-
-/// A block's elements in the order the old writer gave them: each
-/// instance, then each conditional, before the element it was read before
-/// (a stable sort by place, instances first).
-fn elements(b: &Block) -> Vec<Elem> {
-    let n = b.comps.len();
-    let at = |a: u32| (a as usize).min(n);
-    let mut placed: Vec<(usize, Elem)> = b
-        .insts
-        .iter()
-        .map(|&(a, i)| (at(a), Elem::Inst(i)))
-        .collect();
-    placed.extend(
-        b.conds
-            .iter()
-            .enumerate()
-            .map(|(k, &(a, _))| (at(a), Elem::Cond(k))),
-    );
-    placed.sort_by_key(|(k, e)| (*k, matches!(e, Elem::Cond(_))));
-    let mut placed = placed.into_iter().peekable();
-    let mut out = Vec::with_capacity(n + b.insts.len() + b.conds.len());
-    for (k, &c) in b.comps.iter().enumerate() {
-        while let Some((_, e)) = placed.next_if(|(p, _)| *p <= k) {
-            out.push(e);
-        }
-        out.push(Elem::Comp(c));
-    }
-    out.extend(placed.map(|(_, e)| e));
-    out
 }

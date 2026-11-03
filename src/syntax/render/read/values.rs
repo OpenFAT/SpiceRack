@@ -136,7 +136,7 @@ impl Rd<'_> {
     pub(in crate::syntax::render) fn body_text(&self, n: u32) -> String {
         match self.tag(n) {
             Tag::Delimited => self.inner(n).trim().to_string(),
-            _ => self.text(n).trim().to_string(),
+            _ => self.etext(n).trim().to_string(),
         }
     }
 
@@ -153,7 +153,7 @@ impl Rd<'_> {
         if close <= open + 1 {
             return String::new();
         }
-        self.span(open + 1, close - 1)
+        self.espan(open + 1, close - 1)
     }
 
     /// Whether item `n` is a delimited expression the grammar's `Expr`
