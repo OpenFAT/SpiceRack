@@ -3,13 +3,13 @@
 //! `simulation`) and read back (`rawfile`, `result`, `measure_parse`).
 //! `python` is the PyO3 binding the `spicerack` package ships.
 //!
-//! Cites: none (each module cites its own manuals; `grammar/README.md` is the
-//! dialect readers' contract).
+//! Cites: none (each module cites its own manuals; `syntax::lexicon` and
+//! `syntax::device` are the dialect readers' tables).
 //!
 //! Contents:
 //! - `pub mod backend` (feature `backend`), `codegen`, `import`, `ir`, `lint`,
-//!   `measure_parse`, `normalize`, `peg`, `rawfile`, `result`,
-//!   `simulation` (feature `backend`), `syntax` (the transpiler rewrite, not wired in yet),
+//!   `measure_parse`, `normalize`, `rawfile`, `result`,
+//!   `simulation` (feature `backend`), `syntax` (the transpiler front end `import` reads with),
 //!   `unit`, `veriloga`, `python` (feature `python`)
 
 #![allow(clippy::too_many_arguments)]
@@ -22,7 +22,6 @@ pub mod ir;
 pub mod lint;
 pub mod measure_parse;
 pub mod normalize;
-pub mod peg;
 pub mod rawfile;
 pub mod result;
 #[cfg(feature = "backend")]

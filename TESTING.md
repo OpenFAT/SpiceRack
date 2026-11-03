@@ -12,7 +12,7 @@ trusts. The rules behind it are in `AGENTS.md` (Testing).
 | docs | the site builds strictly; every Python example in it runs | `nix develop .#docs -c mkdocs build --strict`; `tests/test_docs.py` | `.github/workflows/docs.yaml`; pytest |
 | release | tag matches `Cargo.toml` and `pyproject.toml`, wheels for every target, sdist | `tools/bump_version.py`, then the release workflow | `.github/workflows/tags.yaml`, `publish.yaml` |
 | nightly | the spice-bench and corpus import suite (`--features corpus`) | `nix develop .#testing -c cargo test --no-default-features --features corpus --release --test test_import_suite` | `.github/workflows/nightly.yaml`, 03:17 UTC daily and on demand |
-| golden | the transpiler rewrite's byte-identical gate against `daa0ad0`, and its tokenizer against today's reader ("Golden gate" below) | `golden record`, then `golden diff <baseline> <new> --xfail migration.xfail`; `cargo test --features corpus --test test_syntax_tokenize` | local, before each rewrite phase lands |
+| golden | the transpiler rewrite's byte-identical gate against `daa0ad0` ("Golden gate" below) | `golden record`, then `golden diff <baseline> <new> --xfail migration.xfail`; `golden check-determinism`; `cargo test --features corpus --test test_syntax` | local, before each rewrite phase lands |
 
 `tools/check_style.py` is vendored from the `code-style` skill
 (https://github.com/OmarSiwy/NixOSConfig/tree/main/skills, sha256 `55f417592f6e7ec3…`).
@@ -41,7 +41,8 @@ provenance, never by re-deriving it the way codegen does.
 | `test_sections_pdk.rs` | real PDK files: section names against a line scan, fixpoints; real ngspice on gf180mcu's `sm141064.ngspice` (nothing raw: subcircuit `.param`s are locals) and real VACASK on its `demo/cmos180n.lib`, written by SpiceRack, bit-identical to the original's run; gf180mcu's sections SPICE -> Spectre -> IR by meaning or refused by named reason; sky130's combined library and the ~190 files it reaches, nothing unparsed or raw, written back as ngspice and as HSPICE and run on `tt` by ngspice bit-identical to the PDK's own files; ESPice `--tokenizer=hspice` on the HSPICE tree, a named known gap (+5.1%) |
 | `test_spectre_golden/` | goldens; Spectre is licence-gated, so the text is checked against the Spectre reference manual |
 | `test_ltspice_dialect.rs` | emitted text against the LTspice help; no LTspice binary, so unverified by execution |
-| `test_syntax_tokenize.rs` | today's reader, over every golden-gate input: the statements rebuilt from `syntax::tokenize`'s tokens against `import::logical_lines` (the grammars' line stages), each number token's value against `import::number_value` (the dialect's `Num` rule and the lowering's arithmetic) to the bit; the hand-read `simulator lang=spice` region of `tests/fixtures/pdk_sections/bare.scs`. Strict xfail: `tests/syntax_tokenize.xfail` |
+| `test_syntax.rs` | the hand-read `simulator lang=spice` region of `tests/fixtures/pdk_sections/bare.scs`, and one region marker per such line in every Spectre fixture; `throughput` (`--ignored`) times the front end's stages over every golden-gate input |
+| `src/syntax` (`#[cfg(test)]`) | one test per node tag and per header shape, each against its manual clause with the tree derived by hand (`src/syntax/tests/`); the device tables read and written back (`device.rs`); a 10⁴-deep nested `.subckt` deck through the parser and the adapter in Debug |
 | `test_backends.rs`, `test_unit.rs` | spec examples |
 | `src/ir` (`schema_check.rs`) | the JSON Schema 2020-12 spec: an IR with every field set, every component and analysis variant, the shipped example and decks imported from ngspice, Spectre and VACASK validate against `schema/circuit-ir.schema.json`; the checker panics on any keyword it does not implement, and rejects one counterexample per keyword |
 
@@ -74,7 +75,7 @@ cargo build -j 4 --release --no-default-features --features json --bin golden
 G=${CARGO_TARGET_DIR:-target}/release/golden
 nix develop .#testing -c env IHP_PDK=<IHP-Open-PDK checkout> $G record <out_dir>
 $G diff <baseline> <out_dir> --xfail migration.xfail
-nix develop .#testing -c env IHP_PDK=<...> $G check-determinism [--frontend syntax]
+nix develop .#testing -c env IHP_PDK=<...> $G check-determinism
 ```
 
 Inputs (the `MANIFEST` of each record lists them, with content hashes):
@@ -113,46 +114,34 @@ Measured on a 32-thread, 31 GB development machine, 2026-11-03, at `daa0ad0`:
   runs in 64.0 s wall, peak RSS 2.1 GB, once built. `ngspice_corpus_fixpoint`
   sets the wall time.
 
-Phase 1, the tokenizer (`src/syntax/`, not wired in), has its own gate:
+`import::parse` has read through the transpiler's front end since phase 2b
+(`tokenize → parse → ast_to_ir`); the PEG reader and its lowering are gone,
+so the recorded `baseline-daa0ad0` is the only oracle left of them, and
+`golden diff` against it is the gate of every phase.
+
+Retired with the PEG reader (phase 2b), because each compared the new front
+end with the old reader in process and the old reader is gone:
+- `test_syntax_tokenize`'s comparison of the tokens' statements and number
+  values with `import::logical_lines` and `import::number_value` (the PEG's
+  line stage and `Num` rule): the baseline records no lines or numbers, only
+  the IR, report and text they make, which `golden diff` compares. Its
+  `lang_switch` test and `throughput` stay, as `test_syntax.rs`.
+- `test_syntax_adapter`, the IR and report of both readers compared in
+  process: with one reader it would compare the reader with itself; `golden
+  diff` against the baseline is the same comparison, file for file.
+
+Measured on the same machine, 2026-11-03, release build, before the
+switch: the phase-1 tokenizer gate read all 14,938 inputs, 3,664,966 logical
+lines and 8,357,766 number tokens with 0 differences in 25.9 s; phase 2's
+`golden record --frontend syntax` took 39.3 s wall, 49.3 s user, peak RSS
+2.46 GB, `check-determinism` 96 s; `throughput` (`--ignored`): 201.3 MB, 30.1
+M tokens, 26.1 M nodes, tokenize 2.36 s (85.3 MB/s), parse 3.44 s (58.5 MB/s),
+`ast_to_ir` 3.56 s.
 
 ```sh
 nix develop .#testing -c env IHP_PDK=<...> cargo test -j 4 --release \
-  --no-default-features --features corpus --test test_syntax_tokenize -- --test-threads=4
+  --no-default-features --features corpus --test test_syntax -- --test-threads=4
 ```
-
-It reads the same inputs through `tools/golden/inputs.rs`. Measured on the
-same machine, 2026-11-03, release build:
-- the gate: all 14,938 inputs, 3,664,966 logical lines and 8,357,766 number
-  tokens, 0 differences, in 25.9 s wall, peak RSS 839 MB (`command time -v`
-  on the test binary; it runs today's PEG reader as the oracle);
-- tokenize alone (`throughput`, run with `--ignored`): 201.3 MB of input,
-  30.1 M tokens, in 2.28 s, which is 88.4 MB/s. That process peaks at 227 MB
-  RSS, including the input walk, which parses each kit file with today's
-  reader to follow its includes.
-
-Phase 2, the parser and its `ast_to_ir` adapter (`src/syntax/`, not wired
-in), is gated by the golden record itself, read through the new front end:
-
-```sh
-nix develop .#testing -c env IHP_PDK=<...> $G record <out_dir> --frontend syntax
-$G diff <baseline> <out_dir> --xfail migration.xfail
-nix develop .#testing -c env IHP_PDK=<...> $G check-determinism --frontend syntax
-nix develop .#testing -c env IHP_PDK=<...> cargo test -j 4 --release \
-  --no-default-features --features corpus --test test_syntax_adapter -- --test-threads=4
-```
-
-`test_syntax_adapter` is the same comparison in process (the `CircuitIR` and
-`Report` JSON of both readers, which decide every writer's text), with
-`SYNTAX_SET` and `SYNTAX_KEY` to run one set or deck. Measured on the same
-machine, 2026-11-03, release build:
-- `golden record --frontend syntax`: all 14,938 inputs in 39.3 s wall, 49.3 s
-  user, peak RSS 2.46 GB; `diff` against `baseline-daa0ad0` prints
-  `IDENTICAL except 14 listed xfail(s)` (two Xyce decks, `migration.xfail`);
-  `check-determinism --frontend syntax`: two records, identical, 96 s;
-- `test_syntax_adapter`: 0 unlisted differences, 51 s for both readers;
-- `throughput` (`--ignored`): 201.3 MB, 30.1 M tokens, 26.1 M nodes;
-  tokenize 2.36 s (85.3 MB/s), parse 3.44 s (58.5 MB/s), `ast_to_ir` 3.56 s;
-  the process peaks at 1.32 GB RSS, including the input walk.
 
 ## Known gaps
 

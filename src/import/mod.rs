@@ -1,42 +1,24 @@
-//! Deck text in any dialect -> [`CircuitIR`], in three stages:
+//! Deck text in any dialect -> [`CircuitIR`], through the transpiler's front
+//! end (`docs/research/transpiler-architecture.md` §2): the dialect's
+//! lexicon tokenizes it (`syntax::tokenize`), one parser builds the AST
+//! (`syntax::parse`), and the temporary bridge `syntax::ast_to_ir` builds
+//! today's `CircuitIR` from it, exactly as the reader before it did (the
+//! golden gate's `daa0ad0` oracle).
 //!
-//! 1. lines: the dialect grammar's `File` rule splits physical lines into
-//!    the title and logical statements (continuations joined, comments gone);
-//! 2. cards: its `Deck` rule parses the logical lines into the AST, rows
-//!    tagged with [`Tag`] (every dialect captures into this one schema);
-//! 3. lowering (`lower.rs`): AST -> IR, shared by every dialect.
-//!
-//! Syntax is the grammar's alone (`grammar/*.peg`): a card the grammar
-//! refuses is [`Report::unparsed`]; one the IR has no field for is
-//! [`Report::raw`]. Both stay verbatim lines, so they reach the deck's own
-//! dialect unchanged. `tools/spice2rack/` is the CLI.
+//! A card the old card grammar refused is [`Report::unparsed`]; one the IR
+//! has no field for is [`Report::raw`]. Both stay verbatim lines, so they
+//! reach the deck's own dialect unchanged. `tools/spice2rack/` is the CLI.
 //!
 //! Contents:
-//! - `pub(crate) enum Tag` (one variant per captured grammar rule)
-//! - `pub(crate) struct Lang` (one dialect's compiled grammar)
 //! - `pub struct Report` (what a deck lost: `unparsed` lines, `raw` count)
 //! - `pub fn decode(bytes: &[u8]) -> String`
 //! - `pub fn parse(src: &str, name: &str, d: Dialect) -> Result<(CircuitIR, Report), String>`
 //! - `pub fn dump(src: &str, d: Dialect) -> Result<String, String>`
-//! - `pub fn logical_lines(src: &str, d: Dialect) -> Result<String, String>` (test hook)
-//! - `pub fn number_value(text: &str, d: Dialect) -> Option<f64>` (test hook)
-
-use std::sync::OnceLock;
 
 use crate::codegen::Dialect;
 use crate::ir::*;
-use crate::peg::{Grammar, Tree};
-
-mod lower;
-
-/// One dialect's grammar: `spice.peg` under the dialect's file.
-pub(crate) struct Lang {
-    g: Grammar,
-    file: u32,
-    deck: u32,
-    /// The cards stage reads lowercased text (SPICE is case-blind).
-    fold: bool,
-}
+use crate::syntax::ast::{Ast, NONE, Node, Tag};
+use crate::syntax::{self, lexicon};
 
 /// What a deck lost on the way to IR.
 #[derive(Debug, Default, Clone, PartialEq)]
@@ -45,42 +27,6 @@ pub struct Report {
     pub unparsed: Vec<String>,
     /// Cards the grammar read that no IR field holds, kept as raw lines.
     pub raw: usize,
-}
-
-macro_rules! tags {
-    ($($t:ident),* $(,)?) => {
-        /// The AST's node kinds: a grammar's captured rule `Foo` (or
-        /// `Foo_anything`, a second spelling of it) is a `Tag::Foo` row.
-        #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-        #[repr(u8)]
-        pub(crate) enum Tag { $($t),* }
-        const TAGS: &[(&str, Tag)] = &[$((stringify!($t), Tag::$t)),*];
-    };
-}
-
-tags! {
-    // lines stage
-    Title, Line, Piece, Glue, EndRun,
-    // blocks and kept text
-    Subckt, Port, Ends, Block, Library, LibDef, Control, CtlCmd, Raw, Unparsed, SpiceRegion, ControlBlock,
-    // dot cards
-    Statistics, Process, Mismatch, Vary, Correlate, Truncate, If, Branch, Cond,
-    Include, Lib, Path, Section, Model, Bin, MPair, MVal, More, Flag, Params, Assign, FuncDef, Func, Arg, Body,
-    Load, Embed, Ground, Options, Pkg, Temp, Ic, Nodeset, NodeVal, Global, Save, Out, Print, PrintKind, Meas, Probe, Step, StepKind,
-    // analyses
-    Op, Dc, Sweep, Ac, Tran, Uic, Noise, Tf, Sens, Pz, Four, Sp,
-    // elements and their fields
-    R, C, L, K, V, I, Sdc, Sac, Pulse, Sin, Pwl, Exp, Sffm, Am, Trnoise, Trrandom, Poly, E, G, F, H, B, D, Q, M, J, Z, S, W, T, X,
-    Mname, Inst, Ana, Ctl,
-    // values
-    Pair, Val, Name, Node, Key, Word, Str, Expr, Num, Mag, Frac,
-    Meg, Mil, Peta, Tera, Giga, Kilo, Unit, Centi, Milli, Micro, Nano, Pico, Femto, Atto,
-}
-
-macro_rules! peg {
-    ($f:literal) => {
-        include_str!(concat!("../../grammar/", $f))
-    };
 }
 
 /// Deck bytes as text: UTF-16LE with a BOM (LTspice), UTF-8, else Latin-1
@@ -100,172 +46,96 @@ pub fn decode(bytes: &[u8]) -> String {
 }
 
 /// Parses deck text in dialect `d` (line 1 is the title) into IR named `name`.
+///
+/// # Errors
+/// `no <d> reader yet` for a dialect with no lexicon (CDL, Verilog); the
+/// front end itself never fails, it keeps what it cannot read as raw lines.
 pub fn parse(src: &str, name: &str, d: Dialect) -> Result<(CircuitIR, Report), String> {
-    let lang = lang(d)?;
-    let lines = lang
-        .g
-        .parse(lang.file, src)
-        .map_err(|at| format!("line grammar stops at byte {at}"))?;
-    let text = logical(&lines);
-    let folded = if lang.fold {
-        text.to_ascii_lowercase()
-    } else {
-        text.clone()
-    };
-    let deck = lang
-        .g
-        .parse(lang.deck, &folded)
-        .map_err(|at| format!("card grammar stops at byte {at}"))?;
-    Ok(lower::deck(&deck, &text, name, d, lang))
+    let lex = lexicon::of(d).ok_or_else(|| format!("no {d:?} reader yet"))?;
+    let t = syntax::tokenize(src, lex);
+    let ast = syntax::parse(&t, lex);
+    Ok(syntax::ast_to_ir(&ast, &t, d, name))
 }
 
-/// The cards stage's AST, one row per line, indented by depth: what the
-/// grammar made of `src` (debugging a grammar).
+/// The AST of `src` (debugging the parser): one row per statement and
+/// item, indented by depth, each its tag and its anchor token's text, then
+/// the parse's diagnostics with their line and column.
+///
+/// # Errors
+/// As [`parse`]: a dialect with no lexicon.
 pub fn dump(src: &str, d: Dialect) -> Result<String, String> {
-    let lang = lang(d)?;
-    let lines = lang
-        .g
-        .parse(lang.file, src)
-        .map_err(|at| format!("line grammar stops at byte {at}"))?;
-    let text = logical(&lines);
-    let folded = if lang.fold {
-        text.to_ascii_lowercase()
-    } else {
-        text.clone()
-    };
-    let t = lang
-        .g
-        .parse(lang.deck, &folded)
-        .map_err(|at| format!("card grammar stops at byte {at}"))?;
+    let lex = lexicon::of(d).ok_or_else(|| format!("no {d:?} reader yet"))?;
+    let t = syntax::tokenize(src, lex);
+    let a = syntax::parse(&t, lex);
     let mut out = String::new();
-    let mut open: Vec<u32> = Vec::new(); // ends of the rows enclosing this one
-    for (i, r) in t.rows.iter().enumerate() {
-        while open.last().is_some_and(|&e| e as usize <= i) {
-            open.pop();
-        }
-        let s = &text[r.start as usize..r.end as usize];
+    let mut work: Vec<(u32, usize)> = a.fields(a.root()).iter().rev().map(|&n| (n, 0)).collect();
+    while let Some((n, depth)) = work.pop() {
+        let node = Node(n);
+        let head = t.text(a.main_token(node));
         out.push_str(&format!(
-            "{}{:?} {:?}\n",
-            "  ".repeat(open.len()),
-            Tag::from_u8(r.tag),
-            s
+            "{}{:?} {head:?}\n",
+            "  ".repeat(depth),
+            a.tag(node)
         ));
-        open.push(r.next);
+        work.extend(
+            children(&a, node)
+                .into_iter()
+                .filter(|&k| k != NONE)
+                .rev()
+                .map(|k| (k, depth + 1)),
+        );
+    }
+    for e in a.diags() {
+        let at = t.location(e.token);
+        out.push_str(&format!("{:?} at {}:{}\n", e.code, at.line, at.column));
     }
     Ok(out)
 }
 
-/// The lines stage alone: `src`'s logical lines as [`parse`] reads them,
-/// each ended by `\n`, the title dropped. A test hook: the transpiler
-/// rewrite's tokenizer (`syntax`) is gated against it
-/// (`tests/test_syntax_tokenize.rs`).
-#[doc(hidden)]
-pub fn logical_lines(src: &str, d: Dialect) -> Result<String, String> {
-    let lang = lang(d)?;
-    let lines = lang
-        .g
-        .parse(lang.file, src)
-        .map_err(|at| format!("line grammar stops at byte {at}"))?;
-    Ok(logical(&lines))
-}
-
-/// The value [`parse`] gives a number spelled `text` in dialect `d`: the
-/// dialect grammar's `Num` rule over all of `text` (case-folded where the
-/// cards stage folds), then the lowering's arithmetic. `None` when `Num`
-/// does not read all of `text`, or `d` has no reader. A test hook, like
-/// [`logical_lines`].
-#[doc(hidden)]
-pub fn number_value(text: &str, d: Dialect) -> Option<f64> {
-    let lang = lang(d).ok()?;
-    let folded = if lang.fold {
-        text.to_ascii_lowercase()
-    } else {
-        text.to_string()
-    };
-    let t = lang.g.parse(lang.g.rule("Num")?, &folded).ok()?;
-    lower::num_value(&t, 0, text, d)
-}
-
 // ---- private ----
 
-impl Tag {
-    fn of(rule: &str) -> Option<u8> {
-        let base = rule.split('_').next().unwrap_or(rule);
-        TAGS.iter().find(|(n, _)| *n == base).map(|(_, t)| *t as u8)
-    }
-
-    fn from_u8(t: u8) -> Tag {
-        TAGS[t as usize].1
-    }
-}
-
-fn lang(d: Dialect) -> Result<&'static Lang, String> {
-    static NG: OnceLock<Lang> = OnceLock::new();
-    static HS: OnceLock<Lang> = OnceLock::new();
-    static LT: OnceLock<Lang> = OnceLock::new();
-    static XY: OnceLock<Lang> = OnceLock::new();
-    static SP: OnceLock<Lang> = OnceLock::new();
-    static VA: OnceLock<Lang> = OnceLock::new();
-    // Spectre and VACASK are whole files of their own; SPICE dialects layer
-    // over spice.peg.
-    let (cell, texts): (_, &[&str]) = match d {
-        Dialect::Spectre => (&SP, &[peg!("spectre.peg")]),
-        Dialect::Vacask => (&VA, &[peg!("vacask.peg")]),
-        _ => (&XY, &[]),
-    };
-    if !texts.is_empty() {
-        return Ok(cell.get_or_init(|| {
-            let g =
-                Grammar::compile(texts, Tag::of).unwrap_or_else(|e| panic!("{d:?} grammar: {e}"));
-            Lang {
-                file: g.rule("file").unwrap(),
-                deck: g.rule("deck").unwrap(),
-                fold: false,
-                g,
-            }
-        }));
-    }
-    let (cell, text) = match d {
-        Dialect::Ngspice | Dialect::Espice => (&NG, peg!("ngspice.peg")),
-        Dialect::Hspice => (&HS, peg!("hspice.peg")),
-        Dialect::Ltspice => (&LT, peg!("ltspice.peg")),
-        Dialect::Xyce => (&XY, peg!("xyce.peg")),
-        other => return Err(format!("no {other:?} reader yet")),
-    };
-    Ok(cell.get_or_init(|| {
-        let g = Grammar::compile(&[peg!("spice.peg"), text], Tag::of)
-            .unwrap_or_else(|e| panic!("{d:?} grammar: {e}"));
-        Lang {
-            file: g.rule("file").unwrap(),
-            deck: g.rule("deck").unwrap(),
-            fold: true,
-            g,
+/// The rows [`dump`] prints under `n`: a header's name, master and nodes,
+/// the fields, a block's body and its chained branch; an item's parts.
+fn children(a: &Ast, n: Node) -> Vec<u32> {
+    let mut k = Vec::new();
+    match a.tag(n) {
+        tag if tag.has_header() => {
+            let h = a.header(n);
+            k.extend([h.name, h.master]);
+            k.extend(h.nodes);
         }
-    }))
-}
-
-/// The logical lines, each ended by `\n`: a `Line`'s parts joined, a
-/// `Piece` after a blank, a `Glue` (HSPICE's `\\`) with nothing.
-fn logical(t: &Tree) -> String {
-    let mut out = String::new();
-    for row in t
-        .children(None)
-        .filter(|&r| Tag::from_u8(t.tag(r)) == Tag::Line)
-    {
-        let mut line = String::new();
-        for part in t.children(Some(row)) {
-            let text = t.text(part).trim();
-            if !line.is_empty() && !text.is_empty() && Tag::from_u8(t.tag(part)) == Tag::Piece {
-                line.push(' ');
-            }
-            line.push_str(text);
-        }
-        if !line.is_empty() {
-            out.push_str(&line);
-            out.push('\n');
-        }
+        Tag::Assign => return vec![a.lhs(n), a.rhs(n)],
+        Tag::Seq => return a.list(a.lhs(n)).to_vec(),
+        Tag::Group => return a.list(a.rhs(n) + 1).to_vec(),
+        Tag::Delimited => return vec![a.lhs(n)],
+        Tag::Root
+        | Tag::Title
+        | Tag::End
+        | Tag::Verbatim
+        | Tag::Line
+        | Tag::Word
+        | Tag::Bad
+        | Tag::Num
+        | Tag::Ident
+        | Tag::Str
+        | Tag::Unary
+        | Tag::Binary
+        | Tag::Ternary
+        | Tag::Call
+        | Tag::Probe
+        | Tag::Index
+        | Tag::Paren
+        | Tag::Vector
+        | Tag::List => return k,
+        // else: the other statements: fields, then a block's body below.
+        _ => {}
     }
-    out
+    k.extend(a.fields(n));
+    if a.rhs(n) != NONE {
+        k.extend(a.body(n));
+        k.extend(a.next(n).map(|x| x.0));
+    }
+    k
 }
 
 #[cfg(test)]

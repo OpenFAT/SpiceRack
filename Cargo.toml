@@ -46,16 +46,10 @@ corpus = ["json"]
 name = "test_import_suite"
 required-features = ["corpus"]
 
-# The transpiler rewrite's tokenizer against today's reader (TESTING.md,
-# "Golden gate"), over every golden-gate input.
+# The transpiler front end over every golden-gate input: the lexicon switch
+# and the stages' throughput (TESTING.md, "Golden gate").
 [[test]]
-name = "test_syntax_tokenize"
-required-features = ["corpus"]
-
-# The transpiler rewrite's parser and adapter against today's reader, in
-# process, over every golden-gate input (TESTING.md, "Golden gate").
-[[test]]
-name = "test_syntax_adapter"
+name = "test_syntax"
 required-features = ["corpus"]
 
 [[bin]]

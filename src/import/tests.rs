@@ -1,6 +1,6 @@
 //! Tests of `import`: one ngspice deck with every card family lowered into
 //! the IR field by field, the ngspice round trip on real ngspice, LTspice's
-//! implicit inductor `Rser`, and every dialect grammar compiling.
+//! implicit inductor `Rser`.
 //!
 //! Cites: ngspice manual (card forms); ADI LTspice help, CIRCUIT-ELEMENTS-REFERENCE
 //! (inductor `Rser=1m`).
@@ -378,17 +378,13 @@ fn ltspice_inductor_gets_implicit_rser_unless_given_or_coupled() {
     assert_eq!(rser("4"), Some(None));
 }
 
-/// Every dialect's grammar compiles and captures only AST tags.
+/// `dump` prints the parser's tree, the header's parts under an element.
 #[test]
-fn every_grammar_compiles() {
-    for d in [
-        Dialect::Ngspice,
-        Dialect::Hspice,
-        Dialect::Ltspice,
-        Dialect::Xyce,
-        Dialect::Spectre,
-        Dialect::Vacask,
-    ] {
-        lang(d).unwrap();
-    }
+fn dump_prints_the_tree() {
+    let out = dump("t\nR1 a b 1k\n", Dialect::Ngspice).unwrap();
+    assert_eq!(
+        out,
+        "Title \"t\"\nInstance \"R1\"\n  Word \"R1\"\n  Word \"a\"\n  Word \"b\"\n  Word \"1k\"\n"
+    );
+    assert!(dump("t\n", Dialect::Cdl).is_err());
 }
