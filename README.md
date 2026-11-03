@@ -53,7 +53,7 @@ print(step_response(ps, rc, period=4e-6).measure()["settle_rise_0p1pct_s"])
 | [Models and PDKs](docs/models.md) | model libraries and corners, Verilog-A, digital Verilog |
 | [Testbenches](docs/testbenches.md) | the bench catalog, corners and Monte Carlo, spec checks |
 | [Re-measuring](docs/remeasure.md) | SNDR, settling, margins, noise and yield recomputed from `.raw` files |
-| [Tools](docs/tools.md) | the `spice2rack` converter, the Rust crate, the JSON format |
+| [Tools](docs/tools.md) | the `spice2rack` converter (decks and PDK model files, sections included), the Rust crate, the JSON format |
 | [API reference](docs/reference.md) | every class and signature |
 
 [examples/](examples/) has 22 runnable scripts.

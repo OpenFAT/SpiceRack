@@ -47,7 +47,8 @@ Params_lt  <- '.params' (s (FuncDef / Assign))+ s?
 Tran       <- '.tran' s Num (s Num (s Num (s Num)?)?)? (s Uic)? s?
 # SCR .LIB: `.lib file` reads the whole library, not a section.
 Lib        <- '.lib' !namechar s Path (s Section)? rest
-libblock   <- never
+# `.lib name` is that file, whole: LTspice has no section definition.
+LibDef     <- never
 # SCR .STEP: `.step [lin|dec|oct] param name start stop step`.
 dotcard    <- Step &nl / Include &nl / Lib &nl / Model &nl / Params &nl / Func &nl / Options &nl
             / Temp &nl / Ic &nl / Nodeset &nl / Global &nl / Save &nl / Print &nl / Meas &nl

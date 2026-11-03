@@ -7,7 +7,7 @@
 //!
 //! Contents:
 //! - `Cx::declarations(&self) -> (HashMap<String, String>, Vec<String>)`
-//! - `Cx::named_card(&mut self, card: usize, here: &mut Subcircuit, inside: bool,
+//! - `Cx::named_card(&mut self, card: usize, here: &mut Subcircuit, top: bool,
 //!   kinds: &HashMap<String, String>, subckts: &[String]) -> bool`
 
 use super::Cx;
@@ -41,7 +41,13 @@ impl Cx<'_> {
                 Tag::Model => {
                     let k = self.kids(i);
                     let (name, master) = (self.name(k[0]), self.name(k[1]));
-                    let p = self.pairs(i);
+                    let mut p = self.pairs(i);
+                    // A model group's polarity is its bins'.
+                    p.extend(
+                        self.kid(i, Tag::Bin)
+                            .map(|b| self.pairs(b))
+                            .unwrap_or_default(),
+                    );
                     let ty = self.get(&p, "type");
                     if self.d == Dialect::Vacask {
                         match vacask_kind(&master, ty.and_then(|t| self.number(t))) {
@@ -70,7 +76,7 @@ impl Cx<'_> {
         &mut self,
         card: usize,
         here: &mut Subcircuit,
-        inside: bool,
+        top: bool,
         kinds: &std::collections::HashMap<String, String>,
         subckts: &[String],
     ) -> bool {
@@ -127,7 +133,7 @@ impl Cx<'_> {
             {
                 self.spectre_options(card)
             }
-            Tag::Ana if !inside => match self.spectre_analysis(card) {
+            Tag::Ana if top => match self.spectre_analysis(card) {
                 Some(a) => self.tb.analyses.push(a),
                 None => return false,
             },
@@ -148,21 +154,49 @@ impl Cx<'_> {
 // ---- private ----
 
 impl Cx<'_> {
-    /// A Spectre or VACASK `.model`; `false` if the IR holds no such model.
+    /// A Spectre or VACASK `.model`, a Spectre model group one model per
+    /// bin (`nch.1`, `nch.2`: SPICE's binning), its own parameters after the
+    /// group's; `false` if the IR holds no such model.
     fn named_model(&mut self, card: usize, here: &mut Subcircuit) -> bool {
         let k = self.kids(card);
         let (name, master) = (self.name(k[0]), self.name(k[1]));
         let p = self.pairs(card);
+        let bins = self.all(card, Tag::Bin);
+        if bins.is_empty() {
+            return self.one_model(name, &master, p, here);
+        }
+        bins.into_iter().all(|b| {
+            let bin = self
+                .text(b)
+                .split(':')
+                .next()
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            let mut p = p.clone();
+            p.extend(self.pairs(b));
+            self.one_model(format!("{name}.{bin}"), &master, p, here)
+        })
+    }
+
+    /// The model `name` of `master` with the parameters `p`, onto `here`.
+    fn one_model(
+        &mut self,
+        name: String,
+        master: &str,
+        p: Vec<(String, usize)>,
+        here: &mut Subcircuit,
+    ) -> bool {
         let (kind, level) = if self.d == Dialect::Vacask {
-            if vacask_builtin(&master).is_some() {
+            if vacask_builtin(master).is_some() {
                 return true; // implied by the devices
             }
-            match vacask_kind(&master, self.get(&p, "type").and_then(|t| self.number(t))) {
+            match vacask_kind(master, self.get(&p, "type").and_then(|t| self.number(t))) {
                 Some(kl) => kl,
                 None => return false,
             }
         } else {
-            spectre_kind(&master, self.get(&p, "type").map(|t| self.text(t)))
+            spectre_kind(master, self.get(&p, "type").map(|t| self.text(t)))
         };
         // `type=` is the master's polarity once a SPICE kind says it.
         let drop_type = self.d == Dialect::Vacask || level.is_some() || kind != master;

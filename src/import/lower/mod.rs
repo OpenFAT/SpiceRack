@@ -2,15 +2,17 @@
 //!
 //! The grammar has settled the syntax; what is left is meaning: which bare
 //! word names a `.model`, which numbers a waveform's fields are, what a card
-//! means inside a `.subckt`. A card that parsed but has no IR form is kept
-//! raw ([`Report::raw`]).
+//! means inside a `.subckt` (a `.param` there is a local) or a library
+//! section (whose cards land in its [`LibSection`], never in the deck's
+//! top). A card that parsed but has no IR form is kept raw
+//! ([`Report::raw`]).
 //!
 //! This file is the spine: the per-deck state `Cx`, the walk over cards and
 //! `.subckt` bodies, and the SPICE cards that only place rows (includes,
 //! `.global`, `.model`, `.param`, `.func`). Each card family lowers in its own
 //! file: `values` (value rows), `elements` and `analyses` (SPICE element and
 //! testbench cards), `named`, `named_elements` and `named_analyses` (Spectre
-//! and VACASK statements).
+//! and VACASK statements), `sections` (library sections).
 //!
 //! Cites: ADI LTspice help, CIRCUIT-ELEMENTS-REFERENCE (implicit inductor
 //! `Rser=1m`); Xyce Reference Guide Table 2-36 (BSIM3 is level 9).
@@ -31,6 +33,7 @@ mod elements;
 mod named;
 mod named_analyses;
 mod named_elements;
+mod sections;
 mod values;
 
 struct Cx<'a> {
@@ -47,9 +50,22 @@ struct Cx<'a> {
     globals: Vec<String>,
     functions: Vec<FuncDef>,
     defs: Vec<Subcircuit>,
+    sections: Vec<LibSection>,
     /// Spectre/VACASK: model kinds by name, and subcircuit names.
     kinds: HashMap<String, String>,
     subckts: Vec<String>,
+}
+
+/// Where a card sits, which decides what a card that means something only
+/// to the deck as a whole (an analysis, an option, an output) becomes.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Scope {
+    Top,
+    Subckt,
+    /// A library section, which holds definitions: such a card, and one
+    /// that would reach the whole deck (`.global`, a function), stays raw
+    /// in it rather than leak out.
+    Section,
 }
 
 pub(super) fn deck(
@@ -75,6 +91,7 @@ pub(super) fn deck(
         globals: vec![],
         functions: vec![],
         defs: vec![],
+        sections: vec![],
         kinds: HashMap::new(),
         subckts: vec![],
     };
@@ -83,7 +100,7 @@ pub(super) fn deck(
     }
     let mut top = sub(name);
     for card in t.children(None) {
-        cx.card(card, &mut top, false);
+        cx.card(card, &mut top, Scope::Top);
     }
     let Cx {
         report,
@@ -91,6 +108,7 @@ pub(super) fn deck(
         globals,
         functions,
         mut defs,
+        sections,
         ..
     } = cx;
     // LTspice inductors carry an implicit Rser=1m unless given or K-coupled
@@ -115,6 +133,7 @@ pub(super) fn deck(
             testbench: Some(tb),
             subcircuit_defs: defs,
             model_libraries: vec![],
+            sections,
         },
         report,
     )
@@ -162,7 +181,9 @@ impl Cx<'_> {
         self.report.raw += 1;
         let text = self.text(card).to_string();
         match self.tag(card) {
-            Tag::Block => here.raw_spice.extend(text.split('\n').map(str::to_string)),
+            Tag::Block | Tag::Library | Tag::LibDef | Tag::SpiceRegion => {
+                here.raw_spice.extend(text.split('\n').map(str::to_string))
+            }
             _ if !matches!(self.d, Dialect::Spectre | Dialect::Vacask)
                 && text.starts_with(|c: char| c.is_ascii_alphabetic()) =>
             {
@@ -172,8 +193,13 @@ impl Cx<'_> {
         }
     }
 
-    fn card(&mut self, card: usize, here: &mut Subcircuit, inside: bool) {
+    fn card(&mut self, card: usize, here: &mut Subcircuit, scope: Scope) {
         let named = matches!(self.d, Dialect::Spectre | Dialect::Vacask);
+        let inside = scope == Scope::Subckt;
+        if scope == Scope::Section && self.leaks(card) {
+            self.raw(card, here);
+            return;
+        }
         if named
             && matches!(
                 self.tag(card),
@@ -193,7 +219,7 @@ impl Cx<'_> {
                 std::mem::take(&mut self.kinds),
                 std::mem::take(&mut self.subckts),
             );
-            let ok = self.named_card(card, here, inside, &kinds, &subckts);
+            let ok = self.named_card(card, here, scope == Scope::Top, &kinds, &subckts);
             (self.kinds, self.subckts) = (kinds, subckts);
             if !ok {
                 self.raw(card, here);
@@ -207,6 +233,14 @@ impl Cx<'_> {
                 here.raw_spice.push(line);
             }
             Tag::Raw | Tag::Block => self.raw(card, here),
+            // Only a deck's top defines sections (a `.lib name` in a
+            // `.subckt` stays raw, as it always has).
+            Tag::Library | Tag::LibDef if scope != Scope::Top => self.raw(card, here),
+            Tag::Library => self.library(card, here),
+            Tag::LibDef => {
+                let s = self.section(card, None);
+                self.sections.push(s);
+            }
             Tag::Subckt => {
                 let sc = self.subckt(card);
                 self.defs.push(sc);
@@ -271,10 +305,21 @@ impl Cx<'_> {
                 }),
                 None => self.raw(card, here),
             },
-            // A SPICE `.subckt`'s own `.param`s and functions are not the
-            // IR's; Spectre's and VACASK's `parameters` are the definition's.
-            Tag::Params | Tag::Func if inside && !(named && self.tag(card) == Tag::Params) => {
+            // A SPICE `.subckt`'s functions are not the IR's (a `.param`
+            // defining one included); its other `.param`s are its locals.
+            // Spectre's and VACASK's `parameters` are the definition's.
+            Tag::Func if inside => self.raw(card, here),
+            Tag::Params if inside && !named && self.kid(card, Tag::FuncDef).is_some() => {
                 self.raw(card, here)
+            }
+            Tag::Params if inside && !named => {
+                for k in self.all(card, Tag::Assign) {
+                    let kv = self.kids(k);
+                    here.locals.push(ParamDef {
+                        name: self.text(kv[0]).to_string(),
+                        default: Some(self.vtext(kv[1])),
+                    });
+                }
             }
             Tag::Params => {
                 for k in self.kids(card) {
@@ -302,7 +347,7 @@ impl Cx<'_> {
                 Some(c) => here.components.push(c),
                 None => self.raw(card, here),
             },
-            _ if inside => self.raw(card, here),
+            _ if scope != Scope::Top => self.raw(card, here),
             _ => {
                 if !self.testbench_card(card) {
                     self.raw(card, here);
@@ -361,7 +406,7 @@ impl Cx<'_> {
                     renames.push((std::mem::replace(&mut inner.name, scoped.clone()), scoped));
                     self.defs.push(inner);
                 }
-                _ => self.card(k, &mut sc, true),
+                _ => self.card(k, &mut sc, Scope::Subckt),
             }
         }
         if self.kid(card, Tag::Ends).is_none() {

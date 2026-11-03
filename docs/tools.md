@@ -20,6 +20,16 @@ skipped; the rest are still written.
 | `--check` | run the generated Python and compare its netlist with the converted deck, and check each deck reads back unchanged in its own dialect |
 | `--dialect hspice` | read HSPICE decks (default: ngspice) |
 
+A PDK model file converts the same way. Its library sections (SPICE
+`.lib tt` ... `.endl tt`, Spectre and VACASK `section tt` ... `endsection`,
+in Spectre bare or inside a `library`) are read into the IR's `sections`, each
+holding its `.param`s, models, `.subckt`s, `.include`s and `.lib` calls, and
+are written back as sections in every dialect that has them: ngspice, HSPICE,
+Xyce and ESPice as `.lib`/`.endl`, Spectre and VACASK as `section` (inside
+its `library` when it had one). SPICE bins (`nch.1`, `nch.2`) become a Spectre model group and
+back. LTspice reads `.lib tt` as a file, so it has no section form and is
+skipped.
+
 ## The JSON circuit format
 
 Every circuit has a JSON form (`to_json()`, `save_json()`, `load_json()`, see

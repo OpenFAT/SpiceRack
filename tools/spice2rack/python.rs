@@ -45,6 +45,17 @@ pub(super) fn python(ir: &CircuitIR) -> Py {
     }
     py.line(format!("dut = ps.Subcircuit({})", py_str(&ir.top.name)));
     py.block("dut", &ir.top, true);
+    // The API has no library section: each goes in as its ngspice text.
+    for s in &ir.sections {
+        let one = CircuitIR {
+            sections: vec![s.clone()],
+            ..Default::default()
+        };
+        let text = netlist(&one, Dialect::Ngspice).unwrap_or_default();
+        for l in text.lines().skip(1).take_while(|l| *l != ".end") {
+            py.gap("dut", "library section", l);
+        }
+    }
     py.line("\ntb = ps.Testbench(dut)");
     for f in &ir.functions {
         let args: Vec<String> = f.args.iter().map(|a| py_str(a)).collect();
@@ -300,6 +311,10 @@ impl Py {
                     py_str(p.default.as_deref().unwrap_or(""))
                 ));
             }
+        }
+        for p in sc.locals.iter().filter(|p| p.default.is_some()) {
+            let card = format!(".param {}={}", p.name, p.default.as_deref().unwrap_or(""));
+            self.gap(obj, "subcircuit-local .param", &card);
         }
         for m in &sc.models {
             self.line(format!(

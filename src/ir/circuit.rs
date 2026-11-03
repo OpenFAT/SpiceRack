@@ -1,15 +1,16 @@
-//! The circuit's definitions: the top and every `.subckt` (ports,
-//! parameters, components, instances, models, raw lines), model libraries,
-//! and the identifier walk a rename runs over them.
+//! The circuit's definitions: the top, every `.subckt` (ports, parameters,
+//! locals, components, instances, models, raw lines) and library section,
+//! model libraries, and the identifier walk a rename runs over them.
 //!
 //! Cites: none (SpiceRack's own IR; JSON in `schema/circuit-ir.schema.json`).
 //!
 //! Contents:
-//! - `pub struct CircuitIR`, `pub struct FuncDef`, `pub struct Subcircuit`
+//! - `pub struct CircuitIR`, `pub struct LibSection`, `pub struct FuncDef`, `pub struct Subcircuit`
 //! - `pub struct VerilogBlock`, `pub enum VerilogMode`, `pub enum VerilogConnection`
 //! - `pub struct Port`, `pub enum PortDirection`, `pub struct ParamDef`
 //! - `pub struct Instance`, `pub enum Element<'a>`, `pub struct ModelDef`, `pub struct ModelLibrary`
 //! - `Subcircuit::elements(&self) -> Vec<Element<'_>>`
+//! - `CircuitIR::subcircuits(&self) -> impl Iterator<Item = &Subcircuit>`
 //! - `CircuitIR::names_mut(&mut self, f: impl FnMut(&mut String))`
 
 use std::collections::BTreeMap;
@@ -37,6 +38,36 @@ pub struct CircuitIR {
     /// expression over the arguments and parameters.
     #[serde(default)]
     pub functions: Vec<FuncDef>,
+    /// Library-section definitions, in file order: what a PDK model file
+    /// holds per corner. A deck selects one by `(file, section)` in
+    /// [`Subcircuit::libs`].
+    #[serde(default)]
+    pub sections: Vec<LibSection>,
+}
+
+/// One library section: SPICE `.lib <name>` … `.endl <name>`, Spectre
+/// `section <name>` … `endsection` (bare or inside `library <lib>` …
+/// `endlibrary`), VACASK `section <name>` … `endsection`. A section holds
+/// definitions, so it is a [`Subcircuit`] body (`name` is the section's; no
+/// ports) plus the `.subckt`s defined in it, each read as the same card
+/// would be at the top of a deck. Sections do not nest in any dialect.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct LibSection {
+    /// The Spectre `library` the section sits in; `None` for a bare one
+    /// (SPICE's, VACASK's, or a Spectre section outside a library). A field
+    /// per section, not a library table: SPICE has no library level and
+    /// Spectre's `include "f" section=s` never names the library, so the
+    /// name exists only to be written back. Consecutive sections of one
+    /// library are written as one `library` block.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub library: Option<String>,
+    /// `.param`s (`parameters`), models, `.include`s, `.lib` calls,
+    /// elements and raw lines, as in a deck's top.
+    pub body: Subcircuit,
+    /// The `.subckt`s defined in the section; nested ones hoisted as at the
+    /// top of a deck.
+    #[serde(default)]
+    pub subcircuit_defs: Vec<Subcircuit>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -61,6 +92,12 @@ pub struct Subcircuit {
     pub osdi_loads: Vec<String>,
     #[serde(default)]
     pub verilog_blocks: Vec<VerilogBlock>,
+    /// A definition's own `.param`s (SPICE `.param` inside a `.subckt`):
+    /// computed in the body from `parameters`, never set by an instance. In
+    /// card order, since a later one may read an earlier one; written before
+    /// the models and elements that read them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub locals: Vec<ParamDef>,
 }
 
 /// Verilog co-simulation or synthesis block stored in the IR
@@ -170,16 +207,41 @@ impl Subcircuit {
 }
 
 impl CircuitIR {
+    /// Every body the deck writes cards from: the top, its definitions, and
+    /// each section's body and definitions.
+    pub fn subcircuits(&self) -> impl Iterator<Item = &Subcircuit> {
+        let sections = self
+            .sections
+            .iter()
+            .flat_map(|s| std::iter::once(&s.body).chain(&s.subcircuit_defs));
+        std::iter::once(&self.top)
+            .chain(&self.subcircuit_defs)
+            .chain(sections)
+    }
+
     /// Calls `f` on every identifier, for renaming: definition names (the
-    /// top's is a title and is skipped), ports, model names, instance names,
-    /// the subcircuits they call and their port mappings, every
-    /// [`Component::names_mut`] in the bodies and the stimulus, and the
-    /// globals. Expressions, saves and analyses are not visited.
+    /// top's is a title and a section's what other files select it by: both
+    /// skipped), ports, model names, instance names, the subcircuits they
+    /// call and their port mappings, every [`Component::names_mut`] in the
+    /// bodies and the stimulus, and the globals. Expressions, saves and
+    /// analyses are not visited.
     pub fn names_mut(&mut self, mut f: impl FnMut(&mut String)) {
+        let section_defs = self
+            .sections
+            .iter_mut()
+            .flat_map(|s| &mut s.subcircuit_defs);
         self.subcircuit_defs
             .iter_mut()
+            .chain(section_defs)
             .for_each(|sc| f(&mut sc.name));
-        for sc in std::iter::once(&mut self.top).chain(&mut self.subcircuit_defs) {
+        let sections = self
+            .sections
+            .iter_mut()
+            .flat_map(|s| std::iter::once(&mut s.body).chain(&mut s.subcircuit_defs));
+        for sc in std::iter::once(&mut self.top)
+            .chain(&mut self.subcircuit_defs)
+            .chain(sections)
+        {
             sc.ports.iter_mut().for_each(|p| f(&mut p.name));
             sc.models.iter_mut().for_each(|m| f(&mut m.name));
             for i in &mut sc.instances {

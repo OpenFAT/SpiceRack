@@ -34,7 +34,7 @@
 //! This file is the deck spine (`netlist`), subcircuits and the options
 //! line; `values` spells numbers, expressions and names, `models` the loads
 //! and `model` lines, `components` instance lines, `analyses` the control
-//! block's `analysis` and `sweep` statements.
+//! block's `analysis` and `sweep` statements, `sections` library sections.
 //!
 //! Contents:
 //! - `pub(super) fn netlist(ir: &CircuitIR) -> Result<String, CodeGenError>`
@@ -43,6 +43,7 @@
 mod analyses;
 mod components;
 mod models;
+mod sections;
 mod values;
 
 use crate::ir::*;
@@ -52,6 +53,7 @@ use super::CodeGenError;
 use analyses::{analysis_block, node_list, step_sweep};
 use components::emit_component;
 use models::{Need, emit_model, need};
+use sections::emit_section;
 pub(crate) use values::parse_spice_num;
 use values::{expr, inst_params, num, q, respell, unsupported_analysis, unsupported_comp};
 
@@ -95,9 +97,7 @@ pub(super) fn netlist(ir: &CircuitIR) -> Result<String, CodeGenError> {
     let mut loads: BTreeSet<String> = BTreeSet::new();
     let mut needs: BTreeSet<Need> = BTreeSet::new();
 
-    let subs: Vec<&Subcircuit> = std::iter::once(&ir.top)
-        .chain(ir.subcircuit_defs.iter())
-        .collect();
+    let subs: Vec<&Subcircuit> = ir.subcircuits().collect();
     for sub in &subs {
         for comp in &sub.components {
             if let Some(n) = need(comp) {
@@ -127,6 +127,18 @@ pub(super) fn netlist(ir: &CircuitIR) -> Result<String, CodeGenError> {
                 .map(|m| emit_model(m, &mut loads, low))
                 .collect::<Result<_, _>>()?,
         );
+    }
+    // A section's models stay in it: the body's, then each definition's.
+    let mut section_models: Vec<Vec<Vec<String>>> = Vec::new();
+    for s in &ir.sections {
+        let blocks = std::iter::once(&s.body).chain(&s.subcircuit_defs);
+        let models = blocks.map(|sc| {
+            sc.models
+                .iter()
+                .map(|m| emit_model(m, &mut loads, low))
+                .collect()
+        });
+        section_models.push(models.collect::<Result<_, _>>()?);
     }
 
     for n in &needs {
@@ -233,6 +245,10 @@ pub(super) fn netlist(ir: &CircuitIR) -> Result<String, CodeGenError> {
 
     for (sc, models) in ir.subcircuit_defs.iter().zip(&sub_models) {
         emit_subcircuit(&mut out, sc, models, low)?;
+        out.push_str("\n\n");
+    }
+    for (s, models) in ir.sections.iter().zip(&section_models) {
+        emit_section(&mut out, s, models, low)?;
         out.push_str("\n\n");
     }
 
@@ -354,12 +370,32 @@ fn emit_subcircuit(
         w!(out, "{}{}", if i == 0 { "" } else { " " }, q(&p.name));
     }
     out.push_str(")\n");
+    emit_body(out, sc, models, low)?;
+    out.push_str("ends");
+    Ok(())
+}
+
+/// A block's models, `parameters`, elements and raw lines, one indented
+/// line each: a `subckt`'s or a `section`'s body.
+fn emit_body(
+    out: &mut String,
+    sc: &Subcircuit,
+    models: &[String],
+    low: bool,
+) -> Result<(), CodeGenError> {
     for m in models {
         w!(out, "  {m}\n");
     }
     if !sc.parameters.is_empty() {
         out.push_str("parameters");
         param_list(out, sc.parameters.iter(), low);
+        out.push('\n');
+    }
+    // A SPICE definition's own `.param`s, in order: VACASK's `parameters`
+    // (one that reads another cannot be overridden, P848-855).
+    if !sc.locals.is_empty() {
+        out.push_str("parameters");
+        param_list(out, sc.locals.iter(), low);
         out.push('\n');
     }
     for e in sc.elements() {
@@ -373,7 +409,6 @@ fn emit_subcircuit(
     for l in &sc.raw_spice {
         w!(out, "  {l}\n");
     }
-    out.push_str("ends");
     Ok(())
 }
 

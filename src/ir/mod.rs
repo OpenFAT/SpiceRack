@@ -388,6 +388,10 @@ mod tests {
     #[test]
     fn every_ir_field_and_imported_deck_matches_the_schema() {
         let s = |x: &str| x.to_string();
+        let sub = |name: &str| Subcircuit {
+            name: s(name),
+            ..Default::default()
+        };
         let kv = || vec![(s("k"), s("v"))];
         let x = |e: &str| IrNum::Expr(e.into());
         let pwl = |repeat, delay| IrWaveform::Pwl {
@@ -499,6 +503,10 @@ mod tests {
                 verilog(VerilogMode::Simulate, None),
                 verilog(VerilogMode::Synthesize, Some(s("x"))),
             ],
+            locals: vec![ParamDef {
+                name: s("k"),
+                default: Some(s("w*2")),
+            }],
         };
         let tb = Testbench {
             stimulus: rcl(IrValue::Expression { expr: s("r") }).into(),
@@ -555,6 +563,14 @@ mod tests {
                 args: vec![s("x")],
                 body: s("x*2"),
             }],
+            sections: vec![
+                LibSection {
+                    library: Some(s("lib")),
+                    body: sub("tt"),
+                    subcircuit_defs: vec![sub("nch")],
+                },
+                LibSection::default(),
+            ],
         };
         assert_schema(&ir);
         assert_schema(&CircuitIR {
@@ -579,6 +595,14 @@ mod tests {
             (
                 Dialect::Vacask,
                 "t\nload \"spice/resistor.osdi\"\nmodel r sp_resistor\nr1 (a 0) r r=1k\ncontrol\n  analysis op1 op\nendc\n",
+            ),
+            (
+                Dialect::Ngspice,
+                "t\n.lib tt\n.param w=1u\n.model nch nmos level=54\n.subckt x a\n.param k=2\n.ends\n.endl tt\n",
+            ),
+            (
+                Dialect::Spectre,
+                "// t\nlibrary lib\nsection tt\nparameters w=1u\nendsection tt\nendlibrary lib\n",
             ),
         ] {
             assert_schema(&crate::import::parse(deck, "t", d).unwrap().0);

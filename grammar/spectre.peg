@@ -69,13 +69,15 @@ l_eolx     <- l_eol / !.
 
 # ── Statements ──
 deck       <- card* !.
-card       <- (SpiceRegion / Subckt / Block / stmt) (nl / !.) / Unparsed nl
+card       <- (SpiceRegion / Subckt / Library / LibDef / Model_group / Block / stmt) (nl / !.) / Unparsed nl
 Unparsed   <- rest
 
 # §3.1: a `simulator lang=spice` region, up to `simulator lang=spectre`:
 # its `.meas` cards are the testbench's (codegen::spectre puts them there),
 # the rest is SPICE text the IR has no Spectre form for.
-SpiceRegion <- 'simulator' s 'lang' s? '=' s? 'spice' (s Pair)* (nl !to_spectre (Meas / Raw_spice))*
+# A region inside a section ends with it: the switch back to Spectre, or the
+# section's `endsection`.
+SpiceRegion <- 'simulator' s 'lang' s? '=' s? 'spice' (s Pair)* (nl !to_spectre !endsec !endlib (Meas / Raw_spice))* (nl to_spectre rest)?
 Meas       <- '.meas' 'ure'? !wchar rest
 Raw_spice  <- rest
 to_spectre <- 'simulator' s 'lang' s? '=' s? 'spectre'
@@ -92,12 +94,27 @@ Path       <- Str
 Section    <- Name
 Load       <- 'ahdl_include' s Path
 
-# Blocks no IR field holds, kept whole: `library` / `section` (§3.4), a
-# model group (UG p.108), `if` (R19 p.491), `statistics` (§4.13), and an
-# analysis or control statement with children.
-Block      <- 'library' s Name nl lines 'endlibrary' (s Name)?
-            / 'section' s Name nl lines 'endsection' (s Name)?
-            / 'model' s Name s Name (s param)* s? '{' nl lines '}'
+# §3.4: `library name` ... `endlibrary [name]` holds sections, and
+# `section name` ... `endsection [name]` statements read as at the top of a
+# netlist (R19 p.498). A library holds only sections and sections do not
+# nest: any other line in a library, and a `section` or `library` in a
+# section, is `Unparsed`. A missing closer runs to the end of the netlist.
+Library    <- 'library' s Name s? nl (!endlib (LibDef (nl / !.) / Unparsed nl))* (endlib rest)?
+LibDef     <- 'section' s Name s? nl (!endsec (!secword card / Unparsed nl))* (endsec rest)?
+endlib     <- 'endlibrary' !wchar
+endsec     <- 'endsection' !wchar
+secword    <- ('section' / 'library') !wchar
+
+# UG p.108: a model group, one model per bin (`1: lmin=1e-7 vth0=...`),
+# selected by geometry: SPICE's binning, which the IR holds as the models
+# `nch.1`, `nch.2`, ... A group this cannot read is a `Block`.
+Model_group <- 'model' s Name s Name (s param)* s? '{' s? nl (s? Bin s? nl)+ s? '}'
+Bin        <- [0-9]+ s? ':' (s? param)*
+
+# Blocks no IR field holds, kept whole: a model group (UG p.108), `if` (R19
+# p.491), `statistics` (§4.13), and an analysis or control statement with
+# children.
+Block      <- 'model' s Name s Name (s param)* s? '{' nl lines '}'
             / 'if' s? '(' s? expr s? ')' (s / nl &'{') branch (s 'else' s (Block / branch))?
             / 'statistics' s? '{' nl lines '}'
             / Name s? (nodelist s?)? Name !wchar (s param)* s? '{' nl lines '}'

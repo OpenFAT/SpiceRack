@@ -60,9 +60,9 @@ tags! {
     // lines stage
     Title, Line, Piece, Glue, EndRun,
     // blocks and kept text
-    Subckt, Port, Ends, Block, Control, CtlCmd, Raw, Unparsed, SpiceRegion, ControlBlock,
+    Subckt, Port, Ends, Block, Library, LibDef, Control, CtlCmd, Raw, Unparsed, SpiceRegion, ControlBlock,
     // dot cards
-    Include, Lib, Path, Section, Model, MPair, MVal, More, Flag, Params, Assign, FuncDef, Func, Arg, Body,
+    Include, Lib, Path, Section, Model, Bin, MPair, MVal, More, Flag, Params, Assign, FuncDef, Func, Arg, Body,
     Load, Embed, Ground, Options, Pkg, Temp, Ic, Nodeset, NodeVal, Global, Save, Out, Print, PrintKind, Meas, Probe, Step, StepKind,
     // analyses
     Op, Dc, Sweep, Ac, Tran, Uic, Noise, Tf, Sens, Pz, Four, Sp,

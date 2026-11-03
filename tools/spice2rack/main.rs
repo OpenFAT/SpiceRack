@@ -20,6 +20,10 @@
 //! dialect and read back, it gives the same IR. `--dialect hspice` reads
 //! HSPICE decks (default ngspice).
 //!
+//! A PDK model file converts like a deck: its library sections (`.lib tt`
+//! ... `.endl tt`, Spectre and VACASK `section`) are written as sections in
+//! every dialect that has them; LTspice has none and is skipped.
+//!
 //! Cites: none (a CLI over `spicerack::import`, `codegen` and the Python API).
 //!
 //! Contents: none (a binary; `main` is its entry).

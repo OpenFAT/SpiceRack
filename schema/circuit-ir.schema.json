@@ -40,7 +40,8 @@
       "oneOf": [{ "$ref": "#/$defs/Dialect" }, { "type": "null" }]
     },
     "globals": { "description": ".global nodes: one net under the same name in every subcircuit. Absent: none.", "type": "array", "items": { "type": "string" } },
-    "functions": { "description": "Top-level .func definitions. Absent: none.", "type": "array", "items": { "$ref": "#/$defs/FuncDef" } }
+    "functions": { "description": "Top-level .func definitions. Absent: none.", "type": "array", "items": { "$ref": "#/$defs/FuncDef" } },
+    "sections": { "description": "Library-section definitions (SPICE .lib name ... .endl, Spectre and VACASK section ... endsection), in file order. Absent: none.", "type": "array", "items": { "$ref": "#/$defs/LibSection" } }
   },
   "additionalProperties": false,
   "$defs": {
@@ -132,7 +133,19 @@
             "type": "string"
           }
         },
-        "verilog_blocks": { "description": "Verilog blocks to co-simulate or synthesize. Absent: none.", "type": "array", "items": { "$ref": "#/$defs/VerilogBlock" } }
+        "verilog_blocks": { "description": "Verilog blocks to co-simulate or synthesize. Absent: none.", "type": "array", "items": { "$ref": "#/$defs/VerilogBlock" } },
+        "locals": { "description": "A definition's own .param cards (SPICE .param inside a .subckt): computed in the body, never set by an instance; in card order. Absent: none.", "type": "array", "items": { "$ref": "#/$defs/ParamDef" } }
+      },
+      "additionalProperties": false
+    },
+    "LibSection": {
+      "type": "object",
+      "description": "One library section: a Subcircuit body (name: the section's; no ports) plus the .subckt definitions inside it.",
+      "required": ["body"],
+      "properties": {
+        "library": { "description": "The Spectre library the section sits in. Absent: a bare section (SPICE, VACASK, or Spectre outside a library).", "type": "string" },
+        "body": { "$ref": "#/$defs/Subcircuit" },
+        "subcircuit_defs": { "description": "The .subckt definitions in the section. Absent: none.", "type": "array", "items": { "$ref": "#/$defs/Subcircuit" } }
       },
       "additionalProperties": false
     },

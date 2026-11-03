@@ -35,8 +35,8 @@
 //! This file is the deck spine (`netlist`) and the deck-level statements
 //! (models, subcircuits, options, measures); `values` spells numbers and
 //! waveforms, `names` identifiers, `components` instance statements,
-//! `analyses` analysis statements and sweeps. The citations above cover all
-//! of them.
+//! `analyses` analysis statements and sweeps, `library` model groups and
+//! library sections. The citations above cover all of them.
 //!
 //! Contents:
 //! - `pub(super) fn netlist(ir: &CircuitIR) -> Result<String, CodeGenError>`
@@ -44,6 +44,7 @@
 
 mod analyses;
 mod components;
+mod library;
 mod names;
 mod values;
 
@@ -52,6 +53,7 @@ use crate::ir::*;
 use super::{CodeGenError, bare_node, param_defs};
 use analyses::emit_analysis_block;
 pub(crate) use components::emit_component;
+use library::{emit_models, emit_sections};
 pub(crate) use names::Names;
 use names::{inst_ref, signal};
 use values::{spectre_num, spectre_value, unsupported_component};
@@ -147,16 +149,14 @@ pub(super) fn netlist(ir: &CircuitIR) -> Result<String, CodeGenError> {
         out.push('\n');
     }
 
-    for m in &ir.top.models {
-        emit_model(&mut out, m, n)?;
-        out.push('\n');
-    }
+    emit_models(&mut out, &ir.top.models, n)?;
 
     for sc in &ir.subcircuit_defs {
         out.push('\n');
         emit_subcircuit(&mut out, sc, n)?;
         out.push('\n');
     }
+    emit_sections(&mut out, ir, n)?;
 
     out.push('\n');
 
@@ -253,6 +253,12 @@ pub(super) fn netlist(ir: &CircuitIR) -> Result<String, CodeGenError> {
 fn emit_model(out: &mut String, m: &ModelDef, n: Names) -> Result<(), CodeGenError> {
     let (master, ty) = spectre_master(m, n)?;
     w!(out, "model {} {}", n.n(&m.name), master.unwrap_or(&m.kind));
+    emit_model_params(out, m, master, ty);
+    Ok(())
+}
+
+/// A model's ` type=t k=v ...` after its master.
+fn emit_model_params(out: &mut String, m: &ModelDef, master: Option<&str>, ty: Option<&str>) {
     if let Some(t) = ty {
         w!(out, " type={t}");
     }
@@ -275,7 +281,6 @@ fn emit_model(out: &mut String, m: &ModelDef, n: Names) -> Result<(), CodeGenErr
         }
         None => w!(out, "{}", super::params(&m.parameters, spectre_value)),
     }
-    Ok(())
 }
 
 /// The Spectre master for `m` (`None`: write `m.kind` as it is) and its `type=`.
@@ -344,11 +349,15 @@ fn emit_subcircuit_body(out: &mut String, sc: &Subcircuit, n: Names) -> Result<(
         param_defs(out, &sc.parameters, spectre_value);
         out.push('\n');
     }
-
-    for m in &sc.models {
-        emit_model(out, m, n)?;
+    // A SPICE definition's own `.param`s: Spectre has no parameter an
+    // instance cannot set, so they are `parameters` too, in order.
+    if !sc.locals.is_empty() {
+        out.push_str("parameters");
+        param_defs(out, &sc.locals, spectre_value);
         out.push('\n');
     }
+
+    emit_models(out, &sc.models, n)?;
 
     for e in sc.elements() {
         match e {

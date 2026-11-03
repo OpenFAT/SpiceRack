@@ -43,10 +43,19 @@ pub enum CodeGenError {
 /// [`params`], written straight into the deck by its `Display`.
 struct Params<'a>(&'a [(String, String)], fn(&str) -> Cow<'_, str>);
 
+/// The statistical functions of SPICE expressions (ngspice manual §2.8.5,
+/// p.64; HSPICE's `.PARAM` distributions): a nominal value plus a random
+/// draw. HSPICE, ngspice (and ESPice) and Xyce have them; the Spectre 19.1
+/// Reference's function table (pp.476-477) and VACASK's (lib/context.cpp)
+/// have none, and LTspice's `gauss(x)` is a different function of one
+/// argument.
+const STATISTICAL: [&str; 5] = ["agauss", "gauss", "aunif", "unif", "limit"];
+
 /// The whole deck for `d`. An analysis or component the simulator cannot run
 /// is an error, never a silently different deck.
 pub fn netlist(ir: &CircuitIR, d: Dialect) -> Result<String, CodeGenError> {
     check_caret_meaning(ir, d)?;
+    check_functions(ir, d)?;
     match d {
         Dialect::Ngspice | Dialect::Ltspice | Dialect::Espice | Dialect::Hspice => {
             spice3::netlist(d, ir)
@@ -131,24 +140,7 @@ fn check_caret_meaning(ir: &CircuitIR, d: Dialect) -> Result<(), CodeGenError> {
     if caret_means_power(from) == caret_means_power(d) {
         return Ok(());
     }
-    let mut exprs: Vec<&str> = ir.functions.iter().map(|f| f.body.as_str()).collect();
-    for sc in std::iter::once(&ir.top).chain(&ir.subcircuit_defs) {
-        exprs.extend(sc.parameters.iter().filter_map(|p| p.default.as_deref()));
-        exprs.extend(
-            sc.models
-                .iter()
-                .flat_map(|m| m.parameters.iter().map(|(_, v)| v.as_str())),
-        );
-        exprs.extend(
-            sc.instances
-                .iter()
-                .flat_map(|i| i.parameters.iter().map(|(_, v)| v.as_str())),
-        );
-        exprs.extend(sc.components.iter().flat_map(Component::exprs));
-    }
-    if let Some(tb) = &ir.testbench {
-        exprs.extend(tb.stimulus.iter().flat_map(Component::exprs));
-    }
+    let exprs = expressions(ir);
     if let Some(bad) = exprs.into_iter().find(|e| e.contains('^')) {
         return Err(CodeGenError::Other(format!(
             "expression '{bad}' uses '^', which means {} in {} but {} in {}; refusing to reinterpret it",
@@ -163,6 +155,80 @@ fn check_caret_meaning(ir: &CircuitIR, d: Dialect) -> Result<(), CodeGenError> {
         )));
     }
     Ok(())
+}
+
+/// Every expression the deck's cards carry: functions, parameters (a
+/// definition's own included), model, instance and component values, the
+/// stimulus. Raw lines are not: they reach their own dialect only.
+fn expressions(ir: &CircuitIR) -> Vec<&str> {
+    let mut exprs: Vec<&str> = ir.functions.iter().map(|f| f.body.as_str()).collect();
+    for sc in ir.subcircuits() {
+        let params = sc.parameters.iter().chain(&sc.locals);
+        exprs.extend(params.filter_map(|p| p.default.as_deref()));
+        let models = sc.models.iter().flat_map(|m| &m.parameters);
+        exprs.extend(models.map(|(_, v)| v.as_str()));
+        let instances = sc.instances.iter().flat_map(|i| &i.parameters);
+        exprs.extend(instances.map(|(_, v)| v.as_str()));
+        exprs.extend(sc.components.iter().flat_map(Component::exprs));
+    }
+    if let Some(tb) = &ir.testbench {
+        exprs.extend(tb.stimulus.iter().flat_map(Component::exprs));
+    }
+    exprs
+}
+
+/// Writing a statistical function where `d` has none would drop its random
+/// term or call something else: refuse, naming the function.
+fn check_functions(ir: &CircuitIR, d: Dialect) -> Result<(), CodeGenError> {
+    let has = match d {
+        Dialect::Ngspice | Dialect::Espice | Dialect::Hspice | Dialect::Xyce => true,
+        // The xschem layouts (LVS) are not evaluated.
+        Dialect::Cdl | Dialect::Verilog => true,
+        Dialect::Ltspice | Dialect::Spectre | Dialect::Vacask => false,
+    };
+    if has {
+        return Ok(());
+    }
+    for e in expressions(ir) {
+        let stat = |f: &&str| STATISTICAL.iter().any(|s| s.eq_ignore_ascii_case(f));
+        if let Some(f) = calls(e).find(stat) {
+            return Err(CodeGenError::Other(format!(
+                "expression '{e}' calls the statistical function {f}(), which {} has no function for; refusing to drop its random term",
+                d.name()
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// The names `e` calls: each identifier followed by `(`.
+fn calls(e: &str) -> impl Iterator<Item = &str> {
+    let b = e.as_bytes();
+    let ident = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
+    (0..b.len()).filter_map(move |i| {
+        let starts = b[i].is_ascii_alphabetic() && (i == 0 || !ident(b[i - 1]) && b[i - 1] != b'.');
+        if !starts {
+            return None;
+        }
+        let end = i + b[i..].iter().take_while(|&&c| ident(c)).count();
+        let open = end
+            + b[end..]
+                .iter()
+                .take_while(|c| c.is_ascii_whitespace())
+                .count();
+        (b.get(open) == Some(&b'(')).then(|| &e[i..end])
+    })
+}
+
+/// A SPICE value without its expression delimiters (`{e}`, `'e'`): Spectre
+/// and VACASK read the bare expression, and a quote there is a string
+/// (Spectre) or a quoted name (VACASK).
+fn undelimited(v: &str) -> &str {
+    let t = v.trim();
+    let inner = t.strip_prefix('{').and_then(|r| r.strip_suffix('}'));
+    inner
+        .or_else(|| t.strip_prefix('\'').and_then(|r| r.strip_suffix('\'')))
+        .map_or(t, str::trim)
 }
 
 /// `^` means power in ngspice, HSPICE, ESPice and Spectre (as SpiceRack
@@ -180,9 +246,7 @@ fn refuse_raw_spice(ir: &CircuitIR, backend: &str) -> Result<(), CodeGenError> {
     if ir.raw_dialect.map(Dialect::name) == Some(backend) {
         return Ok(());
     }
-    let sub = std::iter::once(&ir.top)
-        .chain(&ir.subcircuit_defs)
-        .find(|s| !s.raw_spice.is_empty());
+    let sub = ir.subcircuits().find(|s| !s.raw_spice.is_empty());
     match sub {
         Some(s) => Err(CodeGenError::UnsupportedComponent {
             backend: backend.into(),
@@ -195,7 +259,7 @@ fn refuse_raw_spice(ir: &CircuitIR, backend: &str) -> Result<(), CodeGenError> {
 /// Spectre and VACASK have no valueless parameter: refuse a flag rather than
 /// write `off=` or drop it.
 fn refuse_flags(ir: &CircuitIR, backend: &str) -> Result<(), CodeGenError> {
-    for sc in std::iter::once(&ir.top).chain(&ir.subcircuit_defs) {
+    for sc in ir.subcircuits() {
         let model_flag = sc
             .models
             .iter()

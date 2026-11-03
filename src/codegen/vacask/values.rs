@@ -96,6 +96,12 @@ pub(super) fn value_of(s: &str) -> Option<f64> {
 /// VACASK's are not) unless it is a number; a VACASK-origin IR keeps its
 /// case (`M_PI` is not `m_pi`). Then [`respell`]ed.
 pub(super) fn expr(s: &str, low: bool) -> String {
+    // A SPICE `'e'` is an expression; a VACASK one a quoted name, kept.
+    let s = if low {
+        crate::codegen::undelimited(s)
+    } else {
+        s
+    };
     if low && parse_spice_num(s.trim()).is_none() {
         respell(&s.to_ascii_lowercase())
     } else {

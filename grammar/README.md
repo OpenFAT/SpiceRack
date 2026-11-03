@@ -13,6 +13,13 @@ one schema every dialect captures into; `src/import/lower.rs` lowers it to
 `CircuitIR`. `cargo run --example ast_dump -- <dialect> <deck>` prints the
 AST a deck parses to.
 
+A library section is a block of cards: `LibDef` (SPICE `.lib name` ...
+`.endl`, Spectre and VACASK `section` ... `endsection`; in Spectre inside a
+`Library`) holds its name, then rows of the same `card` rule a deck's top
+uses, and `lower.rs` lowers them into one `LibSection` of
+`CircuitIR::sections`, never into the top. Sections do not nest: a section
+head inside one is `Unparsed`. LTspice has none (`LibDef <- never`).
+
 Sources: the SPICE rules started as ESPice's grammar oracle
 (`tests/frontend/grammar/`); LTspice from ADI's ltspice-reference, Xyce from
 its Reference Guide, VACASK from its lexer, parser and docs

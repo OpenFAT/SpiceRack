@@ -15,6 +15,7 @@
 //! - `Cx::pairs(&self, i: usize) -> Vec<(String, usize)>`,
 //!   `Cx::get(&self, p: &[(String, usize)], k: &str) -> Option<usize>`
 //! - `pub(super) fn unquoted(v: &str) -> Option<String>`
+//! - `pub(super) fn one_group(v: &str) -> String`
 
 use super::{Cx, trim};
 use crate::codegen::Dialect;
@@ -154,6 +155,9 @@ impl Cx<'_> {
     pub(super) fn vtext(&self, v: usize) -> String {
         let more = self.all(v, Tag::More);
         if more.is_empty() {
+            if matches!(self.d, Dialect::Ngspice | Dialect::Espice) {
+                return one_group(self.text(v).trim());
+            }
             // A Spectre/VACASK number in the IR's SPICE spelling: `1M` must
             // not reach a SPICE reader as milli.
             if matches!(self.d, Dialect::Spectre | Dialect::Vacask)
@@ -241,6 +245,33 @@ impl Cx<'_> {
 /// `"text"` without its quotes.
 pub(super) fn unquoted(v: &str) -> Option<String> {
     Some(v.strip_prefix('"')?.strip_suffix('"')?.to_string())
+}
+
+/// An ngspice value as one expression, as ngspice evaluates it: `{"e"}` is
+/// `{e}`, and braced groups with more after them (`{a} + b`) are one
+/// braced expression, each group a parenthesis (`{(a) + b}`). Any other
+/// value is itself.
+pub(super) fn one_group(v: &str) -> String {
+    if let Some(inner) = v
+        .strip_prefix('{')
+        .and_then(|r| r.strip_suffix('}'))
+        .map(str::trim)
+        && let Some(e) = inner.strip_prefix('"').and_then(|r| r.strip_suffix('"'))
+    {
+        return format!("{{{}}}", e.trim());
+    }
+    let single = v.starts_with('{') && {
+        let mut depth = 0i32;
+        let closes = v.char_indices().find(|&(_, c)| {
+            depth += i32::from(c == '{') - i32::from(c == '}');
+            depth == 0
+        });
+        closes.is_some_and(|(i, _)| i + 1 == v.len())
+    };
+    if single || !v.contains('{') {
+        return v.to_string();
+    }
+    format!("{{{}}}", v.replace('{', "(").replace('}', ")"))
 }
 
 // ---- private ----

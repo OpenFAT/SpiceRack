@@ -115,8 +115,20 @@ Femto      <- 'f'
 Atto       <- 'a'
 
 # §1.9, §2.1: `{expr}` is an expression, and so is `'expr'` (ngspice turns
-# the quotes into braces). Expr is the text between the delimiters.
-expr       <- '{' x Expr x '}' / "'" x Expr x "'"
+# the quotes into braces). Expr is the text between the delimiters. ngspice
+# reads `{"expr"}` as `{expr}` (run: `{"a+b*2"}` is 5; sky130's models).
+expr       <- '{' x '"' x Expr x '"' x '}' / '{' x Expr x '}' / "'" x Expr x "'"
+# A lone `+` between two assignments separates them: ngspice reads
+# `a = '-1*x' + b = '0 - 2.5'` (sky130's `parameters/invariant.spice`) as
+# a = -2, b = -2.5 when x = 2 (run).
+Params     <- ('.parameters' / '.parameter' / '.param') ((s '+' s &pairstart / s / s? ',' s?) (FuncDef / Assign))* s?
+# A `.param` value that is a braced group with more after it, unbraced
+# (sky130: `{1.0+corner_factor*0.18} + process_mc_factor*AGAUSS(0,0.04,1)`):
+# one expression, each group a parenthesis. ngspice 45 runs it so when the
+# value calls a statistical function (`{1+x} + x*0*AGAUSS(0,1,1)` is 3 at
+# x=2) and refuses it otherwise ("sign expected"); read the same either way.
+Assign     <- Key s? '=' s? (Val_p / Val)
+Val_p      <- '{' x x_ternary x '}' x [|&<>=!+\-*/%\\^?] x x_ternary !wordchar
 Expr       <- x_ternary
 
 # ESPice: an unbraced expression after `key=` (`w=2*l`, `r = a + b`);

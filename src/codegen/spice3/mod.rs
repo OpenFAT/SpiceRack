@@ -6,7 +6,8 @@
 //! This file is the deck spine (`netlist`) and the block-level cards (loads,
 //! libraries, models, subcircuits, options); `values` spells numbers,
 //! `waveform` source waveforms, `components` cards, `analyses` analysis and
-//! `.step` cards, `control` the ngspice `.control` block.
+//! `.step` cards, `control` the ngspice `.control` block, `sections` the
+//! `.param` cards and library sections.
 //!
 //! Contents:
 //! - `pub(crate) const NGBEHAVIOR: &str`
@@ -16,6 +17,7 @@
 mod analyses;
 mod components;
 mod control;
+mod sections;
 mod values;
 mod waveform;
 
@@ -25,6 +27,7 @@ use super::{CodeGenError, Dialect, param_defs, params, verbatim};
 use analyses::{analysis, step_param};
 pub(crate) use components::component;
 use control::{control_run, raw_lines};
+use sections::{param_cards, params_and_models, section};
 // The ngspice backend reads its own deck back with these.
 #[cfg(feature = "backend")]
 pub(crate) use control::{is_four, is_meas, runs_in_control};
@@ -49,8 +52,8 @@ pub(super) fn netlist(d: Dialect, ir: &CircuitIR) -> Result<String, CodeGenError
     };
     let drop_four = control.is_some();
     // ponytail: ~64 bytes a card is a guess; the String grows past it.
-    let cards = std::iter::once(&ir.top)
-        .chain(&ir.subcircuit_defs)
+    let cards = ir
+        .subcircuits()
         .map(|s| s.components.len() + s.instances.len())
         .sum::<usize>();
     let mut out = String::with_capacity(64 * (cards + 16));
@@ -87,19 +90,15 @@ pub(super) fn netlist(d: Dialect, ir: &CircuitIR) -> Result<String, CodeGenError
         }
     }
 
-    for p in &ir.top.parameters {
-        if let Some(ref default) = p.default {
-            w!(out, ".param {}={}\n", p.name, default);
-        }
-    }
-    for m in &ir.top.models {
-        model(&mut out, d, m);
-        out.push('\n');
-    }
+    params_and_models(&mut out, d, &ir.top);
 
     for sc in &ir.subcircuit_defs {
         out.push('\n');
         subcircuit(&mut out, d, x, sc, drop_four)?;
+    }
+    for s in &ir.sections {
+        out.push('\n');
+        section(&mut out, d, x, s, drop_four)?;
     }
 
     body(&mut out, d, x, &ir.top, drop_four)?;
@@ -232,16 +231,14 @@ fn check_raw_dialect(d: Dialect, ir: &CircuitIR) -> Result<(), CodeGenError> {
     let Some(from) = ir.raw_dialect else {
         return Ok(());
     };
-    let raw = std::iter::once(&ir.top)
-        .chain(&ir.subcircuit_defs)
-        .find_map(|s| {
-            s.raw_spice.first().or_else(|| {
-                s.components.iter().find_map(|c| match c {
-                    Component::RawSpice { line } => Some(line),
-                    _ => None,
-                })
+    let raw = ir.subcircuits().find_map(|s| {
+        s.raw_spice.first().or_else(|| {
+            s.components.iter().find_map(|c| match c {
+                Component::RawSpice { line } => Some(line),
+                _ => None,
             })
-        });
+        })
+    });
     match raw {
         Some(line) if from.family() != d.family() => Err(CodeGenError::UnsupportedComponent {
             backend: d.name().into(),
@@ -383,6 +380,7 @@ fn subcircuit(
     param_defs(out, &sc.parameters, verbatim);
     out.push('\n');
     file_cards(out, d, sc)?;
+    param_cards(out, &sc.locals);
     for m in &sc.models {
         model(out, d, m);
         out.push('\n');

@@ -1,0 +1,17 @@
+// Bare Spectre sections (no library), as a commercial PDK's corner files
+// hold them, one switching to SPICE and back: hand-written for
+// tests/test_sections.rs.
+simulator lang=spectre
+section tt
+parameters vth0n=0.45 u0n=0.03
+include "shared.scs"
+simulator lang=spice
+.param rsh_spice=100
++ rvc=0.01
+simulator lang=spectre
+parameters after=1
+endsection tt
+section ff
+parameters vth0n=0.40 u0n=0.035
+include "shared.scs"
+endsection ff

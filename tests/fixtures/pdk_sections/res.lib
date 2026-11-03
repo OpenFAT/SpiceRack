@@ -1,0 +1,7 @@
+* Resistor corners called from models.lib's sections.
+.lib res_tt
+.param rsh=100
+.endl res_tt
+.lib res_ff
+.param rsh=90
+.endl res_ff

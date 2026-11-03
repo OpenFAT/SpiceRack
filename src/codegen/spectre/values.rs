@@ -17,11 +17,12 @@ use crate::codegen::{CodeGenError, format_spice_number};
 /// A SPICE number in a parameter value, spelled without its scale factor:
 /// Spectre reads `M` as mega where SPICE reads milli (`IKF=30M` is 30e-3),
 /// so `30M` must reach Spectre as `0.03`. Anything else (an expression, a
-/// name) passes unchanged.
+/// name) passes without its SPICE delimiters (`'w*2'` is `w*2`).
 pub(super) fn spectre_value(v: &str) -> Cow<'_, str> {
+    let v = crate::codegen::undelimited(v);
     // The value, written in Spectre's own suffixes: VACASK's spelling of
     // mega is `meg`, which Spectre reads as milli with a unit tail.
-    match crate::codegen::vacask::parse_spice_num(v.trim()) {
+    match crate::codegen::vacask::parse_spice_num(v) {
         Some((x, _)) => spectre_num(x).into(),
         None => v.into(),
     }

@@ -41,6 +41,7 @@ impl Cx<'_> {
             globals: vec![],
             functions: vec![],
             defs: vec![],
+            sections: vec![],
             kinds: HashMap::new(),
             subckts: vec![],
         };

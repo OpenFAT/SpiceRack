@@ -121,8 +121,7 @@ impl CircuitIR {
     pub fn compute_features(&self) -> FeatureFlags {
         let mut flags = FeatureFlags::default();
 
-        self.scan_subcircuit(&self.top, &mut flags);
-        for sub in &self.subcircuit_defs {
+        for sub in self.subcircuits() {
             self.scan_subcircuit(sub, &mut flags);
         }
 

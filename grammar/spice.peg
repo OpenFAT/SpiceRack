@@ -15,7 +15,7 @@ deck       <- card* !.
 one        <- dotcard nl !.
 # Each alternative ends at the card's end (`&nl`), so one that reads only
 # part of a card gives way to the next (PEG commits to a choice that matched).
-card       <- (Subckt / dialect / Block / dotcard / element) (nl / !.) / Unparsed nl
+card       <- (Subckt / dialect / LibDef / Block / dotcard / element) (nl / !.) / Unparsed nl
 Unparsed   <- rest
 # The cards only one dialect reads (its file replaces this).
 dialect    <- never
@@ -31,18 +31,23 @@ Port       <- !'params:' namechar+
 ends       <- ('.ends' / '.eom') !namechar
 Ends       <- ends rest
 
+# §4.1, D3: a `.lib name` section definition, up to `.endl [name]`: its
+# cards read as at the top of a deck. Sections do not nest, so a `.lib name`
+# inside one is `Unparsed`; a missing `.endl` closes at the end of the deck.
+LibDef     <- '.lib' s Name s? nl (!endl (!libhead card / Unparsed nl))* (endl rest)?
+libhead    <- '.lib' s namechar+ s? nl
+endl       <- '.endl' !namechar
+
 # Blocks no IR field holds, kept whole: `.if` ... `.endif` (nesting), `.data`
-# ... `.enddata`, `.variation` ... `.end_variation`, a `.lib name` section
-# ... `.endl`. A missing closer runs to the end of the deck.
-Block      <- ifblock / datablock / varblock / libblock
+# ... `.enddata`, `.variation` ... `.end_variation`. A missing closer runs to
+# the end of the deck.
+Block      <- ifblock / datablock / varblock
 ifblock    <- '.if' !namechar rest (nl (ifblock / !endif rest))* (nl endif rest)?
 endif      <- '.endif' !namechar
 datablock  <- '.data' !namechar rest (nl !enddata rest)* (nl enddata rest)?
 enddata    <- '.enddata' !namechar
 varblock   <- '.variation' !namechar rest (nl !endvar rest)* (nl endvar rest)?
 endvar     <- '.end_variation' !namechar
-libblock   <- '.lib' s (!blank .)+ s? &nl (nl !endl rest)* (nl endl rest)?
-endl       <- '.endl' !namechar
 
 dotcard    <- Include &nl / Lib &nl / Model &nl / Params &nl / Func &nl / Options &nl
             / Temp &nl / Ic &nl / Nodeset &nl / Global &nl / Save &nl / Print &nl / Meas &nl
@@ -71,8 +76,9 @@ mnum       <- &([+\-.0-9]) More !(s? '=')
 More       <- word
 Flag       <- Word
 
-# §2.3: `.param a=1 b='a*2' f(x)='x*2'`.
-Params     <- ('.parameters' / '.parameter' / '.param') ((s / s? ',' s?) (FuncDef / Assign))+ s?
+# §2.3: `.param a=1 b='a*2' f(x)='x*2'`; one with no assignment sets
+# nothing (sky130's `rescap/*.spice`).
+Params     <- ('.parameters' / '.parameter' / '.param') ((s / s? ',' s?) (FuncDef / Assign))* s?
 Assign     <- Key s? '=' s? Val
 FuncDef    <- Key s? '(' s? (Arg (s? ',' s? Arg)*)? s? ')' s? '=' s? Body_p
 # A `.param` function's body: to the next blank or `,` unless delimited.

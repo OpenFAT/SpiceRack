@@ -1,0 +1,28 @@
+// A PDK-like Spectre model file, hand-written for tests/test_sections.rs:
+simulator lang=spectre
+library mylib
+section tt
+parameters vth0n=0.45 u0n=0.03
+include "shared.scs"
+include "res.scs" section=res_tt
+model nch bsim4 type=n version=4.5 vth0=vth0n u0=u0n toxe=4e-9
+model nchb bsim4 {
+1: type=n lmin=1e-7 lmax=1e-6 vth0=vth0n
+2: type=n lmin=1e-6 lmax=1e-4 vth0=vth0n+0.01
+}
+subckt nch_lvt d g s b
+parameters w=1u l=100n
+m0 (d g s b) nch w=w l=l
+ends nch_lvt
+endsection tt
+section ff
+parameters vth0n=0.40 u0n=0.035
+include "shared.scs"
+include "res.scs" section=res_ff
+model nch bsim4 type=n version=4.5 vth0=vth0n u0=u0n toxe=4e-9
+subckt nch_lvt d g s b
+parameters w=1u l=100n
+m0 (d g s b) nch w=w l=l
+ends nch_lvt
+endsection ff
+endlibrary mylib
