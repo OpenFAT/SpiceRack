@@ -20,6 +20,7 @@
 //! `Rser=1m`); Xyce Reference Guide Table 2-36 (BSIM3 is level 9).
 //!
 //! Contents:
+//! - `pub(super) use values::num_value`
 //! - `pub(super) fn deck(t: &Tree, src: &str, name: &str, d: Dialect, lang: &Lang)
 //!   -> (CircuitIR, Report)`
 
@@ -39,6 +40,8 @@ mod named_elements;
 mod sections;
 mod statistics;
 mod values;
+
+pub(super) use values::num_value;
 
 struct Cx<'a> {
     t: &'a Tree<'a>,

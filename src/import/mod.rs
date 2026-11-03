@@ -18,6 +18,8 @@
 //! - `pub fn decode(bytes: &[u8]) -> String`
 //! - `pub fn parse(src: &str, name: &str, d: Dialect) -> Result<(CircuitIR, Report), String>`
 //! - `pub fn dump(src: &str, d: Dialect) -> Result<String, String>`
+//! - `pub fn logical_lines(src: &str, d: Dialect) -> Result<String, String>` (test hook)
+//! - `pub fn number_value(text: &str, d: Dialect) -> Option<f64>` (test hook)
 
 use std::sync::OnceLock;
 
@@ -151,6 +153,37 @@ pub fn dump(src: &str, d: Dialect) -> Result<String, String> {
         open.push(r.next);
     }
     Ok(out)
+}
+
+/// The lines stage alone: `src`'s logical lines as [`parse`] reads them,
+/// each ended by `\n`, the title dropped. A test hook: the transpiler
+/// rewrite's tokenizer (`syntax`) is gated against it
+/// (`tests/test_syntax_tokenize.rs`).
+#[doc(hidden)]
+pub fn logical_lines(src: &str, d: Dialect) -> Result<String, String> {
+    let lang = lang(d)?;
+    let lines = lang
+        .g
+        .parse(lang.file, src)
+        .map_err(|at| format!("line grammar stops at byte {at}"))?;
+    Ok(logical(&lines))
+}
+
+/// The value [`parse`] gives a number spelled `text` in dialect `d`: the
+/// dialect grammar's `Num` rule over all of `text` (case-folded where the
+/// cards stage folds), then the lowering's arithmetic. `None` when `Num`
+/// does not read all of `text`, or `d` has no reader. A test hook, like
+/// [`logical_lines`].
+#[doc(hidden)]
+pub fn number_value(text: &str, d: Dialect) -> Option<f64> {
+    let lang = lang(d).ok()?;
+    let folded = if lang.fold {
+        text.to_ascii_lowercase()
+    } else {
+        text.to_string()
+    };
+    let t = lang.g.parse(lang.g.rule("Num")?, &folded).ok()?;
+    lower::num_value(&t, 0, text, d)
 }
 
 // ---- private ----

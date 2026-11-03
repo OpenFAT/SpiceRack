@@ -14,6 +14,7 @@
 //!   `Cx::body(&self, i: usize) -> String`, `Cx::name(&self, i: usize) -> String`
 //! - `Cx::pairs(&self, i: usize) -> Vec<(String, usize)>`,
 //!   `Cx::get(&self, p: &[(String, usize)], k: &str) -> Option<usize>`
+//! - `pub(in crate::import) fn num_value(t: &Tree, i: usize, src: &str, d: Dialect) -> Option<f64>`
 //! - `pub(super) fn unquoted(v: &str) -> Option<String>`
 //! - `pub(super) fn one_group(v: &str) -> String`
 
@@ -21,48 +22,12 @@ use super::{Cx, trim};
 use crate::codegen::Dialect;
 use crate::import::Tag;
 use crate::ir::*;
+use crate::peg::Tree;
 
 impl Cx<'_> {
-    /// A `Num` row's value: its `Mag` (one decimal, `d` an exponent letter)
-    /// scaled by its scale row, parsed once so `0.1n` is exactly 1e-10.
+    /// A `Num` row's value: [`num_value`] over this deck's rows.
     pub(super) fn num(&self, i: usize) -> Option<f64> {
-        // ngspice's own arithmetic, so a deck written back reads as the same
-        // double (`0.5u` and `500n` differ in the last bit there).
-        if matches!(self.d, Dialect::Ngspice | Dialect::Espice) {
-            return crate::unit::ngspice_value(self.text(i));
-        }
-        let mag = self.kid(i, Tag::Mag)?;
-        let mut m = self.text(mag).to_ascii_lowercase().replace('d', "e");
-        // LTspice `6K34`: the digits after the scale are its fraction.
-        if let Some(f) = self.kid(i, Tag::Frac) {
-            m = format!("{m}.{}", self.text(f));
-        }
-        let scale = self
-            .kids(i)
-            .into_iter()
-            .find(|&k| k != mag && self.tag(k) != Tag::Frac)
-            .map(|k| self.tag(k));
-        let (base, exp) = match m.split_once('e') {
-            Some((b, e)) => (b.to_string(), e.parse::<i32>().ok()?),
-            None => (m.clone(), 0),
-        };
-        let shift = match scale {
-            Some(Tag::Mil) => return Some(m.parse::<f64>().ok()? * 25.4e-6),
-            Some(Tag::Peta) => 15,
-            Some(Tag::Tera) => 12,
-            Some(Tag::Giga) => 9,
-            Some(Tag::Meg) => 6,
-            Some(Tag::Kilo) => 3,
-            Some(Tag::Centi) => -2,
-            Some(Tag::Milli) => -3,
-            Some(Tag::Micro) => -6,
-            Some(Tag::Nano) => -9,
-            Some(Tag::Pico) => -12,
-            Some(Tag::Femto) => -15,
-            Some(Tag::Atto) => -18,
-            _ => 0,
-        };
-        format!("{base}e{}", exp + shift).parse().ok()
+        num_value(self.t, i, self.src, self.d)
     }
 
     /// The number a value row holds when it is one: a `Num`, or a `Word`/
@@ -240,6 +205,55 @@ impl Cx<'_> {
     pub(super) fn get(&self, p: &[(String, usize)], k: &str) -> Option<usize> {
         p.iter().find(|(n, _)| n == k).map(|(_, v)| *v)
     }
+}
+
+/// A `Num` row's value: its `Mag` (one decimal, `d` an exponent letter)
+/// scaled by its scale row, parsed once so `0.1n` is exactly 1e-10. `src` is
+/// the text in its own case, at the offsets `t` was parsed at.
+pub(in crate::import) fn num_value(t: &Tree, i: usize, src: &str, d: Dialect) -> Option<f64> {
+    let text = |k: usize| {
+        let r = t.rows[k];
+        &src[r.start as usize..r.end as usize]
+    };
+    // ngspice's own arithmetic, so a deck written back reads as the same
+    // double (`0.5u` and `500n` differ in the last bit there).
+    if matches!(d, Dialect::Ngspice | Dialect::Espice) {
+        return crate::unit::ngspice_value(text(i));
+    }
+    let kids: Vec<usize> = t.children(Some(i)).collect();
+    let tag = |k: usize| Tag::from_u8(t.tag(k));
+    let mag = *kids.iter().find(|&&k| tag(k) == Tag::Mag)?;
+    let mut m = text(mag).to_ascii_lowercase().replace('d', "e");
+    // LTspice `6K34`: the digits after the scale are its fraction.
+    if let Some(&f) = kids.iter().find(|&&k| tag(k) == Tag::Frac) {
+        m = format!("{m}.{}", text(f));
+    }
+    let scale = kids
+        .iter()
+        .copied()
+        .find(|&k| k != mag && tag(k) != Tag::Frac)
+        .map(tag);
+    let (base, exp) = match m.split_once('e') {
+        Some((b, e)) => (b.to_string(), e.parse::<i32>().ok()?),
+        None => (m.clone(), 0),
+    };
+    let shift = match scale {
+        Some(Tag::Mil) => return Some(m.parse::<f64>().ok()? * 25.4e-6),
+        Some(Tag::Peta) => 15,
+        Some(Tag::Tera) => 12,
+        Some(Tag::Giga) => 9,
+        Some(Tag::Meg) => 6,
+        Some(Tag::Kilo) => 3,
+        Some(Tag::Centi) => -2,
+        Some(Tag::Milli) => -3,
+        Some(Tag::Micro) => -6,
+        Some(Tag::Nano) => -9,
+        Some(Tag::Pico) => -12,
+        Some(Tag::Femto) => -15,
+        Some(Tag::Atto) => -18,
+        _ => 0,
+    };
+    format!("{base}e{}", exp + shift).parse().ok()
 }
 
 /// `"text"` without its quotes.
