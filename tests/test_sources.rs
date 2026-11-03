@@ -1,14 +1,17 @@
 #![cfg(feature = "backend")]
 //! Waveform sources the IR carries beyond SPICE3's six: PWL `r=`/`td=`,
 //! TRNOISE and TRRANDOM, and what each dialect writes for them or refuses;
-//! and the ngspice importer reading PWL `r=`/`td=`, RF ports and `.sp`.
+//! the ngspice importer reading PWL `r=`/`td=`, RF ports and `.sp`, and the
+//! Spectre importer reading PWL `delay`/`pwlperiod`.
 //!
 //! Oracle: real ngspice running the deck the codegen wrote, checked against
 //! the waveform's closed form (ngspice 45 manual §4.1.4) or, for the random
 //! sources, against their distribution with a stated statistical tolerance
-//! (§4.1.7, §4.1.8). An imported deck: real ngspice on the original and on
-//! the deck written from its IR, every vector equal to 1e-12. A missing
-//! ngspice is a failure, not a skip.
+//! (§4.1.7, §4.1.8). An imported ngspice deck: real ngspice on the original
+//! and on the deck written from its IR, every vector equal to 1e-12. An
+//! imported Spectre deck (no Spectre here): the Spectre Reference's
+//! semantics as the closed form, on ngspice running the deck written from
+//! its IR. A missing ngspice is a failure, not a skip.
 
 use spicerack::codegen::{netlist, Dialect};
 use spicerack::ir::*;
@@ -99,10 +102,15 @@ fn pwl_repeat_and_delay_are_refused_where_no_dialect_form_exists() {
     // answers an I source with "unknown parameter (r)"); ESPice reads both.
     assert!(netlist(&bench(source(true, tri()), 1e-5, 1e-3), Dialect::Ngspice).unwrap_err().to_string().contains("PWL"));
     assert!(netlist(&bench(source(true, tri()), 1e-5, 1e-3), Dialect::Espice).unwrap().contains(") r=0 td=0.0005"));
-    for d in [Dialect::Ltspice, Dialect::Hspice, Dialect::Xyce, Dialect::Spectre, Dialect::Vacask] {
+    for d in [Dialect::Ltspice, Dialect::Hspice, Dialect::Xyce, Dialect::Vacask] {
         let e = netlist(&bench(source(false, tri()), 1e-5, 1e-3), d).unwrap_err().to_string();
         assert!(e.contains("PWL"), "{d:?}: {e}");
     }
+    // Spectre: `delay` and `pwlperiod`, but only for an r= that is exactly a
+    // period (test_spectre_golden.rs); r=1m repeats from mid-waveform.
+    assert!(netlist(&bench(source(false, tri()), 1e-5, 1e-3), Dialect::Spectre).unwrap().contains("delay=500u pwlperiod=2m"));
+    let mid = triangle(Some(ms(1.0)), None);
+    assert!(netlist(&bench(source(false, mid), 1e-5, 1e-3), Dialect::Spectre).unwrap_err().to_string().contains("PWL"));
     // Without r=/td= every dialect but VACASK (no PWL at all) writes it.
     for d in [Dialect::Ltspice, Dialect::Hspice, Dialect::Xyce, Dialect::Spectre] {
         netlist(&bench(source(false, triangle(None, None)), 1e-5, 1e-3), d).unwrap_or_else(|e| panic!("{d:?}: {e}"));
@@ -314,4 +322,75 @@ fn an_imported_rf_port_runs_as_the_original_deck() {
         "port round trip\nV1 in 0 dc 1 ac 1 portnum 1 z0 50\nV2 out 0 dc 0 ac 1 portnum=2\nR1 in mid 16.666666666666668\n\
          R2 mid out 16.666666666666668\nR3 mid 0 66.66666666666667\n.op\n.sp lin 3 1k 3k\n.end\n",
     );
+}
+
+// ── Spectre cards in: PWL `delay`, `pwlperiod` ([CMP] p.683 #4, #17, #18; p.686) ──
+//
+// `delay` is the general waveform delay, ngspice's `td=`. `pwlperiod=P`
+// repeats the waveform from t = 0 with period P, and before each repeat
+// ramps over `twidth` (default P/1000) from its value at P - twidth to its
+// value at 0. That is ngspice's `r=0` exactly when the points start at 0,
+// end at P on the first point's value, and the last segment is at least
+// twidth long (the ramp is then the segment itself); any other form stays raw.
+
+const SPECTRE_PWLS: &str = "// pwl\nsimulator lang=spectre\n\
+    v1 (a 0) vsource type=pwl wave=[0 0 1m 1 2m 0] delay=0.5m\n\
+    v2 (b 0) vsource type=pwl wave=[0 0 1m 1 2m 0] pwlperiod=2m\n\
+    v3 (c 0) vsource type=pwl wave=[0 0 1m 1 2m 0] pwlperiod=2m delay=0.5m\n\
+    r1 (a 0) resistor r=1\nr2 (b 0) resistor r=1\nr3 (c 0) resistor r=1\n\
+    tr tran step=10u stop=7m maxstep=10u\n";
+
+#[test]
+fn spectre_pwl_delay_and_an_exact_pwlperiod_lower_into_td_and_r() {
+    let extra = "v4 (d 0) vsource type=pwl wave=[0 0 1m 1 2m 0.5] pwlperiod=2m\n\
+                 v5 (e 0) vsource type=pwl wave=[0 0 1m 1 2m 0] pwlperiod=3m\n\
+                 v6 (f 0) vsource type=pwl wave=[0 0 1m 1 2m 0] pwlperiod=2m twidth=1u\n\
+                 v7 (g 0) vsource type=pwl wave=[0.1m 0 1m 1 2m 0] pwlperiod=2m\n\
+                 v8 (h 0) vsource type=pwl wave=[0 0 1m 1 2m 0 2.0000001m 0] pwlperiod=2.0000001m\n\
+                 v9 (i 0) vsource type=sine sinedc=0 ampl=1 freq=1k fmmodindex=2 fmmodfreq=100 delay=1m\n\
+                 v10 (j 0) vsource type=exp val0=0 val1=1 td1=1m tau1=1m delay=1m\n\
+                 v11 (k 0) vsource type=pulse val0=0 val1=1 pwlperiod=2m\n";
+    let (ir, _) = spicerack::import::parse(&format!("{SPECTRE_PWLS}{extra}"), "t", Dialect::Spectre).unwrap();
+    let sources: Vec<_> = ir.top.components.iter().filter_map(|c| match c {
+        Component::VoltageSource { name, waveform, .. } => Some((name.as_str(), waveform.clone())),
+        _ => None,
+    }).collect();
+    let pwl = |repeat: Option<f64>, delay: Option<f64>| {
+        let values = [(0.0, 0.0), (1e-3, 1.0), (2e-3, 0.0)].map(|(t, v)| (IrNum::Num(t), IrNum::Num(v))).to_vec();
+        Some(IrWaveform::Pwl { values, repeat: repeat.map(IrNum::Num), delay: delay.map(IrNum::Num) })
+    };
+    assert_eq!(sources, [("1", pwl(None, Some(0.5e-3))), ("2", pwl(Some(0.0), None)), ("3", pwl(Some(0.0), Some(0.5e-3)))]);
+    // v4..v11: ends differ (a twidth ramp), a period past the points, a given
+    // twidth, points from 0.1 ms, a last segment shorter than the default
+    // twidth, an FM sine's and an exp's delay (no IR field), a pwlperiod off
+    // a PWL. All raw.
+    assert_eq!(ir.top.raw_spice.len(), 8, "{:?}", ir.top.raw_spice);
+}
+
+#[test]
+fn an_imported_spectre_pwl_runs_on_ngspice_as_the_manual_says() {
+    // The manual's semantics as the closed form: `tri` once (1 V at 1 ms,
+    // 0 from 2 ms), shifted by `delay` (holding its first value before) and
+    // repeated with period `pwlperiod`.
+    let (ir, report) = spicerack::import::parse(SPECTRE_PWLS, "t", Dialect::Spectre).unwrap();
+    assert_eq!((report.raw, ir.top.raw_spice.len()), (0, 0), "{:?}", ir.top.raw_spice);
+    // Written back as Spectre, the cards say what they said.
+    let back = netlist(&ir, Dialect::Spectre).unwrap();
+    assert!(back.contains("wave=[0 0 1m 1 2m 0] pwlperiod=2m\n") && back.contains("wave=[0 0 1m 1 2m 0] delay=500u pwlperiod=2m\n"), "{back}");
+    let deck = netlist(&ir, Dialect::Ngspice).unwrap();
+    let raw = ngspice(&deck);
+    let time = col(&raw, "time");
+    let tri = |t: f64| if t <= 0.0 || t >= 2e-3 { 0.0 } else if t <= 1e-3 { t / 1e-3 } else { (2e-3 - t) / 1e-3 };
+    let delayed = |t: f64| if t < 0.5e-3 { 0.0 } else { (t - 0.5e-3).rem_euclid(2e-3) };
+    for (node, want) in [
+        ("a", &(|t: f64| tri(t - 0.5e-3)) as &dyn Fn(f64) -> f64),
+        ("b", &|t: f64| tri(t.rem_euclid(2e-3))),
+        ("c", &|t: f64| tri(delayed(t))),
+    ] {
+        let v = col(&raw, node);
+        for k in 0..=700 {
+            let t = 7e-3 * k as f64 / 700.0;
+            assert!((at(time, v, t) - want(t)).abs() < 1e-9, "{node} at {t}: {}, want {}\n{deck}", at(time, v, t), want(t));
+        }
+    }
 }

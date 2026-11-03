@@ -521,6 +521,19 @@ impl IrWaveform {
         }).collect()
     }
 
+    /// The Spectre `pwlperiod` that repeats PWL `values` exactly as `repeat`
+    /// 0 (ngspice `r=0`) does, when one does: numeric points from t = 0
+    /// whose last value equals the first, the last segment at least the
+    /// default `twidth` (period/1000) long. Spectre ramps over `twidth` from
+    /// the value at period - twidth to the first value before each repeat
+    /// (Spectre Reference 5.0, `vsource` #17, #18, p.686); under these
+    /// conditions that ramp is the last segment itself. `None` otherwise.
+    pub fn spectre_pwl_period(values: &[(IrNum, IrNum)]) -> Option<f64> {
+        let ([(t0, v0), ..], [.., (tp, _), (tn, vn)]) = (values, values) else { return None };
+        let (t0, v0, tp, tn, vn) = (t0.num()?, v0.num()?, tp.num()?, tn.num()?, vn.num()?);
+        (t0 == 0.0 && vn == v0 && tn > 0.0 && tn - tp >= tn / 1000.0).then_some(tn)
+    }
+
     /// The DC value SPICE takes for a card that gives none: the value at
     /// t=0 (AM starts at 0), and 0 for TRNOISE and TRRANDOM, which add to it.
     pub fn at_zero(&self) -> IrValue {

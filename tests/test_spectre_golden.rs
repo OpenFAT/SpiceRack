@@ -353,6 +353,31 @@ fn spectre_vsource_waveforms_match_documented_parameters() {
     assert_eq!(v(None, Some(1.0), Some(45.0)), "v1 (1 0) vsource dc=0 mag=1 phase=45");
 }
 
+/// `[CMP]` p.683 `vsource` `delay` (#4, the general waveform delay: ngspice
+/// `td=`) and `pwlperiod` (#17) with `twidth=pwlperiod/1000` (#18); p.686:
+/// "Before repeating, the waveform changes linearly in an interval of twidth
+/// from its value at (period - twidth) to its value at the beginning of the
+/// waveform." So `r=0` is `pwlperiod=<last time>` only for points from 0
+/// whose last value is the first and whose last segment spans the ramp;
+/// any other repeat is refused.
+#[test]
+fn spectre_pwl_writes_delay_and_only_an_exact_pwlperiod() {
+    let tri = |end: f64, repeat: Option<f64>, delay: Option<f64>| {
+        let values = [(0.0, 0.0), (1e-3, 1.0), (2e-3, end)].map(|(t, v)| (IrNum::Num(t), IrNum::Num(v))).to_vec();
+        Component::VoltageSource {
+            name: "1".into(), np: "1".into(), nm: "0".into(), value: IrValue::Numeric { value: 0.0 },
+            ac_magnitude: None, ac_phase: None, port: None,
+            waveform: Some(IrWaveform::Pwl { values, repeat: repeat.map(IrNum::Num), delay: delay.map(IrNum::Num) }),
+        }
+    };
+    assert_eq!(component(tri(0.0, None, Some(0.5e-3))), "v1 (1 0) vsource dc=0 type=pwl wave=[0 0 1m 1 2m 0] delay=500u");
+    assert_eq!(component(tri(0.0, Some(0.0), Some(0.5e-3))), "v1 (1 0) vsource dc=0 type=pwl wave=[0 0 1m 1 2m 0] delay=500u pwlperiod=2m");
+    for (end, repeat) in [(0.0, 1e-3), (0.5, 0.0)] {
+        let e = try_component(&tri(end, Some(repeat), None)).unwrap_err().to_string();
+        assert!(e.contains("PWL"), "end {end}, r={repeat}: {e}");
+    }
+}
+
 /// Things SPICE can express that Spectre has no documented spelling for must
 /// error, not silently become a comment or a guessed statement.
 #[test]
