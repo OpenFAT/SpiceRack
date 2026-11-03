@@ -77,6 +77,9 @@ impl<'a> Rd<'a> {
         Some(match (kind.as_str(), ns.as_slice()) {
             ("dc", []) if p.is_empty() => Ana::Op,
             ("dc", []) => {
+                // quirk: `dev=` and `iprobe=` (below) name a source as
+                // written, not as the name map spells its declaration
+                // (`in1` is `Vin1`); phase 7 spells them through the map.
                 let source = match (s("dev"), s("param")) {
                     (Some(dev), Some(param)) if param == "dc" => dev,
                     (None, Some(param)) => param,
