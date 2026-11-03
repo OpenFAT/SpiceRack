@@ -24,6 +24,9 @@ No written-versus-refused flip on any SPICE target. The refusal text report
 Every input dialect reaches every SPICE target through the new reader
 (`render::read`), SPICE and named alike (Spectre, VACASK: `read/named*.rs`).
 
+The last `--writer syntax` record is `/tmp/claude-1000/spicerack-golden/p4`
+(at `479c30c`), the baseline `/tmp/claude-1000/spicerack-golden/baseline-daa0ad0`.
+
 ## Run the gate
 
 ```sh
@@ -104,6 +107,23 @@ others are recorded through `codegen::netlist`, so the whole tree diffs.
    Phase 7 decides (Refuse).
 8. The reader duplicates `syntax::adapter`'s rules (copied, then typed to
    views). Phase 6 deletes the adapter; the rules live here after it.
+9. **The file role** (`resolve::Role`) does not yet decide the title, `.end`
+   and control block: the SPICE writer keeps the old rules (a title always;
+   HSPICE drops `.end` when the deck has no analysis), which the gate holds.
+   Moving them to `Role` changes bytes wherever the guess and the role
+   disagree: a phase-7 behaviour change with its own xfail lines, or a
+   decision for the named writer, whose VACASK library rules are the case
+   the spec names.
+10. **The name map** holds the hoisted-subcircuit renames (`parent__name`)
+    of `X` masters. The SPICE letter policy is still the old reader's (the
+    letter stripped on read, `Card::*::name`, and prefixed on write), so a
+    Spectre `v1` reaches SPICE as `V1` and a reference to it (`probe=v1`)
+    is spelled by the same `strip`; making the letter a rename in the map
+    (declaration and every reference together) is the named writer's
+    first use of it.
+11. `Spelling` holds what the five SPICE rows differ in; the dot-card
+    keywords the five share are literals in `spice/`. The named rows add
+    them (`model`/`.model`, `subckt`/`.subckt`, `parameters`/`.param`).
 
 ## Decisions taken
 
