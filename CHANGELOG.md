@@ -5,7 +5,7 @@ One line per change, written by hand, citing its pull request. Every number is m
 ## Unreleased
 
 - style: `cargo fmt` over the whole tree; the commit is in `.git-blame-ignore-revs` (#19).
-- internal: src/python.rs split into src/python/ by owner (#?).
+- internal: src/python.rs split into src/python/ by owner (#20).
 - `TESTING.md` (tiers and oracles), this changelog, and `tools/check_style.py` vendored.
 - ir: Testbench.dut removed; old JSON carrying it still loads (#13).
 - python: YieldSummary.failed and the add_spectre_montecarlo alias removed; use add_spectre_monte_carlo (#13).
