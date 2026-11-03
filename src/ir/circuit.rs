@@ -6,6 +6,7 @@
 //!
 //! Contents:
 //! - `pub struct CircuitIR`, `pub struct LibSection`, `pub struct FuncDef`, `pub struct Subcircuit`
+//! - `pub struct Conditional`, `pub struct Branch`, `Subcircuit::with_branches(&self) -> Vec<&Subcircuit>`
 //! - `pub struct VerilogBlock`, `pub enum VerilogMode`, `pub enum VerilogConnection`
 //! - `pub struct Port`, `pub enum PortDirection`, `pub struct ParamDef`
 //! - `pub struct Instance`, `pub enum Element<'a>`, `pub struct ModelDef`, `pub struct ModelLibrary`
@@ -68,6 +69,10 @@ pub struct LibSection {
     /// top of a deck.
     #[serde(default)]
     pub subcircuit_defs: Vec<Subcircuit>,
+    /// The section's functions (Spectre `real f(...)`, SPICE `.func`),
+    /// visible to the files that include it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub functions: Vec<FuncDef>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -102,6 +107,35 @@ pub struct Subcircuit {
     /// deck's top or a library section's body.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub statistics: Vec<Statistics>,
+    /// Conditional blocks, each placed by its `at` among the components:
+    /// each picks the cards of its first branch whose condition holds.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub conditionals: Vec<Conditional>,
+}
+
+/// A conditional block: ngspice and HSPICE `.if (c)` ... `.elseif (c)` ...
+/// `.else` ... `.endif` (ngspice manual §2.15), Spectre's structural `if
+/// (c) { ... } else if (c) { ... } else { ... }` (Spectre Reference 19.1
+/// p.491), VACASK `@if c` ... `@elseif c` ... `@else` ... `@end`. The
+/// conditions are evaluated when the hierarchy is flattened, over the
+/// parameters in scope.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Conditional {
+    pub branches: Vec<Branch>,
+    /// Where the block sat among its body's components, as for
+    /// [`Instance::at`]: card order is matrix order.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at: Option<u32>,
+}
+
+/// One branch of a [`Conditional`]: its condition (`None`: the `else`), an
+/// expression as written, and the cards it selects (a body with no name or
+/// ports; it may hold further conditionals).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Branch {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub condition: Option<String>,
+    pub body: Subcircuit,
 }
 
 /// Verilog co-simulation or synthesis block stored in the IR
@@ -168,6 +202,7 @@ pub struct Instance {
 pub enum Element<'a> {
     Component(&'a Component),
     Instance(&'a Instance),
+    Conditional(&'a Conditional),
 }
 
 /// Model definition
@@ -190,29 +225,52 @@ pub struct ModelLibrary {
 }
 
 impl Subcircuit {
+    /// This body and every conditional branch's body in it, depth first.
+    pub fn with_branches(&self) -> Vec<&Subcircuit> {
+        let mut out = vec![self];
+        for c in &self.conditionals {
+            for b in &c.branches {
+                out.extend(b.body.with_branches());
+            }
+        }
+        out
+    }
+
     /// Components and instances merged in card order (each instance before
     /// the component it preceded).
     pub fn elements(&self) -> Vec<Element<'_>> {
         let n = self.components.len();
-        let pos = |i: &Instance| i.at.map_or(n, |a| (a as usize).min(n));
-        let mut insts: Vec<&Instance> = self.instances.iter().collect();
-        insts.sort_by_key(|i| pos(i)); // stable: same-place instances keep their order
-        let mut insts = insts.into_iter().peekable();
-        let mut out = Vec::with_capacity(n + self.instances.len());
+        let at = |a: Option<u32>| a.map_or(n, |a| (a as usize).min(n));
+        // Instances, then conditional blocks, at each place (stable sorts:
+        // same-place ones keep their order).
+        let mut placed: Vec<(usize, Element<'_>)> = self
+            .instances
+            .iter()
+            .map(|i| (at(i.at), Element::Instance(i)))
+            .collect();
+        placed.extend(
+            self.conditionals
+                .iter()
+                .map(|c| (at(c.at), Element::Conditional(c))),
+        );
+        placed.sort_by_key(|(k, e)| (*k, matches!(e, Element::Conditional(_))));
+        let mut placed = placed.into_iter().peekable();
+        let mut out = Vec::with_capacity(n + self.instances.len() + self.conditionals.len());
         for (k, c) in self.components.iter().enumerate() {
-            while let Some(i) = insts.next_if(|i| pos(i) <= k) {
-                out.push(Element::Instance(i));
+            while let Some((_, e)) = placed.next_if(|(p, _)| *p <= k) {
+                out.push(e);
             }
             out.push(Element::Component(c));
         }
-        out.extend(insts.map(Element::Instance));
+        out.extend(placed.map(|(_, e)| e));
         out
     }
 }
 
 impl CircuitIR {
-    /// Every body the deck writes cards from: the top, its definitions, and
-    /// each section's body and definitions.
+    /// Every body the deck writes cards from: the top, its definitions,
+    /// each section's body and definitions, and the conditional branches in
+    /// each.
     pub fn subcircuits(&self) -> impl Iterator<Item = &Subcircuit> {
         let sections = self
             .sections
@@ -221,6 +279,7 @@ impl CircuitIR {
         std::iter::once(&self.top)
             .chain(&self.subcircuit_defs)
             .chain(sections)
+            .flat_map(Subcircuit::with_branches)
     }
 
     /// Calls `f` on every identifier, for renaming: definition names (the

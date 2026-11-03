@@ -20,6 +20,10 @@ uses, and `lower.rs` lowers them into one `LibSection` of
 `CircuitIR::sections`, never into the top. Sections do not nest: a section
 head inside one is `Unparsed`. LTspice has none (`LibDef <- never`).
 
+A conditional block is an `If` of `Branch` rows, each with its `Cond`
+(none for an `else`) and the rows of the same `card` rule; `lower.rs` makes
+a `Conditional` placed among its body's components.
+
 Sources: the SPICE rules started as ESPice's grammar oracle
 (`tests/frontend/grammar/`); LTspice from ADI's ltspice-reference, Xyce from
 its Reference Guide, VACASK from its lexer, parser and docs

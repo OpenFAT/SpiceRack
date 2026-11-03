@@ -86,25 +86,7 @@ pub(super) fn netlist(ir: &CircuitIR) -> Result<String, CodeGenError> {
     // `[KUN]` B.2: `//` is a Spectre comment; "all Spectre netlists must
     // begin with a lang=spectre statement".
     w!(out, "// {}\n\nsimulator lang=spectre\n\n", ir.top.name);
-    // `real f(real x) { return x*2; }` (R5 pp.870-871). A body reading a
-    // node or a current has no Spectre function form.
-    for f in &ir.functions {
-        let b = f.body.to_ascii_lowercase();
-        if b.contains("v(") || b.contains("i(") {
-            return Err(unsupported_component(&format!(
-                ".func {}: a body over v()/i() has no Spectre function form",
-                f.name
-            )));
-        }
-        let args: Vec<String> = f.args.iter().map(|a| format!("real {a}")).collect();
-        w!(
-            out,
-            "real {}({}) {{\n    return {};\n}}\n",
-            f.name,
-            args.join(", "),
-            f.body
-        );
-    }
+    emit_functions(&mut out, &ir.functions)?;
     // `global 0 a b`: Spectre takes the first global as ground (R5 p.871).
     if !ir.globals.is_empty() {
         out.push_str("global 0");
@@ -165,6 +147,10 @@ pub(super) fn netlist(ir: &CircuitIR) -> Result<String, CodeGenError> {
         match e {
             Element::Component(c) => emit_component(&mut out, c, n)?,
             Element::Instance(i) => emit_instance(&mut out, i, n),
+            Element::Conditional(c) => {
+                emit_conditionals(&mut out, std::slice::from_ref(c), n)?;
+                continue;
+            }
         }
         out.push('\n');
     }
@@ -365,6 +351,10 @@ fn emit_subcircuit_body(out: &mut String, sc: &Subcircuit, n: Names) -> Result<(
         match e {
             Element::Component(c) => emit_component(out, c, n)?,
             Element::Instance(i) => emit_instance(out, i, n),
+            Element::Conditional(c) => {
+                emit_conditionals(out, std::slice::from_ref(c), n)?;
+                continue;
+            }
         }
         out.push('\n');
     }
@@ -372,6 +362,54 @@ fn emit_subcircuit_body(out: &mut String, sc: &Subcircuit, n: Names) -> Result<(
     // that it is Spectre's).
     for l in &sc.raw_spice {
         w!(out, "{l}\n");
+    }
+    Ok(())
+}
+
+/// `[REF]` p.491: `if (c) {` ... `} else if (c) {` ... `} else {` ... `}`,
+/// each branch a body (`emit_subcircuit_body`), nesting.
+fn emit_conditionals(
+    out: &mut String,
+    blocks: &[Conditional],
+    n: Names,
+) -> Result<(), CodeGenError> {
+    for c in blocks {
+        for (i, b) in c.branches.iter().enumerate() {
+            match (&b.condition, i) {
+                (Some(c), 0) => w!(out, "if ({}) {{\n", spectre_value(c)),
+                (Some(c), _) => w!(out, "}} else if ({}) {{\n", spectre_value(c)),
+                (None, _) => out.push_str("} else {\n"),
+            }
+            emit_subcircuit_body(out, &b.body, n)?;
+        }
+        out.push_str("}\n");
+    }
+    Ok(())
+}
+
+/// `real f(real x) {` / `return x*2;` / `}` (R5 pp.870-871). A body reading
+/// a node or a current (`v(..)`, `i(..)`) has no Spectre function form.
+fn emit_functions(out: &mut String, functions: &[FuncDef]) -> Result<(), CodeGenError> {
+    for f in functions {
+        let mut probe = false;
+        crate::codegen::statistics::rewrite_calls(&f.body, &mut |name, _| {
+            probe |= name.eq_ignore_ascii_case("v") || name.eq_ignore_ascii_case("i");
+            None
+        });
+        if probe {
+            return Err(unsupported_component(&format!(
+                ".func {}: a body over v()/i() has no Spectre function form",
+                f.name
+            )));
+        }
+        let args: Vec<String> = f.args.iter().map(|a| format!("real {a}")).collect();
+        w!(
+            out,
+            "real {}({}) {{\n    return {};\n}}\n",
+            f.name,
+            args.join(", "),
+            f.body
+        );
     }
     Ok(())
 }

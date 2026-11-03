@@ -538,6 +538,19 @@ mod tests {
                 }],
                 truncate: [Some(s("4")), None, Some(s("3"))],
             }],
+            conditionals: vec![Conditional {
+                branches: vec![
+                    Branch {
+                        condition: Some(s("w > 1")),
+                        body: sub("b"),
+                    },
+                    Branch {
+                        condition: None,
+                        body: Subcircuit::default(),
+                    },
+                ],
+                at: Some(0),
+            }],
         };
         let tb = Testbench {
             stimulus: rcl(IrValue::Expression { expr: s("r") }).into(),
@@ -599,6 +612,11 @@ mod tests {
                     library: Some(s("lib")),
                     body: sub("tt"),
                     subcircuit_defs: vec![sub("nch")],
+                    functions: vec![FuncDef {
+                        name: s("g"),
+                        args: vec![s("x")],
+                        body: s("x+1"),
+                    }],
                 },
                 LibSection::default(),
             ],
@@ -1404,7 +1422,7 @@ mod tests {
             .map(|e| match e {
                 Element::Component(Component::RawSpice { line }) => line.as_str(),
                 Element::Instance(i) => i.name.as_str(),
-                _ => "",
+                Element::Conditional(_) | Element::Component(_) => "",
             })
             .collect();
         assert_eq!(names, ["first", "a", "mid", "b", "late"]);

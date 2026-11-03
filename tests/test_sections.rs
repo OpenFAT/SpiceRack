@@ -136,7 +136,7 @@ fn a_nested_section_is_unparsed_and_kept_in_its_section() {
 }
 
 /// A card that means something to the whole deck stays raw in a section
-/// instead of leaking out of it.
+/// instead of leaking out of it; a function is the section's.
 #[test]
 fn a_testbench_card_in_a_section_stays_in_it() {
     let (ir, _) = parse(
@@ -147,12 +147,16 @@ fn a_testbench_card_in_a_section_stays_in_it() {
     .unwrap();
     assert_eq!(
         ir.sections[0].body.raw_spice,
-        [
-            ".global vdd",
-            ".func f(x) {x*2}",
-            ".option reltol=1e-4",
-            ".op"
-        ]
+        [".global vdd", ".option reltol=1e-4", ".op"]
+    );
+    // A function is the section's own.
+    assert_eq!(
+        ir.sections[0].functions,
+        [FuncDef {
+            name: "f".into(),
+            args: vec!["x".into()],
+            body: "x*2".into()
+        }]
     );
     assert!(ir.globals.is_empty() && ir.functions.is_empty());
     assert_eq!(ir.testbench.unwrap(), Testbench::default());

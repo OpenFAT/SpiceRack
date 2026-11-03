@@ -62,7 +62,8 @@ fn deck_to_ir() {
     assert_eq!(names, ["a__sub", "a", "b__sub", "b"]);
     assert_eq!(sc.subcircuit_defs[1].instances[0].subcircuit, "a__sub");
     assert_eq!(sc.subcircuit_defs[3].instances[0].subcircuit, "b__sub");
-    // Nested `.if` blocks stay one raw block.
+    // Nested `.if` blocks are conditionals, the inner one in the outer's
+    // first branch.
     let n = parse(
         "t\n.if (a == 1)\n.if (b == 1)\nR1 1 0 1\n.endif\n.else\nR1 1 0 2\n.endif\n",
         "t",
@@ -70,8 +71,26 @@ fn deck_to_ir() {
     )
     .unwrap()
     .0;
+    let [outer] = &n.top.conditionals[..] else {
+        panic!("{:?}", n.top)
+    };
+    assert_eq!(outer.branches.len(), 2);
+    assert_eq!(outer.branches[0].condition.as_deref(), Some("a == 1"));
+    assert_eq!(
+        outer.branches[0].body.conditionals[0].branches[0]
+            .condition
+            .as_deref(),
+        Some("b == 1")
+    );
+    assert_eq!(
+        (
+            outer.branches[1].condition.as_ref(),
+            outer.branches[1].body.components.len()
+        ),
+        (None, 1)
+    );
     assert!(
-        n.top.components.is_empty() && n.top.raw_spice.len() == 7,
+        n.top.components.is_empty() && n.top.raw_spice.is_empty(),
         "{:?}",
         n.top
     );

@@ -86,7 +86,8 @@ const NUMERIC_OPTIONS: &[&str] = &[
 /// The whole VACASK deck, ending in a newline.
 pub(super) fn netlist(ir: &CircuitIR) -> Result<String, CodeGenError> {
     super::refuse_raw_spice(ir, "vacask")?;
-    if let Some(f) = ir.functions.first() {
+    let section_fn = ir.sections.iter().flat_map(|s| &s.functions).next();
+    if let Some(f) = ir.functions.first().or(section_fn) {
         return Err(unsupported_comp(format!(
             ".func {}: VACASK has no user functions",
             f.name
@@ -127,6 +128,16 @@ pub(super) fn netlist(ir: &CircuitIR) -> Result<String, CodeGenError> {
                 .map(|m| emit_model(m, &mut loads, low))
                 .collect::<Result<_, _>>()?,
         );
+    }
+    // A conditional branch's models load their modules too.
+    for sc in ir.subcircuits() {
+        for c in &sc.conditionals {
+            for b in &c.branches {
+                for m in &b.body.models {
+                    emit_model(m, &mut loads, low)?;
+                }
+            }
+        }
     }
     // A section's models stay in it: the body's, then each definition's.
     let mut section_models: Vec<Vec<Vec<String>>> = Vec::new();
@@ -256,6 +267,10 @@ pub(super) fn netlist(ir: &CircuitIR) -> Result<String, CodeGenError> {
         match e {
             Element::Component(c) => emit_component(&mut out, c, low)?,
             Element::Instance(i) => emit_instance(&mut out, i, low),
+            Element::Conditional(c) => {
+                emit_conditionals(&mut out, std::slice::from_ref(c), low)?;
+                continue;
+            }
         }
         out.push('\n');
     }
@@ -457,11 +472,49 @@ fn emit_body(
         match e {
             Element::Component(c) => emit_component(out, c, low)?,
             Element::Instance(i) => emit_instance(out, i, low),
+            Element::Conditional(c) => {
+                emit_conditionals(out, std::slice::from_ref(c), low)?;
+                continue;
+            }
         }
         out.push('\n');
     }
     for l in &sc.raw_spice {
         w!(out, "  {l}\n");
+    }
+    Ok(())
+}
+
+/// P462-P509: `@if c` ... `@elseif c` ... `@else` ... `@end`; a branch
+/// holds instances and models only. Its models' loads were collected with
+/// every other model's.
+fn emit_conditionals(
+    out: &mut String,
+    blocks: &[Conditional],
+    low: bool,
+) -> Result<(), CodeGenError> {
+    for c in blocks {
+        for (i, b) in c.branches.iter().enumerate() {
+            if !b.body.parameters.is_empty() || !b.body.locals.is_empty() {
+                return Err(unsupported_comp(
+                    "parameters in a conditional branch: a VACASK @if holds instances and models only".to_string(),
+                ));
+            }
+            match (&b.condition, i) {
+                (Some(c), 0) => w!(out, "@if {}\n", expr(c, low)),
+                (Some(c), _) => w!(out, "@elseif {}\n", expr(c, low)),
+                (None, _) => out.push_str("@else\n"),
+            }
+            let mut scratch = BTreeSet::new();
+            let models = b
+                .body
+                .models
+                .iter()
+                .map(|m| emit_model(m, &mut scratch, low))
+                .collect::<Result<Vec<_>, _>>()?;
+            emit_body(out, &b.body, &models, low)?;
+        }
+        out.push_str("@end\n");
     }
     Ok(())
 }

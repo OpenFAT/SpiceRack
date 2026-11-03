@@ -40,7 +40,7 @@ l_eolx     <- l_eol / !.
 
 # ── Statements ──
 deck       <- card* !.
-card       <- (Subckt / ControlBlock / LibDef / Block / stmt) (nl / !.) / Unparsed nl
+card       <- (Subckt / ControlBlock / LibDef / If / Block / stmt) (nl / !.) / Unparsed nl
 Unparsed   <- rest
 # Keywords are keywords only at the start of a statement (L783-L868).
 stmt       <- Include &nl / Load &nl / Embed &nl / Global &nl / Ground &nl / Params &nl
@@ -78,6 +78,14 @@ Ends       <- ends (s? Name)?
 # nest: a `section` in one is `Unparsed`.
 LibDef     <- 'section' !nc s? Name s? nl (!endsec (!('section' !nc) card / Unparsed nl))* endsec?
 endsec     <- 'endsection' !nc
+
+# P462-P509: `@if c` ... `@elseif c` ... `@else` ... `@end`, nesting; each
+# branch's statements read as where the block sits.
+If         <- Branch Branch_x* (atend rest)?
+Branch     <- '@if' !nc s? Cond nl bcard*
+Branch_x   <- '@elseif' !nc s? Cond nl bcard* / '@else' !nc s? nl bcard*
+bcard      <- !(('@elseif' / '@else' / '@end') !nc) card
+Cond       <- (!nl .)+
 
 # P462-P509: `@if c` ... `@end`: kept whole (nested).
 Block      <- '@if' !nc rest (nl (Block_if / !atend rest))* (nl atend rest)?

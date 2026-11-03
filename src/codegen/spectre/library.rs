@@ -80,6 +80,7 @@ pub(super) fn emit_sections(
             w!(out, "\nlibrary {}\n", n.n(name));
         }
         w!(out, "section {}\n", n.n(&s.body.name));
+        super::emit_functions(out, &s.functions)?;
         for inc in &s.body.includes {
             w!(out, "include \"{inc}\"\n");
         }

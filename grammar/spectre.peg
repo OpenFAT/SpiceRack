@@ -69,7 +69,7 @@ l_eolx     <- l_eol / !.
 
 # ── Statements ──
 deck       <- card* !.
-card       <- (SpiceRegion / Subckt / Library / LibDef / Model_group / Statistics / Block / stmt) (nl / !.) / Unparsed nl
+card       <- (SpiceRegion / Subckt / Library / LibDef / Model_group / Statistics / If / Block / stmt) (nl / !.) / Unparsed nl
 Unparsed   <- rest
 
 # §3.1: a `simulator lang=spice` region, up to `simulator lang=spectre`:
@@ -123,6 +123,17 @@ Correlate  <- 'correlate' (s param)*
 Truncate   <- 'truncate' (s param)*
 ws         <- (s / nl)*
 
+# R19 p.491: the structural `if (c) statement [else statement]`, a
+# statement a braced list of cards, one card, or a further `if` (so `else
+# if` chains); conditions may span lines. A form this does not read is a
+# `Block`, kept whole.
+If         <- Branch (ws 'else' !wchar ws (Branch / Branch_e))*
+Branch     <- 'if' ws Cond ws bbody
+Branch_e   <- bbody
+bbody      <- '{' s? nl (!(s? '}') card)* s? '}' / '{' s? stmt s? '}' / stmt
+Cond       <- '(' cinner ')'
+cinner     <- ('(' cinner ')' / !')' .)*
+
 # Blocks no IR field holds, kept whole: a model group (UG p.108), `if` (R19
 # p.491), `statistics` (§4.13), and an analysis or control statement with
 # children.
@@ -157,10 +168,10 @@ Ends       <- ends (s Name)?
 
 # §4.7: `real f(real a, real b) { return expr }` (UG p.92), on one line or
 # with the body on the lines after the `{`.
-Func       <- 'real' s Name s? '(' s? (fargs)? s? ')' s? '{' (s fbody s '}' / nl fbody nl '}')
+Func       <- 'real' s Name s? '(' s? (fargs)? s? ')' ws '{' ws fbody ws '}'
 fargs      <- 'real' s Arg (s? ',' s? 'real' s Arg)*
 Arg        <- Name
-fbody      <- 'return' s Body (s? ';')?
+fbody      <- 'return' s? Body (s? ';')?
 Body       <- expr
 
 # §4.11: `save X[:t] ...`, `ic sig=v ...`, `nodeset sig=v ...` (R11 p.366).

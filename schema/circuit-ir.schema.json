@@ -134,9 +134,24 @@
           }
         },
         "verilog_blocks": { "description": "Verilog blocks to co-simulate or synthesize. Absent: none.", "type": "array", "items": { "$ref": "#/$defs/VerilogBlock" } },
+        "conditionals": { "description": "Conditional blocks (.if/.elseif/.else/.endif, Spectre if/else, VACASK @if), after the body's other cards. Absent: none.", "type": "array", "items": { "$ref": "#/$defs/Conditional" } },
         "statistics": { "description": "Spectre statistics blocks, as the Spectre importer reads them. Absent: none.", "type": "array", "items": { "$ref": "#/$defs/Statistics" } },
         "locals": { "description": "A definition's own .param cards (SPICE .param inside a .subckt): computed in the body, never set by an instance; in card order. Absent: none.", "type": "array", "items": { "$ref": "#/$defs/ParamDef" } }
       },
+      "additionalProperties": false
+    },
+    "Conditional": {
+      "type": "object",
+      "description": "A conditional block: the cards of its first branch whose condition holds.",
+      "required": ["branches"],
+      "properties": { "branches": { "type": "array", "items": { "$ref": "#/$defs/Branch" } }, "at": { "description": "Where the block sat among its body's components; absent: after them.", "type": "integer", "minimum": 0 } },
+      "additionalProperties": false
+    },
+    "Branch": {
+      "type": "object",
+      "description": "One branch: its condition (absent: else) and the cards it selects.",
+      "required": ["body"],
+      "properties": { "condition": { "type": "string" }, "body": { "$ref": "#/$defs/Subcircuit" } },
       "additionalProperties": false
     },
     "Statistics": {
@@ -180,7 +195,8 @@
       "properties": {
         "library": { "description": "The Spectre library the section sits in. Absent: a bare section (SPICE, VACASK, or Spectre outside a library).", "type": "string" },
         "body": { "$ref": "#/$defs/Subcircuit" },
-        "subcircuit_defs": { "description": "The .subckt definitions in the section. Absent: none.", "type": "array", "items": { "$ref": "#/$defs/Subcircuit" } }
+        "subcircuit_defs": { "description": "The .subckt definitions in the section. Absent: none.", "type": "array", "items": { "$ref": "#/$defs/Subcircuit" } },
+        "functions": { "description": "The section's functions. Absent: none.", "type": "array", "items": { "$ref": "#/$defs/FuncDef" } }
       },
       "additionalProperties": false
     },

@@ -13,7 +13,8 @@
 //! file: `values` (value rows), `elements` and `analyses` (SPICE element and
 //! testbench cards), `named`, `named_elements` and `named_analyses` (Spectre
 //! and VACASK statements), `sections` (library sections), `statistics`
-//! (Spectre `statistics` blocks; SpiceRack's own lifted calls read back).
+//! (Spectre `statistics` blocks; SpiceRack's own lifted calls read back),
+//! `conditionals` (`.if` blocks and their kin).
 //!
 //! Cites: ADI LTspice help, CIRCUIT-ELEMENTS-REFERENCE (implicit inductor
 //! `Rser=1m`); Xyce Reference Guide Table 2-36 (BSIM3 is level 9).
@@ -30,6 +31,7 @@ use crate::ir::*;
 use crate::peg::Tree;
 
 mod analyses;
+mod conditionals;
 mod elements;
 mod named;
 mod named_analyses;
@@ -237,6 +239,13 @@ impl Cx<'_> {
                 here.raw_spice.push(line);
             }
             Tag::Raw | Tag::Block => self.raw(card, here),
+            Tag::If => {
+                let c = Conditional {
+                    at: Some(here.components.len() as u32),
+                    ..self.conditional(card, scope)
+                };
+                here.conditionals.push(c);
+            }
             Tag::Statistics => {
                 let st = self.statistics(card);
                 here.statistics.push(st);

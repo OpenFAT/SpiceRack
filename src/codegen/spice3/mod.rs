@@ -7,7 +7,7 @@
 //! libraries, models, subcircuits, options); `values` spells numbers,
 //! `waveform` source waveforms, `components` cards, `analyses` analysis and
 //! `.step` cards, `control` the ngspice `.control` block, `sections` the
-//! `.param` cards and library sections.
+//! `.param` cards and library sections, `conditionals` `.if` blocks.
 //!
 //! Contents:
 //! - `pub(crate) const NGBEHAVIOR: &str`
@@ -16,6 +16,7 @@
 
 mod analyses;
 mod components;
+mod conditionals;
 mod control;
 mod sections;
 mod values;
@@ -26,6 +27,7 @@ use crate::ir::*;
 use super::{CodeGenError, Dialect, param_defs, params};
 use analyses::{analysis, step_param};
 pub(crate) use components::component;
+use conditionals::conditionals;
 use control::{control_run, raw_lines};
 use sections::{param_cards, params_and_models, section};
 // The ngspice backend reads its own deck back with these.
@@ -415,6 +417,10 @@ fn body(
         match e {
             Element::Component(c) => component(out, d, x, c)?,
             Element::Instance(i) => instance(out, d, i),
+            Element::Conditional(c) => {
+                conditionals(out, d, x, std::slice::from_ref(c), drop_four)?;
+                continue;
+            }
         }
         out.push('\n');
     }

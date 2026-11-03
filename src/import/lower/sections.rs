@@ -42,10 +42,11 @@ impl Cx<'_> {
             "a section's first row is its name"
         );
         let mut body = sub(&self.name(kids[0]));
-        let first = self.defs.len();
+        let (first, first_f) = (self.defs.len(), self.functions.len());
         for &k in &kids[1..] {
             self.card(k, &mut body, Scope::Section);
         }
+        let functions = self.functions.split_off(first_f);
         let subcircuit_defs = self.defs.split_off(first);
         assert_eq!(
             self.defs.len(),
@@ -56,23 +57,22 @@ impl Cx<'_> {
             library,
             body,
             subcircuit_defs,
+            functions,
         }
     }
 
-    /// Whether a card in a section would reach past it: a testbench card,
-    /// a `.global`, or a function (a `.param` defining one included).
+    /// Whether a card in a section would reach past it: a testbench card or
+    /// a `.global`. (A function stays the section's: `LibSection::functions`.)
     pub(super) fn leaks(&self, card: usize) -> bool {
-        match self.tag(card) {
+        matches!(
+            self.tag(card),
             Tag::Global
-            | Tag::Func
-            | Tag::Control
-            | Tag::Save
-            | Tag::SpiceRegion
-            | Tag::ControlBlock
-            | Tag::Ctl
-            | Tag::Ana => true,
-            Tag::Params => self.kid(card, Tag::FuncDef).is_some(),
-            _ => false,
-        }
+                | Tag::Control
+                | Tag::Save
+                | Tag::SpiceRegion
+                | Tag::ControlBlock
+                | Tag::Ctl
+                | Tag::Ana
+        )
     }
 }

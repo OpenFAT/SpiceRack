@@ -15,7 +15,7 @@ deck       <- card* !.
 one        <- dotcard nl !.
 # Each alternative ends at the card's end (`&nl`), so one that reads only
 # part of a card gives way to the next (PEG commits to a choice that matched).
-card       <- (Subckt / dialect / LibDef / Block / dotcard / element) (nl / !.) / Unparsed nl
+card       <- (Subckt / dialect / LibDef / If / Block / dotcard / element) (nl / !.) / Unparsed nl
 Unparsed   <- rest
 # The cards only one dialect reads (its file replaces this).
 dialect    <- never
@@ -37,6 +37,16 @@ Ends       <- ends rest
 LibDef     <- '.lib' s Name s? nl (!endl (!libhead card / Unparsed nl))* (endl rest)?
 libhead    <- '.lib' s namechar+ s? nl
 endl       <- '.endl' !namechar
+
+# ngspice §2.15: `.if (c)` ... `.elseif (c)` ... `.else` ... `.endif`,
+# nesting; each branch's cards read as where the block sits. A block this
+# does not read (no condition in parentheses) is an `ifblock`, kept whole.
+If         <- Branch Branch_x* (endif rest)?
+Branch     <- '.if' s? Cond s? nl bcard*
+Branch_x   <- '.elseif' s? Cond s? nl bcard* / '.else' !namechar s? nl bcard*
+bcard      <- !(('.elseif' / '.else' / '.endif') !namechar) card
+Cond       <- '(' cinner ')'
+cinner     <- ('(' cinner ')' / !')' !nl .)*
 
 # Blocks no IR field holds, kept whole: `.if` ... `.endif` (nesting), `.data`
 # ... `.enddata`, `.variation` ... `.end_variation`. A missing closer runs to

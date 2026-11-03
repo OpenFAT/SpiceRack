@@ -62,7 +62,7 @@ tags! {
     // blocks and kept text
     Subckt, Port, Ends, Block, Library, LibDef, Control, CtlCmd, Raw, Unparsed, SpiceRegion, ControlBlock,
     // dot cards
-    Statistics, Process, Mismatch, Vary, Correlate, Truncate,
+    Statistics, Process, Mismatch, Vary, Correlate, Truncate, If, Branch, Cond,
     Include, Lib, Path, Section, Model, Bin, MPair, MVal, More, Flag, Params, Assign, FuncDef, Func, Arg, Body,
     Load, Embed, Ground, Options, Pkg, Temp, Ic, Nodeset, NodeVal, Global, Save, Out, Print, PrintKind, Meas, Probe, Step, StepKind,
     // analyses

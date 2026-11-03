@@ -57,6 +57,14 @@ pub(super) fn section(
     }
     w!(out, ".lib {name}\n");
     file_cards(out, d, &s.body)?;
+    // HSPICE spells a function as a parameter: `.param f(x)='x*2'`.
+    for f in &s.functions {
+        let args = f.args.join(", ");
+        match d {
+            Dialect::Hspice => w!(out, ".param {}({args})='{}'\n", f.name, f.body),
+            _ => w!(out, ".func {}({args}) {{{}}}\n", f.name, f.body),
+        }
+    }
     params_and_models(out, d, &s.body);
     for sc in &s.subcircuit_defs {
         subcircuit(out, d, x, sc, drop_four)?;

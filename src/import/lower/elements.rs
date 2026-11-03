@@ -433,6 +433,14 @@ impl Cx<'_> {
             .map(|v| self.irnum(v))
             .collect::<Option<_>>()?;
         let g = |i: usize| a.get(i).cloned().unwrap_or(IrNum::Num(0.0));
+        // ngspice's SFFM and AM take eight fields (manual §4.1.5, §4.1.6:
+        // a delay and two phases after the five the IR holds): a nonzero
+        // one has no IR field, so the card stays raw.
+        if matches!(self.tag(w), Tag::Sffm | Tag::Am)
+            && a[a.len().min(5)..].iter().any(|x| *x != IrNum::Num(0.0))
+        {
+            return None;
+        }
         Some(match self.tag(w) {
             Tag::Sin => IrWaveform::Sin {
                 offset: g(0),

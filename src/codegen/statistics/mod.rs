@@ -237,6 +237,11 @@ fn body(
     for c in &mut sc.components {
         component(c, &subckt, section, f);
     }
+    for c in &mut sc.conditionals {
+        for b in &mut c.branches {
+            body(&mut b.body, subckt.clone(), section, f);
+        }
+    }
 }
 
 fn component(

@@ -1,0 +1,38 @@
+// A Spectre corner library in the shapes a commercial kit uses (made up,
+// hand-written for tests/test_conditionals.rs): `real` functions one-line,
+// multi-line and with the brace on the next line, inside a section; a
+// subcircuit whose body picks its devices with structural `if` blocks: an
+// `else if` chain, a condition spanning two lines, `}` and `else` on
+// separate lines, a nested `if` and an unbraced one-statement branch.
+simulator lang=spectre
+library kit
+section tt
+real rscale(real w, real l) { return 1 + 0.1*(l/w); }
+real rsheet(real t)
+{
+    return 100*(1 + 1e-3*(t - 27));
+}
+real lim(real x, real lo, real hi) {
+    return x < lo ? lo : (x > hi ? hi : x);
+}
+parameters rsh=rsheet(27)
+model nch bsim4 type=n vth0=0.4
+subckt res (a b)
+parameters w=1u l=10u mode=0 hot=0
+if (mode == 0) {
+    r0 (a b) resistor r=rsh*l/w
+} else if (mode == 1 &&
+           hot == 0) {
+    r0 (a b) resistor r=2*rsh*l/w*rscale(w, l)
+}
+else if (mode == 2) {
+    if (hot == 1) {
+        r0 (a b) resistor r=lim(3*rsh*l/w, 1, 1e4)
+    } else {
+        r0 (a b) resistor r=3*rsh*l/w
+    }
+} else
+    r0 (a b) resistor r=1k
+ends res
+endsection tt
+endlibrary kit
