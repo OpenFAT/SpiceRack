@@ -118,6 +118,39 @@ fn ast_to_ir_matches_todays_reader() {
     );
 }
 
+/// Parse throughput over the gate's inputs, printed; `--ignored` runs it.
+#[test]
+#[ignore]
+fn throughput() {
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut manifest = Vec::new();
+    let (mut bytes, mut tokens, mut nodes) = (0usize, 0usize, 0usize);
+    let (mut lexing, mut parsing, mut adapting) = (0.0f64, 0.0f64, 0.0f64);
+    for i in inputs::inputs(repo, &mut manifest) {
+        let text = decode(&std::fs::read(&i.path).expect("input readable"));
+        let (src, name) = inputs::source(&text, i.form, &i.path);
+        let lex = lexicon::of(i.dialect).expect("a lexicon");
+        let at = std::time::Instant::now();
+        let t = tokenize(&src, lex);
+        lexing += at.elapsed().as_secs_f64();
+        let at = std::time::Instant::now();
+        let ast = spicerack::syntax::parse(&t, lex);
+        parsing += at.elapsed().as_secs_f64();
+        let at = std::time::Instant::now();
+        let ir = ast_to_ir(&ast, &t, i.dialect, &name);
+        adapting += at.elapsed().as_secs_f64();
+        std::hint::black_box(ir);
+        (bytes, tokens, nodes) = (bytes + src.len(), tokens + t.len(), nodes + ast.len());
+    }
+    let mb = bytes as f64 / 1e6;
+    println!(
+        "{mb:.1} MB, {tokens} tokens, {nodes} nodes: tokenize {lexing:.2} s ({:.1} MB/s), \
+         parse {parsing:.2} s ({:.1} MB/s), ast_to_ir {adapting:.2} s",
+        mb / lexing,
+        mb / parsing
+    );
+}
+
 fn json<T: serde::Serialize>(v: &T) -> String {
     serde_json::to_string_pretty(v).expect("IR serialises")
 }

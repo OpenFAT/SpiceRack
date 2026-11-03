@@ -130,6 +130,30 @@ same machine, 2026-11-03, release build:
   RSS, including the input walk, which parses each kit file with today's
   reader to follow its includes.
 
+Phase 2, the parser and its `ast_to_ir` adapter (`src/syntax/`, not wired
+in), is gated by the golden record itself, read through the new front end:
+
+```sh
+nix develop .#testing -c env IHP_PDK=<...> $G record <out_dir> --frontend syntax
+$G diff <baseline> <out_dir> --xfail migration.xfail
+nix develop .#testing -c env IHP_PDK=<...> $G check-determinism --frontend syntax
+nix develop .#testing -c env IHP_PDK=<...> cargo test -j 4 --release \
+  --no-default-features --features corpus --test test_syntax_adapter -- --test-threads=4
+```
+
+`test_syntax_adapter` is the same comparison in process (the `CircuitIR` and
+`Report` JSON of both readers, which decide every writer's text), with
+`SYNTAX_SET` and `SYNTAX_KEY` to run one set or deck. Measured on the same
+machine, 2026-11-03, release build:
+- `golden record --frontend syntax`: all 14,938 inputs in 39.3 s wall, 49.3 s
+  user, peak RSS 2.46 GB; `diff` against `baseline-daa0ad0` prints
+  `IDENTICAL except 14 listed xfail(s)` (two Xyce decks, `migration.xfail`);
+  `check-determinism --frontend syntax`: two records, identical, 96 s;
+- `test_syntax_adapter`: 0 unlisted differences, 51 s for both readers;
+- `throughput` (`--ignored`): 201.3 MB, 30.1 M tokens, 26.1 M nodes;
+  tokenize 2.36 s (85.3 MB/s), parse 3.44 s (58.5 MB/s), `ast_to_ir` 3.56 s;
+  the process peaks at 1.32 GB RSS, including the input walk.
+
 ## Known gaps
 
 `nix develop .#testing` provides every simulator and corpus the tests read
