@@ -17,3 +17,13 @@ xyce/INVALID_CHARS/double_quote_fails_device_name.cir ir today's Str rule crosse
 xyce/INVALID_CHARS/double_quote_fails_device_name.cir report today's Str rule crosses a line end; the raw count follows
 xyce/INVALID_CHARS/double_quote_fails_node_name.cir ir today's Str rule crosses a line end; the two cards stay two
 xyce/INVALID_CHARS/double_quote_fails_node_name.cir report today's Str rule crosses a line end; the raw count follows
+xyce/INVALID_CHARS/double_quote_fails_device_name.cir cdl the IR above differs (one more raw card), so the xschem layout lists it
+xyce/INVALID_CHARS/double_quote_fails_device_name.cir verilog the IR above differs (one more raw card), so the xschem layout lists it
+xyce/INVALID_CHARS/double_quote_fails_node_name.cir cdl the IR above differs (one more raw card), so the xschem layout lists it
+xyce/INVALID_CHARS/double_quote_fails_node_name.cir verilog the IR above differs (one more raw card), so the xschem layout lists it
+xyce/INVALID_CHARS/double_quote_fails_node_name.cir espice the refusal quotes the first raw line, which is now one card
+xyce/INVALID_CHARS/double_quote_fails_node_name.cir hspice the refusal quotes the first raw line, which is now one card
+xyce/INVALID_CHARS/double_quote_fails_node_name.cir ltspice the refusal quotes the first raw line, which is now one card
+xyce/INVALID_CHARS/double_quote_fails_node_name.cir ngspice the refusal quotes the first raw line, which is now one card
+xyce/INVALID_CHARS/double_quote_fails_node_name.cir spectre the refusal quotes the first raw line, which is now one card
+xyce/INVALID_CHARS/double_quote_fails_node_name.cir vacask the refusal quotes the first raw line, which is now one card

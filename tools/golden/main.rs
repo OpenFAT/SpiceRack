@@ -2,9 +2,9 @@
 //! files: the oracle each phase of the transpiler rewrite must reproduce byte
 //! for byte (`docs/research/transpiler-architecture.md` §5).
 //!
-//!   golden record <out_dir>
+//!   golden record <out_dir> [--frontend import|syntax]
 //!   golden diff <a> <b> [--xfail migration.xfail]
-//!   golden check-determinism [--xfail migration.xfail]
+//!   golden check-determinism [--xfail migration.xfail] [--frontend import|syntax]
 //!
 //! `record` reads every input `inputs.rs` finds (run it in `nix develop
 //! .#testing`, which sets the corpus and PDK variables; `$IHP_PDK` names an
@@ -15,6 +15,11 @@
 //!   `codegen::netlist`, or `<target>.refused`, its error text;
 //! - `parse.refused` instead of all of these when `parse` refuses the file;
 //! - `<name>.panicked`, the panic message, when a call panics.
+//!
+//! `--frontend syntax` reads each input with the transpiler rewrite's front
+//! end, `syntax::ast_to_ir(syntax::parse(syntax::tokenize(..)))`, in place of
+//! `import::parse` (the default, `import`); everything else is the same, so
+//! `diff` against an `import` record is phase 2's gate.
 //!
 //! `MANIFEST` lists the sets, each kit's read order, each input's content
 //! hash and each output file's. `diff` prints `IDENTICAL` or every differing
@@ -34,15 +39,26 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use spicerack::codegen::{Dialect, netlist};
-use spicerack::import::{decode, parse};
+use spicerack::import::{Report, decode, parse};
+use spicerack::ir::CircuitIR;
 
 mod diff;
 mod inputs;
 
 use inputs::{Form, Input, inputs, source};
 
-const USAGE: &str = "usage: golden record <out_dir> | golden diff <a> <b> [--xfail <file>] | \
-                     golden check-determinism [--xfail <file>]";
+const USAGE: &str = "usage: golden record <out_dir> [--frontend import|syntax] | \
+                     golden diff <a> <b> [--xfail <file>] | \
+                     golden check-determinism [--xfail <file>] [--frontend import|syntax]";
+
+/// The reader a record runs.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Frontend {
+    /// Today's `import::parse`: the oracle.
+    Import,
+    /// The transpiler rewrite's `syntax` front end and its `ast_to_ir`.
+    Syntax,
+}
 
 /// Input dialects no set reads, and why: the manifest's `skip` lines.
 /// Every target is written for every input that parses; none is skipped.
@@ -66,10 +82,29 @@ fn main() -> ExitCode {
         Some(_) => return usage(),
         None => None,
     };
+    let frontend = match rest.iter().position(|a| *a == "--frontend") {
+        Some(i) if i + 1 < rest.len() => {
+            let f = match rest[i + 1] {
+                "import" => Frontend::Import,
+                "syntax" => Frontend::Syntax,
+                _ => return usage(),
+            };
+            rest.drain(i..i + 2);
+            Some(f)
+        }
+        Some(_) => return usage(),
+        None => None,
+    };
     let run = match rest.as_slice() {
-        ["record", out] if xfail.is_none() => record(Path::new(out)).map(|()| true),
-        ["diff", a, b] => diff::diff(Path::new(a), Path::new(b), xfail.as_deref()),
-        ["check-determinism"] => check_determinism(xfail.as_deref()),
+        ["record", out] if xfail.is_none() => {
+            record(Path::new(out), frontend.unwrap_or(Frontend::Import)).map(|()| true)
+        }
+        ["diff", a, b] if frontend.is_none() => {
+            diff::diff(Path::new(a), Path::new(b), xfail.as_deref())
+        }
+        ["check-determinism"] => {
+            check_determinism(xfail.as_deref(), frontend.unwrap_or(Frontend::Import))
+        }
         _ => return usage(),
     };
     match run {
@@ -89,7 +124,7 @@ fn usage() -> ExitCode {
 
 /// Records every input into `out`, which must be absent or empty, so no
 /// stale file from an earlier record survives into the tree.
-fn record(out: &Path) -> std::io::Result<()> {
+fn record(out: &Path, frontend: Frontend) -> std::io::Result<()> {
     if std::fs::read_dir(out).is_ok_and(|mut d| d.next().is_some()) {
         return Err(std::io::Error::other(format!(
             "{} is not empty",
@@ -113,7 +148,7 @@ fn record(out: &Path) -> std::io::Result<()> {
             let worker = std::thread::Builder::new().stack_size(256 << 20);
             let spawned = worker.spawn_scoped(s, || {
                 while let Some(input) = all.get(next.fetch_add(1, Ordering::Relaxed)) {
-                    match record_one(out, input) {
+                    match record_one(out, input, frontend) {
                         Ok(v) => lines.lock().expect("no worker panics").extend(v),
                         Err(e) => {
                             let why = format!("{}/{}: {e}", input.set, input.rel);
@@ -137,7 +172,7 @@ fn record(out: &Path) -> std::io::Result<()> {
 }
 
 /// Records one input; returns its manifest lines (input and output hashes).
-fn record_one(out: &Path, input: &Input) -> std::io::Result<Vec<String>> {
+fn record_one(out: &Path, input: &Input, frontend: Frontend) -> std::io::Result<Vec<String>> {
     let key = format!("{}/{}", input.set, input.rel);
     let dir = out.join(&key);
     std::fs::create_dir_all(&dir)?;
@@ -157,7 +192,7 @@ fn record_one(out: &Path, input: &Input) -> std::io::Result<Vec<String>> {
         Ok(())
     };
     let (src, name) = source(&decode(&bytes), input.form, &input.path);
-    let (ir, report) = match catch_unwind(|| parse(&src, &name, input.dialect)) {
+    let (ir, report) = match catch_unwind(|| read(&src, &name, input.dialect, frontend)) {
         Ok(Ok(parsed)) => parsed,
         Ok(Err(e)) => {
             put("parse.refused", &format!("{e}\n"))?;
@@ -183,6 +218,25 @@ fn record_one(out: &Path, input: &Input) -> std::io::Result<Vec<String>> {
     Ok(lines)
 }
 
+/// `src` read by `frontend` into IR named `name`.
+fn read(
+    src: &str,
+    name: &str,
+    d: Dialect,
+    frontend: Frontend,
+) -> Result<(CircuitIR, Report), String> {
+    match frontend {
+        Frontend::Import => parse(src, name, d),
+        Frontend::Syntax => {
+            let lex =
+                spicerack::syntax::lexicon::of(d).ok_or_else(|| format!("no {d:?} reader yet"))?;
+            let t = spicerack::syntax::tokenize(src, lex);
+            let ast = spicerack::syntax::parse(&t, lex);
+            Ok(spicerack::syntax::ast_to_ir(&ast, &t, d, name))
+        }
+    }
+}
+
 /// A panic's message, without its location (which moves with every edit).
 fn panic_text(p: Box<dyn std::any::Any + Send>) -> String {
     let msg = p
@@ -205,13 +259,18 @@ fn hash(bytes: &[u8]) -> String {
 
 /// Records twice into a temp dir, each in its own process (a `HashMap`'s
 /// seed is per process), and diffs the two trees. Removes them on success.
-fn check_determinism(xfail: Option<&Path>) -> std::io::Result<bool> {
+fn check_determinism(xfail: Option<&Path>, frontend: Frontend) -> std::io::Result<bool> {
     let base = std::env::temp_dir().join(format!("golden-determinism-{}", std::process::id()));
     let exe = std::env::current_exe()?;
     for run in ["a", "b"] {
         let status = std::process::Command::new(&exe)
             .arg("record")
             .arg(base.join(run))
+            .arg("--frontend")
+            .arg(match frontend {
+                Frontend::Import => "import",
+                Frontend::Syntax => "syntax",
+            })
             .status()?;
         if !status.success() {
             return Err(std::io::Error::other(format!(
