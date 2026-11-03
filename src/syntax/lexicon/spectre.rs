@@ -113,8 +113,10 @@ const SCALES: &[(&str, Scale)] = &[
     ("T", Scale::Exp(12)),
     ("G", Scale::Exp(9)),
     ("M", Scale::Exp(6)),
-    ("K", Scale::Exp(3)),
+    // `k` first: the writer spells kilo with the first (Cadence's own
+    // examples write `1k`).
     ("k", Scale::Exp(3)),
+    ("K", Scale::Exp(3)),
     ("_", Scale::Exp(0)),
     ("%", Scale::Exp(-2)),
     ("c", Scale::Exp(-2)),
