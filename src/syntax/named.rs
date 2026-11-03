@@ -1,8 +1,8 @@
 //! A Spectre or VACASK statement → its nodes on the block stack. A head is a
 //! keyword (`model`, `parameters`, `subckt`, `section`, `if`, `statistics`,
 //! VACASK `load`, `control`, `@if` …) or a name: `name [(nodes)] master
-//! params`, an instance (analyses and control statements are instances of
-//! their master, as Spectre reads them).
+//! params`: an instance, or by its master word (`Lexicon::masters`) an
+//! analysis, a control statement or options.
 //!
 //! Spectre's `{ }` blocks may open and close inside one line, so a statement
 //! is read as units cut at its top-level braces: `} else if (c) {` is a
@@ -26,6 +26,7 @@ use crate::syntax::ast::{NONE, Name, Node, Tag};
 use crate::syntax::diag::Code;
 use crate::syntax::fields::Mode;
 use crate::syntax::parse::{Frame, Head, Parser, Wait};
+use crate::syntax::statement::Statement;
 use crate::syntax::token::Tag as T;
 
 impl Parser<'_, '_> {
@@ -302,11 +303,15 @@ impl Parser<'_, '_> {
                 let f = self.ast.push_list(&[e.0]);
                 flat(self.ast.push(Tag::Card, first, f, NONE))
             }
-            T::Ident if opens => (
-                Head::Open(self.head_fields(Tag::Card, Mode::Fields)),
-                Wait::No,
-            ),
+            T::Ident if opens => (Head::Open(self.instance()), Wait::No),
             T::Ident if in_tag == Tag::Control => flat(self.head_fields(Tag::Card, Mode::Fields)),
+            T::KwAnalysis => flat(self.analysis()),
+            T::KwOptions => {
+                self.i += 1;
+                let args = self.items(Mode::Fields);
+                let h = self.ast.push_header(NONE, NONE, NONE, &[], &args);
+                flat(self.ast.push(Tag::Options, first, h, NONE))
+            }
             T::Ident => flat(self.instance()),
             T::Number => flat(self.head_fields(Tag::Card, Mode::Fields)),
             // else: any other keyword (`ahdl_include`, `vary`, VACASK `load`,
@@ -355,15 +360,42 @@ impl Parser<'_, '_> {
             master = nodes.pop().unwrap_or(NONE);
         }
         let args = self.items(Mode::Fields);
-        let code = match master {
-            NONE => NONE,
-            m => {
-                let word = self.ast.name(Name(self.ast.rhs(Node(m))));
-                let lex = self.t.lexicon_at(first);
-                lex.device(word).map_or(NONE, |d| d.primitive as u32)
+        let lex = self.t.lexicon_at(first);
+        let word = (master != NONE).then(|| self.ast.name(Name(self.ast.rhs(Node(master)))));
+        let (tag, code) = match word.and_then(|w| lex.master(w)) {
+            Some(Statement::Analysis(a)) => (Tag::Analysis, a as u32),
+            Some(Statement::Command(c)) if nodes.is_empty() => (Tag::Command, c as u32),
+            Some(Statement::Options) if nodes.is_empty() => (Tag::Options, NONE),
+            _ => {
+                let device = word.and_then(|w| lex.device(w));
+                (Tag::Instance, device.map_or(NONE, |d| d.primitive as u32))
             }
         };
         let h = self.ast.push_header(name.0, master, code, &nodes, &args);
-        self.ast.push(Tag::Instance, first, h, NONE)
+        self.ast.push(tag, first, h, NONE)
+    }
+
+    /// VACASK `analysis name kind params`.
+    fn analysis(&mut self) -> Node {
+        let first = self.i;
+        self.i += 1;
+        let mut words = [NONE; 2];
+        for w in &mut words {
+            if self.i < self.end && !self.separates(self.i) && !self.pairstart(self.i) {
+                *w = self.word().0;
+            }
+        }
+        let [name, kind] = words;
+        let lex = self.t.lexicon_at(first);
+        let code = match kind {
+            NONE => NONE,
+            k => {
+                let word = self.ast.name(Name(self.ast.rhs(Node(k))));
+                lex.analysis(word).map_or(NONE, |a| a as u32)
+            }
+        };
+        let args = self.items(Mode::Fields);
+        let h = self.ast.push_header(name, kind, code, &[], &args);
+        self.ast.push(Tag::Analysis, first, h, NONE)
     }
 }

@@ -97,6 +97,8 @@ pub const NGSPICE: Lexicon = Lexicon {
     keywords: &[SPICE_KEYWORDS, OWN_KEYWORDS],
     named: false,
     devices: &[device::SPICE, device::NGSPICE_OWN],
+    masters: &[],
+    analyses: &[],
     lang_spice: None,
 };
 

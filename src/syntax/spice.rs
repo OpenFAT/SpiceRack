@@ -19,6 +19,7 @@ use crate::syntax::device::{Device, FLAGS, Model, Terminals};
 use crate::syntax::diag::Code;
 use crate::syntax::fields::Mode;
 use crate::syntax::parse::{Head, Parser};
+use crate::syntax::statement::Analysis;
 use crate::syntax::token::Tag as T;
 
 impl Parser<'_, '_> {
@@ -76,7 +77,15 @@ impl Parser<'_, '_> {
     /// A flat dot card led by keyword `kw` at the cursor.
     pub(super) fn dot_card(&mut self, kw: T) -> Node {
         let (tag, mode) = shape(kw);
-        self.head_only(tag, mode)
+        if !tag.has_header() {
+            return self.head_only(tag, mode);
+        }
+        let head = self.i;
+        self.i += 1;
+        let args = self.items(mode);
+        let code = analysis(kw).map_or(NONE, |a| a as u32);
+        let h = self.ast.push_header(NONE, NONE, code, &[], &args);
+        self.ast.push(tag, head, h, NONE)
     }
 }
 
@@ -113,6 +122,24 @@ fn shape(kw: T) -> (Tag, Mode) {
         // Spectre word in a SPICE region) is a generic card.
         _ => (Tag::Card, Mode::Fields),
     }
+}
+
+/// The analysis an analysis card's keyword names.
+fn analysis(kw: T) -> Option<Analysis> {
+    Some(match kw {
+        T::KwOp => Analysis::Op,
+        T::KwDc => Analysis::Dc,
+        T::KwAc => Analysis::Ac,
+        T::KwTran => Analysis::Tran,
+        T::KwNoise => Analysis::Noise,
+        T::KwTf => Analysis::Tf,
+        T::KwSens => Analysis::Sens,
+        T::KwPz => Analysis::Pz,
+        T::KwFour => Analysis::Four,
+        T::KwSp => Analysis::Sp,
+        // else: no other keyword is an analysis.
+        _ => return None,
+    })
 }
 
 /// Whether `tag` is a keyword (one of the `Kw*` tags).

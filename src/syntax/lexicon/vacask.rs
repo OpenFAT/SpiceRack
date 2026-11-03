@@ -15,6 +15,7 @@ use super::{
     Arithmetic, Backslash, Caret, Dollar, Lexicon, Numbers, Ops, Quote, Quoting, Scale, Tail,
 };
 use crate::codegen::Dialect;
+use crate::syntax::statement::Analysis;
 use crate::syntax::token::Tag;
 
 /// VACASK: case kept, `//` and `/* */` comments, statements across lines
@@ -105,6 +106,8 @@ pub const VACASK: Lexicon = Lexicon {
     // An instance's master is a model or a subcircuit, never a device word;
     // the modules a `model` names are `device::VACASK`, which resolve reads.
     devices: &[],
+    masters: &[],
+    analyses: ANALYSES,
     lang_spice: None,
 };
 
@@ -143,12 +146,25 @@ const KEYWORDS: &[(&str, Tag)] = &[
     ("control", Tag::KwControl),
     ("endc", Tag::KwEndc),
     ("analysis", Tag::KwAnalysis),
+    ("options", Tag::KwOptions),
     ("sweep", Tag::KwSweep),
     ("save", Tag::KwSave),
     ("@if", Tag::KwIf),
     ("@elseif", Tag::KwElseif),
     ("@else", Tag::KwElse),
     ("@end", Tag::KwEndif),
+];
+
+/// The kinds after `analysis name` (`statement.rs` cites the decks).
+const ANALYSES: &[(&str, Analysis)] = &[
+    ("op", Analysis::Op),
+    ("dcinc", Analysis::Dcinc),
+    ("dcxf", Analysis::Dcxf),
+    ("ac", Analysis::Ac),
+    ("acxf", Analysis::Acxf),
+    ("noise", Analysis::Noise),
+    ("tran", Analysis::Tran),
+    ("hb", Analysis::Hb),
 ];
 
 #[cfg(test)]

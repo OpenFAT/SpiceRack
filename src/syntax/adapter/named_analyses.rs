@@ -15,7 +15,7 @@
 use super::Cx;
 use super::named_elements::unquoted;
 use crate::ir::*;
-use crate::syntax::ast::{Node, Tag};
+use crate::syntax::ast::{NONE, Node, Tag};
 
 impl<'a> Cx<'a> {
     /// `name [(p n)] kind k=v`: the analyses `codegen::spectre` writes
@@ -109,7 +109,7 @@ impl<'a> Cx<'a> {
     /// A VACASK `options` statement in a `control` block
     /// (lower/named_analyses.rs `vacask_control`, `Ctl`).
     pub(super) fn vacask_options(&mut self, st: u32) -> bool {
-        if self.tag(st) != Tag::Card || self.t.text(self.main(st)) != "options" {
+        if self.tag(st) != Tag::Options {
             return false;
         }
         for (k, v) in self.pairs(st) {
@@ -156,13 +156,10 @@ impl<'a> Cx<'a> {
             })
             .collect();
         let Some(sweeps) = parsed else { return false };
-        let words: Vec<u32> = self
-            .fields(st)
-            .iter()
-            .copied()
-            .filter(|&k| self.tag(k) == Tag::Word)
-            .collect();
-        let kind = words.get(1).map(|&w| self.text(w)).unwrap_or_default();
+        let kind = match self.ast.header(Node(st)).master {
+            NONE => String::new(),
+            w => self.text(w),
+        };
         let freq = || -> Option<FreqSweep> {
             let mode: Sweep = s("mode")?.parse().ok()?;
             let points = num("points")? as u32 + u32::from(mode == Sweep::Lin);

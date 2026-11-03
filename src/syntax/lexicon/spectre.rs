@@ -17,6 +17,7 @@ use super::{
 };
 use crate::codegen::Dialect;
 use crate::syntax::device;
+use crate::syntax::statement::{Analysis, Command, Statement};
 use crate::syntax::token::Tag;
 
 /// Spectre: case kept, `*` (column 1) and `//` comments, `\` and `+`
@@ -101,6 +102,8 @@ pub const SPECTRE: Lexicon = Lexicon {
     keywords: &[KEYWORDS],
     named: true,
     devices: &[device::SPECTRE],
+    masters: MASTERS,
+    analyses: &[],
     lang_spice: Some(&HSPICE),
 };
 
@@ -153,6 +156,60 @@ const KEYWORDS: &[(&str, Tag)] = &[
     ("ic", Tag::KwIc),
     ("nodeset", Tag::KwNodeset),
 ];
+
+/// The analysis and control-statement masters (`statement.rs` cites the
+/// `[REF]` pages), in today's reader's order.
+const MASTERS: &[(&str, Statement)] = {
+    use Analysis as A;
+    use Statement::{Analysis as An, Command as C};
+    &[
+        ("montecarlo", An(A::Montecarlo)),
+        ("acmatch", An(A::Acmatch)),
+        ("dcmatch", An(A::Dcmatch)),
+        ("hbnoise", An(A::Hbnoise)),
+        ("qpnoise", An(A::Qpnoise)),
+        ("fourier", An(A::Fourier)),
+        ("pdisto", An(A::Pdisto)),
+        ("pnoise", An(A::Pnoise)),
+        ("hbstb", An(A::Hbstb)),
+        ("envlp", An(A::Envlp)),
+        ("hbsp", An(A::Hbsp)),
+        ("hbac", An(A::Hbac)),
+        ("hbxf", An(A::Hbxf)),
+        ("noise", An(A::Noise)),
+        ("qpac", An(A::Qpac)),
+        ("qpsp", An(A::Qpsp)),
+        ("qpss", An(A::Qpss)),
+        ("qpxf", An(A::Qpxf)),
+        ("sweep", An(A::Sweep)),
+        ("pac", An(A::Pac)),
+        ("psp", An(A::Psp)),
+        ("pss", An(A::Pss)),
+        ("pstb", An(A::Pstb)),
+        ("pxf", An(A::Pxf)),
+        ("sens", An(A::Sens)),
+        ("tran", An(A::Tran)),
+        ("tdr", An(A::Tdr)),
+        ("stb", An(A::Stb)),
+        ("ac", An(A::Ac)),
+        ("dc", An(A::Dc)),
+        ("hb", An(A::Hb)),
+        ("pz", An(A::Pz)),
+        ("sp", An(A::Sp)),
+        ("xf", An(A::Xf)),
+        ("altergroup", C(Command::Altergroup)),
+        ("checklimit", C(Command::Checklimit)),
+        ("paramtest", C(Command::Paramtest)),
+        ("paramset", C(Command::Paramset)),
+        ("options", Statement::Options),
+        ("assert", C(Command::Assert)),
+        ("alter", C(Command::Alter)),
+        ("check", C(Command::Check)),
+        ("shell", C(Command::Shell)),
+        ("info", C(Command::Info)),
+        ("set", C(Command::Set)),
+    ]
+};
 
 #[cfg(test)]
 mod tests {

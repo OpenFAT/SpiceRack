@@ -13,8 +13,11 @@ use crate::syntax::ast::{Ast, NONE, Node, Tag};
 use crate::syntax::device::Primitive;
 use crate::syntax::diag::Code;
 use crate::syntax::lexicon::{HSPICE, LTSPICE, Lexicon, NGSPICE, SPECTRE, VACASK, XYCE};
+use crate::syntax::statement::{Analysis, Command};
 use crate::syntax::token::Tokens;
 use crate::syntax::{parse, tokenize};
+
+mod heads;
 
 // ---- private ----
 
@@ -84,15 +87,26 @@ fn show(a: &Ast, t: &Tokens, n: u32) -> String {
         }
         Tag::Seq => format!("Seq[{}]", list(a.list(a.lhs(node)))),
         Tag::Bad | Tag::Verbatim | Tag::Line => format!("{:?}{head:?}", a.tag(node)),
-        Tag::Instance => {
+        tag if tag.has_header() => {
             let h = a.header(node);
-            let p = Primitive::from_u32(h.code).map_or("-".to_string(), |p| format!("{p:?}"));
-            format!(
-                "Instance{head:?}<{p} {}|{}>[{}]",
+            let code = match tag {
+                Tag::Instance => Primitive::from_u32(h.code).map(|p| format!("{p:?}")),
+                Tag::Analysis => Analysis::from_u32(h.code).map(|k| format!("{k:?}")),
+                Tag::Command => Command::from_u32(h.code).map(|c| format!("{c:?}")),
+                _ => None,
+            };
+            let mut s = format!(
+                "{tag:?}{head:?}<{} {} {}|{}>[{}]",
+                code.unwrap_or("-".into()),
+                show(a, t, h.name),
                 show(a, t, h.master),
                 list(h.nodes),
                 list(a.fields(node))
-            )
+            );
+            if a.rhs(node) != NONE {
+                s.push_str(&format!("{{{}}}", list(a.body(node))));
+            }
+            s
         }
         tag => {
             let mut s = format!("{tag:?}{head:?}[{}]", list(a.fields(node)));
@@ -154,7 +168,7 @@ fn subckt_with_params() {
     assert_eq!(
         top,
         [
-            "Subckt\".subckt\"[w\"s\" w\"a\" w\"b\" w\"params:\" w\"w\"=n\"1\"]{Instance\"R1\"<Resistor -|w\"a\" w\"b\">[w\"1k\"]}"
+            "Subckt\".subckt\"[w\"s\" w\"a\" w\"b\" w\"params:\" w\"w\"=n\"1\"]{Instance\"R1\"<Resistor w\"R1\" -|w\"a\" w\"b\">[w\"1k\"]}"
         ]
     );
     assert!(codes.is_empty());
@@ -201,7 +215,7 @@ fn if_else_chain() {
     assert_eq!(
         top,
         [
-            "If\".if\"[Paren\"(\"[(== i\"a\" n\"1\")]]{Instance\"R1\"<Resistor -|w\"a\" w\"0\">[w\"1\"]} -> If\".elseif\"[Paren\"(\"[i\"b\"]]{} -> Else\".else\"[]{}"
+            "If\".if\"[Paren\"(\"[(== i\"a\" n\"1\")]]{Instance\"R1\"<Resistor w\"R1\" -|w\"a\" w\"0\">[w\"1\"]} -> If\".elseif\"[Paren\"(\"[i\"b\"]]{} -> Else\".else\"[]{}"
         ]
     );
     assert!(codes.is_empty());
@@ -218,7 +232,7 @@ fn spectre_if_else_and_unbraced_branch() {
     assert_eq!(
         top,
         [
-            "If\"if\"[Paren\"(\"[(== i\"m\" n\"0\")]]{Instance\"r0\"<Resistor w\"resistor\"|w\"a\" w\"b\">[w\"r\"=n\"1\"]} -> Else\"else\"[]{Instance\"r1\"<Resistor w\"resistor\"|w\"a\" w\"b\">[w\"r\"=n\"2\"]}"
+            "If\"if\"[Paren\"(\"[(== i\"m\" n\"0\")]]{Instance\"r0\"<Resistor w\"r0\" w\"resistor\"|w\"a\" w\"b\">[w\"r\"=n\"1\"]} -> Else\"else\"[]{Instance\"r1\"<Resistor w\"r1\" w\"resistor\"|w\"a\" w\"b\">[w\"r\"=n\"2\"]}"
         ]
     );
     assert!(codes.is_empty());
@@ -241,7 +255,7 @@ fn control_reads_analysis_commands_only() {
     let (top, codes) = read("t\n.control\ntran 1n 10n\nrun\n.endc\n", &NGSPICE);
     assert_eq!(
         top,
-        ["Control\".control\"[]{Analysis\"tran\"[w\"1n\" w\"10n\"] Line\"run\"}"]
+        ["Control\".control\"[]{Analysis\"tran\"<Tran - -|>[w\"1n\" w\"10n\"] Line\"run\"}"]
     );
     assert!(codes.is_empty());
 }
@@ -340,8 +354,8 @@ fn testbench_cards() {
     assert_eq!(
         top,
         [
-            "Options\".options\"[w\"reltol\"=n\"1e-3\" w\"klu\"]",
-            "Analysis\".tran\"[w\"1n\" w\"10n\"]",
+            "Options\".options\"<- - -|>[w\"reltol\"=n\"1e-3\" w\"klu\"]",
+            "Analysis\".tran\"<Tran - -|>[w\"1n\" w\"10n\"]",
             "Save\".save\"[Group\"v\"[w\"a\"]]",
             "Print\".print\"[w\"tran\" Group\"v\"[w\"a\"]]",
             "Measure\".meas\"[w\"tran\" w\"x\" w\"find\" Group\"v\"[w\"a\"] w\"at\"=n\"1n\"]",
@@ -392,85 +406,13 @@ fn card_for_other_directives() {
 }
 
 #[test]
-fn spice_instance_x_master_either_side() {
-    // ngspice manual §2.4.3: `XYYY N1 N2 SUBNAM p=v`; sky130's alias puts
-    // the parameters first (`X1 a b w=1 sub`). Checks: 2.
-    let (top, codes) = read("t\nX1 a b sub w=1\nX2 a b w=1 sub\n", &NGSPICE);
-    assert_eq!(
-        top,
-        [
-            "Instance\"X1\"<Subckt w\"sub\"|w\"a\" w\"b\">[w\"w\"=n\"1\"]",
-            "Instance\"X2\"<Subckt w\"sub\"|w\"a\" w\"b\">[w\"w\"=n\"1\"]"
-        ]
-    );
-    assert!(codes.is_empty());
-}
-
-#[test]
-fn element_cards_split_by_their_device_row() {
-    // The general forms `syntax::device` cites: `RXXX n+ n- <value>
-    // <mname>` (a model among the arguments: resolve decides), `KXXX LYYY
-    // LZZZ value`, `VXXX N+ N- <DC> ...`, `EXXX N+ N- NC+ NC- VALUE`, `FXXX
-    // N+ N- VNAM VALUE`, `DXXX n+ n- mname`, `QXXX nc nb ne <ns> mname`
-    // (a flag ends the nodes), `MXXX nd ng ns nb mname` and HSPICE's
-    // bulkless `Mxxx nd ng ns mname`, `WYYY N+ N- VNAM MODEL`, `TXXX N1 N2
-    // N3 N4 Z0=VALUE`, ngspice's OSDI `NXXX n1 ... mname`. Checks: 2.
-    let src = "t\nR1 a b 1k rmod\nK1 L1 L2 0.9\nV1 a 0 dc 1 ac 1\nE1 a b c d 2\nF1 a b vs 2\nD1 a k dmod area=2\nQ1 c b e s qmod off\nM1 d g s b nch w=1u\nM2 d g s nch\nW1 a b vc wmod\nT1 a 0 b 0 z0=50\nN1 a b c va\n";
-    let (top, codes) = read(src, &NGSPICE);
-    assert_eq!(
-        top,
-        [
-            "Instance\"R1\"<Resistor -|w\"a\" w\"b\">[w\"1k\" w\"rmod\"]",
-            "Instance\"K1\"<Coupling -|>[w\"L1\" w\"L2\" w\"0.9\"]",
-            "Instance\"V1\"<VoltageSource -|w\"a\" w\"0\">[w\"dc\" w\"1\" w\"ac\" w\"1\"]",
-            "Instance\"E1\"<Vcvs -|w\"a\" w\"b\" w\"c\" w\"d\">[w\"2\"]",
-            "Instance\"F1\"<Cccs -|w\"a\" w\"b\">[w\"vs\" w\"2\"]",
-            "Instance\"D1\"<Diode w\"dmod\"|w\"a\" w\"k\">[w\"area\"=n\"2\"]",
-            "Instance\"Q1\"<Bjt w\"qmod\"|w\"c\" w\"b\" w\"e\" w\"s\">[w\"off\"]",
-            "Instance\"M1\"<Mosfet w\"nch\"|w\"d\" w\"g\" w\"s\" w\"b\">[w\"w\"=n\"1u\"]",
-            "Instance\"M2\"<Mosfet w\"nch\"|w\"d\" w\"g\" w\"s\">[]",
-            "Instance\"W1\"<CurrentSwitch w\"wmod\"|w\"a\" w\"b\">[w\"vc\"]",
-            "Instance\"T1\"<TransmissionLine -|w\"a\" w\"0\" w\"b\" w\"0\">[w\"z0\"=n\"50\"]",
-            "Instance\"N1\"<Osdi w\"va\"|w\"a\" w\"b\" w\"c\">[]"
-        ]
-    );
-    assert!(codes.is_empty());
-}
-
-#[test]
-fn a_letter_no_table_holds_has_no_primitive() {
-    // HSPICE reads only the twenty shared letters (`syntax::device::SPICE`);
-    // its legal neighbour is ngspice's `N1` above. Checks: 1.
-    let (top, _) = read("t\nN1 a b c va\n", &HSPICE);
-    assert_eq!(top, ["Instance\"N1\"<- -|>[w\"a\" w\"b\" w\"c\" w\"va\"]"]);
-}
-
-#[test]
-fn spectre_instance_with_and_without_parentheses() {
-    // Spectre UG p.66: `name [(]nodes[)] master params`; without parentheses
-    // the master is the last bare word before the first `name=`. Checks: 2.
-    let (top, codes) = read(
-        "t\nr1 (a b) resistor r=1k\nr2 a b resistor r=2k\n",
-        &SPECTRE,
-    );
-    assert_eq!(
-        top,
-        [
-            "Instance\"r1\"<Resistor w\"resistor\"|w\"a\" w\"b\">[w\"r\"=n\"1k\"]",
-            "Instance\"r2\"<Resistor w\"resistor\"|w\"a\" w\"b\">[w\"r\"=n\"2k\"]"
-        ]
-    );
-    assert!(codes.is_empty());
-}
-
-#[test]
 fn words_join_gapless_tokens() {
     // ngspice manual §2.1: node names are any non-separator characters
     // (`net-1`, `vdd!`, `n<3>`); INPgetTok reads `10%3` as one token. Checks: 2.
     let (top, codes) = read("t\nR1 net-1 vdd! 10%3\n", &NGSPICE);
     assert_eq!(
         top,
-        ["Instance\"R1\"<Resistor -|w\"net-1\" w\"vdd!\">[w\"10%3\"]"]
+        ["Instance\"R1\"<Resistor w\"R1\" -|w\"net-1\" w\"vdd!\">[w\"10%3\"]"]
     );
     assert!(codes.is_empty());
 }
@@ -483,8 +425,8 @@ fn group_and_probe() {
     assert_eq!(
         top,
         [
-            "Instance\"V1\"<VoltageSource -|w\"a\" w\"0\">[Group\"sin\"[w\"0\" w\"1\" w\"1k\"]]",
-            "Instance\"B1\"<Behavioural -|w\"a\" w\"0\">[w\"v\"=Delimited\"{\"[(* Probe\"v\"[w\"a\" w\"b\"] n\"2\")]]"
+            "Instance\"V1\"<VoltageSource w\"V1\" -|w\"a\" w\"0\">[Group\"sin\"[w\"0\" w\"1\" w\"1k\"]]",
+            "Instance\"B1\"<Behavioural w\"B1\" -|w\"a\" w\"0\">[w\"v\"=Delimited\"{\"[(* Probe\"v\"[w\"a\" w\"b\"] n\"2\")]]"
         ]
     );
     assert!(codes.is_empty());
@@ -496,7 +438,7 @@ fn element_comma_vector_is_a_seq() {
     let (top, codes) = read("t\nC1 a 0 1p ic=0,-5\n", &NGSPICE);
     assert_eq!(
         top,
-        ["Instance\"C1\"<Capacitor -|w\"a\" w\"0\">[w\"1p\" w\"ic\"=Seq[n\"0\" w\"-5\"]]"]
+        ["Instance\"C1\"<Capacitor w\"C1\" -|w\"a\" w\"0\">[w\"1p\" w\"ic\"=Seq[n\"0\" w\"-5\"]]"]
     );
     assert!(codes.is_empty());
 }
@@ -554,7 +496,7 @@ fn vector_list_index() {
     assert_eq!(
         read("t\nc1 (a b) capacitor c=[1p 2p]\n", &SPECTRE).0,
         [
-            "Instance\"c1\"<Capacitor w\"capacitor\"|w\"a\" w\"b\">[w\"c\"=Vector\"[\"[n\"1p\" n\"2p\"]]"
+            "Instance\"c1\"<Capacitor w\"c1\" w\"capacitor\"|w\"a\" w\"b\">[w\"c\"=Vector\"[\"[n\"1p\" n\"2p\"]]"
         ]
     );
     assert_eq!(

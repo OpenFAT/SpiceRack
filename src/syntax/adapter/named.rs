@@ -19,7 +19,7 @@
 //! - `Cx::named_card_spine(&mut self, n: u32, here: &mut Subcircuit, scope: Scope)`
 //! - `Cx::pairs(&self, n: u32) -> Vec<(String, u32)>`
 //! - `Cx::get(&self, p: &[(String, u32)], k: &str) -> Option<u32>`
-//! - `Cx::analysis_kind(&self, n: u32) -> Option<&'static str>`
+//! - `Cx::analysis_kind(&self, n: u32) -> bool`
 
 use std::collections::HashMap;
 
@@ -27,60 +27,8 @@ use super::{Cx, Scope};
 use crate::codegen::Dialect;
 use crate::ir::*;
 use crate::syntax::ast::{Header, NONE, Node, Tag};
+use crate::syntax::statement::Statement;
 use crate::syntax::token::Tag as T;
-
-/// spectre.peg `Word_kind`: the masters that make a statement an analysis.
-const WORD_KIND: &[&str] = &[
-    "montecarlo",
-    "acmatch",
-    "dcmatch",
-    "hbnoise",
-    "qpnoise",
-    "fourier",
-    "pdisto",
-    "pnoise",
-    "hbstb",
-    "envlp",
-    "hbsp",
-    "hbac",
-    "hbxf",
-    "noise",
-    "qpac",
-    "qpsp",
-    "qpss",
-    "qpxf",
-    "sweep",
-    "pac",
-    "psp",
-    "pss",
-    "pstb",
-    "pxf",
-    "sens",
-    "tran",
-    "tdr",
-    "stb",
-    "ac",
-    "dc",
-    "hb",
-    "pz",
-    "sp",
-    "xf",
-];
-
-/// spectre.peg `Word_ctl`: the masters that make it a control statement.
-const WORD_CTL: &[&str] = &[
-    "altergroup",
-    "checklimit",
-    "paramtest",
-    "paramset",
-    "options",
-    "assert",
-    "alter",
-    "check",
-    "shell",
-    "info",
-    "set",
-];
 
 /// The module names `codegen::vacask` declares itself (lower/named.rs).
 const VACASK_BUILTINS: &[&str] = &[
@@ -214,6 +162,11 @@ impl<'a> Cx<'a> {
     /// One Spectre or VACASK statement (lower/mod.rs `card`, named).
     pub(super) fn named_card_spine(&mut self, n: u32, here: &mut Subcircuit, scope: Scope) {
         let tag = self.tag(n);
+        if tag.has_header() && self.ast.rhs(Node(n)) != NONE {
+            // quirk: spectre.peg `Block`: a `name master … {` statement is
+            // kept whole, its body unread.
+            return self.raw(n, here, true);
+        }
         if scope == Scope::Section && self.named_leaks(n) {
             return self.raw(n, here, matches!(tag, Tag::Region | Tag::Control));
         }
@@ -222,12 +175,27 @@ impl<'a> Cx<'a> {
             Tag::Verbatim | Tag::Line => self.unparsed(n, here),
             Tag::Card if self.ttag(self.main(n)) == T::KwSimulator => {}
             Tag::Instance if !self.inst_peg_ok(n) => self.unparsed(n, here),
-            // quirk: vacask.peg `stmt`: `save`, `analysis`, `sweep` are
-            // statements only inside `control`.
-            Tag::Save | Tag::Card if self.d == Dialect::Vacask && !self.vacask_top_ok(n) => {
+            Tag::Analysis | Tag::Command | Tag::Options
+                if self.d == Dialect::Spectre && !self.inst_peg_ok(n) =>
+            {
                 self.unparsed(n, here)
             }
-            Tag::Card | Tag::Model | Tag::Save | Tag::Region | Tag::Control | Tag::Instance => {
+            // quirk: vacask.peg `stmt`: `save`, `analysis`, `sweep`, `options`
+            // are statements only inside `control`.
+            Tag::Save | Tag::Card | Tag::Analysis | Tag::Options
+                if self.d == Dialect::Vacask && !self.vacask_top_ok(n) =>
+            {
+                self.unparsed(n, here)
+            }
+            Tag::Card
+            | Tag::Model
+            | Tag::Save
+            | Tag::Region
+            | Tag::Control
+            | Tag::Instance
+            | Tag::Analysis
+            | Tag::Command
+            | Tag::Options => {
                 let ok = self.named_card(n, here, scope == Scope::Top);
                 if !ok {
                     let block =
@@ -326,20 +294,26 @@ impl<'a> Cx<'a> {
         p.iter().find(|(n, _)| n == k).map(|(_, v)| *v)
     }
 
-    /// The analysis master a Spectre instance statement names
-    /// (spectre.peg `Ana`).
-    pub(super) fn analysis_kind(&self, n: u32) -> Option<&'static str> {
-        let m = self.master(n)?;
-        WORD_KIND.iter().find(|&&k| k == m).copied()
+    /// quirk: lower/named.rs read spectre.peg's `Word_kind` for VACASK
+    /// too: a VACASK instance whose master is a Spectre analysis word is an
+    /// analysis (Spectre's are `Analysis` nodes already).
+    pub(super) fn analysis_kind(&self, n: u32) -> bool {
+        self.tag(n) == Tag::Instance
+            && self.master(n).is_some_and(|m| {
+                matches!(
+                    crate::syntax::lexicon::SPECTRE.master(&m),
+                    Some(Statement::Analysis(_))
+                )
+            })
     }
 }
 
 // ---- private ----
 
 impl<'a> Cx<'a> {
-    /// An instance statement's master word's text.
+    /// A header statement's master word's text.
     fn master(&self, n: u32) -> Option<String> {
-        if self.tag(n) != Tag::Instance {
+        if !self.tag(n).has_header() {
             return None;
         }
         let m = self.ast.header(Node(n)).master;
@@ -374,22 +348,13 @@ impl<'a> Cx<'a> {
         )
     }
 
-    /// Whether the statement is a Spectre control statement (`Ctl`).
-    fn is_ctl(&self, n: u32) -> bool {
-        let nodes = self.ast.header(Node(n)).nodes;
-        self.d == Dialect::Spectre
-            && nodes.is_empty()
-            && self
-                .master(n)
-                .is_some_and(|m| WORD_CTL.contains(&m.as_str()))
-    }
-
     /// lower/sections.rs `leaks`, named: control, output and analysis
     /// statements, and `global`.
     fn named_leaks(&self, n: u32) -> bool {
         match self.tag(n) {
             Tag::Global | Tag::Save | Tag::Region | Tag::Control => true,
-            Tag::Instance => self.analysis_kind(n).is_some() || self.is_ctl(n),
+            Tag::Analysis | Tag::Command | Tag::Options => self.d == Dialect::Spectre,
+            Tag::Instance => self.analysis_kind(n),
             _ => false,
         }
     }
@@ -453,11 +418,13 @@ impl<'a> Cx<'a> {
                 self.vacask_control_block(n);
                 true
             }
-            Tag::Instance if self.is_ctl(n) && self.master(n).as_deref() == Some("options") => {
+            Tag::Options => {
                 self.spectre_options(n);
                 true
             }
-            Tag::Instance if self.analysis_kind(n).is_some() || self.is_ctl(n) => {
+            Tag::Analysis | Tag::Command | Tag::Instance
+                if self.tag(n) != Tag::Instance || self.analysis_kind(n) =>
+            {
                 top && match self.spectre_analysis(n) {
                     Some(a) => {
                         self.tb.analyses.push(a);

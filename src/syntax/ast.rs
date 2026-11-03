@@ -114,7 +114,9 @@ pub enum Tag {
     /// `.model name kind params`, Spectre/VACASK `model name master params`.
     /// Fields; a Spectre model group's body holds its bins (`Card`s).
     Model,
-    /// `.options`, `.option`, `.opt`. Fields.
+    /// `.options`, `.option`, `.opt`, Spectre `opt1 options reltol=1e-3`,
+    /// VACASK `options` (in `control`). A header: Spectre's name and master
+    /// word, else `NONE`; `code` `NONE`. Fields.
     Options,
     /// `.save`, HSPICE `.probe`, Spectre/VACASK `save`. Fields.
     Save,
@@ -130,10 +132,22 @@ pub enum Tag {
     Temp,
     /// `.global`, `global`. Fields.
     Global,
-    /// A SPICE analysis card: `.op`, `.dc`, `.ac`, `.tran`, `.noise`, `.tf`,
-    /// `.sens`, `.pz`, `.four`, `.sp`; its kind is its head token's tag.
-    /// Fields.
+    /// An analysis: SPICE `.op`, `.dc`, `.ac`, `.tran`, `.noise`, `.tf`,
+    /// `.sens`, `.pz`, `.four`, `.sp` (and a `.control` command read as its
+    /// card), Spectre `tran1 tran stop=1n`, VACASK `analysis op1 op`. A
+    /// header: the name and the kind word (`NONE` in SPICE, whose kind is
+    /// its keyword), `code` the [`Analysis`] kind (`NONE` for a kind word
+    /// the dialect's table lacks), the nodes (Spectre `noise1 (out 0)
+    /// noise`). Fields; a Spectre `sweep … {`'s body.
+    ///
+    /// [`Analysis`]: crate::syntax::statement::Analysis
     Analysis,
+    /// A Spectre control statement: `alter1 alter param=x value=1`, `info`,
+    /// `set`, `shell` …. A header: the name, the master word, `code` the
+    /// [`Command`]. Fields; an `altergroup … {`'s body.
+    ///
+    /// [`Command`]: crate::syntax::statement::Command
+    Command,
     /// `.step`. Fields.
     Step,
     /// Spectre `statistics {`. Body: `Process`, `Mismatch`, `Card`s
@@ -143,8 +157,9 @@ pub enum Tag {
     /// (`vary`, `truncate`).
     Process,
     /// Any other statement with a keyword or directive head (`.mc`,
-    /// `.backanno`, `load`, `vary`, a Spectre `} ` closer, a bin `1: …`):
-    /// its head's token tag says which. Fields; a Spectre `{` block's body.
+    /// `.backanno`, `load`, `vary`, a Spectre `} ` closer, a bin `1: …`, a
+    /// VACASK `control` line): its head's token tag says which. Fields; a
+    /// Spectre `{` block's body.
     Card,
     /// An element: SPICE `R1 a b 1k`, Spectre `r1 (a b) resistor r=1k`,
     /// split by its dialect's device row (`syntax::device`). A header:
@@ -153,7 +168,8 @@ pub enum Tag {
     /// [`Primitive`] (`NONE` when the parser cannot know it: a Spectre master
     /// that is a model or a subcircuit, a VACASK model), the nodes `Word`s;
     /// fields: the arguments after the nodes and master, positional values
-    /// and `key=value`s, in source order.
+    /// and `key=value`s, in source order; a Spectre `name master … {`'s
+    /// body.
     ///
     /// [`Primitive`]: crate::syntax::device::Primitive
     Instance,
@@ -233,8 +249,8 @@ pub struct Header<'a> {
     pub name: u32,
     /// The master `Word`, or `NONE`.
     pub master: u32,
-    /// What the master names, by the tag: a `Primitive` for an `Instance`;
-    /// `NONE` when unknown.
+    /// What the master names, by the tag: a `Primitive` (`Instance`), an
+    /// `Analysis` kind, a `Command`; `NONE` when unknown.
     pub code: u32,
     /// The node `Word`s.
     pub nodes: &'a [u32],
@@ -267,7 +283,10 @@ pub struct Ast<'s> {
 impl Tag {
     /// Whether the statement's `lhs` is a [`Header`] and its fields.
     pub fn has_header(self) -> bool {
-        matches!(self, Tag::Instance)
+        matches!(
+            self,
+            Tag::Instance | Tag::Analysis | Tag::Command | Tag::Options
+        )
     }
 }
 

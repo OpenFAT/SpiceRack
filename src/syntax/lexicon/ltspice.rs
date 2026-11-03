@@ -95,6 +95,8 @@ pub const LTSPICE: Lexicon = Lexicon {
     keywords: &[OWN_KEYWORDS, SPICE_KEYWORDS],
     named: false,
     devices: &[device::SPICE],
+    masters: &[],
+    analyses: &[],
     lang_spice: None,
 };
 

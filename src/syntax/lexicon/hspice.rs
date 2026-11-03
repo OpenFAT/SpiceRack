@@ -90,6 +90,8 @@ pub const HSPICE: Lexicon = Lexicon {
     keywords: &[SPICE_KEYWORDS, OWN_KEYWORDS],
     named: false,
     devices: &[device::SPICE],
+    masters: &[],
+    analyses: &[],
     lang_spice: None,
 };
 

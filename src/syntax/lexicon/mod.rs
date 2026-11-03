@@ -15,7 +15,9 @@
 //!
 //! Contents:
 //! - `pub struct Lexicon`, `Lexicon::keyword(&self, word: &str) -> Option<Tag>`,
-//!   `Lexicon::device(&self, word: &str) -> Option<&'static Device>`
+//!   `Lexicon::device(&self, word: &str) -> Option<&'static Device>`,
+//!   `Lexicon::master(&self, word: &str) -> Option<Statement>`,
+//!   `Lexicon::analysis(&self, word: &str) -> Option<Analysis>`
 //! - `pub enum Dollar`, `pub enum Backslash`, `pub struct End`, `pub enum Quote`,
 //!   `pub struct Quoting`, `pub enum Caret`, `pub struct Ops`, `Ops::TERNARY: u8`
 //! - `pub struct Numbers`, `pub enum Scale`, `pub enum Tail`, `pub enum Arithmetic`
@@ -24,6 +26,7 @@
 
 use crate::codegen::Dialect;
 use crate::syntax::device::{self, Device};
+use crate::syntax::statement::{Analysis, Statement};
 use crate::syntax::token::Tag;
 
 mod hspice;
@@ -129,6 +132,12 @@ pub struct Lexicon {
     /// holding a word wins: the element letters, or the masters an instance
     /// names directly.
     pub devices: &'static [&'static [Device]],
+    /// The master words that make `name [(nodes)] word params` an analysis,
+    /// a control statement or options rather than an instance (Spectre;
+    /// empty where those statements have keywords of their own).
+    pub masters: &'static [(&'static str, Statement)],
+    /// The kinds `analysis name kind` names (VACASK; empty elsewhere).
+    pub analyses: &'static [(&'static str, Analysis)],
     /// The lexicon a `simulator lang=spice` statement switches to, and the
     /// one `simulator lang=spectre` switches back from: Spectre's hook.
     pub lang_spice: Option<&'static Lexicon>,
@@ -363,6 +372,21 @@ impl Lexicon {
                 hit.then_some(tag)
             })
         })
+    }
+
+    /// The statement master word `word` makes (exact spelling).
+    pub fn master(&self, word: &str) -> Option<Statement> {
+        self.masters
+            .iter()
+            .find_map(|&(s, m)| (s == word).then_some(m))
+    }
+
+    /// The analysis kind `word` names after `analysis name` (exact
+    /// spelling).
+    pub fn analysis(&self, word: &str) -> Option<Analysis> {
+        self.analyses
+            .iter()
+            .find_map(|&(s, a)| (s == word).then_some(a))
     }
 
     /// The device row spelled `word` (a SPICE letter, a Spectre master),
