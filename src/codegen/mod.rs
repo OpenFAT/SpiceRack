@@ -1,14 +1,7 @@
 //! `CircuitIR` -> netlist text, one dialect per simulator.
 
-/// `write!` into a `String`: every writer here appends to the one deck
-/// buffer instead of formatting a `String` per card and copying it.
-macro_rules! w {
-    ($out:expr, $($fmt:tt)*) => {{
-        use std::fmt::Write as _;
-        $out.write_fmt(format_args!($($fmt)*)).expect("writing to a String cannot fail")
-    }};
-}
-
+#[macro_use]
+mod append;
 pub mod laplace;
 mod spectre;
 pub(crate) mod spice3;
@@ -17,6 +10,7 @@ pub mod xschem;
 
 use std::borrow::Cow;
 
+pub use crate::ir::Dialect;
 use crate::ir::*;
 
 #[derive(Debug, thiserror::Error)]
@@ -29,14 +23,88 @@ pub enum CodeGenError {
     Other(String),
 }
 
-pub use crate::ir::Dialect;
+/// [`params`], written straight into the deck by its `Display`.
+struct Params<'a>(&'a [(String, String)], fn(&str) -> Cow<'_, str>);
 
-/// `^` means power in ngspice, HSPICE, ESPice and Spectre (as SpiceRack
-/// writes it), but XOR in LTspice, Xyce and VACASK. `true` here means
-/// "power".
-fn caret_means_power(d: Dialect) -> bool {
-    !matches!(d, Dialect::Ltspice | Dialect::Xyce | Dialect::Vacask)
+/// The whole deck for `d`. An analysis or component the simulator cannot run
+/// is an error, never a silently different deck.
+pub fn netlist(ir: &CircuitIR, d: Dialect) -> Result<String, CodeGenError> {
+    check_caret_meaning(ir, d)?;
+    match d {
+        Dialect::Ngspice | Dialect::Ltspice | Dialect::Espice | Dialect::Hspice => {
+            spice3::netlist(d, ir)
+        }
+        Dialect::Spectre => spectre::netlist(ir),
+        Dialect::Vacask => vacask::netlist(ir),
+        // A Xyce deck with its analyses; `xschem::write` is the xschem layout.
+        Dialect::Xyce => spice3::netlist(d, ir),
+        Dialect::Cdl | Dialect::Verilog => xschem::write(&xschem::Deck::new(ir), d),
+    }
 }
+
+/// One component's card in a SPICE-family dialect (ngspice, LTspice,
+/// HSPICE, ESPice): what `netlist` writes for it.
+pub fn card(comp: &Component, d: Dialect) -> Result<String, CodeGenError> {
+    match d {
+        Dialect::Ngspice | Dialect::Ltspice | Dialect::Espice | Dialect::Hspice => {
+            let mut s = String::new();
+            spice3::component(&mut s, d, false, comp)?;
+            Ok(s)
+        }
+        _ => Err(CodeGenError::Other(format!(
+            "card: {d:?} has no single-card writer"
+        ))),
+    }
+}
+
+/// `v` in SPICE notation, with an SI suffix when that spelling reads back as
+/// exactly `v` (`10k`, `2.5n`), else the shortest exact exponent form
+/// (`2.0000000000000002e-7`). Rounding the mantissa (`200n` for that value)
+/// would hand the simulator a different number.
+pub fn format_spice_number(v: f64) -> String {
+    let (mult, suffix) = crate::unit::si_prefix(v);
+    let exp = mult.log10().round() as i32; // the prefixes are powers of ten
+    let m = crate::unit::unscale(v, mult);
+    let rounded = m.round();
+    let whole = (rounded.abs() < 1e15).then(|| format!("{}", rounded as i64));
+    for mantissa in whole.into_iter().chain([format!("{m}")]) {
+        if format!("{mantissa}e{exp}").parse::<f64>() == Ok(v) {
+            return mantissa + suffix;
+        }
+    }
+    format!("{v:e}")
+}
+
+/// An R/C/L naming a `.model` (ngspice's `R1 a b rmod`) has no spelling in
+/// `backend`'s element line; only spice3-family dialects write it.
+pub(crate) fn model_refuse(
+    backend: &str,
+    name: &str,
+    model: &Option<String>,
+) -> Result<(), CodeGenError> {
+    match model {
+        Some(m) => Err(CodeGenError::UnsupportedComponent {
+            backend: backend.into(),
+            component: format!("{name}: model reference '{m}'"),
+        }),
+        None => Ok(()),
+    }
+}
+
+impl std::fmt::Display for Params<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (k, v) in self.0 {
+            if v.is_empty() {
+                write!(f, " {k}")?
+            } else {
+                write!(f, " {k}={}", (self.1)(v))?
+            }
+        }
+        Ok(())
+    }
+}
+
+// ---- private ----
 
 /// `^` read as power and `^` read as XOR are different expressions wearing
 /// the same character; carrying one into the other dialect would silently
@@ -80,51 +148,11 @@ fn check_caret_meaning(ir: &CircuitIR, d: Dialect) -> Result<(), CodeGenError> {
     Ok(())
 }
 
-/// The whole deck for `d`. An analysis or component the simulator cannot run
-/// is an error, never a silently different deck.
-pub fn netlist(ir: &CircuitIR, d: Dialect) -> Result<String, CodeGenError> {
-    check_caret_meaning(ir, d)?;
-    match d {
-        Dialect::Ngspice | Dialect::Ltspice | Dialect::Espice | Dialect::Hspice => {
-            spice3::netlist(d, ir)
-        }
-        Dialect::Spectre => spectre::netlist(ir),
-        Dialect::Vacask => vacask::netlist(ir),
-        // A Xyce deck with its analyses; `xschem::write` is the xschem layout.
-        Dialect::Xyce => spice3::netlist(d, ir),
-        Dialect::Cdl | Dialect::Verilog => xschem::write(&xschem::Deck::new(ir), d),
-    }
-}
-
-/// One component's card in a SPICE-family dialect (ngspice, LTspice,
-/// HSPICE, ESPice): what `netlist` writes for it.
-pub fn card(comp: &Component, d: Dialect) -> Result<String, CodeGenError> {
-    match d {
-        Dialect::Ngspice | Dialect::Ltspice | Dialect::Espice | Dialect::Hspice => {
-            let mut s = String::new();
-            spice3::component(&mut s, d, false, comp)?;
-            Ok(s)
-        }
-        _ => Err(CodeGenError::Other(format!(
-            "card: {d:?} has no single-card writer"
-        ))),
-    }
-}
-
-/// An R/C/L naming a `.model` (ngspice's `R1 a b rmod`) has no spelling in
-/// `backend`'s element line; only spice3-family dialects write it.
-pub(crate) fn model_refuse(
-    backend: &str,
-    name: &str,
-    model: &Option<String>,
-) -> Result<(), CodeGenError> {
-    match model {
-        Some(m) => Err(CodeGenError::UnsupportedComponent {
-            backend: backend.into(),
-            component: format!("{name}: model reference '{m}'"),
-        }),
-        None => Ok(()),
-    }
+/// `^` means power in ngspice, HSPICE, ESPice and Spectre (as SpiceRack
+/// writes it), but XOR in LTspice, Xyce and VACASK. `true` here means
+/// "power".
+fn caret_means_power(d: Dialect) -> bool {
+    !matches!(d, Dialect::Ltspice | Dialect::Xyce | Dialect::Vacask)
 }
 
 /// `raw_spice` lines are SPICE text; a non-SPICE dialect cannot place them,
@@ -144,64 +172,6 @@ fn refuse_raw_spice(ir: &CircuitIR, backend: &str) -> Result<(), CodeGenError> {
             component: format!("raw SPICE line '{}' in {}", s.raw_spice[0].trim(), s.name),
         }),
         None => Ok(()),
-    }
-}
-
-/// `v` in SPICE notation, with an SI suffix when that spelling reads back as
-/// exactly `v` (`10k`, `2.5n`), else the shortest exact exponent form
-/// (`2.0000000000000002e-7`). Rounding the mantissa (`200n` for that value)
-/// would hand the simulator a different number.
-pub fn format_spice_number(v: f64) -> String {
-    let (mult, suffix) = crate::unit::si_prefix(v);
-    let exp = mult.log10().round() as i32; // the prefixes are powers of ten
-    let m = crate::unit::unscale(v, mult);
-    let rounded = m.round();
-    let whole = (rounded.abs() < 1e15).then(|| format!("{}", rounded as i64));
-    for mantissa in whole.into_iter().chain([format!("{m}")]) {
-        if format!("{mantissa}e{exp}").parse::<f64>() == Ok(v) {
-            return mantissa + suffix;
-        }
-    }
-    format!("{v:e}")
-}
-
-/// A SPICE signal (`V(out)`, `i(v1)`) as the bare node or device name;
-/// other text trimmed. Spectre and VACASK name nodes bare: `[REF]` p.502
-/// `nodeset 7=0 out=1`, p.524 `sens (q1:betadc 2 Out) ...`.
-fn bare_node(s: &str) -> &str {
-    let t = s.trim();
-    let inner = ["V(", "v(", "I(", "i("]
-        .into_iter()
-        .find_map(|p| t.strip_prefix(p))
-        .and_then(|r| r.strip_suffix(')'));
-    inner.map_or(t, str::trim)
-}
-
-/// ` k=v k=v` — instance parameters in SPICE and Spectre alike, each value
-/// through `respell`. An empty value is a flag (`off`, VDMOS `pchan`),
-/// written bare (Spectre refuses flags before it gets here).
-fn params(params: &[(String, String)], respell: fn(&str) -> Cow<'_, str>) -> Params<'_> {
-    Params(params, respell)
-}
-
-/// A value respelled as itself, for [`params`] and [`param_defs`].
-fn verbatim(v: &str) -> Cow<'_, str> {
-    Cow::Borrowed(v)
-}
-
-/// [`params`], written straight into the deck by its `Display`.
-struct Params<'a>(&'a [(String, String)], fn(&str) -> Cow<'_, str>);
-
-impl std::fmt::Display for Params<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for (k, v) in self.0 {
-            if v.is_empty() {
-                write!(f, " {k}")?
-            } else {
-                write!(f, " {k}={}", (self.1)(v))?
-            }
-        }
-        Ok(())
     }
 }
 
@@ -233,6 +203,30 @@ fn refuse_flags(ir: &CircuitIR, backend: &str) -> Result<(), CodeGenError> {
         }
     }
     Ok(())
+}
+
+/// A SPICE signal (`V(out)`, `i(v1)`) as the bare node or device name;
+/// other text trimmed. Spectre and VACASK name nodes bare: `[REF]` p.502
+/// `nodeset 7=0 out=1`, p.524 `sens (q1:betadc 2 Out) ...`.
+fn bare_node(s: &str) -> &str {
+    let t = s.trim();
+    let inner = ["V(", "v(", "I(", "i("]
+        .into_iter()
+        .find_map(|p| t.strip_prefix(p))
+        .and_then(|r| r.strip_suffix(')'));
+    inner.map_or(t, str::trim)
+}
+
+/// ` k=v k=v` — instance parameters in SPICE and Spectre alike, each value
+/// through `respell`. An empty value is a flag (`off`, VDMOS `pchan`),
+/// written bare (Spectre refuses flags before it gets here).
+fn params(params: &[(String, String)], respell: fn(&str) -> Cow<'_, str>) -> Params<'_> {
+    Params(params, respell)
+}
+
+/// A value respelled as itself, for [`params`] and [`param_defs`].
+fn verbatim(v: &str) -> Cow<'_, str> {
+    Cow::Borrowed(v)
 }
 
 /// ` a=1 b` — parameter declarations (SPICE `PARAMS:`, Spectre `parameters`),

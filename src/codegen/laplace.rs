@@ -62,6 +62,32 @@ pub enum Laplace {
     },
 }
 
+/// `num/den`, both **ascending** in powers of `s` (index == power) because
+/// that is the order polynomial arithmetic is natural in. Flipped to the
+/// descending order `s_xfer` wants only on the way out.
+#[derive(Debug, Clone, PartialEq)]
+struct Rational {
+    num: Vec<f64>,
+    den: Vec<f64>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum Tok {
+    Num(f64),
+    S,
+    Op(char),
+    Pow,
+    LParen,
+    RParen,
+    Ident(String),
+}
+
+struct Parser<'a> {
+    toks: &'a [Tok],
+    pos: usize,
+    src: &'a str,
+}
+
 impl Laplace {
     pub fn input(&self) -> &(String, String) {
         match self {
@@ -138,42 +164,23 @@ pub fn parse(expr: &str) -> Result<Laplace, String> {
     Ok(Laplace::Xfer { input, num, den })
 }
 
-fn improper(num: &[f64], den: &[f64]) -> String {
-    format!(
-        "improper transfer function: numerator degree {} exceeds denominator \
-         degree {}. ngspice's s_xfer rejects this outright (\"Numerator \
-         coefficient array size greater than denominator coefficiant array \
-         size\"), so a pure differentiator such as `s` or `s^2` has no \
-         translation. Add poles (e.g. `s/(1+s*tau)`).",
-        num.len() - 1,
-        den.len() - 1
-    )
+/// Coefficient list for an `s_xfer` array parameter, descending.
+pub fn coeff_array(c: &[f64]) -> String {
+    c.iter().map(|v| coeff(*v)).collect::<Vec<_>>().join(" ")
 }
 
-/// `V(a)` / `V(a,b)`. Anything else is refused: `I(Vx)` would need a current
-/// input port, which is a different physical quantity from a branch current.
-fn parse_input(arg: &str) -> Result<(String, String), String> {
-    let lower = arg.to_ascii_lowercase();
-    let inner = lower
-        .strip_prefix('v')
-        .map(str::trim_start)
-        .and_then(|r| r.strip_prefix('('))
-        .and_then(|r| r.strip_suffix(')'))
-        .ok_or_else(|| {
-            format!(
-                "Laplace input must be `V(node)` or `V(node1,node2)`, got `{arg}`. \
-                 A branch current `I(Vx)` cannot drive a transfer block: the \
-                 code model's current input port measures node current, not \
-                 the current through a named source."
-            )
-        })?;
-    let parts: Vec<&str> = inner.split(',').map(str::trim).collect();
-    match parts.as_slice() {
-        [a] if !a.is_empty() => Ok((a.to_string(), "0".to_string())),
-        [a, b] if !a.is_empty() && !b.is_empty() => Ok((a.to_string(), b.to_string())),
-        _ => Err(format!("cannot read node names out of `{arg}`")),
+/// Descending coefficients as a Horner-nested polynomial in `s`:
+/// `[1e-3, 1] -> (1e-3*s+1e0)`. Horner avoids `**`/`^`, whose spelling differs
+/// between expression dialects, and keeps the text short for high orders.
+pub fn horner(c: &[f64]) -> String {
+    let mut out = coeff(c[0]);
+    for v in &c[1..] {
+        out = format!("({out}*s+{})", coeff(*v));
     }
+    out
 }
+
+// ---- private ----
 
 /// Index of the `)` matching the `(` at `open`.
 fn match_paren(s: &str, open: usize) -> Option<usize> {
@@ -212,50 +219,29 @@ fn split_top_level(s: &str) -> Vec<&str> {
     out
 }
 
-// ── rational functions of s ──
-
-/// `num/den`, both **ascending** in powers of `s` (index == power) because
-/// that is the order polynomial arithmetic is natural in. Flipped to the
-/// descending order `s_xfer` wants only on the way out.
-#[derive(Debug, Clone, PartialEq)]
-struct Rational {
-    num: Vec<f64>,
-    den: Vec<f64>,
-}
-
-fn poly_mul(a: &[f64], b: &[f64]) -> Vec<f64> {
-    let mut out = vec![0.0; a.len() + b.len() - 1];
-    for (i, x) in a.iter().enumerate() {
-        for (j, y) in b.iter().enumerate() {
-            out[i + j] += x * y;
-        }
+/// `V(a)` / `V(a,b)`. Anything else is refused: `I(Vx)` would need a current
+/// input port, which is a different physical quantity from a branch current.
+fn parse_input(arg: &str) -> Result<(String, String), String> {
+    let lower = arg.to_ascii_lowercase();
+    let inner = lower
+        .strip_prefix('v')
+        .map(str::trim_start)
+        .and_then(|r| r.strip_prefix('('))
+        .and_then(|r| r.strip_suffix(')'))
+        .ok_or_else(|| {
+            format!(
+                "Laplace input must be `V(node)` or `V(node1,node2)`, got `{arg}`. \
+                 A branch current `I(Vx)` cannot drive a transfer block: the \
+                 code model's current input port measures node current, not \
+                 the current through a named source."
+            )
+        })?;
+    let parts: Vec<&str> = inner.split(',').map(str::trim).collect();
+    match parts.as_slice() {
+        [a] if !a.is_empty() => Ok((a.to_string(), "0".to_string())),
+        [a, b] if !a.is_empty() && !b.is_empty() => Ok((a.to_string(), b.to_string())),
+        _ => Err(format!("cannot read node names out of `{arg}`")),
     }
-    out
-}
-
-fn poly_add(a: &[f64], b: &[f64]) -> Vec<f64> {
-    let mut out = vec![0.0; a.len().max(b.len())];
-    for (i, x) in a.iter().enumerate() {
-        out[i] += x;
-    }
-    for (i, y) in b.iter().enumerate() {
-        out[i] += y;
-    }
-    out
-}
-
-/// Drop exactly-zero high-order terms. The comparison is exact, not a
-/// tolerance: a legitimate coefficient can be 2.5e-8 (a 1 kHz two-pole
-/// denominator) and must survive.
-fn trim(mut v: Vec<f64>) -> Vec<f64> {
-    while v.len() > 1 && v[v.len() - 1] == 0.0 {
-        v.pop();
-    }
-    v
-}
-
-fn is_zero(p: &[f64]) -> bool {
-    p.iter().all(|c| *c == 0.0)
 }
 
 impl Rational {
@@ -354,31 +340,51 @@ impl Rational {
     }
 }
 
-// ── expression parsing ──
-
-#[derive(Debug, Clone, PartialEq)]
-enum Tok {
-    Num(f64),
-    S,
-    Op(char),
-    Pow,
-    LParen,
-    RParen,
-    Ident(String),
+fn improper(num: &[f64], den: &[f64]) -> String {
+    format!(
+        "improper transfer function: numerator degree {} exceeds denominator \
+         degree {}. ngspice's s_xfer rejects this outright (\"Numerator \
+         coefficient array size greater than denominator coefficiant array \
+         size\"), so a pure differentiator such as `s` or `s^2` has no \
+         translation. Add poles (e.g. `s/(1+s*tau)`).",
+        num.len() - 1,
+        den.len() - 1
+    )
 }
 
-impl Tok {
-    fn show(&self) -> String {
-        match self {
-            Tok::Num(v) => v.to_string(),
-            Tok::S => "s".into(),
-            Tok::Op(c) => c.to_string(),
-            Tok::Pow => "^".into(),
-            Tok::LParen => "(".into(),
-            Tok::RParen => ")".into(),
-            Tok::Ident(n) => n.clone(),
+/// Drop exactly-zero high-order terms. The comparison is exact, not a
+/// tolerance: a legitimate coefficient can be 2.5e-8 (a 1 kHz two-pole
+/// denominator) and must survive.
+fn trim(mut v: Vec<f64>) -> Vec<f64> {
+    while v.len() > 1 && v[v.len() - 1] == 0.0 {
+        v.pop();
+    }
+    v
+}
+
+fn poly_mul(a: &[f64], b: &[f64]) -> Vec<f64> {
+    let mut out = vec![0.0; a.len() + b.len() - 1];
+    for (i, x) in a.iter().enumerate() {
+        for (j, y) in b.iter().enumerate() {
+            out[i + j] += x * y;
         }
     }
+    out
+}
+
+fn poly_add(a: &[f64], b: &[f64]) -> Vec<f64> {
+    let mut out = vec![0.0; a.len().max(b.len())];
+    for (i, x) in a.iter().enumerate() {
+        out[i] += x;
+    }
+    for (i, y) in b.iter().enumerate() {
+        out[i] += y;
+    }
+    out
+}
+
+fn is_zero(p: &[f64]) -> bool {
+    p.iter().all(|c| *c == 0.0)
 }
 
 fn lex(src: &str) -> Result<Vec<Tok>, String> {
@@ -437,12 +443,6 @@ fn lex_number(b: &[char], start: usize) -> Result<(Tok, usize), String> {
     let (v, len, scale) = crate::unit::parse_spice_number(&text)
         .ok_or_else(|| format!("cannot read number `{text}` in H(s)"))?;
     Ok((Tok::Num(v), start + len + scale.len()))
-}
-
-struct Parser<'a> {
-    toks: &'a [Tok],
-    pos: usize,
-    src: &'a str,
 }
 
 impl Parser<'_> {
@@ -540,28 +540,24 @@ impl Parser<'_> {
     }
 }
 
-// ── rendering ──
+impl Tok {
+    fn show(&self) -> String {
+        match self {
+            Tok::Num(v) => v.to_string(),
+            Tok::S => "s".into(),
+            Tok::Op(c) => c.to_string(),
+            Tok::Pow => "^".into(),
+            Tok::LParen => "(".into(),
+            Tok::RParen => ")".into(),
+            Tok::Ident(n) => n.clone(),
+        }
+    }
+}
 
 /// `{:e}` and nothing clever: `format_spice_number` would turn 1e6 into
 /// `1meg`, which is fine in a netlist but noise inside a coefficient array.
 fn coeff(v: f64) -> String {
     format!("{:e}", v)
-}
-
-/// Coefficient list for an `s_xfer` array parameter, descending.
-pub fn coeff_array(c: &[f64]) -> String {
-    c.iter().map(|v| coeff(*v)).collect::<Vec<_>>().join(" ")
-}
-
-/// Descending coefficients as a Horner-nested polynomial in `s`:
-/// `[1e-3, 1] -> (1e-3*s+1e0)`. Horner avoids `**`/`^`, whose spelling differs
-/// between expression dialects, and keeps the text short for high orders.
-pub fn horner(c: &[f64]) -> String {
-    let mut out = coeff(c[0]);
-    for v in &c[1..] {
-        out = format!("({out}*s+{})", coeff(*v));
-    }
-    out
 }
 
 #[cfg(test)]
