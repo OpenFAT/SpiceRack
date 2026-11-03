@@ -5,7 +5,6 @@
 A `ModelLibrary` names a PDK's model file and corner. Attach it to a bench; the
 netlist gets the right `.lib` line for whichever simulator runs it.
 
-<!-- not run: needs the sky130 PDK under $PDK_ROOT -->
 ```python
 import os
 import spicerack as ps
@@ -18,6 +17,7 @@ dut.X("m1", "sky130_fd_pr__nfet_01v8", "vout", "vin", dut.gnd, dut.gnd, W=2, L=0
 
 tb = ps.Testbench(dut)
 tb.use_pdk(lib)
+tb.ngbehavior = "hsa"  # how sky130's own ngspice/spinit reads its libraries
 tb.V("dd", "vdd", "0", 1.8)
 tb.V("in", "vin", "0", 0.7)
 print(tb.operating_point()["vout"])
@@ -25,14 +25,17 @@ print(tb.operating_point()["vout"])
 
 `ModelLibrary(path, corner=None, setup_includes=None, **backend_paths)`: pass
 `spectre="..."`, `vacask="..."` and so on when each simulator needs its own
-model file. Swapping PDKs is swapping the library and the device names; the
-topology stays.
+model file. `setup_includes` are `.include`d before the library: gf180mcu's
+corners read switches its `design.ngspice` defines, so its library is
+`ModelLibrary(f"{ngspice}/sm141064.ngspice", corner="typical",
+setup_includes=[f"{ngspice}/design.ngspice"])`. Swapping PDKs is swapping the
+library and the device names; the topology stays. `tb.ngbehavior` is
+ngspice's compatibility mode (see [Simulate](simulate.md#ngspice-compatibility-mode)).
 
 For every corner, temperature and supply at once, build the list with
 `pdk_corners` and run it with `run_corners` (see
 [Testbenches](testbenches.md#corners-and-monte-carlo)):
 
-<!-- not run: needs the sky130 PDK under $PDK_ROOT -->
 ```python
 from spicerack.testbenches import pdk_corners
 

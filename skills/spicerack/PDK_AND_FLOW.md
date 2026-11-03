@@ -10,10 +10,23 @@ import os, spicerack as ps
 lib = ps.ModelLibrary(f"{os.environ['PDK_ROOT']}/sky130A/libs.tech/ngspice/sky130.lib.spice",
                       corner="tt")
 tb = ps.Testbench(dut); tb.use_pdk(lib)
+tb.ngbehavior = "hsa"   # sky130's ngspice/spinit setting; ngspice reads it before the deck
+
+gf = f"{os.environ['PDK_ROOT']}/gf180mcuD/libs.tech/ngspice"
+lib = ps.ModelLibrary(f"{gf}/sm141064.ngspice", corner="typical",
+                      setup_includes=[f"{gf}/design.ngspice"])   # no ngbehavior needed
 ```
 
 * `ModelLibrary(path, corner=None, setup_includes=None, **backend_paths)` —
   `backend_paths` maps a backend to its own file, e.g. `spectre="/pdk/x.scs"`.
+  `setup_includes` are `.include`d before the `.lib`: gf180mcu's corner sections read
+  `fnoicor`, `sw_stat_mismatch`, ... from `design.ngspice`; without it every one is a
+  `Formula() error`.
+* `tb.ngbehavior` is the only way to give ngspice a compatibility mode: SpiceRack runs
+  ngspice with `-n`, so a `.spiceinit` (yours or the PDK's `spinit`) is never read.
+  sky130A ships `libs.tech/ngspice/spinit` with `ngbehavior=hsa`; gf180mcuD ships none.
+  On ngspice-45, `examples/20_pdk_hotswap.py` gives the same `.op` with or without it. ESPice
+  reads sky130 with no mode; it refuses gf180's FETs (BSIM4 `mulu0`, ESPice 0.3.0).
 * `corner` is passed through verbatim as the lib section. No tt/ss/ff table exists; the
   names are the PDK's own and vary by PDK version — `grep '^\.lib' <file>`. sky130A
   `sky130.lib.spice`: `tt sf ff ss fs ll hh hl lh`, `*_mm`, `mc`. gf180mcuD

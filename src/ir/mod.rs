@@ -573,6 +573,12 @@ pub struct Testbench {
     /// (LTspice, Spectre, VACASK) omit them without changing a result.
     #[serde(default)]
     pub prints: Vec<PrintCard>,
+    /// ngspice's compatibility mode (`hsa`, `ps`, `lt`, ...), which it reads
+    /// only before parsing the deck. The ngspice backend passes it as
+    /// `-D ngbehavior=<mode>`; every other dialect ignores it, since it says
+    /// how ngspice reads text, not what the circuit is.
+    #[serde(default)]
+    pub ngbehavior: Option<String>,
 }
 
 /// One `.print` card: the analysis (`tran`, `dc`, ...; empty if none named)
@@ -1160,6 +1166,7 @@ mod tests {
             step_params: vec![StepParam { param: s("r"), start: 1.0, stop: 2.0, step: 1.0, sweep_type: Some(Sweep::Lin) }, StepParam { param: s("c"), start: 1.0, stop: 2.0, step: 1.0, sweep_type: None }],
             extra_lines: vec![s(".option x")],
             prints: vec![PrintCard { analysis: s("tran"), outputs: vec![s("v(a)")] }],
+            ngbehavior: Some(s("hsa")),
         };
         let library = ModelLibrary { name: s("sky"), path: s("sky.lib"), corner: Some(s("tt")), backend_paths: [(s("vacask"), s("sky.inc"))].into(), setup_includes: vec![s("a.inc")] };
         let ir = CircuitIR {

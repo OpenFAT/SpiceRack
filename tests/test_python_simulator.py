@@ -564,3 +564,75 @@ def test_run_gives_none_for_a_fourier_and_refuses_an_empty_queue():
     empty = ps.Testbench(ps.Subcircuit("e", ["a"]))
     with pytest.raises(ValueError, match="add_"):
         empty.run()
+
+
+# ======================================================================
+# ngspice compatibility mode, and no init file reaching a run
+# ======================================================================
+
+# A 1 V source across 1 kOhm: V(a) = 1 exactly.
+ONE_VOLT = """
+import spicerack as ps
+c = ps.Circuit("init")
+c.V(name="1", positive="a", negative=c.gnd, value=1.0)
+c.R(name="1", positive="a", negative=c.gnd, value=1e3)
+print(c.simulator(simulator="ngspice").operating_point()["a"])
+"""
+
+
+class TestNgbehavior:
+    def _tb(self):
+        dut = ps().Subcircuit("nb", ["a"])
+        dut.R(name="1", positive="a", negative=dut.gnd, value=1e3)
+        tb = ps().Testbench(dut)
+        tb.V(name="1", positive="a", negative=dut.gnd, value=1.0)
+        return tb
+
+    def test_the_mode_lands_on_the_ngspice_deck_only(self):
+        tb = self._tb()
+        assert tb.ngbehavior is None
+        tb.ngbehavior = "hsa"
+        assert tb.ngbehavior == "hsa"
+        assert "*spicerack ngbehavior=hsa" in tb.netlist("ngspice").splitlines()
+        for other in ("espice", "hspice", "ltspice", "vacask", "spectre"):
+            assert "ngbehavior" not in tb.netlist(other), other
+        tb.ngbehavior = None
+        assert "ngbehavior" not in tb.netlist("ngspice")
+
+    @pytest.mark.parametrize("bad", ["", "HSA", "hs a", "hsa\nshell ls"])
+    def test_anything_but_lowercase_letters_is_refused(self, bad):
+        tb = self._tb()
+        with pytest.raises(ValueError, match="lowercase letters"):
+            tb.ngbehavior = bad
+
+    @pytest.mark.needs("ngspice")
+    def test_a_mode_ngspice_rejects_fails_the_run(self):
+        tb = self._tb()
+        tb.with_backend("ngspice")
+        tb.ngbehavior = "hsa"
+        assert tb.operating_point()["a"] == 1.0
+        tb.ngbehavior = "xyz"
+        with pytest.raises(RuntimeError, match="ngbehavior=xyz"):
+            tb.operating_point()
+
+    # Oracle: a `.spiceinit` whose `shell touch` leaves a file behind when
+    # ngspice reads it. ngspice reads ./.spiceinit, else ~/.spiceinit.
+    @pytest.mark.needs("ngspice")
+    @pytest.mark.parametrize("where", ["cwd", "home"])
+    def test_no_spiceinit_reaches_a_run(self, tmp_path, where):
+        import os
+        import subprocess
+        import sys
+
+        home, work = tmp_path / "home", tmp_path / "work"
+        home.mkdir()
+        work.mkdir()
+        marker = tmp_path / "read"
+        (home if where == "home" else work).joinpath(".spiceinit").write_text(f"shell touch {marker}\n")
+        r = subprocess.run(
+            [sys.executable, "-c", ONE_VOLT], cwd=work, capture_output=True, text=True, timeout=60,
+            env={**os.environ, "HOME": str(home)},
+        )
+        assert r.returncode == 0, r.stderr
+        assert float(r.stdout) == 1.0
+        assert not marker.exists(), f"ngspice read the {where} .spiceinit"

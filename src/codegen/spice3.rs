@@ -5,6 +5,12 @@ use std::borrow::Cow;
 
 use super::{laplace, param_defs, params, verbatim, CodeGenError, Dialect};
 
+/// The comment that carries `Testbench::ngbehavior` in an ngspice deck.
+/// ngspice reads its compatibility mode only before parsing (no card sets
+/// it), so the backend lifts this line onto its command line and the deck
+/// text stays the whole input of a run.
+pub(crate) const NGBEHAVIOR: &str = "*spicerack ngbehavior=";
+
 /// A number as `d` reads it back: ngspice (and ESPice, reading its decks)
 /// computes a mantissa times `pow(10, e)`, so its spelling is picked to land
 /// on exactly the same double ([`crate::unit::ngspice_spelling`]).
@@ -566,6 +572,10 @@ pub(super) fn netlist(d: Dialect, ir: &CircuitIR) -> Result<String, CodeGenError
     let mut out = String::with_capacity(64 * (cards + 16));
     // Title must be first line (SPICE treats line 1 as title/comment)
     w!(out, "* {}\n", ir.top.name);
+    let mode = ir.testbench.as_ref().and_then(|tb| tb.ngbehavior.as_ref());
+    if let (Dialect::Ngspice, Some(mode)) = (d, mode) {
+        w!(out, "{NGBEHAVIOR}{mode}\n");
+    }
     loads(&mut out, d, ir)?;
 
     if !ir.globals.is_empty() {

@@ -81,6 +81,22 @@ print(res.measures["vmax"])
 `tb.step(param, start, stop, step)` and `tb.step_sweep(param, start, stop, n, "dec")`
 emit `.step`: LTspice, VACASK and Spectre run it, ngspice and ESPice do not.
 
+### ngspice compatibility mode
+
+PDKs written for HSPICE (sky130 among them) ship an ngspice setting that tells
+it how to read them, and ngspice takes it only before it parses the deck. Set
+it on the bench; SpiceRack runs `ngspice -D ngbehavior=<mode>`, and every other
+simulator ignores it:
+
+```python
+tb.ngbehavior = "hsa"   # sky130's own setting; "hs", "ps", "lt", "ki", "spe", "a" for the whole deck
+tb.ngbehavior = None    # plain ngspice
+```
+
+ngspice runs with `-n`: a `.spiceinit` in your working directory or home
+directory never changes a SpiceRack result. A mode ngspice does not recognise
+fails the run.
+
 ## Netlists without simulating
 
 ```python

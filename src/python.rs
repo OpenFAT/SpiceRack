@@ -521,6 +521,26 @@ impl PySimulator {
         self.tb().nominal_temperature = Some(temp);
     }
 
+    /// ngspice's compatibility mode (`"hsa"` for sky130), set before the deck
+    /// is read; other simulators ignore it. Lowercase letters only.
+    #[setter]
+    fn set_ngbehavior(&mut self, mode: Option<String>) -> PyResult<()> {
+        if let Some(m) = &mode
+            && (m.is_empty() || !m.bytes().all(|b| b.is_ascii_lowercase()))
+        {
+            return Err(PyValueError::new_err(format!(
+                "ngbehavior must be lowercase letters (\"hsa\", \"ps\", \"lt\", ...), got {m:?}"
+            )));
+        }
+        self.tb().ngbehavior = mode;
+        Ok(())
+    }
+
+    #[getter]
+    fn get_ngbehavior(&self) -> Option<String> {
+        self.ir.testbench.as_ref().and_then(|tb| tb.ngbehavior.clone())
+    }
+
     #[pyo3(signature = (param, start, stop, step))]
     fn step(&mut self, param: &str, start: f64, stop: f64, step: f64) {
         self.tb().step_params.push(ir::StepParam { param: param.to_string(), start, stop, step, sweep_type: None });
