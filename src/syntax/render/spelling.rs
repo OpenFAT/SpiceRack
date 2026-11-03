@@ -52,6 +52,8 @@ pub enum FuncForm {
     Param,
     /// `real f(real a, real b) { return body; }` (Spectre, R5 pp.870-871).
     Real,
+    /// None: the target defines no functions (VACASK).
+    None,
 }
 
 /// The writer's scale ladder, largest first: (multiplier, exponent). The
@@ -128,6 +130,15 @@ const SPECTRE: Spelling = Spelling {
     ngspice_numbers: false,
 };
 
+/// VACASK's title is its first line, bare (no comment leader).
+const VACASK: Spelling = Spelling {
+    target: Dialect::Vacask,
+    lexicon: &lexicon::VACASK,
+    comment: "",
+    func: FuncForm::None,
+    ..SPECTRE
+};
+
 /// Target `target`'s row.
 ///
 /// # Panics
@@ -141,7 +152,8 @@ pub const fn spelling(target: Dialect) -> &'static Spelling {
         Dialect::Ltspice => &LTSPICE,
         Dialect::Cdl => &CDL,
         Dialect::Spectre => &SPECTRE,
-        Dialect::Vacask | Dialect::Verilog => {
+        Dialect::Vacask => &VACASK,
+        Dialect::Verilog => {
             panic!("spelling: no row yet for this target")
         }
     }

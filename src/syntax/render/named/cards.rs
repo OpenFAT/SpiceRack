@@ -422,7 +422,7 @@ impl W<'_, '_> {
             // Spectre has ammodindex/ammodfreq but publishes no waveform
             // equation to map SPICE's AM() onto.
             WaveKind::Am => {
-                self.refuse(Code::W0105, tok);
+                self.refuse(Code::W0108, tok);
                 return None;
             }
         })
@@ -472,7 +472,7 @@ fn spectre_master(m: &Model) -> Option<Master> {
         .iter()
         .find(|(k, _)| k.eq_ignore_ascii_case("level"))
         .and_then(|(_, v)| super::spice_num(v.trim()))
-        .map_or(1, |l| l as u32);
+        .map_or(1, |(l, _)| l as u32);
     let mos = |l: u32| match l {
         1 => Some("mos1"),
         2 => Some("mos2"),

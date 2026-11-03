@@ -13,7 +13,9 @@
 //! (`fourier`); `[KUN]` B.2 (`simulator lang=`).
 //!
 //! Contents:
-//! - `W::bench(&mut self)`
+//! - `pub(super) struct Tb`, `pub(super) type Step`
+//! - `W::bench(&mut self)`, `W::fold(&self) -> Tb`
+//! - `fn bare_node(s: &str) -> &str`
 
 use super::W;
 use crate::syntax::diag::Code;
@@ -22,22 +24,29 @@ use crate::syntax::render::read::{Ana, Bench, BenchCard, Opt, Sweep};
 
 /// The testbench, folded from its statements in read order.
 #[derive(Default)]
-struct Tb {
+pub(super) struct Tb {
     /// Each analysis, with its statement's first token.
-    analyses: Vec<(Ana, u32)>,
+    pub(super) analyses: Vec<(Ana, u32)>,
     /// The portable options, with their statement's first token.
-    options: Vec<(String, String, u32)>,
-    temp: Option<f64>,
-    tnom: Option<f64>,
-    ics: Vec<(String, f64)>,
-    nodesets: Vec<(String, f64)>,
-    saves: Vec<String>,
-    measures: Vec<String>,
+    pub(super) options: Vec<(String, String, u32)>,
+    /// VACASK's own options, values as written.
+    pub(super) vacask: Vec<(String, String)>,
+    pub(super) temp: Option<f64>,
+    pub(super) tnom: Option<f64>,
+    pub(super) ics: Vec<(String, f64)>,
+    pub(super) nodesets: Vec<(String, f64)>,
+    pub(super) saves: Vec<String>,
+    /// Each `.meas` line, with its statement's first token.
+    pub(super) measures: Vec<(String, u32)>,
     /// Each `.step`'s sweep, name, numbers and first token.
-    steps: Vec<(Option<&'static str>, String, [f64; 3], u32)>,
+    pub(super) steps: Vec<Step>,
     /// VACASK control lines kept as text.
-    extra: Vec<String>,
+    pub(super) extra: Vec<String>,
 }
+
+/// A `.step`: its sweep keyword, parameter, start, stop and step, and its
+/// statement's first token.
+pub(super) type Step = (Option<&'static str>, String, [f64; 3], u32);
 
 impl W<'_, '_> {
     /// The testbench's statements.
@@ -92,7 +101,8 @@ impl W<'_, '_> {
             self.line(&line);
         }
         // `.measure` is SPICE syntax: fenced by language switches.
-        for m in &tb.measures {
+        for (m, tok) in &tb.measures {
+            self.ask(Construct::Measure, *tok);
             let body = m.trim();
             let body = match body.starts_with('.') {
                 true => body.to_string(),
@@ -128,11 +138,9 @@ impl W<'_, '_> {
     }
 }
 
-// ---- private ----
-
 impl W<'_, '_> {
     /// The deck's testbench items, folded in read order.
-    fn fold(&self) -> Tb {
+    pub(super) fn fold(&self) -> Tb {
         let mut tb = Tb::default();
         for &b in &self.deck.bench {
             let tok = match b {
@@ -153,8 +161,9 @@ impl W<'_, '_> {
                                 Opt::Portable(k, v) => tb.options.push((k, v, tok)),
                                 Opt::Temp(t) => tb.temp = Some(t),
                                 Opt::Tnom(t) => tb.tnom = Some(t),
-                                // Another target's own options.
-                                Opt::Xyce(..) | Opt::Vacask(..) => {}
+                                Opt::Vacask(k, v) => tb.vacask.push((k, v)),
+                                // Xyce's own options.
+                                Opt::Xyce(..) => {}
                             }
                         }
                     }
@@ -167,14 +176,29 @@ impl W<'_, '_> {
                     BenchCard::NodeVals(false, v) => tb.nodesets.extend(v),
                     // `Construct::Print` is `Spell(Omit)` here (a quirk).
                     BenchCard::Print(..) => {}
-                    BenchCard::Meas(m) => tb.measures.push(m),
+                    BenchCard::Meas(m) => tb.measures.push((m, tok)),
                     BenchCard::Extra(l) => tb.extra.push(l),
                 }
             }
         }
         tb
     }
+}
 
+/// A SPICE signal (`V(out)`, `i(v1)`) as the bare node or device name;
+/// other text trimmed (`[REF]` p.502: `nodeset 7=0 out=1`).
+pub(super) fn bare_node(s: &str) -> &str {
+    let t = s.trim();
+    let inner = ["V(", "v(", "I(", "i("]
+        .into_iter()
+        .find_map(|p| t.strip_prefix(p))
+        .and_then(|r| r.strip_suffix(')'));
+    inner.map_or(t, str::trim)
+}
+
+// ---- private ----
+
+impl W<'_, '_> {
     /// A signal (`v(x)`, `i(x)`, bare `x`), the name inside its wrapper in
     /// Spectre's spelling.
     fn signal(&self, s: &str) -> String {
@@ -315,7 +339,7 @@ impl W<'_, '_> {
     fn sweep_head(
         &mut self,
         idx: usize,
-        (sweep, param, [start, stop, step], tok): &(Option<&'static str>, String, [f64; 3], u32),
+        (sweep, param, [start, stop, step], tok): &Step,
     ) -> Option<String> {
         let suffix: String = param
             .chars()
@@ -341,17 +365,6 @@ impl W<'_, '_> {
             self.num(*step)
         ))
     }
-}
-
-/// A SPICE signal (`V(out)`, `i(v1)`) as the bare node or device name;
-/// other text trimmed (`[REF]` p.502: `nodeset 7=0 out=1`).
-fn bare_node(s: &str) -> &str {
-    let t = s.trim();
-    let inner = ["V(", "v(", "I(", "i("]
-        .into_iter()
-        .find_map(|p| t.strip_prefix(p))
-        .and_then(|r| r.strip_suffix(')'));
-    inner.map_or(t, str::trim)
 }
 
 /// SPICE `.dc Vin 0 5 0.1` sweeps a source's dc value: `dev=vin

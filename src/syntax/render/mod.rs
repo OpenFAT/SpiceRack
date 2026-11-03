@@ -2,7 +2,7 @@
 //! last stage (`docs/research/transpiler-architecture.md` §2.5). Two
 //! structural writers, because there are two statement shapes: the SPICE
 //! family (`spice`: ngspice, ESPice, HSPICE, Xyce, LTspice, CDL) and the named
-//! family (`named`: Spectre; VACASK not yet ported). Each reads the reader's plan
+//! family (`named`: Spectre, VACASK). Each reads the reader's plan
 //! (`read`: which statement is written where, and its views), spells
 //! through the target's [`spelling::Spelling`] row, asks
 //! [`capability::action`] for everything a target may not say, and writes
@@ -116,18 +116,9 @@ pub fn render_text(
     render(&src, target)
 }
 
-/// Whether [`render`] writes `target`: the SPICE family, CDL and Spectre,
-/// for now (VACASK is not ported yet; Verilog stays on the old layout
-/// writer, whose element lines are the old IR's own text).
+/// Whether [`render`] writes `target`: every target but Verilog, which
+/// stays on the old layout writer (its element lines are the old IR's own
+/// text).
 pub fn writes(target: Dialect) -> bool {
-    matches!(
-        target,
-        Dialect::Ngspice
-            | Dialect::Espice
-            | Dialect::Hspice
-            | Dialect::Xyce
-            | Dialect::Ltspice
-            | Dialect::Cdl
-            | Dialect::Spectre
-    )
+    target != Dialect::Verilog
 }

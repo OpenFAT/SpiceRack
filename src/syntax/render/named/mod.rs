@@ -6,8 +6,11 @@
 //! includes, parameters and `statistics`, models, subcircuits, sections,
 //! the body, the testbench) and the block-level statements; `cards` writes
 //! instances, waveforms and models, `bench` the testbench and analyses,
-//! `checks` the deck-wide refusals, `lift` the Monte Carlo lift (the
-//! `Lift(RackVars)` rule, its fixups over `Call` nodes).
+//! `checks` the deck-wide refusals (both targets'), `lift` the Monte Carlo
+//! rules (Spectre's `Lift(RackVars)`, VACASK's `Lift(VacaskCalls)`: fixups
+//! over `Call` nodes), `vacask` the VACASK spine and its blocks and models,
+//! `vacask_cards` its instances, `vacask_bench` its `control` block. The two share the reader's plan, the checks, the
+//! testbench fold and the lift's walk; their decks differ around them.
 //!
 //! Cites: Spectre Circuit Simulator Reference 19.1 (`[REF]`): p.494, p.493
 //! (`include`), p.498 (`library`, `section`), p.506 (`parameters`),
@@ -24,8 +27,11 @@ mod bench;
 mod cards;
 mod checks;
 mod lift;
+mod vacask;
+mod vacask_bench;
+mod vacask_cards;
 
-use super::capability::{Action, Construct, action};
+use super::capability::{Action, Construct, Rule, action};
 use super::out::{Out, Space};
 use super::read::{Block, Comp, Deck, Elem, Func, Raw, Rd, Section};
 use super::spelling::{Spelling, spelling};
@@ -54,16 +60,15 @@ struct W<'a, 'r> {
 /// construct has no meaning-keeping form there.
 ///
 /// # Panics
-/// For a target outside the named family.
+/// For a target outside the named family (Spectre, VACASK).
 pub(super) fn write(rd: &mut Rd, deck: &Deck, target: Dialect) -> Result<String, Vec<Diag>> {
-    assert_eq!(
-        target,
-        Dialect::Spectre,
-        "write: a named target with a writer"
-    );
     let mut refused = Vec::new();
     let lifted = match action(target, Construct::StatisticalCall) {
-        Action::Lift(_) => lift::lift(rd, deck, &mut refused),
+        Action::Lift(Rule::RackVars) => lift::lift(rd, deck, &mut refused),
+        Action::Lift(Rule::VacaskCalls) => {
+            lift::vacask_calls(rd, deck, &mut refused);
+            Lifted::default()
+        }
         _ => Lifted::default(),
     };
     let mut w = W {
@@ -77,7 +82,11 @@ pub(super) fn write(rd: &mut Rd, deck: &Deck, target: Dialect) -> Result<String,
         refused,
     };
     w.checks();
-    w.spectre();
+    match target {
+        Dialect::Spectre => w.spectre(),
+        Dialect::Vacask => w.vacask(),
+        _ => panic!("write: a named target"),
+    }
     match w.refused.is_empty() {
         true => Ok(w.o.finish()),
         false => Err(w.refused),
@@ -456,7 +465,7 @@ impl W<'_, '_> {
     fn value_text(&self, v: &str) -> String {
         let v = undelimited(v);
         match spice_num(v) {
-            Some(x) => self.num(x),
+            Some((x, _)) => self.num(x),
             None => v.to_string(),
         }
     }
@@ -519,16 +528,24 @@ fn undelimited(v: &str) -> &str {
 }
 
 /// The value of `t` when it is one signed SPICE number with a scale and
-/// a unit tail (`5V`, `1meg`), nothing else (`1k*(1+x)` is an expression).
+/// a unit tail (`5V`, `1meg`), nothing else (`1k*(1+x)` is an expression),
+/// and its VACASK spelling: the unit dropped, tera and giga in capitals
+/// (`t` is no VACASK scale).
 // ponytail: the view holds the value as SPICE text, so its number is read
 // again here (the old writer's `parse_spice_num`); a view carrying the
 // token's decoded value retires it.
-fn spice_num(t: &str) -> Option<f64> {
+fn spice_num(t: &str) -> Option<(f64, String)> {
     let body = t.strip_prefix(['+', '-']).unwrap_or(t);
-    let (v, len, _) = crate::unit::parse_spice_number(body)?;
+    let (v, len, scale) = crate::unit::parse_spice_number(body)?;
     let lead = t.len() - body.len() + len;
     if !t[lead..].bytes().all(|c| c.is_ascii_alphabetic()) {
         return None;
     }
-    Some(if t.starts_with('-') { -v } else { v })
+    let scale = match scale {
+        "t" => "T",
+        "g" => "G",
+        s => s,
+    };
+    let v = if t.starts_with('-') { -v } else { v };
+    Some((v, format!("{}{scale}", &t[..lead])))
 }

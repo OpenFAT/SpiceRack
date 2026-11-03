@@ -15,6 +15,11 @@
 //! post-order (inner calls first), so variables are named and declared in
 //! its order.
 //!
+//! VACASK has `agauss`, `gauss`, `aunif` and `unif`, drawn once per call
+//! site per scope as Spectre's process/mismatch split (VACASK
+//! `docs/cmd-analysis-mc.md` lines 31-61), so its rule
+//! (`Lift(VacaskCalls)`, [`vacask_calls`]) spells out only what it lacks.
+//!
 //! Cites: monte-carlo-spectre.md §5, §10.2, §11; ngspice `xpressn.c:45-85`
 //! (the guards); Spectre Reference 19.1 p.481 (user functions), p.474 (no
 //! short-circuiting); XY-RG Table 2-33 (Xyce's `limit`, a clamp).
@@ -22,6 +27,7 @@
 //! Contents:
 //! - `pub(super) struct Lifted`, `pub(super) struct Var`
 //! - `pub(super) fn lift(rd: &mut Rd, deck: &Deck, refused: &mut Vec<Diag>) -> Lifted`
+//! - `pub(super) fn vacask_calls(rd: &mut Rd, deck: &Deck, refused: &mut Vec<Diag>)`
 //! - `Lifted::vars_at(&self, at: Option<usize>) -> impl Iterator<Item = &Var>`,
 //!   `Lifted::block_at(&self, at: Option<usize>) -> Option<Stats>`,
 //!   `Lifted::rack(&self) -> impl Iterator<Item = (&str, [&str; 4], &str)>`
@@ -202,6 +208,51 @@ pub(super) fn lift(rd: &mut Rd, deck: &Deck, refused: &mut Vec<Diag>) -> Lifted 
         rd.lift_call(tok, l);
     }
     out
+}
+
+/// Spells out the statistical calls VACASK lacks (§7, §10.3), as fixups
+/// in `rd`: `limit(nom, avar)` as an `aunif` ternary, Xyce's clamp
+/// `limit(x, lo, hi)` as `min(max())`, a two-argument `agauss`/`gauss` with
+/// its sigma 1; nothing when the deck calls none. HSPICE's four-argument
+/// form is refused into `refused`.
+pub(super) fn vacask_calls(rd: &mut Rd, deck: &Deck, refused: &mut Vec<Diag>) {
+    let scoped = sites(rd, deck);
+    let calls: Vec<u32> = scoped
+        .iter()
+        .flat_map(|s| &s.sites)
+        .flat_map(|s| &s.roots)
+        .flat_map(|&r| rd.calls_in(r))
+        .collect();
+    let stat = |rd: &Rd, call: u32| {
+        let (f, n) = rd.call_of(call);
+        let f = f.to_ascii_lowercase();
+        STATISTICAL.contains(&f.as_str()) && !(f == "limit" && n == 3)
+    };
+    if !calls.iter().any(|&c| stat(rd, c)) {
+        return;
+    }
+    let mut fixes = Vec::new();
+    for call in calls {
+        let (name, args) = rd.call_of(call);
+        let f = name.to_ascii_lowercase();
+        let Some(f) = STATISTICAL.iter().copied().find(|s| *s == f) else {
+            continue;
+        };
+        let tok = rd.main(call);
+        match (f, args) {
+            ("limit", 2) => fixes.push((tok, Lift::Limit)),
+            ("limit", 3) => fixes.push((tok, Lift::Clamp)),
+            ("agauss" | "gauss", 2) => fixes.push((tok, Lift::Sigma(f))),
+            ("agauss" | "gauss", 3) | ("aunif" | "unif", 2) => {}
+            _ => refused.push(Diag {
+                code: Code::W0107,
+                token: tok,
+            }),
+        }
+    }
+    for (tok, l) in fixes {
+        rd.lift_call(tok, l);
+    }
 }
 
 impl Lifted {
@@ -612,6 +663,21 @@ mod tests {
             }
             let want = std::fs::read_to_string(dir.join(file)).expect(file);
             assert_eq!(text, want, "{file}");
+        }
+    }
+
+    #[test]
+    fn vacask_gets_its_four_calls_as_written_and_limit_spelled_out() {
+        // The oracle is monte-carlo-spectre.md §7: VACASK has agauss,
+        // gauss, aunif and unif with ngspice's arguments, no `limit` (an
+        // `aunif` ternary), and Xyce's sigma-less `agauss` takes sigma 1.
+        let deck = "t\nR1 a 0 {agauss(1k,100,3) + limit(0, 50)}\nR2 a 0 {agauss(1, 2)}\n.end\n";
+        let out = render_text(deck, Dialect::Xyce, "t", Dialect::Vacask).expect("written");
+        for want in [
+            "r1 (a 0) resistor r=agauss(1k,100,3) + ((aunif(0, 1) > 0) ? (0) + ( 50) : (0) - ( 50))",
+            "r2 (a 0) resistor r=agauss(1, 2,1)",
+        ] {
+            assert!(out.contains(want), "no `{want}` in\n{out}");
         }
     }
 }
