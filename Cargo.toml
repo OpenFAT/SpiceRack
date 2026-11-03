@@ -48,5 +48,5 @@ required-features = ["corpus"]
 
 [[bin]]
 name = "spice2rack"
-path = "tools/spice2rack.rs"
+path = "tools/spice2rack/main.rs"
 required-features = ["json"]
