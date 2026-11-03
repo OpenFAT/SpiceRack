@@ -78,6 +78,15 @@ $G diff <baseline> <out_dir> --xfail migration.xfail
 nix develop .#testing -c env IHP_PDK=<...> $G check-determinism
 ```
 
+Phase 4 records the renderer (`syntax::render`) with `golden record --writer
+syntax <out_dir>`: each target `render::writes` names is written from the
+file's AST and kit, the others through `codegen::netlist`, and a refusal is
+its `W` codes. `golden diff … --refusal-status-only <report>` compares a
+refusal by status only (the old texts are free text, the new ones codes until
+phase 5) and writes each old/new pair to `<report>` for review; written versus
+refused still differs. `check-determinism --writer syntax` checks the same
+record. The per-target state is `tests/fixtures/transpiler/PHASE4-STATUS.md`.
+
 Inputs (the `MANIFEST` of each record lists them, with content hashes):
 
 | Set | Read as | Inputs | Source |
