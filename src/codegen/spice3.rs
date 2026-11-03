@@ -3,7 +3,7 @@
 
 use std::borrow::Cow;
 
-use super::{laplace, param_defs, params, verbatim, CodeGenError, Dialect};
+use super::{CodeGenError, Dialect, laplace, param_defs, params, verbatim};
 
 /// The comment that carries `Testbench::ngbehavior` in an ngspice deck.
 /// ngspice reads its compatibility mode only before parsing (no card sets
@@ -15,14 +15,22 @@ pub(crate) const NGBEHAVIOR: &str = "*spicerack ngbehavior=";
 /// computes a mantissa times `pow(10, e)`, so its spelling is picked to land
 /// on exactly the same double ([`crate::unit::ngspice_spelling`]).
 fn num(d: Dialect, x: bool, v: f64) -> String {
-    if x && ngspice(d) { crate::unit::ngspice_spelling(v) } else { super::format_spice_number(v) }
+    if x && ngspice(d) {
+        crate::unit::ngspice_spelling(v)
+    } else {
+        super::format_spice_number(v)
+    }
 }
 
 /// `v` as plain decimal, unless ngspice would read that back as another
 /// double (then [`num`]'s exact spelling).
 fn dec(d: Dialect, x: bool, v: f64) -> String {
     let s = format!("{v}");
-    if !(x && ngspice(d)) || crate::unit::ngspice_value(&s) == Some(v) { s } else { crate::unit::ngspice_spelling(v) }
+    if !(x && ngspice(d)) || crate::unit::ngspice_value(&s) == Some(v) {
+        s
+    } else {
+        crate::unit::ngspice_spelling(v)
+    }
 }
 use crate::ir::*;
 
@@ -73,17 +81,22 @@ fn rclvalue(out: &mut String, d: Dialect, x: bool, v: &IrValue, model: &Option<S
 /// both; no other dialect here has been shown to repeat the same way.
 fn refuse_wave(d: Dialect, letter: char, name: &str, wf: &IrWaveform) -> Result<(), CodeGenError> {
     let why = match wf {
-        IrWaveform::Pwl { repeat, delay, .. } if repeat.is_some() || delay.is_some() => match (d, letter) {
-            (Dialect::Espice, _) | (Dialect::Ngspice, 'V') => return Ok(()),
-            _ => "PWL r=/td= (repeat, delay)",
-        },
+        IrWaveform::Pwl { repeat, delay, .. } if repeat.is_some() || delay.is_some() => {
+            match (d, letter) {
+                (Dialect::Espice, _) | (Dialect::Ngspice, 'V') => return Ok(()),
+                _ => "PWL r=/td= (repeat, delay)",
+            }
+        }
         // ESPice 0.3.0 refuses both cards ("the trnoise source waveform is
         // not supported"); HSPICE, LTspice and Xyce have no source form.
         IrWaveform::TrNoise { .. } if d != Dialect::Ngspice => "TRNOISE (ngspice only)",
         IrWaveform::TrRandom { .. } if d != Dialect::Ngspice => "TRRANDOM (ngspice only)",
         _ => return Ok(()),
     };
-    Err(CodeGenError::UnsupportedComponent { backend: d.name().into(), component: format!("{letter}{name}: {why}") })
+    Err(CodeGenError::UnsupportedComponent {
+        backend: d.name().into(),
+        component: format!("{letter}{name}: {why}"),
+    })
 }
 
 fn waveform(out: &mut String, d: Dialect, x: bool, wf: &IrWaveform) {
@@ -92,13 +105,51 @@ fn waveform(out: &mut String, d: Dialect, x: bool, wf: &IrWaveform) {
         n => value(d, x, &n.into()).into_owned(),
     };
     match wf {
-        IrWaveform::Sin { offset, amplitude, frequency, delay, damping, phase } => {
-            w!(out, "SIN({} {} {} {} {} {})", w(offset), w(amplitude), w(frequency), w(delay), w(damping), w(phase))
+        IrWaveform::Sin {
+            offset,
+            amplitude,
+            frequency,
+            delay,
+            damping,
+            phase,
+        } => {
+            w!(
+                out,
+                "SIN({} {} {} {} {} {})",
+                w(offset),
+                w(amplitude),
+                w(frequency),
+                w(delay),
+                w(damping),
+                w(phase)
+            )
         }
-        IrWaveform::Pulse { initial, pulsed, delay, rise_time, fall_time, pulse_width, period } => {
-            w!(out, "PULSE({} {} {} {} {} {} {})", w(initial), w(pulsed), w(delay), w(rise_time), w(fall_time), w(pulse_width), w(period))
+        IrWaveform::Pulse {
+            initial,
+            pulsed,
+            delay,
+            rise_time,
+            fall_time,
+            pulse_width,
+            period,
+        } => {
+            w!(
+                out,
+                "PULSE({} {} {} {} {} {} {})",
+                w(initial),
+                w(pulsed),
+                w(delay),
+                w(rise_time),
+                w(fall_time),
+                w(pulse_width),
+                w(period)
+            )
         }
-        IrWaveform::Pwl { values, repeat, delay } => {
+        IrWaveform::Pwl {
+            values,
+            repeat,
+            delay,
+        } => {
             out.push_str("PWL(");
             for (i, (t, v)) in values.iter().enumerate() {
                 w!(out, "{}{} {}", if i == 0 { "" } else { " " }, w(t), w(v));
@@ -111,26 +162,92 @@ fn waveform(out: &mut String, d: Dialect, x: bool, wf: &IrWaveform) {
                 w!(out, " td={}", w(td));
             }
         }
-        IrWaveform::Exp { initial, pulsed, rise_delay, rise_tau, fall_delay, fall_tau } => {
-            w!(out, "EXP({} {} {} {} {} {})", w(initial), w(pulsed), w(rise_delay), w(rise_tau), w(fall_delay), w(fall_tau))
+        IrWaveform::Exp {
+            initial,
+            pulsed,
+            rise_delay,
+            rise_tau,
+            fall_delay,
+            fall_tau,
+        } => {
+            w!(
+                out,
+                "EXP({} {} {} {} {} {})",
+                w(initial),
+                w(pulsed),
+                w(rise_delay),
+                w(rise_tau),
+                w(fall_delay),
+                w(fall_tau)
+            )
         }
-        IrWaveform::Sffm { offset, amplitude, carrier_freq, modulation_index, signal_freq } => {
-            w!(out, "SFFM({} {} {} {} {})", w(offset), w(amplitude), w(carrier_freq), w(modulation_index), w(signal_freq))
+        IrWaveform::Sffm {
+            offset,
+            amplitude,
+            carrier_freq,
+            modulation_index,
+            signal_freq,
+        } => {
+            w!(
+                out,
+                "SFFM({} {} {} {} {})",
+                w(offset),
+                w(amplitude),
+                w(carrier_freq),
+                w(modulation_index),
+                w(signal_freq)
+            )
         }
-        IrWaveform::Am { amplitude, offset, modulating_freq, carrier_freq, delay } => {
-            w!(out, "AM({} {} {} {} {})", w(amplitude), w(offset), w(modulating_freq), w(carrier_freq), w(delay))
+        IrWaveform::Am {
+            amplitude,
+            offset,
+            modulating_freq,
+            carrier_freq,
+            delay,
+        } => {
+            w!(
+                out,
+                "AM({} {} {} {} {})",
+                w(amplitude),
+                w(offset),
+                w(modulating_freq),
+                w(carrier_freq),
+                w(delay)
+            )
         }
         // The RTS fields are left off when all zero, as the manual's
         // white and 1/f examples write the card.
-        IrWaveform::TrNoise { na, nt, nalpha, namp, rtsam, rtscapt, rtsemt } => {
+        IrWaveform::TrNoise {
+            na,
+            nt,
+            nalpha,
+            namp,
+            rtsam,
+            rtscapt,
+            rtsemt,
+        } => {
             w!(out, "TRNOISE({} {} {} {}", w(na), w(nt), w(nalpha), w(namp));
             if !(*rtsam == 0.0 && *rtscapt == 0.0 && *rtsemt == 0.0) {
                 w!(out, " {} {} {}", w(rtsam), w(rtscapt), w(rtsemt));
             }
             out.push(')');
         }
-        IrWaveform::TrRandom { kind, ts, td, p1, p2 } => {
-            w!(out, "TRRANDOM({} {} {} {} {})", *kind as u8, w(ts), w(td), w(p1), w(p2))
+        IrWaveform::TrRandom {
+            kind,
+            ts,
+            td,
+            p1,
+            p2,
+        } => {
+            w!(
+                out,
+                "TRRANDOM({} {} {} {} {})",
+                *kind as u8,
+                w(ts),
+                w(td),
+                w(p1),
+                w(p2)
+            )
         }
     }
 }
@@ -151,14 +268,16 @@ fn waveform(out: &mut String, d: Dialect, x: bool, wf: &IrWaveform) {
 ///   be run here. The expression is still parsed first, so what goes out is
 ///   a transfer function we understand rather than an opaque string.
 fn laplace_source(
-    d: Dialect, x: bool,
+    d: Dialect,
+    x: bool,
     name: &str,
     np: &str,
     nm: &str,
     expression: &str,
     current_output: bool,
 ) -> Result<String, CodeGenError> {
-    let parsed = laplace::parse(expression).map_err(|why| CodeGenError::Other(format!("B{name}: {why}")))?;
+    let parsed =
+        laplace::parse(expression).map_err(|why| CodeGenError::Other(format!("B{name}: {why}")))?;
     let (ip, im) = parsed.input().clone();
     let letter = if current_output { 'G' } else { 'E' };
 
@@ -166,13 +285,21 @@ fn laplace_source(
     // also the only safe option on ngspice: `den_coeff=[1]` segfaults
     // ngspice 44.2 outright.
     if let laplace::Laplace::Gain { gain, .. } = parsed {
-        return Ok(format!("{letter}B{name} {np} {nm} {ip} {im} {}", num(d, x, gain)));
+        return Ok(format!(
+            "{letter}B{name} {np} {nm} {ip} {im} {}",
+            num(d, x, gain)
+        ));
     }
-    let laplace::Laplace::Xfer { num, den, .. } = parsed else { unreachable!() };
+    let laplace::Laplace::Xfer { num, den, .. } = parsed else {
+        unreachable!()
+    };
 
     // Xyce has no LAPLACE E/G form (RG §6.1.5).
     if d == Dialect::Xyce {
-        return Err(CodeGenError::UnsupportedComponent { backend: "xyce".into(), component: format!("B{name}: Laplace source") });
+        return Err(CodeGenError::UnsupportedComponent {
+            backend: "xyce".into(),
+            component: format!("B{name}: Laplace source"),
+        });
     }
     if d == Dialect::Ltspice {
         return Ok(format!(
@@ -186,7 +313,11 @@ fn laplace_source(
     // `s_xfer` (ESPice `docs/using/reference.md`, controlled sources).
     if matches!(d, Dialect::Hspice | Dialect::Espice) {
         let asc = |c: &[f64]| laplace::coeff_array(&c.iter().rev().copied().collect::<Vec<_>>());
-        return Ok(format!("{letter}B{name} {np} {nm} LAPLACE {ip} {im} {} / {}", asc(&num), asc(&den)));
+        return Ok(format!(
+            "{letter}B{name} {np} {nm} LAPLACE {ip} {im} {} / {}",
+            asc(&num),
+            asc(&den)
+        ));
     }
     let port = if current_output { "id" } else { "vd" };
     // One integrator stage per denominator order; `int_ic=[]` is
@@ -208,9 +339,17 @@ fn model(out: &mut String, d: Dialect, m: &ModelDef) {
     let mos = m.kind.eq_ignore_ascii_case("nmos") || m.kind.eq_ignore_ascii_case("pmos");
     w!(out, ".model {} {}", m.name, m.kind);
     for (i, (k, v)) in m.parameters.iter().enumerate() {
-        let v = if d == Dialect::Xyce && mos && k.eq_ignore_ascii_case("level") && v.trim() == "8" { "49" } else { v };
+        let v = if d == Dialect::Xyce && mos && k.eq_ignore_ascii_case("level") && v.trim() == "8" {
+            "49"
+        } else {
+            v
+        };
         let open = if i == 0 { " (" } else { " " };
-        if v.is_empty() { w!(out, "{open}{k}") } else { w!(out, "{open}{k}={v}") }
+        if v.is_empty() {
+            w!(out, "{open}{k}")
+        } else {
+            w!(out, "{open}{k}={v}")
+        }
     }
     if !m.parameters.is_empty() {
         out.push(')');
@@ -222,12 +361,23 @@ fn instance(out: &mut String, inst: &Instance) {
     for port in &inst.port_mapping {
         w!(out, " {port}");
     }
-    w!(out, " {}{}", inst.subcircuit, params(&inst.parameters, verbatim));
+    w!(
+        out,
+        " {}{}",
+        inst.subcircuit,
+        params(&inst.parameters, verbatim)
+    );
 }
 
 /// Components, instances, raw text — the part of a block after its models,
 /// one line each.
-fn body(out: &mut String, d: Dialect, x: bool, sc: &Subcircuit, drop_four: bool) -> Result<(), CodeGenError> {
+fn body(
+    out: &mut String,
+    d: Dialect,
+    x: bool,
+    sc: &Subcircuit,
+    drop_four: bool,
+) -> Result<(), CodeGenError> {
     for e in sc.elements() {
         match e {
             Element::Component(c) => component(out, d, x, c)?,
@@ -253,7 +403,11 @@ fn file_cards(out: &mut String, d: Dialect, sc: &Subcircuit) -> Result<(), CodeG
     for (p, section) in &sc.libs {
         match (section.is_empty(), d) {
             (true, Dialect::Ltspice) => w!(out, ".lib {q}{p}{q}\n"),
-            (true, _) => return Err(CodeGenError::Other(format!(".lib {p} with no section is LTspice's whole-file form; {d:?} reads it as a section definition"))),
+            (true, _) => {
+                return Err(CodeGenError::Other(format!(
+                    ".lib {p} with no section is LTspice's whole-file form; {d:?} reads it as a section definition"
+                )));
+            }
             (false, _) => w!(out, ".lib {q}{p}{q} {section}\n"),
         }
     }
@@ -265,7 +419,13 @@ fn quote(d: Dialect) -> &'static str {
     if d == Dialect::Hspice { "'" } else { "" }
 }
 
-fn subcircuit(out: &mut String, d: Dialect, x: bool, sc: &Subcircuit, drop_four: bool) -> Result<(), CodeGenError> {
+fn subcircuit(
+    out: &mut String,
+    d: Dialect,
+    x: bool,
+    sc: &Subcircuit,
+    drop_four: bool,
+) -> Result<(), CodeGenError> {
     w!(out, ".subckt {}", sc.name);
     for port in &sc.ports {
         w!(out, " {}", port.name);
@@ -306,12 +466,22 @@ fn step_param(d: Dialect, sp: &StepParam) -> Result<String, CodeGenError> {
     // Xyce and LTspice step lin, dec or oct only; Spectre's `log` is not
     // theirs.
     if sp.sweep_type == Some(Sweep::Log) && matches!(d, Dialect::Xyce | Dialect::Ltspice) {
-        return Err(CodeGenError::Other(format!("{} `.step` has no log sweep (stepping '{}')", d.name(), sp.param)));
+        return Err(CodeGenError::Other(format!(
+            "{} `.step` has no log sweep (stepping '{}')",
+            d.name(),
+            sp.param
+        )));
     }
     // Xyce: `.step [lin|dec|oct] <name> <start> <stop> <inc>`, no `param` (RG p.155).
     if d == Dialect::Xyce {
-        let sweep = sp.sweep_type.map(|t| format!("{} ", t.name())).unwrap_or_default();
-        return Ok(format!(".step {sweep}{} {} {} {}", sp.param, sp.start, sp.stop, sp.step));
+        let sweep = sp
+            .sweep_type
+            .map(|t| format!("{} ", t.name()))
+            .unwrap_or_default();
+        return Ok(format!(
+            ".step {sweep}{} {} {} {}",
+            sp.param, sp.start, sp.stop, sp.step
+        ));
     }
     if d != Dialect::Ltspice {
         return Err(CodeGenError::Other(format!(
@@ -324,8 +494,18 @@ fn step_param(d: Dialect, sp: &StepParam) -> Result<String, CodeGenError> {
     // LTspice: `.step [lin|oct|dec] param <name> <start> <stop> <inc>`.
     // The `param` keyword is mandatory in both forms.
     Ok(match sp.sweep_type {
-        Some(sweep) => format!(".step {} param {} {} {} {}", sweep.name(), sp.param, sp.start, sp.stop, sp.step),
-        None => format!(".step param {} {} {} {}", sp.param, sp.start, sp.stop, sp.step),
+        Some(sweep) => format!(
+            ".step {} param {} {} {} {}",
+            sweep.name(),
+            sp.param,
+            sp.start,
+            sp.stop,
+            sp.step
+        ),
+        None => format!(
+            ".step param {} {} {} {}",
+            sp.param, sp.start, sp.stop, sp.step
+        ),
     })
 }
 
@@ -335,7 +515,8 @@ fn step_param(d: Dialect, sp: &StepParam) -> Result<String, CodeGenError> {
 fn loads(out: &mut String, d: Dialect, ir: &CircuitIR) -> Result<(), CodeGenError> {
     match d {
         Dialect::Ngspice if !ir.top.osdi_loads.is_empty() => {
-            let loads = crate::veriloga::osdi_loads(&ir.top.osdi_loads).map_err(CodeGenError::Other)?;
+            let loads =
+                crate::veriloga::osdi_loads(&ir.top.osdi_loads).map_err(CodeGenError::Other)?;
             // pre_osdi is a control command, not a dot command
             out.push_str(".control\n");
             for p in &loads {
@@ -344,7 +525,11 @@ fn loads(out: &mut String, d: Dialect, ir: &CircuitIR) -> Result<(), CodeGenErro
             out.push_str(".endc\n");
         }
         Dialect::Espice => {
-            let all = ir.top.osdi_loads.iter().chain(ir.subcircuit_defs.iter().flat_map(|s| &s.osdi_loads));
+            let all = ir
+                .top
+                .osdi_loads
+                .iter()
+                .chain(ir.subcircuit_defs.iter().flat_map(|s| &s.osdi_loads));
             let mut seen: Vec<&str> = Vec::new();
             for l in all {
                 if !crate::veriloga::is_source(l) {
@@ -359,7 +544,9 @@ fn loads(out: &mut String, d: Dialect, ir: &CircuitIR) -> Result<(), CodeGenErro
             }
         }
         Dialect::Xyce if !ir.top.osdi_loads.is_empty() => {
-            return Err(CodeGenError::Other("Xyce loads Verilog-A through -plugin, not a deck card".into()));
+            return Err(CodeGenError::Other(
+                "Xyce loads Verilog-A through -plugin, not a deck card".into(),
+            ));
         }
         Dialect::Hspice => {
             for l in &ir.top.osdi_loads {
@@ -384,7 +571,13 @@ fn xyce_options(tb: &Testbench) -> Result<Vec<String>, CodeGenError> {
     // (package, `k=v` or bare `k`), in order; consecutive entries of one
     // package share a line, so a deck's own order reads back unchanged.
     let mut items: Vec<(String, String)> = Vec::new();
-    let kv = |k: &str, v: &str| if v.is_empty() { k.to_string() } else { format!("{k}={v}") };
+    let kv = |k: &str, v: &str| {
+        if v.is_empty() {
+            k.to_string()
+        } else {
+            format!("{k}={v}")
+        }
+    };
     for (k, v) in &tb.options.portable {
         let (pkg, key) = match k.to_ascii_lowercase().as_str() {
             "reltol" => ("timeint", "reltol"),
@@ -395,7 +588,10 @@ fn xyce_options(tb: &Testbench) -> Result<Vec<String>, CodeGenError> {
             "itl1" | "max_iterations" => ("nonlin", "maxstep"),
             "itl4" => ("nonlin-tran", "maxstep"),
             other => {
-                return Err(CodeGenError::UnsupportedAnalysis { backend: "xyce".into(), analysis: format!("option '{other}' (no Xyce package mapped)") });
+                return Err(CodeGenError::UnsupportedAnalysis {
+                    backend: "xyce".into(),
+                    analysis: format!("option '{other}' (no Xyce package mapped)"),
+                });
             }
         };
         items.push((pkg.into(), kv(key, v)));
@@ -408,7 +604,13 @@ fn xyce_options(tb: &Testbench) -> Result<Vec<String>, CodeGenError> {
     }
     // `pkg.key`, a bare package `pkg.` (`.options post`), or a key with no
     // package (`.option scale=`, package ""), each kept as the deck wrote it.
-    for (pk, v) in tb.options.backend_specific.get("xyce").into_iter().flatten() {
+    for (pk, v) in tb
+        .options
+        .backend_specific
+        .get("xyce")
+        .into_iter()
+        .flatten()
+    {
         match pk.split_once('.') {
             Some((pkg, "")) => items.push((pkg.into(), String::new())),
             Some((pkg, k)) => items.push((pkg.into(), kv(k, v))),
@@ -423,27 +625,50 @@ fn xyce_options(tb: &Testbench) -> Result<Vec<String>, CodeGenError> {
                 line.push(' ');
                 line.push_str(&item);
             }
-            _ => out.push((pkg.clone(), if pkg.is_empty() { item } else if item.is_empty() { pkg } else { format!("{pkg} {item}") })),
+            _ => out.push((
+                pkg.clone(),
+                if pkg.is_empty() {
+                    item
+                } else if item.is_empty() {
+                    pkg
+                } else {
+                    format!("{pkg} {item}")
+                },
+            )),
         }
     }
-    Ok(out.into_iter().map(|(_, l)| format!(".options {l}")).collect())
+    Ok(out
+        .into_iter()
+        .map(|(_, l)| format!(".options {l}"))
+        .collect())
 }
 
 /// Raw lines imported from one dialect reach only that dialect (ngspice and
 /// ESPice read the same text): ngspice's TRNOISE or `.probe` copied into an
 /// HSPICE deck would be a silently different deck.
 fn check_raw_dialect(d: Dialect, ir: &CircuitIR) -> Result<(), CodeGenError> {
-    let Some(from) = ir.raw_dialect else { return Ok(()) };
-    let raw = std::iter::once(&ir.top).chain(&ir.subcircuit_defs).find_map(|s| {
-        s.raw_spice.first().or_else(|| s.components.iter().find_map(|c| match c {
-            Component::RawSpice { line } => Some(line),
-            _ => None,
-        }))
-    });
+    let Some(from) = ir.raw_dialect else {
+        return Ok(());
+    };
+    let raw = std::iter::once(&ir.top)
+        .chain(&ir.subcircuit_defs)
+        .find_map(|s| {
+            s.raw_spice.first().or_else(|| {
+                s.components.iter().find_map(|c| match c {
+                    Component::RawSpice { line } => Some(line),
+                    _ => None,
+                })
+            })
+        });
     match raw {
         Some(line) if from.family() != d.family() => Err(CodeGenError::UnsupportedComponent {
             backend: d.name().into(),
-            component: format!("{} line '{}' (kept verbatim on import; it is {} text)", from.name(), line.trim(), from.name()),
+            component: format!(
+                "{} line '{}' (kept verbatim on import; it is {} text)",
+                from.name(),
+                line.trim(),
+                from.name()
+            ),
         }),
         _ => Ok(()),
     }
@@ -472,12 +697,17 @@ pub(crate) fn runs_in_control<'a>(lines: impl IntoIterator<Item = &'a str>) -> b
 
 /// True if `line` is a `.meas`/`.measure` card (any case).
 pub(crate) fn is_meas(line: &str) -> bool {
-    line.split_whitespace().next().and_then(|w| w.get(..5)).is_some_and(|w| w.eq_ignore_ascii_case(".meas"))
+    line.split_whitespace()
+        .next()
+        .and_then(|w| w.get(..5))
+        .is_some_and(|w| w.eq_ignore_ascii_case(".meas"))
 }
 
 /// True if `line` is a `.four` card (any case).
 pub(crate) fn is_four(line: &str) -> bool {
-    line.split_whitespace().next().is_some_and(|w| w.eq_ignore_ascii_case(".four"))
+    line.split_whitespace()
+        .next()
+        .is_some_and(|w| w.eq_ignore_ascii_case(".four"))
 }
 
 /// True if `line` continues the card above it (`+ ...`).
@@ -494,7 +724,9 @@ fn fourier_commands<'a>(lines: impl Iterator<Item = &'a str>) -> Vec<String> {
     for l in lines {
         if is_continuation(l) {
             if let (true, Some(cmd)) = (open, out.last_mut()) {
-                l.trim_start()[1..].split_whitespace().for_each(|t| w!(cmd, " {t}"));
+                l.trim_start()[1..]
+                    .split_whitespace()
+                    .for_each(|t| w!(cmd, " {t}"));
             }
             continue;
         }
@@ -541,19 +773,41 @@ fn raw_lines(out: &mut String, lines: &[String], drop_four: bool) {
 /// with a `.meas` or `.four` and no block that runs it, rather than lose its
 /// results).
 fn control_run(x: bool, ir: &CircuitIR, tb: &Testbench) -> Option<Vec<String>> {
-    let raw = || ir.subcircuit_defs.iter().chain(std::iter::once(&ir.top)).flat_map(|s| &s.raw_spice).chain(&tb.extra_lines).map(String::as_str);
+    let raw = || {
+        ir.subcircuit_defs
+            .iter()
+            .chain(std::iter::once(&ir.top))
+            .flat_map(|s| &s.raw_spice)
+            .chain(&tb.extra_lines)
+            .map(String::as_str)
+    };
     let mut fourier = fourier_commands(raw());
     for a in &tb.analyses {
-        if let Analysis::Fourier { fundamental, outputs, .. } = a {
+        if let Analysis::Fourier {
+            fundamental,
+            outputs,
+            ..
+        } = a
+        {
             let mut cmd = format!("fourier {}", num(Dialect::Ngspice, x, *fundamental));
             outputs.iter().for_each(|o| w!(cmd, " {o}"));
             fourier.push(cmd);
         }
     }
-    if (tb.measures.is_empty() && !raw().any(is_meas) && fourier.is_empty()) || runs_in_control(raw()) {
+    if (tb.measures.is_empty() && !raw().any(is_meas) && fourier.is_empty())
+        || runs_in_control(raw())
+    {
         return None;
     }
-    tb.analyses.iter().any(|a| matches!(a, Analysis::Ac { .. } | Analysis::Transient { .. } | Analysis::Dc { .. })).then_some(fourier)
+    tb.analyses
+        .iter()
+        .any(|a| {
+            matches!(
+                a,
+                Analysis::Ac { .. } | Analysis::Transient { .. } | Analysis::Dc { .. }
+            )
+        })
+        .then_some(fourier)
 }
 
 pub(super) fn netlist(d: Dialect, ir: &CircuitIR) -> Result<String, CodeGenError> {
@@ -568,7 +822,10 @@ pub(super) fn netlist(d: Dialect, ir: &CircuitIR) -> Result<String, CodeGenError
     };
     let drop_four = control.is_some();
     // ponytail: ~64 bytes a card is a guess; the String grows past it.
-    let cards = std::iter::once(&ir.top).chain(&ir.subcircuit_defs).map(|s| s.components.len() + s.instances.len()).sum::<usize>();
+    let cards = std::iter::once(&ir.top)
+        .chain(&ir.subcircuit_defs)
+        .map(|s| s.components.len() + s.instances.len())
+        .sum::<usize>();
     let mut out = String::with_capacity(64 * (cards + 16));
     // Title must be first line (SPICE treats line 1 as title/comment)
     w!(out, "* {}\n", ir.top.name);
@@ -657,14 +914,21 @@ pub(super) fn netlist(d: Dialect, ir: &CircuitIR) -> Result<String, CodeGenError
         // just gets no save list.
         // ngspice reads one `.save` card: `all` beside named outputs means
         // all of them plus those, and alone it is what no list means.
-        let noise = tb.analyses.iter().any(|a| matches!(a, Analysis::Noise { .. }));
+        let noise = tb
+            .analyses
+            .iter()
+            .any(|a| matches!(a, Analysis::Noise { .. }));
         // Xyce's `.save` writes the operating point; its rawfile (-r) holds
         // every vector, so a save list has nothing to restrict there.
         if d == Dialect::Xyce {
         } else if d == Dialect::Hspice && !noise {
             // HSPICE's `.save` saves simulator state; `.probe` selects outputs.
             for s in &tb.saves {
-                if s == "all" { out.push_str(".option post\n") } else { w!(out, ".probe {s}\n") }
+                if s == "all" {
+                    out.push_str(".option post\n")
+                } else {
+                    w!(out, ".probe {s}\n")
+                }
             }
         } else if ngspice(d) && noise {
             out.push_str(".save all");
@@ -686,7 +950,9 @@ pub(super) fn netlist(d: Dialect, ir: &CircuitIR) -> Result<String, CodeGenError
 
         for meas in &tb.measures {
             // `.MEASURE TRAN ...` is already a card, in any case.
-            let card = meas.get(..5).is_some_and(|p| p.eq_ignore_ascii_case(".meas"));
+            let card = meas
+                .get(..5)
+                .is_some_and(|p| p.eq_ignore_ascii_case(".meas"));
             w!(out, "{}{meas}\n", if card { "" } else { ".meas " });
         }
         for sp in &tb.step_params {
@@ -697,7 +963,10 @@ pub(super) fn netlist(d: Dialect, ir: &CircuitIR) -> Result<String, CodeGenError
             Some(fourier) => {
                 // `fourier` reads the current plot: it follows the first
                 // transient (at the end of the block when there is none).
-                let at = tb.analyses.iter().position(|a| matches!(a, Analysis::Transient { .. }));
+                let at = tb
+                    .analyses
+                    .iter()
+                    .position(|a| matches!(a, Analysis::Transient { .. }));
                 let four = |out: &mut String| fourier.iter().for_each(|f| w!(out, "{f}\n"));
                 out.push_str(".control\n");
                 for (i, a) in tb.analyses.iter().enumerate() {
@@ -729,26 +998,92 @@ pub(super) fn netlist(d: Dialect, ir: &CircuitIR) -> Result<String, CodeGenError
 
 /// `comp`'s card, written onto `out` with no line end (a Laplace source is
 /// two lines). Nothing is written when it errs.
-pub(crate) fn component(out: &mut String, d: Dialect, x: bool, comp: &Component) -> Result<(), CodeGenError> {
+pub(crate) fn component(
+    out: &mut String,
+    d: Dialect,
+    x: bool,
+    comp: &Component,
+) -> Result<(), CodeGenError> {
     let ps = |p| params(p, verbatim);
     match comp {
-        Component::Resistor { name, n1, n2, value: v, model, params: p }
-        | Component::Capacitor { name, n1, n2, value: v, model, params: p }
-        | Component::Inductor { name, n1, n2, value: v, model, params: p } => {
-            let letter = match comp { Component::Resistor { .. } => 'R', Component::Capacitor { .. } => 'C', _ => 'L' };
+        Component::Resistor {
+            name,
+            n1,
+            n2,
+            value: v,
+            model,
+            params: p,
+        }
+        | Component::Capacitor {
+            name,
+            n1,
+            n2,
+            value: v,
+            model,
+            params: p,
+        }
+        | Component::Inductor {
+            name,
+            n1,
+            n2,
+            value: v,
+            model,
+            params: p,
+        } => {
+            let letter = match comp {
+                Component::Resistor { .. } => 'R',
+                Component::Capacitor { .. } => 'C',
+                _ => 'L',
+            };
             if model.is_some() && d == Dialect::Ltspice {
-                return Err(CodeGenError::UnsupportedComponent { backend: "ltspice".into(), component: format!("{letter}{name}: model reference") });
+                return Err(CodeGenError::UnsupportedComponent {
+                    backend: "ltspice".into(),
+                    component: format!("{letter}{name}: model reference"),
+                });
             }
             w!(out, "{letter}{} {} {}", name, n1, n2);
             rclvalue(out, d, x, v, model);
             w!(out, "{}", ps(p));
         }
-        Component::MutualInductor { name, inductor1, inductor2, coupling } => {
-            w!(out, "K{} L{} L{} {}", name, inductor1, inductor2, dec(d, x, *coupling))
+        Component::MutualInductor {
+            name,
+            inductor1,
+            inductor2,
+            coupling,
+        } => {
+            w!(
+                out,
+                "K{} L{} L{} {}",
+                name,
+                inductor1,
+                inductor2,
+                dec(d, x, *coupling)
+            )
         }
-        Component::VoltageSource { name, np, nm, value: v, ac_magnitude, ac_phase, waveform: wf, .. }
-        | Component::CurrentSource { name, np, nm, value: v, ac_magnitude, ac_phase, waveform: wf } => {
-            let letter = if matches!(comp, Component::VoltageSource { .. }) { 'V' } else { 'I' };
+        Component::VoltageSource {
+            name,
+            np,
+            nm,
+            value: v,
+            ac_magnitude,
+            ac_phase,
+            waveform: wf,
+            ..
+        }
+        | Component::CurrentSource {
+            name,
+            np,
+            nm,
+            value: v,
+            ac_magnitude,
+            ac_phase,
+            waveform: wf,
+        } => {
+            let letter = if matches!(comp, Component::VoltageSource { .. }) {
+                'V'
+            } else {
+                'I'
+            };
             if let Some(wf) = wf {
                 refuse_wave(d, letter, name, wf)?;
             }
@@ -760,7 +1095,10 @@ pub(crate) fn component(out: &mut String, d: Dialect, x: bool, comp: &Component)
             // `portnum n z0 Z`); HSPICE's is a `P` element, and dropping the
             // port would lose its series Z0.
             if port.is_some() && !ngspice(d) {
-                return Err(CodeGenError::UnsupportedComponent { backend: d.name().into(), component: format!("V{name}: RF port") });
+                return Err(CodeGenError::UnsupportedComponent {
+                    backend: d.name().into(),
+                    component: format!("V{name}: RF port"),
+                });
             }
             w!(out, "{}{} {} {} {}", letter, name, np, nm, value(d, x, v));
             if let Some(mag) = ac_magnitude {
@@ -777,7 +1115,12 @@ pub(crate) fn component(out: &mut String, d: Dialect, x: bool, comp: &Component)
                 waveform(out, d, x, wf);
             }
         }
-        Component::BehavioralVoltage { name, np, nm, expression } => {
+        Component::BehavioralVoltage {
+            name,
+            np,
+            nm,
+            expression,
+        } => {
             if laplace::is_laplace(expression) {
                 out.push_str(&laplace_source(d, x, name, np, nm, expression, false)?);
             } else if d == Dialect::Hspice {
@@ -789,7 +1132,12 @@ pub(crate) fn component(out: &mut String, d: Dialect, x: bool, comp: &Component)
                 w!(out, "B{} {} {} V={}", name, np, nm, expression)
             }
         }
-        Component::BehavioralCurrent { name, np, nm, expression } => {
+        Component::BehavioralCurrent {
+            name,
+            np,
+            nm,
+            expression,
+        } => {
             if laplace::is_laplace(expression) {
                 out.push_str(&laplace_source(d, x, name, np, nm, expression, true)?);
             } else if d == Dialect::Hspice {
@@ -800,42 +1148,185 @@ pub(crate) fn component(out: &mut String, d: Dialect, x: bool, comp: &Component)
                 w!(out, "B{} {} {} I={}", name, np, nm, expression)
             }
         }
-        Component::Vcvs { name, np, nm, ncp, ncm, gain } => w!(out, "E{} {} {} {} {} {}", name, np, nm, ncp, ncm, dec(d, x, *gain)),
-        Component::Vccs { name, np, nm, ncp, ncm, transconductance } => {
-            w!(out, "G{} {} {} {} {} {}", name, np, nm, ncp, ncm, dec(d, x, *transconductance))
+        Component::Vcvs {
+            name,
+            np,
+            nm,
+            ncp,
+            ncm,
+            gain,
+        } => w!(
+            out,
+            "E{} {} {} {} {} {}",
+            name,
+            np,
+            nm,
+            ncp,
+            ncm,
+            dec(d, x, *gain)
+        ),
+        Component::Vccs {
+            name,
+            np,
+            nm,
+            ncp,
+            ncm,
+            transconductance,
+        } => {
+            w!(
+                out,
+                "G{} {} {} {} {} {}",
+                name,
+                np,
+                nm,
+                ncp,
+                ncm,
+                dec(d, x, *transconductance)
+            )
         }
-        Component::Cccs { name, np, nm, vsense, gain } => w!(out, "F{} {} {} {} {}", name, np, nm, vsense, dec(d, x, *gain)),
-        Component::Poly { name, letter, np, nm, controls, coeffs } => {
-            let dims = if matches!(letter, 'E' | 'G') { controls.len() / 2 } else { controls.len() };
-            w!(out, "{letter}{name} {np} {nm} POLY({dims}) {} ", controls.join(" "));
+        Component::Cccs {
+            name,
+            np,
+            nm,
+            vsense,
+            gain,
+        } => w!(
+            out,
+            "F{} {} {} {} {}",
+            name,
+            np,
+            nm,
+            vsense,
+            dec(d, x, *gain)
+        ),
+        Component::Poly {
+            name,
+            letter,
+            np,
+            nm,
+            controls,
+            coeffs,
+        } => {
+            let dims = if matches!(letter, 'E' | 'G') {
+                controls.len() / 2
+            } else {
+                controls.len()
+            };
+            w!(
+                out,
+                "{letter}{name} {np} {nm} POLY({dims}) {} ",
+                controls.join(" ")
+            );
             for (i, c) in coeffs.iter().enumerate() {
                 w!(out, "{}{}", if i == 0 { "" } else { " " }, num(d, x, *c));
             }
         }
-        Component::Ccvs { name, np, nm, vsense, transresistance } => {
-            w!(out, "H{} {} {} {} {}", name, np, nm, vsense, dec(d, x, *transresistance))
+        Component::Ccvs {
+            name,
+            np,
+            nm,
+            vsense,
+            transresistance,
+        } => {
+            w!(
+                out,
+                "H{} {} {} {} {}",
+                name,
+                np,
+                nm,
+                vsense,
+                dec(d, x, *transresistance)
+            )
         }
-        Component::Diode { name, np, nm, model, params: p } => w!(out, "D{} {} {} {}{}", name, np, nm, model, ps(p)),
-        Component::Bjt { name, nc, nb, ne, extra_nodes, model, params: p } => {
+        Component::Diode {
+            name,
+            np,
+            nm,
+            model,
+            params: p,
+        } => w!(out, "D{} {} {} {}{}", name, np, nm, model, ps(p)),
+        Component::Bjt {
+            name,
+            nc,
+            nb,
+            ne,
+            extra_nodes,
+            model,
+            params: p,
+        } => {
             w!(out, "Q{} {} {} {}", name, nc, nb, ne);
             for n in extra_nodes {
                 w!(out, " {n}");
             }
             w!(out, " {}{}", model, ps(p));
         }
-        Component::Mosfet { name, nd, ng, ns, nb, extra_nodes, model, params: p } => {
+        Component::Mosfet {
+            name,
+            nd,
+            ng,
+            ns,
+            nb,
+            extra_nodes,
+            model,
+            params: p,
+        } => {
             w!(out, "M{} {} {} {}", name, nd, ng, ns);
             for n in nb.iter().chain(extra_nodes) {
                 w!(out, " {n}");
             }
             w!(out, " {}{}", model, ps(p));
         }
-        Component::Jfet { name, nd, ng, ns, model, params: p } => w!(out, "J{} {} {} {} {}{}", name, nd, ng, ns, model, ps(p)),
-        Component::Mesfet { name, nd, ng, ns, model, params: p } => w!(out, "Z{} {} {} {} {}{}", name, nd, ng, ns, model, ps(p)),
-        Component::VSwitch { name, np, nm, ncp, ncm, model } => w!(out, "S{} {} {} {} {} {}", name, np, nm, ncp, ncm, model),
-        Component::ISwitch { name, np, nm, vcontrol, model } => w!(out, "W{} {} {} {} {}", name, np, nm, vcontrol, model),
-        Component::TLine { name, inp, inm, outp, outm, z0, td } => {
-            w!(out, "T{} {} {} {} {} Z0={} TD={}", name, inp, inm, outp, outm, dec(d, x, *z0), dec(d, x, *td))
+        Component::Jfet {
+            name,
+            nd,
+            ng,
+            ns,
+            model,
+            params: p,
+        } => w!(out, "J{} {} {} {} {}{}", name, nd, ng, ns, model, ps(p)),
+        Component::Mesfet {
+            name,
+            nd,
+            ng,
+            ns,
+            model,
+            params: p,
+        } => w!(out, "Z{} {} {} {} {}{}", name, nd, ng, ns, model, ps(p)),
+        Component::VSwitch {
+            name,
+            np,
+            nm,
+            ncp,
+            ncm,
+            model,
+        } => w!(out, "S{} {} {} {} {} {}", name, np, nm, ncp, ncm, model),
+        Component::ISwitch {
+            name,
+            np,
+            nm,
+            vcontrol,
+            model,
+        } => w!(out, "W{} {} {} {} {}", name, np, nm, vcontrol, model),
+        Component::TLine {
+            name,
+            inp,
+            inm,
+            outp,
+            outm,
+            z0,
+            td,
+        } => {
+            w!(
+                out,
+                "T{} {} {} {} {} Z0={} TD={}",
+                name,
+                inp,
+                inm,
+                outp,
+                outm,
+                dec(d, x, *z0),
+                dec(d, x, *td)
+            )
         }
         Component::Xspice { name, .. } if matches!(d, Dialect::Hspice | Dialect::Xyce) => {
             return Err(CodeGenError::UnsupportedComponent {
@@ -843,9 +1334,17 @@ pub(crate) fn component(out: &mut String, d: Dialect, x: bool, comp: &Component)
                 component: format!("XSPICE A{}", name),
             });
         }
-        Component::Xspice { name, connections, model } => {
+        Component::Xspice {
+            name,
+            connections,
+            model,
+        } => {
             // LTspice has no XSPICE A-elements -- emit as comment
-            let lead = if d == Dialect::Ltspice { "* XSPICE (unsupported): " } else { "" };
+            let lead = if d == Dialect::Ltspice {
+                "* XSPICE (unsupported): "
+            } else {
+                ""
+            };
             w!(out, "{lead}A{}", name);
             for conn in connections {
                 w!(out, " {conn}");
@@ -864,16 +1363,43 @@ fn analysis(d: Dialect, x: bool, a: &Analysis) -> Result<String, CodeGenError> {
         Analysis::Dc { sweeps } => {
             let mut s = String::from(".dc");
             for sw in sweeps {
-                w!(s, " {} {} {} {}", sw.source, num(d, x, sw.start), num(d, x, sw.stop), num(d, x, sw.step));
+                w!(
+                    s,
+                    " {} {} {} {}",
+                    sw.source,
+                    num(d, x, sw.start),
+                    num(d, x, sw.stop),
+                    num(d, x, sw.step)
+                );
             }
             s
         }
-        Analysis::Ac { sweep: FreqSweep { variation, points, start, stop } } => {
-            format!(".ac {} {} {} {}", variation.name(), points, num(d, x, *start), num(d, x, *stop))
+        Analysis::Ac {
+            sweep:
+                FreqSweep {
+                    variation,
+                    points,
+                    start,
+                    stop,
+                },
+        } => {
+            format!(
+                ".ac {} {} {} {}",
+                variation.name(),
+                points,
+                num(d, x, *start),
+                num(d, x, *stop)
+            )
         }
         // HSPICE reads extra positional fields as further step/stop
         // segments, so the start is `START=` and the step cap `delmax`.
-        Analysis::Transient { step, stop, start, max_step, uic } if hs => {
+        Analysis::Transient {
+            step,
+            stop,
+            start,
+            max_step,
+            uic,
+        } if hs => {
             let mut s = String::new();
             if let Some(ms) = max_step {
                 w!(s, ".option delmax={}\n", num(d, x, *ms));
@@ -887,7 +1413,13 @@ fn analysis(d: Dialect, x: bool, a: &Analysis) -> Result<String, CodeGenError> {
             }
             s
         }
-        Analysis::Transient { step, stop, start, max_step, uic } => {
+        Analysis::Transient {
+            step,
+            stop,
+            start,
+            max_step,
+            uic,
+        } => {
             let mut s = format!(".tran {} {}", num(d, x, *step), num(d, x, *stop));
             if let Some(st) = start {
                 w!(s, " {}", num(d, x, *st));
@@ -904,7 +1436,19 @@ fn analysis(d: Dialect, x: bool, a: &Analysis) -> Result<String, CodeGenError> {
             }
             s
         }
-        Analysis::Noise { output, reference, source, sweep: FreqSweep { variation, points, start, stop }, points_per_summary } => {
+        Analysis::Noise {
+            output,
+            reference,
+            source,
+            sweep:
+                FreqSweep {
+                    variation,
+                    points,
+                    start,
+                    stop,
+                },
+            points_per_summary,
+        } => {
             let out_spec = if reference.is_empty() || reference == "0" {
                 format!("V({})", output)
             } else {
@@ -914,10 +1458,24 @@ fn analysis(d: Dialect, x: bool, a: &Analysis) -> Result<String, CodeGenError> {
             if hs {
                 return Ok(format!(
                     ".ac {} {} {} {}\n.noise {} {} {}",
-                    variation.name(), points, num(d, x, *start), num(d, x, *stop), out_spec, source, points_per_summary.unwrap_or(0),
+                    variation.name(),
+                    points,
+                    num(d, x, *start),
+                    num(d, x, *stop),
+                    out_spec,
+                    source,
+                    points_per_summary.unwrap_or(0),
                 ));
             }
-            let mut s = format!(".noise {} {} {} {} {} {}", out_spec, source, variation.name(), points, num(d, x, *start), num(d, x, *stop));
+            let mut s = format!(
+                ".noise {} {} {} {} {} {}",
+                out_spec,
+                source,
+                variation.name(),
+                points,
+                num(d, x, *start),
+                num(d, x, *stop)
+            );
             // `pts_per_summary` is an ngspice/SPICE3 extension; LTspice's
             // `.noise` card stops at the stop frequency.
             if let (Some(pps), true) = (points_per_summary, ng || d == Dialect::Xyce) {
@@ -927,10 +1485,17 @@ fn analysis(d: Dialect, x: bool, a: &Analysis) -> Result<String, CodeGenError> {
         }
         // Xyce has no .tf (RG Table 6-1).
         Analysis::Tf { .. } if d == Dialect::Xyce => {
-            return Err(CodeGenError::UnsupportedAnalysis { backend: "xyce".into(), analysis: "Tf".into() });
+            return Err(CodeGenError::UnsupportedAnalysis {
+                backend: "xyce".into(),
+                analysis: "Tf".into(),
+            });
         }
         Analysis::Tf { output, source } => format!(".tf {} {}", output, source),
-        Analysis::Fourier { fundamental, outputs, num_harmonics } => {
+        Analysis::Fourier {
+            fundamental,
+            outputs,
+            num_harmonics,
+        } => {
             // SPICE3/ngspice: `.four <freq> <ov1> [ov2 ...]` — there is no
             // harmonic-count field. Emitting one makes ngspice warn
             // "can't parse '10': ignored" and then fail the analysis with
@@ -950,15 +1515,52 @@ fn analysis(d: Dialect, x: bool, a: &Analysis) -> Result<String, CodeGenError> {
         Analysis::Sensitivity { output, ac } if ng || (hs && ac.is_none()) => {
             let mut s = format!(".sens {}", output);
             if let Some(p) = ac {
-                w!(s, " AC {} {} {} {}", p.variation.name(), p.points, num(d, x, p.start), num(d, x, p.stop));
+                w!(
+                    s,
+                    " AC {} {} {} {}",
+                    p.variation.name(),
+                    p.points,
+                    num(d, x, p.start),
+                    num(d, x, p.stop)
+                );
             }
             s
         }
-        Analysis::PoleZero { node1, node2, node3, node4, tf_type, pz_type } if ng => {
-            format!(".pz {} {} {} {} {} {}", node1, node2, node3, node4, tf_type.name(), pz_type.name())
+        Analysis::PoleZero {
+            node1,
+            node2,
+            node3,
+            node4,
+            tf_type,
+            pz_type,
+        } if ng => {
+            format!(
+                ".pz {} {} {} {} {} {}",
+                node1,
+                node2,
+                node3,
+                node4,
+                tf_type.name(),
+                pz_type.name()
+            )
         }
-        Analysis::Distortion { sweep: FreqSweep { variation, points, start, stop }, f2overf1 } if ng => {
-            let mut s = format!(".disto {} {} {} {}", variation.name(), points, num(d, x, *start), num(d, x, *stop));
+        Analysis::Distortion {
+            sweep:
+                FreqSweep {
+                    variation,
+                    points,
+                    start,
+                    stop,
+                },
+            f2overf1,
+        } if ng => {
+            let mut s = format!(
+                ".disto {} {} {} {}",
+                variation.name(),
+                points,
+                num(d, x, *start),
+                num(d, x, *stop)
+            );
             if let Some(ratio) = f2overf1 {
                 w!(s, " {}", ratio);
             }
@@ -966,19 +1568,44 @@ fn analysis(d: Dialect, x: bool, a: &Analysis) -> Result<String, CodeGenError> {
         }
         // ponytail: Rust `{}` numbers, byte-for-byte what the retired string
         // path sent ngspice for these two cards.
-        Analysis::Pss { fundamental, stabilization, observe_node, points_per_period, harmonics, sc_iter, steady_coeff, uic } if ng => {
-            let mut s = format!(".pss {} {} {} {} {}", fundamental, stabilization, observe_node, points_per_period, harmonics);
+        Analysis::Pss {
+            fundamental,
+            stabilization,
+            observe_node,
+            points_per_period,
+            harmonics,
+            sc_iter,
+            steady_coeff,
+            uic,
+        } if ng => {
+            let mut s = format!(
+                ".pss {} {} {} {} {}",
+                fundamental, stabilization, observe_node, points_per_period, harmonics
+            );
             // SCITER and STEADYCOEFF are positional (manual §11.3.12): one
             // given, or `uic`, writes both, the other at ngspice's default.
             if sc_iter.is_some() || steady_coeff.is_some() || *uic {
-                w!(s, " {} {}", sc_iter.unwrap_or(50), steady_coeff.unwrap_or(1e-3));
+                w!(
+                    s,
+                    " {} {}",
+                    sc_iter.unwrap_or(50),
+                    steady_coeff.unwrap_or(1e-3)
+                );
             }
             if *uic {
                 s.push_str(" uic");
             }
             s
         }
-        Analysis::SPar { sweep: FreqSweep { variation, points, start, stop } } if ng => {
+        Analysis::SPar {
+            sweep:
+                FreqSweep {
+                    variation,
+                    points,
+                    start,
+                    stop,
+                },
+        } if ng => {
             format!(".sp {} {} {} {}", variation.name(), points, start, stop)
         }
         // Harmonic balance, loop-gain stability, transient noise and the
@@ -1029,9 +1656,15 @@ mod tests {
                         model: None,
                         params: vec![],
                     },
-                ], ..Default::default() },
+                ],
+                ..Default::default()
+            },
             testbench: Some(Testbench {
-                analyses: vec![Analysis::Op], ..Default::default() }), ..Default::default() }
+                analyses: vec![Analysis::Op],
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
     }
 
     #[test]
@@ -1039,10 +1672,26 @@ mod tests {
         let ir = sample_resistor_divider();
         let cg = Dialect::Ngspice;
         let netlist = netlist(cg, &ir).unwrap();
-        assert!(netlist.contains("* Voltage Divider"), "missing title: {}", netlist);
-        assert!(netlist.contains("Vin input 0 10"), "missing Vin: {}", netlist);
-        assert!(netlist.contains("R1 input output 10k"), "missing R1: {}", netlist);
-        assert!(netlist.contains("R2 output 0 10k"), "missing R2: {}", netlist);
+        assert!(
+            netlist.contains("* Voltage Divider"),
+            "missing title: {}",
+            netlist
+        );
+        assert!(
+            netlist.contains("Vin input 0 10"),
+            "missing Vin: {}",
+            netlist
+        );
+        assert!(
+            netlist.contains("R1 input output 10k"),
+            "missing R1: {}",
+            netlist
+        );
+        assert!(
+            netlist.contains("R2 output 0 10k"),
+            "missing R2: {}",
+            netlist
+        );
         assert!(netlist.contains(".op"), "missing .op: {}", netlist);
         assert!(netlist.contains(".end"), "missing .end: {}", netlist);
     }
@@ -1071,7 +1720,8 @@ mod tests {
                         nd: "out".into(),
                         ng: "in".into(),
                         ns: "vdd".into(),
-                        nb: Some("vdd".into()), extra_nodes: vec![],
+                        nb: Some("vdd".into()),
+                        extra_nodes: vec![],
                         model: "pmos_3p3".into(),
                         params: vec![("W".into(), "2u".into()), ("L".into(), "180n".into())],
                     },
@@ -1080,7 +1730,8 @@ mod tests {
                         nd: "out".into(),
                         ng: "in".into(),
                         ns: "0".into(),
-                        nb: Some("0".into()), extra_nodes: vec![],
+                        nb: Some("0".into()),
+                        extra_nodes: vec![],
                         model: "nmos_3p3".into(),
                         params: vec![("W".into(), "1u".into()), ("L".into(), "180n".into())],
                     },
@@ -1095,24 +1746,45 @@ mod tests {
                         port: None,
                     },
                 ],
-                models: vec![
-                    ModelDef {
-                        name: "nmos_3p3".into(),
-                        kind: "NMOS".into(),
-                        parameters: vec![("VTO".into(), "0.7".into()), ("KP".into(), "110e-6".into())],
-                    },
-                ], ..Default::default() },
+                models: vec![ModelDef {
+                    name: "nmos_3p3".into(),
+                    kind: "NMOS".into(),
+                    parameters: vec![("VTO".into(), "0.7".into()), ("KP".into(), "110e-6".into())],
+                }],
+                ..Default::default()
+            },
             testbench: Some(Testbench {
-                analyses: vec![
-                    Analysis::Dc { sweeps: vec![DcSweep { source: "Vdd".into(), start: 0.0, stop: 3.3, step: 0.01 }] },
-                ],
-                temperature: Some(27.0), ..Default::default() }), ..Default::default() };
+                analyses: vec![Analysis::Dc {
+                    sweeps: vec![DcSweep {
+                        source: "Vdd".into(),
+                        start: 0.0,
+                        stop: 3.3,
+                        step: 0.01,
+                    }],
+                }],
+                temperature: Some(27.0),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
 
         let cg = Dialect::Ngspice;
         let netlist = netlist(cg, &ir).unwrap();
-        assert!(netlist.contains("M1 out in vdd vdd pmos_3p3 W=2u L=180n"), "missing M1: {}", netlist);
-        assert!(netlist.contains("M2 out in 0 0 nmos_3p3 W=1u L=180n"), "missing M2: {}", netlist);
-        assert!(netlist.contains(".model nmos_3p3 NMOS (VTO=0.7 KP=110e-6)"), "missing model: {}", netlist);
+        assert!(
+            netlist.contains("M1 out in vdd vdd pmos_3p3 W=2u L=180n"),
+            "missing M1: {}",
+            netlist
+        );
+        assert!(
+            netlist.contains("M2 out in 0 0 nmos_3p3 W=1u L=180n"),
+            "missing M2: {}",
+            netlist
+        );
+        assert!(
+            netlist.contains(".model nmos_3p3 NMOS (VTO=0.7 KP=110e-6)"),
+            "missing model: {}",
+            netlist
+        );
         assert!(netlist.contains(".temp 27"), "missing temp: {}", netlist);
         assert!(netlist.contains(".dc Vdd 0 3"), "missing dc: {}", netlist);
     }
@@ -1122,66 +1794,104 @@ mod tests {
         let ir = CircuitIR {
             top: Subcircuit {
                 name: "Top".into(),
-                components: vec![
-                    Component::VoltageSource {
-                        name: "dd".into(),
-                        np: "vdd".into(),
-                        nm: "0".into(),
-                        value: IrValue::Numeric { value: 1.8 },
-                        ac_magnitude: None,
-                        ac_phase: None,
-                        waveform: None,
-                        port: None,
+                components: vec![Component::VoltageSource {
+                    name: "dd".into(),
+                    np: "vdd".into(),
+                    nm: "0".into(),
+                    value: IrValue::Numeric { value: 1.8 },
+                    ac_magnitude: None,
+                    ac_phase: None,
+                    waveform: None,
+                    port: None,
+                }],
+                instances: vec![Instance {
+                    name: "1".into(),
+                    subcircuit: "inverter".into(),
+                    port_mapping: vec!["in".into(), "out".into(), "vdd".into(), "0".into()],
+                    parameters: vec![("wp".into(), "2u".into())],
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+            subcircuit_defs: vec![Subcircuit {
+                name: "inverter".into(),
+                ports: vec![
+                    Port {
+                        name: "in".into(),
+                        direction: PortDirection::Input,
+                    },
+                    Port {
+                        name: "out".into(),
+                        direction: PortDirection::Output,
+                    },
+                    Port {
+                        name: "vdd".into(),
+                        direction: PortDirection::InOut,
+                    },
+                    Port {
+                        name: "gnd".into(),
+                        direction: PortDirection::InOut,
                     },
                 ],
-                instances: vec![
-                    Instance {
-                        name: "1".into(),
-                        subcircuit: "inverter".into(),
-                        port_mapping: vec!["in".into(), "out".into(), "vdd".into(), "0".into()],
-                        parameters: vec![("wp".into(), "2u".into())], ..Default::default() },
-                ], ..Default::default() },
-            subcircuit_defs: vec![
-                Subcircuit {
-                    name: "inverter".into(),
-                    ports: vec![
-                        Port { name: "in".into(), direction: PortDirection::Input },
-                        Port { name: "out".into(), direction: PortDirection::Output },
-                        Port { name: "vdd".into(), direction: PortDirection::InOut },
-                        Port { name: "gnd".into(), direction: PortDirection::InOut },
-                    ],
-                    parameters: vec![
-                        ParamDef { name: "wp".into(), default: Some("1u".into()) },
-                        ParamDef { name: "wn".into(), default: Some("500n".into()) },
-                    ],
-                    components: vec![
-                        Component::Mosfet {
-                            name: "p".into(),
-                            nd: "out".into(),
-                            ng: "in".into(),
-                            ns: "vdd".into(),
-                            nb: Some("vdd".into()), extra_nodes: vec![],
-                            model: "pmos".into(),
-                            params: vec![("W".into(), "{wp}".into()), ("L".into(), "180n".into())],
-                        },
-                        Component::Mosfet {
-                            name: "n".into(),
-                            nd: "out".into(),
-                            ng: "in".into(),
-                            ns: "gnd".into(),
-                            nb: Some("gnd".into()), extra_nodes: vec![],
-                            model: "nmos".into(),
-                            params: vec![("W".into(), "{wn}".into()), ("L".into(), "180n".into())],
-                        },
-                    ], ..Default::default() },
-            ], ..Default::default() };
+                parameters: vec![
+                    ParamDef {
+                        name: "wp".into(),
+                        default: Some("1u".into()),
+                    },
+                    ParamDef {
+                        name: "wn".into(),
+                        default: Some("500n".into()),
+                    },
+                ],
+                components: vec![
+                    Component::Mosfet {
+                        name: "p".into(),
+                        nd: "out".into(),
+                        ng: "in".into(),
+                        ns: "vdd".into(),
+                        nb: Some("vdd".into()),
+                        extra_nodes: vec![],
+                        model: "pmos".into(),
+                        params: vec![("W".into(), "{wp}".into()), ("L".into(), "180n".into())],
+                    },
+                    Component::Mosfet {
+                        name: "n".into(),
+                        nd: "out".into(),
+                        ng: "in".into(),
+                        ns: "gnd".into(),
+                        nb: Some("gnd".into()),
+                        extra_nodes: vec![],
+                        model: "nmos".into(),
+                        params: vec![("W".into(), "{wn}".into()), ("L".into(), "180n".into())],
+                    },
+                ],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
 
         let cg = Dialect::Ngspice;
         let netlist = netlist(cg, &ir).unwrap();
-        assert!(netlist.contains(".subckt inverter in out vdd gnd PARAMS: wp=1u wn=500n"), "missing subckt header: {}", netlist);
-        assert!(netlist.contains("Mp out in vdd vdd pmos W={wp} L=180n"), "missing Mp: {}", netlist);
-        assert!(netlist.contains(".ends inverter"), "missing .ends: {}", netlist);
-        assert!(netlist.contains("X1 in out vdd 0 inverter wp=2u"), "missing instance: {}", netlist);
+        assert!(
+            netlist.contains(".subckt inverter in out vdd gnd PARAMS: wp=1u wn=500n"),
+            "missing subckt header: {}",
+            netlist
+        );
+        assert!(
+            netlist.contains("Mp out in vdd vdd pmos W={wp} L=180n"),
+            "missing Mp: {}",
+            netlist
+        );
+        assert!(
+            netlist.contains(".ends inverter"),
+            "missing .ends: {}",
+            netlist
+        );
+        assert!(
+            netlist.contains("X1 in out vdd 0 inverter wp=2u"),
+            "missing instance: {}",
+            netlist
+        );
     }
 
     #[test]
@@ -1233,18 +1943,34 @@ mod tests {
                         ac_magnitude: None,
                         ac_phase: None,
                         waveform: Some(IrWaveform::Pwl {
-                            values: vec![((0.0).into(), (0.0).into()), ((1e-6).into(), (3.3).into()), ((2e-6).into(), (0.0).into())],
+                            values: vec![
+                                ((0.0).into(), (0.0).into()),
+                                ((1e-6).into(), (3.3).into()),
+                                ((2e-6).into(), (0.0).into()),
+                            ],
                             repeat: None,
                             delay: None,
                         }),
                         port: None,
                     },
-                ], ..Default::default() }, ..Default::default() };
+                ],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
 
         let cg = Dialect::Ngspice;
         let netlist = netlist(cg, &ir).unwrap();
-        assert!(netlist.contains("SIN(1.65 1.65 1000000"), "missing SIN: {}", netlist);
-        assert!(netlist.contains("PULSE(0 3.3 0"), "missing PULSE: {}", netlist);
+        assert!(
+            netlist.contains("SIN(1.65 1.65 1000000"),
+            "missing SIN: {}",
+            netlist
+        );
+        assert!(
+            netlist.contains("PULSE(0 3.3 0"),
+            "missing PULSE: {}",
+            netlist
+        );
         assert!(netlist.contains("PWL(0 0"), "missing PWL: {}", netlist);
     }
 
@@ -1257,23 +1983,47 @@ mod tests {
 
         // DC
         let dc = Analysis::Dc {
-            sweeps: vec![DcSweep { source: "V1".into(), start: 0.0, stop: 5.0, step: 0.1 }],
+            sweeps: vec![DcSweep {
+                source: "V1".into(),
+                start: 0.0,
+                stop: 5.0,
+                step: 0.1,
+            }],
         };
         let dc_str = analysis(cg, false, &dc).unwrap();
         assert!(dc_str.starts_with(".dc V1"), "dc: {}", dc_str);
 
         // AC
-        let ac = Analysis::Ac { sweep: FreqSweep { variation: Sweep::Dec, points: 100, start: 1.0, stop: 1e9 } };
+        let ac = Analysis::Ac {
+            sweep: FreqSweep {
+                variation: Sweep::Dec,
+                points: 100,
+                start: 1.0,
+                stop: 1e9,
+            },
+        };
         let ac_str = analysis(cg, false, &ac).unwrap();
         assert!(ac_str.starts_with(".ac dec 100"), "ac: {}", ac_str);
 
         // Transient
-        let tran = Analysis::Transient { step: 1e-9, stop: 1e-6, start: None, max_step: None, uic: false };
+        let tran = Analysis::Transient {
+            step: 1e-9,
+            stop: 1e-6,
+            start: None,
+            max_step: None,
+            uic: false,
+        };
         let tran_str = analysis(cg, false, &tran).unwrap();
         assert!(tran_str.starts_with(".tran 1n"), "tran: {}", tran_str);
 
         // Transient with UIC
-        let tran_uic = Analysis::Transient { step: 1e-9, stop: 1e-6, start: None, max_step: None, uic: true };
+        let tran_uic = Analysis::Transient {
+            step: 1e-9,
+            stop: 1e-6,
+            start: None,
+            max_step: None,
+            uic: true,
+        };
         let tran_uic_str = analysis(cg, false, &tran_uic).unwrap();
         assert!(tran_uic_str.contains("UIC"), "tran_uic: {}", tran_uic_str);
 
@@ -1282,34 +2032,62 @@ mod tests {
             output: "out".into(),
             reference: "0".into(),
             source: "V1".into(),
-            sweep: FreqSweep { variation: Sweep::Dec,
-            points: 10, start: 1.0, stop: 1e6 },
+            sweep: FreqSweep {
+                variation: Sweep::Dec,
+                points: 10,
+                start: 1.0,
+                stop: 1e6,
+            },
             points_per_summary: None,
         };
         let noise_str = analysis(cg, false, &noise).unwrap();
-        assert!(noise_str.starts_with(".noise V(out) V1 dec"), "noise: {}", noise_str);
+        assert!(
+            noise_str.starts_with(".noise V(out) V1 dec"),
+            "noise: {}",
+            noise_str
+        );
 
         // TF
-        let tf = Analysis::Tf { output: "V(out)".into(), source: "Vin".into() };
+        let tf = Analysis::Tf {
+            output: "V(out)".into(),
+            source: "Vin".into(),
+        };
         assert_eq!(analysis(cg, false, &tf).unwrap(), ".tf V(out) Vin");
 
         // Sensitivity
-        let sens = Analysis::Sensitivity { output: "V(out)".into(), ac: None };
+        let sens = Analysis::Sensitivity {
+            output: "V(out)".into(),
+            ac: None,
+        };
         assert_eq!(analysis(cg, false, &sens).unwrap(), ".sens V(out)");
 
         // PoleZero
         let pz = Analysis::PoleZero {
-            node1: "1".into(), node2: "0".into(), node3: "3".into(), node4: "0".into(),
-            tf_type: PzTransfer::Vol, pz_type: PzKind::Pz,
+            node1: "1".into(),
+            node2: "0".into(),
+            node3: "3".into(),
+            node4: "0".into(),
+            tf_type: PzTransfer::Vol,
+            pz_type: PzKind::Pz,
         };
         assert_eq!(analysis(cg, false, &pz).unwrap(), ".pz 1 0 3 0 vol pz");
 
         // Distortion
         let disto = Analysis::Distortion {
-            sweep: FreqSweep { variation: Sweep::Dec, points: 10, start: 1e3, stop: 1e6 }, f2overf1: None,
+            sweep: FreqSweep {
+                variation: Sweep::Dec,
+                points: 10,
+                start: 1e3,
+                stop: 1e6,
+            },
+            f2overf1: None,
         };
         let disto_str = analysis(cg, false, &disto).unwrap();
-        assert!(disto_str.starts_with(".disto dec 10"), "disto: {}", disto_str);
+        assert!(
+            disto_str.starts_with(".disto dec 10"),
+            "disto: {}",
+            disto_str
+        );
 
         // Fourier
         let four = Analysis::Fourier {
@@ -1371,19 +2149,34 @@ mod tests {
         let ir = CircuitIR {
             top: Subcircuit {
                 name: "OSDI Test".into(),
-                osdi_loads: vec!["/path/to/model.osdi".into()], ..Default::default() }, ..Default::default() };
+                osdi_loads: vec!["/path/to/model.osdi".into()],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
 
         // ngspice wraps OSDI loads in .control block
         let cg_ng = Dialect::Ngspice;
         let ng_str = netlist(cg_ng, &ir).unwrap();
-        assert!(ng_str.contains(".control\npre_osdi /path/to/model.osdi\n.endc"),
-            "ng osdi control block: {}", ng_str);
-        assert!(!ng_str.contains(".pre_osdi"), "no dot-command form: {}", ng_str);
+        assert!(
+            ng_str.contains(".control\npre_osdi /path/to/model.osdi\n.endc"),
+            "ng osdi control block: {}",
+            ng_str
+        );
+        assert!(
+            !ng_str.contains(".pre_osdi"),
+            "no dot-command form: {}",
+            ng_str
+        );
 
         // LTspice does not
         let cg_lt = Dialect::Ltspice;
         let lt_str = netlist(cg_lt, &ir).unwrap();
-        assert!(!lt_str.contains("pre_osdi"), "lt should not have osdi: {}", lt_str);
+        assert!(
+            !lt_str.contains("pre_osdi"),
+            "lt should not have osdi: {}",
+            lt_str
+        );
     }
 
     #[test]
@@ -1401,7 +2194,11 @@ mod tests {
 
         let cg_lt = Dialect::Ltspice;
         let lt_str = crate::codegen::card(&comp, cg_lt).unwrap();
-        assert!(lt_str.starts_with("* XSPICE"), "lt xspice should be comment: {}", lt_str);
+        assert!(
+            lt_str.starts_with("* XSPICE"),
+            "lt xspice should be comment: {}",
+            lt_str
+        );
     }
 
     #[test]
@@ -1409,16 +2206,18 @@ mod tests {
         let ir = CircuitIR {
             top: Subcircuit {
                 name: "Step Test".into(),
-                components: vec![
-                    Component::Resistor {
-                        name: "1".into(),
-                        n1: "a".into(),
-                        n2: "0".into(),
-                        value: IrValue::Expression { expr: "rval".into() },
-                        model: None,
-                        params: vec![],
+                components: vec![Component::Resistor {
+                    name: "1".into(),
+                    n1: "a".into(),
+                    n2: "0".into(),
+                    value: IrValue::Expression {
+                        expr: "rval".into(),
                     },
-                ], ..Default::default() },
+                    model: None,
+                    params: vec![],
+                }],
+                ..Default::default()
+            },
             testbench: Some(Testbench {
                 analyses: vec![Analysis::Op],
                 step_params: vec![StepParam {
@@ -1427,12 +2226,20 @@ mod tests {
                     stop: 10000.0,
                     step: 1000.0,
                     sweep_type: None,
-                }], ..Default::default() }), ..Default::default() };
+                }],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
 
         // LTspice emits a native .step
         let cg = Dialect::Ltspice;
         let lt = netlist(cg, &ir).unwrap();
-        assert!(lt.contains(".step param rval 1000 10000 1000"), "step: {}", lt);
+        assert!(
+            lt.contains(".step param rval 1000 10000 1000"),
+            "step: {}",
+            lt
+        );
 
         // ngspice has no .step — it must fail loudly rather than run once.
         let ng = Dialect::Ngspice;
@@ -1452,7 +2259,10 @@ mod tests {
             step: 10.0,
             sweep_type: Some(Sweep::Dec),
         };
-        assert_eq!(step_param(cg, &sp).unwrap(), ".step dec param rval 1000 10000 10");
+        assert_eq!(
+            step_param(cg, &sp).unwrap(),
+            ".step dec param rval 1000 10000 10"
+        );
     }
 
     #[test]
@@ -1465,9 +2275,12 @@ mod tests {
         let cg = Dialect::Ngspice;
         let netlist = netlist(cg, &ir).unwrap();
         assert!(netlist.contains(".options tnom=27"), "tnom: {}", netlist);
-        assert!(netlist.contains(".meas tran vmax MAX V(output)"), "measure: {}", netlist);
+        assert!(
+            netlist.contains(".meas tran vmax MAX V(output)"),
+            "measure: {}",
+            netlist
+        );
     }
-
 
     // ── `.measure` / `.four` run from a `.control` block on ngspice ──
 
@@ -1482,20 +2295,41 @@ mod tests {
     }
 
     fn ac() -> Analysis {
-        Analysis::Ac { sweep: FreqSweep { variation: Sweep::Dec, points: 10, start: 1.0, stop: 1e3 } }
+        Analysis::Ac {
+            sweep: FreqSweep {
+                variation: Sweep::Dec,
+                points: 10,
+                start: 1.0,
+                stop: 1e3,
+            },
+        }
     }
 
     fn tran() -> Analysis {
-        Analysis::Transient { step: 1e-6, stop: 1e-2, start: None, max_step: None, uic: false }
+        Analysis::Transient {
+            step: 1e-6,
+            stop: 1e-2,
+            start: None,
+            max_step: None,
+            uic: false,
+        }
     }
 
     fn four(outputs: &[&str]) -> Analysis {
-        Analysis::Fourier { fundamental: 1e3, outputs: outputs.iter().map(|o| o.to_string()).collect(), num_harmonics: None }
+        Analysis::Fourier {
+            fundamental: 1e3,
+            outputs: outputs.iter().map(|o| o.to_string()).collect(),
+            num_harmonics: None,
+        }
     }
 
     #[test]
     fn measures_move_every_analysis_into_a_control_block() {
-        let ir = divider(vec![Analysis::Op, ac(), tran()], &["ac g find vdb(output) at=100"], &[]);
+        let ir = divider(
+            vec![Analysis::Op, ac(), tran()],
+            &["ac g find vdb(output) at=100"],
+            &[],
+        );
         let deck = netlist(Dialect::Ngspice, &ir).unwrap();
         assert!(deck.ends_with(".meas ac g find vdb(output) at=100\n.control\nop\nac dec 10 1 1k\ntran 1u 10m\n.endc\n.end"), "{deck}");
         // ESPice and LTspice read `.measure` under their rawfile option.
@@ -1506,50 +2340,113 @@ mod tests {
 
     #[test]
     fn a_raw_meas_line_counts_as_a_measure() {
-        let deck = netlist(Dialect::Ngspice, &divider(vec![tran()], &[], &[".MEASURE tran v1 find v(output)", "+ at=1m"])).unwrap();
+        let deck = netlist(
+            Dialect::Ngspice,
+            &divider(
+                vec![tran()],
+                &[],
+                &[".MEASURE tran v1 find v(output)", "+ at=1m"],
+            ),
+        )
+        .unwrap();
         // The card and its continuation stay where they were written.
-        assert!(deck.ends_with(".MEASURE tran v1 find v(output)\n+ at=1m\n.control\ntran 1u 10m\n.endc\n.end"), "{deck}");
+        assert!(
+            deck.ends_with(
+                ".MEASURE tran v1 find v(output)\n+ at=1m\n.control\ntran 1u 10m\n.endc\n.end"
+            ),
+            "{deck}"
+        );
         let mut ir = divider(vec![tran()], &[], &[]);
         ir.top.raw_spice = vec![".meas tran v2 find v(output) at=1m".into()];
-        assert!(netlist(Dialect::Ngspice, &ir).unwrap().contains(".control\ntran 1u 10m\n.endc"));
+        assert!(
+            netlist(Dialect::Ngspice, &ir)
+                .unwrap()
+                .contains(".control\ntran 1u 10m\n.endc")
+        );
     }
 
     #[test]
     fn no_block_without_a_measure_or_fourier() {
         let deck = netlist(Dialect::Ngspice, &divider(vec![ac()], &[], &[])).unwrap();
-        assert!(deck.ends_with(".ac dec 10 1 1k\n.end") && !deck.contains(".control"), "{deck}");
+        assert!(
+            deck.ends_with(".ac dec 10 1 1k\n.end") && !deck.contains(".control"),
+            "{deck}"
+        );
     }
 
     #[test]
     fn noise_never_moves_into_a_block() {
         // `write` would keep only "Integrated Noise" and drop the spectra.
         let noise = Analysis::Noise {
-            output: "output".into(), reference: "0".into(), source: "Vin".into(),
-            sweep: FreqSweep { variation: Sweep::Dec, points: 10, start: 1.0, stop: 1e3 }, points_per_summary: None,
+            output: "output".into(),
+            reference: "0".into(),
+            source: "Vin".into(),
+            sweep: FreqSweep {
+                variation: Sweep::Dec,
+                points: 10,
+                start: 1.0,
+                stop: 1e3,
+            },
+            points_per_summary: None,
         };
-        let deck = netlist(Dialect::Ngspice, &divider(vec![noise], &["tran x find v(output) at=1"], &[])).unwrap();
+        let deck = netlist(
+            Dialect::Ngspice,
+            &divider(vec![noise], &["tran x find v(output) at=1"], &[]),
+        )
+        .unwrap();
         assert!(!deck.contains(".control"), "{deck}");
     }
 
     #[test]
     fn defers_to_a_raw_control_block_that_runs() {
-        let deck = netlist(Dialect::Ngspice, &divider(vec![ac()], &["ac g find vdb(output) at=100"], &[".control", "run", ".endc"])).unwrap();
-        assert!(deck.contains(".control\nrun\n.endc\n.ac dec 10 1 1k"), "{deck}");
+        let deck = netlist(
+            Dialect::Ngspice,
+            &divider(
+                vec![ac()],
+                &["ac g find vdb(output) at=100"],
+                &[".control", "run", ".endc"],
+            ),
+        )
+        .unwrap();
+        assert!(
+            deck.contains(".control\nrun\n.endc\n.ac dec 10 1 1k"),
+            "{deck}"
+        );
         assert_eq!(deck.matches(".control").count(), 1, "{deck}");
     }
 
     #[test]
     fn four_becomes_the_fourier_command_after_the_transient() {
-        let deck = netlist(Dialect::Ngspice, &divider(vec![tran(), four(&["v(output)"]), four(&["v(input)"])], &[], &[])).unwrap();
+        let deck = netlist(
+            Dialect::Ngspice,
+            &divider(
+                vec![tran(), four(&["v(output)"]), four(&["v(input)"])],
+                &[],
+                &[],
+            ),
+        )
+        .unwrap();
         // Each `.four` gets its command; the old backend rewrite kept only the first.
-        assert!(deck.ends_with(".control\ntran 1u 10m\nfourier 1k v(output)\nfourier 1k v(input)\n.endc\n.end"), "{deck}");
+        assert!(
+            deck.ends_with(
+                ".control\ntran 1u 10m\nfourier 1k v(output)\nfourier 1k v(input)\n.endc\n.end"
+            ),
+            "{deck}"
+        );
     }
 
     #[test]
     fn four_without_a_transient_stays_a_card() {
         // No analysis to run from a block: the backend refuses this deck.
-        let alone = netlist(Dialect::Ngspice, &divider(vec![four(&["v(output)"])], &[], &[])).unwrap();
-        assert!(alone.ends_with(".four 1k v(output)\n.end") && !alone.contains(".control"), "{alone}");
+        let alone = netlist(
+            Dialect::Ngspice,
+            &divider(vec![four(&["v(output)"])], &[], &[]),
+        )
+        .unwrap();
+        assert!(
+            alone.ends_with(".four 1k v(output)\n.end") && !alone.contains(".control"),
+            "{alone}"
+        );
     }
 
     #[test]
@@ -1557,19 +2454,37 @@ mod tests {
         // Spec (ngspice manual, `.four`): `.four freq ov1 <ov2 ...>`; a `+`
         // line continues the card. Raw cards in the body and the testbench
         // lines, and the testbench's own `.four`, each get a command.
-        let mut ir = divider(vec![tran(), four(&["v(output)"])], &[], &[".FOUR 2k v(input)", "+ v(output)", ".print tran v(output)"]);
+        let mut ir = divider(
+            vec![tran(), four(&["v(output)"])],
+            &[],
+            &[".FOUR 2k v(input)", "+ v(output)", ".print tran v(output)"],
+        );
         ir.top.raw_spice = vec![".four 3k".into(), "  + v(input)".into()];
         let deck = netlist(Dialect::Ngspice, &ir).unwrap();
         assert!(deck.ends_with(".print tran v(output)\n.control\ntran 1u 10m\nfourier 3k v(input)\nfourier 2k v(input) v(output)\nfourier 1k v(output)\n.endc\n.end"), "{deck}");
-        assert!(!deck.to_ascii_lowercase().contains(".four") && !deck.contains("+ v("), "{deck}");
+        assert!(
+            !deck.to_ascii_lowercase().contains(".four") && !deck.contains("+ v("),
+            "{deck}"
+        );
         // Other dialects keep the cards as written.
-        assert!(netlist(Dialect::Ltspice, &ir).unwrap().contains(".FOUR 2k v(input)\n+ v(output)"));
+        assert!(
+            netlist(Dialect::Ltspice, &ir)
+                .unwrap()
+                .contains(".FOUR 2k v(input)\n+ v(output)")
+        );
     }
 
     #[test]
     fn a_raw_four_line_alone_moves_the_transient() {
-        let deck = netlist(Dialect::Ngspice, &divider(vec![tran()], &[], &[".four 1k v(output)"])).unwrap();
-        assert!(deck.ends_with(".control\ntran 1u 10m\nfourier 1k v(output)\n.endc\n.end"), "{deck}");
+        let deck = netlist(
+            Dialect::Ngspice,
+            &divider(vec![tran()], &[], &[".four 1k v(output)"]),
+        )
+        .unwrap();
+        assert!(
+            deck.ends_with(".control\ntran 1u 10m\nfourier 1k v(output)\n.endc\n.end"),
+            "{deck}"
+        );
     }
 
     // ── Issue 03: ModelLibrary per-backend path + corner ──
@@ -1582,43 +2497,63 @@ mod tests {
 
         let ir = CircuitIR {
             top: Subcircuit {
-                name: "pdk_test".into(), ..Default::default() },
+                name: "pdk_test".into(),
+                ..Default::default()
+            },
             testbench: Some(Testbench {
-                analyses: vec![Analysis::Op], ..Default::default() }),
+                analyses: vec![Analysis::Op],
+                ..Default::default()
+            }),
             model_libraries: vec![ModelLibrary {
                 name: "sky130".into(),
                 path: "/pdk/default/sky130.lib".into(),
                 corner: Some("tt".into()),
                 backend_paths,
                 setup_includes: vec![],
-            }], ..Default::default() };
+            }],
+            ..Default::default()
+        };
 
         // Ngspice selects its path
         let ng = Dialect::Ngspice;
         let ng_netlist = netlist(ng, &ir).unwrap();
-        assert!(ng_netlist.contains(".lib /pdk/ngspice/sky130.lib tt"),
-            "ngspice path: {}", ng_netlist);
-        assert!(!ng_netlist.contains("spectre"), "no spectre path in ngspice: {}", ng_netlist);
+        assert!(
+            ng_netlist.contains(".lib /pdk/ngspice/sky130.lib tt"),
+            "ngspice path: {}",
+            ng_netlist
+        );
+        assert!(
+            !ng_netlist.contains("spectre"),
+            "no spectre path in ngspice: {}",
+            ng_netlist
+        );
 
         // LTspice falls back to the default path (no ltspice key)
         let lt = Dialect::Ltspice;
         let lt_netlist = netlist(lt, &ir).unwrap();
-        assert!(lt_netlist.contains(".lib /pdk/default/sky130.lib tt"),
-            "ltspice fallback: {}", lt_netlist);
+        assert!(
+            lt_netlist.contains(".lib /pdk/default/sky130.lib tt"),
+            "ltspice fallback: {}",
+            lt_netlist
+        );
     }
 
     #[test]
     fn test_model_library_corner_switch() {
         let ir_tt = CircuitIR {
             top: Subcircuit {
-                name: "corner".into(), ..Default::default() },
+                name: "corner".into(),
+                ..Default::default()
+            },
             model_libraries: vec![ModelLibrary {
                 name: "sky130".into(),
                 path: "/pdk/sky130.lib".into(),
                 corner: Some("tt".into()),
                 backend_paths: BTreeMap::new(),
                 setup_includes: vec![],
-            }], ..Default::default() };
+            }],
+            ..Default::default()
+        };
 
         let mut ir_ss = ir_tt.clone();
         ir_ss.model_libraries[0].corner = Some("ss".into());
@@ -1628,8 +2563,16 @@ mod tests {
         let tt_netlist = netlist(cg, &ir_tt).unwrap();
         let ss_netlist = netlist(cg, &ir_ss).unwrap();
 
-        assert!(tt_netlist.contains(".lib /pdk/sky130.lib tt"), "tt: {}", tt_netlist);
-        assert!(ss_netlist.contains(".lib /pdk/sky130.lib ss"), "ss: {}", ss_netlist);
+        assert!(
+            tt_netlist.contains(".lib /pdk/sky130.lib tt"),
+            "tt: {}",
+            tt_netlist
+        );
+        assert!(
+            ss_netlist.contains(".lib /pdk/sky130.lib ss"),
+            "ss: {}",
+            ss_netlist
+        );
         assert!(!tt_netlist.contains("ss"), "tt has no ss");
     }
 
@@ -1637,19 +2580,31 @@ mod tests {
     fn test_model_library_no_corner_uses_include() {
         let ir = CircuitIR {
             top: Subcircuit {
-                name: "nocorner".into(), ..Default::default() },
+                name: "nocorner".into(),
+                ..Default::default()
+            },
             model_libraries: vec![ModelLibrary {
                 name: "custom".into(),
                 path: "/models/custom.lib".into(),
                 corner: None,
                 backend_paths: BTreeMap::new(),
                 setup_includes: vec![],
-            }], ..Default::default() };
+            }],
+            ..Default::default()
+        };
 
         let cg = Dialect::Ngspice;
         let netlist = netlist(cg, &ir).unwrap();
-        assert!(netlist.contains(".include /models/custom.lib"), "include: {}", netlist);
-        assert!(!netlist.contains(".lib /models"), "no .lib without corner: {}", netlist);
+        assert!(
+            netlist.contains(".include /models/custom.lib"),
+            "include: {}",
+            netlist
+        );
+        assert!(
+            !netlist.contains(".lib /models"),
+            "no .lib without corner: {}",
+            netlist
+        );
     }
 
     // ── Issue 05: Dialect correctness ──
@@ -1658,44 +2613,81 @@ mod tests {
     fn test_ngspice_uses_save() {
         let ir = CircuitIR {
             top: Subcircuit {
-                name: "ng_save".into(), ..Default::default() },
+                name: "ng_save".into(),
+                ..Default::default()
+            },
             testbench: Some(Testbench {
                 analyses: vec![Analysis::Op],
-                saves: vec!["V(a)".into()], ..Default::default() }), ..Default::default() };
+                saves: vec!["V(a)".into()],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
 
         let ng = Dialect::Ngspice;
         let netlist = netlist(ng, &ir).unwrap();
-        assert!(netlist.contains(".save V(a)"), "ngspice uses .save: {}", netlist);
+        assert!(
+            netlist.contains(".save V(a)"),
+            "ngspice uses .save: {}",
+            netlist
+        );
     }
 
     #[test]
     fn test_pz_disto_sens_error_on_ltspice() {
         let cg_xy = Dialect::Ltspice;
         let pz = Analysis::PoleZero {
-            node1: "1".into(), node2: "0".into(),
-            node3: "3".into(), node4: "0".into(),
-            tf_type: PzTransfer::Vol, pz_type: PzKind::Pz,
+            node1: "1".into(),
+            node2: "0".into(),
+            node3: "3".into(),
+            node4: "0".into(),
+            tf_type: PzTransfer::Vol,
+            pz_type: PzKind::Pz,
         };
-        assert!(analysis(cg_xy, false, &pz).is_err(), "pz should error on ltspice");
+        assert!(
+            analysis(cg_xy, false, &pz).is_err(),
+            "pz should error on ltspice"
+        );
 
         let disto = Analysis::Distortion {
-            sweep: FreqSweep { variation: Sweep::Dec, points: 10, start: 1e3, stop: 1e6 }, f2overf1: None,
+            sweep: FreqSweep {
+                variation: Sweep::Dec,
+                points: 10,
+                start: 1e3,
+                stop: 1e6,
+            },
+            f2overf1: None,
         };
-        assert!(analysis(cg_xy, false, &disto).is_err(), "disto should error on ltspice");
+        assert!(
+            analysis(cg_xy, false, &disto).is_err(),
+            "disto should error on ltspice"
+        );
 
-        let sens = Analysis::Sensitivity { output: "V(out)".into(), ac: None };
-        assert!(analysis(cg_xy, false, &sens).is_err(), "sens should error on ltspice");
+        let sens = Analysis::Sensitivity {
+            output: "V(out)".into(),
+            ac: None,
+        };
+        assert!(
+            analysis(cg_xy, false, &sens).is_err(),
+            "sens should error on ltspice"
+        );
     }
 
     #[test]
     fn test_pz_disto_ok_on_ngspice() {
         let cg_ng = Dialect::Ngspice;
         let pz = Analysis::PoleZero {
-            node1: "1".into(), node2: "0".into(),
-            node3: "3".into(), node4: "0".into(),
-            tf_type: PzTransfer::Vol, pz_type: PzKind::Pz,
+            node1: "1".into(),
+            node2: "0".into(),
+            node3: "3".into(),
+            node4: "0".into(),
+            tf_type: PzTransfer::Vol,
+            pz_type: PzKind::Pz,
         };
-        assert!(analysis(cg_ng, false, &pz).is_ok(), "pz should work on ngspice");
+        assert!(
+            analysis(cg_ng, false, &pz).is_ok(),
+            "pz should work on ngspice"
+        );
     }
 
     #[test]
@@ -1704,9 +2696,12 @@ mod tests {
 
         // AC magnitude only
         let v_ac = Component::VoltageSource {
-            name: "in".into(), np: "inp".into(), nm: "0".into(),
+            name: "in".into(),
+            np: "inp".into(),
+            nm: "0".into(),
             value: IrValue::Numeric { value: 0.0 },
-            ac_magnitude: Some(1.0), ac_phase: None,
+            ac_magnitude: Some(1.0),
+            ac_phase: None,
             waveform: None,
             port: None,
         };
@@ -1715,9 +2710,12 @@ mod tests {
 
         // AC magnitude + phase
         let v_ac_phase = Component::VoltageSource {
-            name: "in".into(), np: "inp".into(), nm: "0".into(),
+            name: "in".into(),
+            np: "inp".into(),
+            nm: "0".into(),
             value: IrValue::Numeric { value: 0.0 },
-            ac_magnitude: Some(1.0), ac_phase: Some(45.0),
+            ac_magnitude: Some(1.0),
+            ac_phase: Some(45.0),
             waveform: None,
             port: None,
         };
@@ -1726,9 +2724,12 @@ mod tests {
 
         // No AC — regression check
         let v_dc = Component::VoltageSource {
-            name: "dd".into(), np: "vdd".into(), nm: "0".into(),
+            name: "dd".into(),
+            np: "vdd".into(),
+            nm: "0".into(),
             value: IrValue::Numeric { value: 3.3 },
-            ac_magnitude: None, ac_phase: None,
+            ac_magnitude: None,
+            ac_phase: None,
             waveform: None,
             port: None,
         };
@@ -1741,9 +2742,12 @@ mod tests {
     fn test_current_source_ac_magnitude() {
         let cg = Dialect::Ngspice;
         let i_ac = Component::CurrentSource {
-            name: "ac".into(), np: "a".into(), nm: "0".into(),
+            name: "ac".into(),
+            np: "a".into(),
+            nm: "0".into(),
             value: IrValue::Numeric { value: 0.0 },
-            ac_magnitude: Some(1e-3), ac_phase: Some(90.0),
+            ac_magnitude: Some(1e-3),
+            ac_phase: Some(90.0),
             waveform: None,
         };
         let s = crate::codegen::card(&i_ac, cg).unwrap();
@@ -1758,95 +2762,154 @@ mod tests {
                 instances: vec![Instance {
                     name: "dut".into(),
                     subcircuit: "cs_amp".into(),
-                    port_mapping: vec!["vdd".into(), "vin".into(), "vout".into()], ..Default::default() }], ..Default::default() },
+                    port_mapping: vec!["vdd".into(), "vin".into(), "vout".into()],
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
             testbench: Some(Testbench {
-                stimulus: vec![
-                    Component::VoltageSource {
-                        name: "dd".into(), np: "vdd".into(), nm: "0".into(),
-                        value: IrValue::Numeric { value: 1.8 },
-                        ac_magnitude: None, ac_phase: None,
-                        waveform: None,
-                        port: None,
-                    },
-                ],
-                analyses: vec![Analysis::Op], ..Default::default() }),
+                stimulus: vec![Component::VoltageSource {
+                    name: "dd".into(),
+                    np: "vdd".into(),
+                    nm: "0".into(),
+                    value: IrValue::Numeric { value: 1.8 },
+                    ac_magnitude: None,
+                    ac_phase: None,
+                    waveform: None,
+                    port: None,
+                }],
+                analyses: vec![Analysis::Op],
+                ..Default::default()
+            }),
             subcircuit_defs: vec![Subcircuit {
                 name: "cs_amp".into(),
                 ports: vec![
-                    Port { name: "vdd".into(), direction: PortDirection::InOut },
-                    Port { name: "vin".into(), direction: PortDirection::Input },
-                    Port { name: "vout".into(), direction: PortDirection::Output },
+                    Port {
+                        name: "vdd".into(),
+                        direction: PortDirection::InOut,
+                    },
+                    Port {
+                        name: "vin".into(),
+                        direction: PortDirection::Input,
+                    },
+                    Port {
+                        name: "vout".into(),
+                        direction: PortDirection::Output,
+                    },
                 ],
                 components: vec![
                     Component::Resistor {
-                        name: "drain".into(), n1: "vdd".into(), n2: "vout".into(),
-                        value: IrValue::Numeric { value: 5e3 }, model: None, params: vec![],
+                        name: "drain".into(),
+                        n1: "vdd".into(),
+                        n2: "vout".into(),
+                        value: IrValue::Numeric { value: 5e3 },
+                        model: None,
+                        params: vec![],
                     },
                     Component::Mosfet {
-                        name: "n1".into(), nd: "vout".into(), ng: "vin".into(),
-                        ns: "0".into(), nb: Some("0".into()), extra_nodes: vec![],
+                        name: "n1".into(),
+                        nd: "vout".into(),
+                        ng: "vin".into(),
+                        ns: "0".into(),
+                        nb: Some("0".into()),
+                        extra_nodes: vec![],
                         model: "sky130_fd_pr__nfet_01v8".into(),
                         params: vec![],
                     },
-                ], ..Default::default() }],
+                ],
+                ..Default::default()
+            }],
             model_libraries: vec![ModelLibrary {
                 name: "sky130".into(),
                 path: "/pdk/sky130.lib.spice".into(),
                 corner: Some("tt".into()),
                 backend_paths: BTreeMap::new(),
                 setup_includes: vec![],
-            }], ..Default::default() };
+            }],
+            ..Default::default()
+        };
 
         let cg = Dialect::Ngspice;
         let netlist = netlist(cg, &ir).unwrap();
 
         // Title must be line 1
         let lines: Vec<&str> = netlist.lines().collect();
-        assert!(lines[0].starts_with("*"), "first line is title: {}", lines[0]);
+        assert!(
+            lines[0].starts_with("*"),
+            "first line is title: {}",
+            lines[0]
+        );
 
         // .lib must come before .subckt
         let lib_pos = netlist.find(".lib").expect("must have .lib");
         let subckt_pos = netlist.find(".subckt").expect("must have .subckt");
-        assert!(lib_pos < subckt_pos,
-            ".lib ({}) must come before .subckt ({}):\n{}", lib_pos, subckt_pos, netlist);
+        assert!(
+            lib_pos < subckt_pos,
+            ".lib ({}) must come before .subckt ({}):\n{}",
+            lib_pos,
+            subckt_pos,
+            netlist
+        );
 
         // .lib must come before components
         let mosfet_pos = netlist.find("Mn1").expect("must have Mn1");
-        assert!(lib_pos < mosfet_pos,
-            ".lib must come before MOSFET:\n{}", netlist);
+        assert!(
+            lib_pos < mosfet_pos,
+            ".lib must come before MOSFET:\n{}",
+            netlist
+        );
 
         // Verify the .lib line itself
-        assert!(netlist.contains(".lib /pdk/sky130.lib.spice tt"),
-            "lib line: {}", netlist);
+        assert!(
+            netlist.contains(".lib /pdk/sky130.lib.spice tt"),
+            "lib line: {}",
+            netlist
+        );
     }
 
     #[test]
     fn test_setup_includes_emitted_before_lib() {
         let ir = CircuitIR {
             top: Subcircuit {
-                name: "gf180_test".into(), ..Default::default() },
+                name: "gf180_test".into(),
+                ..Default::default()
+            },
             testbench: Some(Testbench {
-                analyses: vec![Analysis::Op], ..Default::default() }),
+                analyses: vec![Analysis::Op],
+                ..Default::default()
+            }),
             model_libraries: vec![ModelLibrary {
                 name: "gf180".into(),
                 path: "/pdk/gf180/sm141064.ngspice".into(),
                 corner: Some("typical".into()),
                 backend_paths: BTreeMap::new(),
                 setup_includes: vec!["/pdk/gf180/design.ngspice".into()],
-            }], ..Default::default() };
+            }],
+            ..Default::default()
+        };
 
         let cg = Dialect::Ngspice;
         let netlist = netlist(cg, &ir).unwrap();
 
         // setup_includes emitted as .include
-        assert!(netlist.contains(".include /pdk/gf180/design.ngspice"),
-            "setup include present: {}", netlist);
+        assert!(
+            netlist.contains(".include /pdk/gf180/design.ngspice"),
+            "setup include present: {}",
+            netlist
+        );
 
         // setup_includes comes BEFORE the .lib
         let setup_pos = netlist.find(".include /pdk/gf180/design.ngspice").unwrap();
-        let lib_pos = netlist.find(".lib /pdk/gf180/sm141064.ngspice typical").unwrap();
-        assert!(setup_pos < lib_pos,
-            "setup ({}) before lib ({}): {}", setup_pos, lib_pos, netlist);
+        let lib_pos = netlist
+            .find(".lib /pdk/gf180/sm141064.ngspice typical")
+            .unwrap();
+        assert!(
+            setup_pos < lib_pos,
+            "setup ({}) before lib ({}): {}",
+            setup_pos,
+            lib_pos,
+            netlist
+        );
     }
 
     fn loads_ir(loads: Vec<String>) -> CircuitIR {
@@ -1859,7 +2922,10 @@ mod tests {
     #[test]
     fn espice_veriloga_becomes_hdl_without_pre_osdi() {
         let n = netlist(Dialect::Espice, &loads_ir(vec!["/m/vres.va".into()])).unwrap();
-        assert!(n.starts_with("* Voltage Divider\n.hdl \"/m/vres.va\"\n"), "{n}");
+        assert!(
+            n.starts_with("* Voltage Divider\n.hdl \"/m/vres.va\"\n"),
+            "{n}"
+        );
         assert!(!n.contains("pre_osdi") && !n.contains(".control"), "{n}");
     }
 
@@ -1873,21 +2939,48 @@ mod tests {
     #[test]
     fn pss_and_sp_are_ngspice_only() {
         let pss = Analysis::Pss {
-            fundamental: 1e9, stabilization: 1e-7, observe_node: "v(out)".into(),
-            points_per_period: 128, harmonics: 10,
-            sc_iter: None, steady_coeff: None, uic: false,
+            fundamental: 1e9,
+            stabilization: 1e-7,
+            observe_node: "v(out)".into(),
+            points_per_period: 128,
+            harmonics: 10,
+            sc_iter: None,
+            steady_coeff: None,
+            uic: false,
         };
-        let sp = Analysis::SPar { sweep: FreqSweep { variation: Sweep::Dec, points: 10, start: 1e6, stop: 1e10 } };
-        assert_eq!(analysis(Dialect::Ngspice, false, &pss).unwrap(), ".pss 1000000000 0.0000001 v(out) 128 10");
-        assert_eq!(analysis(Dialect::Ngspice, false, &sp).unwrap(), ".sp dec 10 1000000 10000000000");
+        let sp = Analysis::SPar {
+            sweep: FreqSweep {
+                variation: Sweep::Dec,
+                points: 10,
+                start: 1e6,
+                stop: 1e10,
+            },
+        };
+        assert_eq!(
+            analysis(Dialect::Ngspice, false, &pss).unwrap(),
+            ".pss 1000000000 0.0000001 v(out) 128 10"
+        );
+        assert_eq!(
+            analysis(Dialect::Ngspice, false, &sp).unwrap(),
+            ".sp dec 10 1000000 10000000000"
+        );
         for a in [&pss, &sp] {
             assert!(analysis(Dialect::Ltspice, false, a).is_err(), "{a:?}");
         }
         for a in [
-            Analysis::HarmonicBalance { frequencies: vec![1e6], harmonics: vec![7] },
-            Analysis::TransientNoise { step: 1e-9, stop: 1e-6 },
+            Analysis::HarmonicBalance {
+                frequencies: vec![1e6],
+                harmonics: vec![7],
+            },
+            Analysis::TransientNoise {
+                step: 1e-9,
+                stop: 1e-6,
+            },
         ] {
-            assert!(matches!(analysis(Dialect::Ngspice, false, &a), Err(CodeGenError::UnsupportedAnalysis { .. })));
+            assert!(matches!(
+                analysis(Dialect::Ngspice, false, &a),
+                Err(CodeGenError::UnsupportedAnalysis { .. })
+            ));
         }
     }
 }

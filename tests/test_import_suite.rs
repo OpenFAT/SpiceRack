@@ -30,10 +30,16 @@ use spicerack::result::RawData;
 
 /// Files ending in `.ext` under `dir`, skipping `src*` directories.
 fn files(dir: &Path, ext: &str, out: &mut Vec<PathBuf>) {
-    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
     for e in rd.flatten() {
         let p = e.path();
-        if p.is_dir() && !p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("src")) {
+        if p.is_dir()
+            && !p
+                .file_name()
+                .is_some_and(|n| n.to_string_lossy().starts_with("src"))
+        {
             files(&p, ext, out);
         } else if p.extension() == Some(ext.as_ref()) {
             out.push(p);
@@ -42,14 +48,24 @@ fn files(dir: &Path, ext: &str, out: &mut Vec<PathBuf>) {
 }
 
 fn decks(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
     for e in rd.flatten() {
         let p = e.path();
         // `src*` holds fetched sources and their assets, not runnable decks.
-        if p.is_dir() && !p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("src")) {
+        if p.is_dir()
+            && !p
+                .file_name()
+                .is_some_and(|n| n.to_string_lossy().starts_with("src"))
+        {
             decks(&p, out);
         // `.tmp*`: this harness's own working decks, left by a killed run.
-        } else if p.extension() == Some("sp".as_ref()) && !p.file_name().is_some_and(|n| n.to_string_lossy().starts_with('.')) {
+        } else if p.extension() == Some("sp".as_ref())
+            && !p
+                .file_name()
+                .is_some_and(|n| n.to_string_lossy().starts_with('.'))
+        {
             out.push(p);
         }
     }
@@ -76,11 +92,15 @@ struct Run {
 /// as written does not change.
 /// `Err` carries why; `Ok(None)` is a timeout.
 fn ngspice(dir: &Path, deck: &str, secs: u64, converted: bool) -> Result<Option<Run>, String> {
-    let file = tempfile::Builder::new().suffix(".sp").tempfile().map_err(|e| e.to_string())?;
+    let file = tempfile::Builder::new()
+        .suffix(".sp")
+        .tempfile()
+        .map_err(|e| e.to_string())?;
     // A pinned seed: models with `agauss` mismatch (gf180) draw a fresh
     // value every run otherwise, so the same deck disagrees with itself.
     let (title, body) = deck.split_once('\n').unwrap_or((deck, ""));
-    std::fs::write(file.path(), format!("{title}\n.option seed=1\n{body}")).map_err(|e| e.to_string())?;
+    std::fs::write(file.path(), format!("{title}\n.option seed=1\n{body}"))
+        .map_err(|e| e.to_string())?;
     let tmp = tempfile::TempDir::new().map_err(|e| e.to_string())?;
     let raw = tmp.path().join("out.raw");
     let meas = analyses(deck).contains_key(".meas");
@@ -91,10 +111,20 @@ fn ngspice(dir: &Path, deck: &str, secs: u64, converted: bool) -> Result<Option<
     };
     let control = block.is_some();
     if let Some(run) = block {
-        let end = body.lines().position(|l| l.trim().eq_ignore_ascii_case(".end")).unwrap_or(body.lines().count());
+        let end = body
+            .lines()
+            .position(|l| l.trim().eq_ignore_ascii_case(".end"))
+            .unwrap_or(body.lines().count());
         let mut lines: Vec<String> = body.lines().map(str::to_string).collect();
-        lines.insert(end, format!(".control\n{run}write {}\n.endc", raw.display()));
-        std::fs::write(file.path(), format!("{title}\n.option seed=1\n{}\n", lines.join("\n"))).map_err(|e| e.to_string())?;
+        lines.insert(
+            end,
+            format!(".control\n{run}write {}\n.endc", raw.display()),
+        );
+        std::fs::write(
+            file.path(),
+            format!("{title}\n.option seed=1\n{}\n", lines.join("\n")),
+        )
+        .map_err(|e| e.to_string())?;
     }
     // The budget is CPU seconds, not wall: under a loaded machine a wall
     // clock times out decks that are not slow. One OpenMP thread, since a
@@ -102,18 +132,26 @@ fn ngspice(dir: &Path, deck: &str, secs: u64, converted: bool) -> Result<Option<
     // The wall `timeout` only catches a hang.
     let run = |with_raw: bool| {
         let mut c = Command::new("timeout");
-        c.arg((10 * secs).to_string()).arg("prlimit").arg(format!("--cpu={secs}")).args(["ngspice", "-b"]).env("OMP_NUM_THREADS", "1");
+        c.arg((10 * secs).to_string())
+            .arg("prlimit")
+            .arg(format!("--cpu={secs}"))
+            .args(["ngspice", "-b"])
+            .env("OMP_NUM_THREADS", "1");
         if with_raw {
             c.arg("-r").arg(&raw);
         }
-        c.arg(file.path()).current_dir(dir).output().map_err(|e| e.to_string())
+        c.arg(file.path())
+            .current_dir(dir)
+            .output()
+            .map_err(|e| e.to_string())
     };
     // `timeout` exits 124 itself; when the CPU limit kills ngspice (SIGXCPU,
     // or SIGKILL at the hard limit) it re-raises that signal on itself, so
     // there is no exit code. 137 and 152 are the same deaths through a shell.
     let timed_out = |o: &std::process::Output| {
         use std::os::unix::process::ExitStatusExt;
-        matches!(o.status.code(), Some(124 | 137 | 152)) || matches!(o.status.signal(), Some(9 | 24))
+        matches!(o.status.code(), Some(124 | 137 | 152))
+            || matches!(o.status.signal(), Some(9 | 24))
     };
     let out = run(!control)?;
     if timed_out(&out) {
@@ -121,7 +159,14 @@ fn ngspice(dir: &Path, deck: &str, secs: u64, converted: bool) -> Result<Option<
     }
     let bytes = std::fs::read(&raw).map_err(|_| {
         let log = String::from_utf8_lossy(&out.stdout) + String::from_utf8_lossy(&out.stderr);
-        format!("no raw file: {}", log.lines().filter(|l| l.to_lowercase().contains("error")).take(3).collect::<Vec<_>>().join(" | "))
+        format!(
+            "no raw file: {}",
+            log.lines()
+                .filter(|l| l.to_lowercase().contains("error"))
+                .take(3)
+                .collect::<Vec<_>>()
+                .join(" | ")
+        )
     })?;
     let plots = spicerack::rawfile::parse_raw_all(&bytes).map_err(|e| e.to_string())?;
     let mut measures = Vec::new();
@@ -131,7 +176,10 @@ fn ngspice(dir: &Path, deck: &str, secs: u64, converted: bool) -> Result<Option<
             return Ok(None);
         }
         let text = String::from_utf8_lossy(&out.stdout);
-        measures = parse_measures(&text, Some(spicerack::ir::Dialect::Ngspice)).into_iter().map(|m| (m.name.to_lowercase(), m.value)).collect();
+        measures = parse_measures(&text, Some(spicerack::ir::Dialect::Ngspice))
+            .into_iter()
+            .map(|m| (m.name.to_lowercase(), m.value))
+            .collect();
         measures.sort_by(|a, b| a.0.cmp(&b.0));
     }
     Ok(Some(Run { plots, measures }))
@@ -141,7 +189,13 @@ fn ngspice(dir: &Path, deck: &str, secs: u64, converted: bool) -> Result<Option<
 fn runs_in_control(deck: &str) -> bool {
     let mut inside = false;
     for line in deck.lines() {
-        match line.split_whitespace().next().unwrap_or("").to_ascii_lowercase().as_str() {
+        match line
+            .split_whitespace()
+            .next()
+            .unwrap_or("")
+            .to_ascii_lowercase()
+            .as_str()
+        {
             ".control" => inside = true,
             ".endc" => inside = false,
             "run" | "op" | "ac" | "tran" | "dc" if inside => return true,
@@ -156,14 +210,29 @@ fn runs_in_control(deck: &str) -> bool {
 /// deck's `.meas`/`.four` analysis from one.
 fn analyses(deck: &str) -> BTreeMap<&'static str, usize> {
     const KINDS: [(&str, &str); 14] = [
-        (".op", ".op"), (".dc", ".dc"), (".ac", ".ac"), (".tran", ".tran"), (".noise", ".noise"), (".tf", ".tf"),
-        (".sens", ".sens"), (".pz", ".pz"), (".disto", ".disto"), (".four", ".four"), (".fourier", ".four"),
-        (".meas", ".meas"), (".measure", ".meas"), (".step", ".step"),
+        (".op", ".op"),
+        (".dc", ".dc"),
+        (".ac", ".ac"),
+        (".tran", ".tran"),
+        (".noise", ".noise"),
+        (".tf", ".tf"),
+        (".sens", ".sens"),
+        (".pz", ".pz"),
+        (".disto", ".disto"),
+        (".four", ".four"),
+        (".fourier", ".four"),
+        (".meas", ".meas"),
+        (".measure", ".meas"),
+        (".step", ".step"),
     ];
     let mut out = BTreeMap::new();
     let mut control = false;
     for line in deck.lines().skip(1) {
-        let word = line.split_whitespace().next().unwrap_or("").to_ascii_lowercase();
+        let word = line
+            .split_whitespace()
+            .next()
+            .unwrap_or("")
+            .to_ascii_lowercase();
         match word.as_str() {
             ".control" => control = true,
             ".endc" => control = false,
@@ -197,7 +266,11 @@ fn in_tube(xs: &[f64], ys: &[f64], x: f64, dx: f64, y: f64, tol: f64) -> bool {
     let lo = xs.partition_point(|&t| t < x - dx).saturating_sub(1);
     let hi = (xs.partition_point(|&t| t <= x + dx) + 1).min(xs.len());
     let band = &ys[lo..hi];
-    let (min, max) = band.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), &v| (a.min(v), b.max(v)));
+    let (min, max) = band
+        .iter()
+        .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), &v| {
+            (a.min(v), b.max(v))
+        });
     y >= min - tol && y <= max + tol
 }
 
@@ -209,7 +282,10 @@ fn leaves_tube(xa: &[f64], ya: &[f64], xb: &[f64], yb: &[f64], dx: f64, tol: f64
     if !xa.is_sorted() || !xb.is_sorted() {
         return (0..ya.len()).find(|&k| !in_tube(xb, yb, xa[k], dx, ya[k], tol));
     }
-    let (mut mins, mut maxs) = (std::collections::VecDeque::<usize>::new(), std::collections::VecDeque::<usize>::new());
+    let (mut mins, mut maxs) = (
+        std::collections::VecDeque::<usize>::new(),
+        std::collections::VecDeque::<usize>::new(),
+    );
     let (mut lo, mut hi, mut pushed) = (0, 0, 0);
     for (k, (&x, &y)) in xa.iter().zip(ya).enumerate() {
         while lo < xb.len() && xb[lo] < x - dx {
@@ -247,14 +323,23 @@ fn leaves_tube(xa: &[f64], ya: &[f64], xb: &[f64], yb: &[f64], dx: f64, tol: f64
 
 #[test]
 fn sliding_tube_matches_the_scan() {
-    let xb: Vec<f64> = (0..400).map(|i| i as f64 * 0.01 + (i % 7) as f64 * 1e-4).collect();
-    let yb: Vec<f64> = xb.iter().map(|x| (7.0 * x).sin() + if (x * 10.0) as i32 % 3 == 0 { 0.5 } else { 0.0 }).collect();
+    let xb: Vec<f64> = (0..400)
+        .map(|i| i as f64 * 0.01 + (i % 7) as f64 * 1e-4)
+        .collect();
+    let yb: Vec<f64> = xb
+        .iter()
+        .map(|x| (7.0 * x).sin() + if (x * 10.0) as i32 % 3 == 0 { 0.5 } else { 0.0 })
+        .collect();
     for shift in [0.0, 0.003, 0.02, 0.2] {
         let xa: Vec<f64> = (0..300).map(|i| i as f64 * 0.013).collect();
         let ya: Vec<f64> = xa.iter().map(|x| (7.0 * (x + shift)).sin()).collect();
         for dx in [0.0, 0.005, 0.04] {
             let scan = (0..ya.len()).find(|&k| !in_tube(&xb, &yb, xa[k], dx, ya[k], 1e-3));
-            assert_eq!(leaves_tube(&xa, &ya, &xb, &yb, dx, 1e-3), scan, "shift {shift} dx {dx}");
+            assert_eq!(
+                leaves_tube(&xa, &ya, &xb, &yb, dx, 1e-3),
+                scan,
+                "shift {shift} dx {dx}"
+            );
         }
     }
 }
@@ -271,32 +356,64 @@ fn close(x: f64, y: f64) -> bool {
 /// the conversion. A vector passes within `1e-3` of its largest magnitude
 /// (plus `1e-9`), so a node near zero is judged against its own swing.
 fn compare(a: &Run, b: &Run) -> Result<(), String> {
-    let names = |r: &Run| r.plots.iter().map(|p| p.plot_name.clone()).collect::<Vec<_>>();
+    let names = |r: &Run| {
+        r.plots
+            .iter()
+            .map(|p| p.plot_name.clone())
+            .collect::<Vec<_>>()
+    };
     if names(a) != names(b) {
         return Err(format!("plots {:?} became {:?}", names(a), names(b)));
     }
     for (pa, pb) in a.plots.iter().zip(&b.plots) {
-        let transient = pa.variables.first().is_some_and(|v| v.name.eq_ignore_ascii_case("time"));
+        let transient = pa
+            .variables
+            .first()
+            .is_some_and(|v| v.name.eq_ignore_ascii_case("time"));
         let (xa, xb) = (pa.re(0), pb.re(0));
         // Span-relative: a sweep crossing zero lands within an ulp of it, and
         // `-50m` and `-0.05` are two such ulps in ngspice's number parser.
         let span = xa.iter().fold(0.0f64, |m, x| m.max(x.abs()));
-        if !transient && (xa.len() != xb.len() || xa.iter().zip(xb.iter()).any(|(x, y)| (x - y).abs() > 1e-9 * span)) {
-            return Err(format!("{}: sweep grid changed ({} -> {} points)", pa.plot_name, xa.len(), xb.len()));
+        if !transient
+            && (xa.len() != xb.len()
+                || xa
+                    .iter()
+                    .zip(xb.iter())
+                    .any(|(x, y)| (x - y).abs() > 1e-9 * span))
+        {
+            return Err(format!(
+                "{}: sweep grid changed ({} -> {} points)",
+                pa.plot_name,
+                xa.len(),
+                xb.len()
+            ));
         }
         if transient && !matches!((xa.last(), xb.last()), (Some(&x), Some(&y)) if close(x, y)) {
-            return Err(format!("{}: stop time {:?} -> {:?}", pa.plot_name, xa.last(), xb.last()));
+            return Err(format!(
+                "{}: stop time {:?} -> {:?}",
+                pa.plot_name,
+                xa.last(),
+                xb.last()
+            ));
         }
         let mut shared = 0;
         // A name can repeat (a TXL line's two `i(y1)` branches): pair the
         // k-th occurrence in `a` with the k-th in `b`. Indexed by name, since
         // a power grid saves ~10^6 vectors and a scan per vector is quadratic.
-        let mut in_b = std::collections::HashMap::<String, std::collections::VecDeque<usize>>::new();
+        let mut in_b =
+            std::collections::HashMap::<String, std::collections::VecDeque<usize>>::new();
         for (j, w) in pb.variables.iter().enumerate() {
-            in_b.entry(w.name.to_ascii_lowercase()).or_default().push_back(j);
+            in_b.entry(w.name.to_ascii_lowercase())
+                .or_default()
+                .push_back(j);
         }
         for (i, v) in pa.variables.iter().enumerate() {
-            let Some(j) = in_b.get_mut(&v.name.to_ascii_lowercase()).and_then(|q| q.pop_front()) else { continue };
+            let Some(j) = in_b
+                .get_mut(&v.name.to_ascii_lowercase())
+                .and_then(|q| q.pop_front())
+            else {
+                continue;
+            };
             if i == 0 {
                 continue; // the scale; popped so the k-th pairing counts it
             }
@@ -311,17 +428,26 @@ fn compare(a: &Run, b: &Run) -> Result<(), String> {
                 let (ra, rb) = (pa.re(i), pb.re(j));
                 let dx = 0.01 * xa.last().unwrap();
                 if let Some(k) = leaves_tube(&xa, &ra, &xb, &rb, dx, tol) {
-                    return Err(format!("{} {}: {} leaves the tube at {}", pa.plot_name, v.name, ra[k], xa[k]));
+                    return Err(format!(
+                        "{} {}: {} leaves the tube at {}",
+                        pa.plot_name, v.name, ra[k], xa[k]
+                    ));
                 }
             } else if let Some(k) = (0..ya.len()).find(|&k| (ya[k] - yb[k]).norm() > tol) {
-                return Err(format!("{} {}: {} vs {} at {}", pa.plot_name, v.name, ya[k], yb[k], xa[k]));
+                return Err(format!(
+                    "{} {}: {} vs {} at {}",
+                    pa.plot_name, v.name, ya[k], yb[k], xa[k]
+                ));
             }
         }
         if shared == 0 && pa.variables.len() > 1 {
             return Err(format!("{}: no vector in common", pa.plot_name));
         }
     }
-    let (ma, mb): (Vec<_>, Vec<_>) = (a.measures.iter().map(|m| &m.0).collect(), b.measures.iter().map(|m| &m.0).collect());
+    let (ma, mb): (Vec<_>, Vec<_>) = (
+        a.measures.iter().map(|m| &m.0).collect(),
+        b.measures.iter().map(|m| &m.0).collect(),
+    );
     if ma != mb {
         return Err(format!(".meas {ma:?} became {mb:?}"));
     }
@@ -372,7 +498,9 @@ fn fixpoint(ir: &CircuitIR, d: Dialect) -> Result<String, String> {
     let text = netlist(ir, d).map_err(|e| format!("{d:?} emit: {e}"))?;
     let (again, _) = parse(&text, &ir.top.name, d)?;
     if &again != ir || netlist(&again, d).ok().as_ref() != Some(&text) {
-        return Err(format!("{d:?} is no fixpoint: re-reading the emitted deck changes the IR"));
+        return Err(format!(
+            "{d:?} is no fixpoint: re-reading the emitted deck changes the IR"
+        ));
     }
     Ok(text)
 }
@@ -380,7 +508,9 @@ fn fixpoint(ir: &CircuitIR, d: Dialect) -> Result<String, String> {
 /// Every deck under `$<var>` whose path passes `keep` is a fixpoint in `d`.
 /// No simulator.
 fn corpus_fixpoint(var: &str, d: Dialect, ext: &str, keep: fn(&str) -> bool) {
-    let root = std::env::var(var).unwrap_or_else(|_| panic!("{var} not set: run the tests in `nix develop .#testing`, which sets it"));
+    let root = std::env::var(var).unwrap_or_else(|_| {
+        panic!("{var} not set: run the tests in `nix develop .#testing`, which sets it")
+    });
     let mut all = Vec::new();
     files(Path::new(&root), ext, &mut all);
     all.retain(|p| keep(&p.to_string_lossy()));
@@ -394,10 +524,15 @@ fn corpus_fixpoint(var: &str, d: Dialect, ext: &str, keep: fn(&str) -> bool) {
             // importers byte for byte (`diff -r before after`).
             if let Ok(dir) = std::env::var("GOLDEN_DIR") {
                 let rel = p.strip_prefix(&root).unwrap_or(p);
-                let out = Path::new(&dir).join(format!("{d:?}")).join(rel).with_extension("json");
+                let out = Path::new(&dir)
+                    .join(format!("{d:?}"))
+                    .join(rel)
+                    .with_extension("json");
                 std::fs::create_dir_all(out.parent().unwrap()).unwrap();
                 let body = match &parsed {
-                    Ok((ir, r)) => format!("{}\n{:?}\n", serde_json::to_string_pretty(ir).unwrap(), r),
+                    Ok((ir, r)) => {
+                        format!("{}\n{:?}\n", serde_json::to_string_pretty(ir).unwrap(), r)
+                    }
                     Err(e) => format!("error: {e}\n"),
                 };
                 std::fs::write(out, body).unwrap();
@@ -416,13 +551,17 @@ fn corpus_fixpoint(var: &str, d: Dialect, ext: &str, keep: fn(&str) -> bool) {
 /// ngspice decks (`$NGSPICE_CORPUS`, e.g. spice-bench's `*.sp`).
 #[test]
 fn ngspice_corpus_fixpoint() {
-    corpus_fixpoint("NGSPICE_CORPUS", Dialect::Ngspice, "sp", |p| !p.contains("/src") && !p.contains("/.tmp"));
+    corpus_fixpoint("NGSPICE_CORPUS", Dialect::Ngspice, "sp", |p| {
+        !p.contains("/src") && !p.contains("/.tmp")
+    });
 }
 
 /// ESPice's HSPICE corpus (`$HSPICE_CORPUS`, its `tests/conformance/tests/netlist`).
 #[test]
 fn hspice_corpus_fixpoint() {
-    corpus_fixpoint("HSPICE_CORPUS", Dialect::Hspice, "sp", |p| p.contains("hspice") && !p.contains("invalid"));
+    corpus_fixpoint("HSPICE_CORPUS", Dialect::Hspice, "sp", |p| {
+        p.contains("hspice") && !p.contains("invalid")
+    });
 }
 
 /// Xyce's regression decks (`$XYCE_CORPUS`, Xyce_Regression's `Netlists`).
@@ -440,7 +579,9 @@ fn xyce_corpus_fixpoint() {
 #[test]
 #[should_panic(expected = "SPECTRE_CORPUS not set")]
 fn spectre_corpus_fixpoint() {
-    corpus_fixpoint("SPECTRE_CORPUS", Dialect::Spectre, "scs", |p| !p.contains("/err_"));
+    corpus_fixpoint("SPECTRE_CORPUS", Dialect::Spectre, "scs", |p| {
+        !p.contains("/err_")
+    });
 }
 
 /// VACASK decks (`$VACASK_CORPUS`, e.g. VACASK's `test`, `demo`, `benchmark`).
@@ -463,7 +604,12 @@ enum Outcome {
     Fail(String),
 }
 
-fn check(deck: &Path, secs: u64, simulate: bool, refused: &std::sync::Mutex<std::collections::BTreeMap<String, usize>>) -> Outcome {
+fn check(
+    deck: &Path,
+    secs: u64,
+    simulate: bool,
+    refused: &std::sync::Mutex<std::collections::BTreeMap<String, usize>>,
+) -> Outcome {
     let src = match std::fs::read(deck) {
         Ok(b) => spicerack::import::decode(&b),
         Err(e) => return Outcome::Fail(e.to_string()),
@@ -481,7 +627,13 @@ fn check(deck: &Path, secs: u64, simulate: bool, refused: &std::sync::Mutex<std:
     if back != ir {
         return Outcome::Fail("JSON round trip changed the IR".into());
     }
-    for d in [Dialect::Hspice, Dialect::Ltspice, Dialect::Spectre, Dialect::Vacask, Dialect::Espice] {
+    for d in [
+        Dialect::Hspice,
+        Dialect::Ltspice,
+        Dialect::Spectre,
+        Dialect::Vacask,
+        Dialect::Espice,
+    ] {
         if netlist(&ir, d).is_err() {
             *refused.lock().unwrap().entry(format!("{d:?}")).or_default() += 1;
         }
@@ -500,7 +652,11 @@ fn check(deck: &Path, secs: u64, simulate: bool, refused: &std::sync::Mutex<std:
         Ok(None) => return Outcome::Skip("original timed out".into()),
         Err(e) => return Outcome::Skip(format!("original fails: {e}")),
     };
-    if let Some(p) = original.plots.iter().find(|p| p.variables.len() > 0 && p.re(0).is_empty()) {
+    if let Some(p) = original
+        .plots
+        .iter()
+        .find(|p| p.variables.len() > 0 && p.re(0).is_empty())
+    {
         return Outcome::Skip(format!("original fails: {} has no points", p.plot_name));
     }
     // Twice the budget: under a loaded machine a deck near the limit as
@@ -513,9 +669,13 @@ fn check(deck: &Path, secs: u64, simulate: bool, refused: &std::sync::Mutex<std:
             // reordered deck stays within the tolerance the converted one
             // broke.
             Err(why) => match ngspice(dir, &src, secs, false) {
-                Ok(Some(again)) if compare(&original, &again).is_err() => Outcome::Skip(format!("original is not repeatable: two runs disagree ({why})")),
+                Ok(Some(again)) if compare(&original, &again).is_err() => Outcome::Skip(format!(
+                    "original is not repeatable: two runs disagree ({why})"
+                )),
                 _ => match ngspice(dir, &reordered(&src), secs, false) {
-                    Ok(Some(c)) if compare(&original, &c).is_err() => Outcome::Skip(format!("order-sensitive: reordering the original alone breaks it ({why})")),
+                    Ok(Some(c)) if compare(&original, &c).is_err() => Outcome::Skip(format!(
+                        "order-sensitive: reordering the original alone breaks it ({why})"
+                    )),
                     _ => Outcome::Fail(why),
                 },
             },
@@ -536,23 +696,46 @@ const SLOW: &str = include_str!("fixtures/spice_bench_slow.txt");
 
 /// The deck paths of a known-failure list.
 fn names(list: &str) -> Vec<&str> {
-    list.lines().filter_map(|l| l.split_whitespace().next().filter(|w| !w.starts_with('#'))).collect()
+    list.lines()
+        .filter_map(|l| l.split_whitespace().next().filter(|w| !w.starts_with('#')))
+        .collect()
 }
 
 #[test]
 fn spice_bench_round_trip() {
-    let root = std::env::var("SPICE_BENCH").unwrap_or_else(|_| panic!("SPICE_BENCH not set: run the tests in `nix develop .#testing`, which sets it"));
-    assert!(Command::new("ngspice").arg("--version").output().is_ok(), "ngspice not on PATH: run the tests in `nix develop .#testing`");
-    let secs = std::env::var("SPICE_BENCH_TIMEOUT").ok().and_then(|s| s.parse().ok()).unwrap_or(120);
+    let root = std::env::var("SPICE_BENCH").unwrap_or_else(|_| {
+        panic!("SPICE_BENCH not set: run the tests in `nix develop .#testing`, which sets it")
+    });
+    assert!(
+        Command::new("ngspice").arg("--version").output().is_ok(),
+        "ngspice not on PATH: run the tests in `nix develop .#testing`"
+    );
+    let secs = std::env::var("SPICE_BENCH_TIMEOUT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(120);
     let mut all = Vec::new();
     decks(Path::new(&root), &mut all);
     // Largest first: a big deck started last would set the wall clock alone.
     all.sort_by_key(|p| std::cmp::Reverse(std::fs::metadata(p).map_or(0, |m| m.len())));
     assert!(!all.is_empty(), "no *.sp under {root}");
-    let rel = |deck: &Path| deck.strip_prefix(&root).unwrap_or(deck).to_string_lossy().into_owned();
+    let rel = |deck: &Path| {
+        deck.strip_prefix(&root)
+            .unwrap_or(deck)
+            .to_string_lossy()
+            .into_owned()
+    };
     let (slow, known) = (names(SLOW), names(KNOWN_FAILURES));
-    let stale: Vec<&str> = slow.iter().chain(&known).copied().filter(|n| !all.iter().any(|d| rel(d) == *n)).collect();
-    assert!(stale.is_empty(), "listed decks missing from the suite: {stale:#?}");
+    let stale: Vec<&str> = slow
+        .iter()
+        .chain(&known)
+        .copied()
+        .filter(|n| !all.iter().any(|d| rel(d) == *n))
+        .collect();
+    assert!(
+        stale.is_empty(),
+        "listed decks missing from the suite: {stale:#?}"
+    );
 
     let refused = std::sync::Mutex::new(std::collections::BTreeMap::new());
     let next = std::sync::atomic::AtomicUsize::new(0);
@@ -560,15 +743,17 @@ fn spice_bench_round_trip() {
     let workers = std::thread::available_parallelism().map_or(4, |n| n.get());
     std::thread::scope(|s| {
         for _ in 0..workers {
-            s.spawn(|| loop {
-                let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                let Some(deck) = all.get(i) else { break };
-                let t = std::time::Instant::now();
-                let o = check(deck, secs, !slow.contains(&rel(deck).as_str()), &refused);
-                if t.elapsed().as_secs() > 60 {
-                    eprintln!("slow {}: {:.0?}", deck.display(), t.elapsed());
+            s.spawn(|| {
+                loop {
+                    let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let Some(deck) = all.get(i) else { break };
+                    let t = std::time::Instant::now();
+                    let o = check(deck, secs, !slow.contains(&rel(deck).as_str()), &refused);
+                    if t.elapsed().as_secs() > 60 {
+                        eprintln!("slow {}: {:.0?}", deck.display(), t.elapsed());
+                    }
+                    results.lock().unwrap().push((deck.clone(), o));
                 }
-                results.lock().unwrap().push((deck.clone(), o));
             });
         }
     });
@@ -588,13 +773,27 @@ fn spice_bench_round_trip() {
             Outcome::Fail(why) => fail.push(format!("{rel}: {why}")),
         }
     }
-    eprintln!("\n{} decks: {pass} pass, {quarantined} slow, {} skip, {} fail", results.len(), skipped.len(), fail.len());
-    eprintln!("decks each backend could not express: {:?}", refused.into_inner().unwrap());
+    eprintln!(
+        "\n{} decks: {pass} pass, {quarantined} slow, {} skip, {} fail",
+        results.len(),
+        skipped.len(),
+        fail.len()
+    );
+    eprintln!(
+        "decks each backend could not express: {:?}",
+        refused.into_inner().unwrap()
+    );
     // A skip is a named known failure: the deck's line in KNOWN_FAILURES
     // (or SLOW, for a timeout). The name lists must match: an unlisted skip
     // and a listed deck that ran both fail, until the list is edited.
-    let unlisted: Vec<&String> = skipped.iter().filter(|d| !known.contains(&d.as_str())).collect();
-    let ran: Vec<&&str> = known.iter().filter(|k| !skipped.iter().any(|d| d == *k)).collect();
+    let unlisted: Vec<&String> = skipped
+        .iter()
+        .filter(|d| !known.contains(&d.as_str()))
+        .collect();
+    let ran: Vec<&&str> = known
+        .iter()
+        .filter(|k| !skipped.iter().any(|d| d == *k))
+        .collect();
     assert!(fail.is_empty(), "round trip failed:\n{}", fail.join("\n"));
     assert!(
         unlisted.is_empty() && ran.is_empty(),

@@ -3,8 +3,8 @@
 //! [`parse_raw`] reads the first plot; [`parse_raw_all`] reads every plot
 //! (ngspice writes one per analysis, not in card order).
 
-use num_complex::Complex64;
 use crate::result::{RawData, VarInfo, VarType};
+use num_complex::Complex64;
 
 #[derive(Debug, thiserror::Error)]
 pub enum RawFileError {
@@ -72,7 +72,9 @@ fn parse_utf8(data: &[u8]) -> Result<(RawData, usize), RawFileError> {
             .iter()
             .position(|&b| b == b'\n')
             .ok_or_else(|| RawFileError::Format("Unexpected EOF in header".into()))?;
-        let line = std::str::from_utf8(&data[pos..pos + nl]).map_err(bad("header text"))?.trim_end();
+        let line = std::str::from_utf8(&data[pos..pos + nl])
+            .map_err(bad("header text"))?
+            .trim_end();
         pos += nl + 1;
 
         match line {
@@ -82,7 +84,8 @@ fn parse_utf8(data: &[u8]) -> Result<(RawData, usize), RawFileError> {
             _ if in_variables => {
                 // "\tindex\tname\ttype [extra...]"
                 let mut parts = line.split_whitespace();
-                if let (Some(i), Some(name), Some(ty)) = (parts.next(), parts.next(), parts.next()) {
+                if let (Some(i), Some(name), Some(ty)) = (parts.next(), parts.next(), parts.next())
+                {
                     raw.variables.push(VarInfo {
                         index: i.parse().map_err(bad("variable index"))?,
                         name: name.to_string(),
@@ -130,7 +133,10 @@ fn parse_utf8(data: &[u8]) -> Result<(RawData, usize), RawFileError> {
         parse_binary(body, &mut raw, num_vars, num_points, fast_access)?
     } else {
         // The values end where the next plot's header begins.
-        let end = body.windows(7).position(|w| w == b"\nTitle:").map_or(body.len(), |i| i + 1);
+        let end = body
+            .windows(7)
+            .position(|w| w == b"\nTitle:")
+            .map_or(body.len(), |i| i + 1);
         parse_ascii(&body[..end], &mut raw, num_vars, num_points)?;
         end
     };
@@ -158,10 +164,16 @@ fn parse_binary(
     let slot = |v: usize, p: usize| width * if fast_access { v * np + p } else { p * nv + v };
     if raw.is_complex {
         raw.complex_data = (0..nv)
-            .map(|v| (0..np).map(|p| Complex64::new(f(slot(v, p)), f(slot(v, p) + 1))).collect())
+            .map(|v| {
+                (0..np)
+                    .map(|p| Complex64::new(f(slot(v, p)), f(slot(v, p) + 1)))
+                    .collect()
+            })
             .collect();
     } else {
-        raw.real_data = (0..nv).map(|v| (0..np).map(|p| f(slot(v, p))).collect()).collect();
+        raw.real_data = (0..nv)
+            .map(|v| (0..np).map(|p| f(slot(v, p))).collect())
+            .collect();
     }
     Ok(need)
 }
@@ -171,8 +183,15 @@ fn parse_binary(
 fn parse_ascii(body: &[u8], raw: &mut RawData, nv: usize, np: usize) -> Result<(), RawFileError> {
     let text = std::str::from_utf8(body).map_err(bad("values text"))?;
     let mut tokens = text.split_ascii_whitespace();
-    let mut next = || tokens.next().ok_or_else(|| RawFileError::Format("Values block ends early".into()));
-    let num = |s: &str| s.parse::<f64>().map_err(|e| RawFileError::Parse(format!("Bad value '{s}': {e}")));
+    let mut next = || {
+        tokens
+            .next()
+            .ok_or_else(|| RawFileError::Format("Values block ends early".into()))
+    };
+    let num = |s: &str| {
+        s.parse::<f64>()
+            .map_err(|e| RawFileError::Parse(format!("Bad value '{s}': {e}")))
+    };
 
     if raw.is_complex {
         raw.complex_data = vec![Vec::with_capacity(np); nv];
@@ -226,7 +245,13 @@ mod tests {
         bin.extend(header("real", &["v(a)", "v(b)"], 1, "Binary:\n"));
         bin.extend([4.0f64, 5.0].iter().flat_map(|v| v.to_le_bytes()));
         let plots = parse_raw_all(&bin).unwrap();
-        assert_eq!(plots.iter().map(|p| p.real_data.clone()).collect::<Vec<_>>(), vec![vec![vec![3.0]], vec![vec![4.0], vec![5.0]]]);
+        assert_eq!(
+            plots
+                .iter()
+                .map(|p| p.real_data.clone())
+                .collect::<Vec<_>>(),
+            vec![vec![vec![3.0]], vec![vec![4.0], vec![5.0]]]
+        );
     }
 
     #[test]

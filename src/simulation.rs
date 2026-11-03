@@ -3,7 +3,7 @@
 //! by plot name (ngspice and ESPice `Plotname`s, checked on both), one per
 //! analysis.
 
-use crate::backend::{netlist, select, BackendError, Dialect};
+use crate::backend::{BackendError, Dialect, netlist, select};
 use crate::ir::{Analysis, CircuitIR};
 use crate::result::RawData;
 
@@ -19,15 +19,27 @@ pub fn run(ir: &CircuitIR, backend: Option<&str>) -> Result<RawData, BackendErro
 /// in run order), each tagged with the backend and the run's `.meas` values.
 pub fn run_all(ir: &CircuitIR, backend: Option<&str>) -> Result<Vec<RawData>, BackendError> {
     let op = Analysis::Op;
-    let first = ir.testbench.as_ref().and_then(|tb| tb.analyses.first()).unwrap_or(&op);
+    let first = ir
+        .testbench
+        .as_ref()
+        .and_then(|tb| tb.analyses.first())
+        .unwrap_or(&op);
     let sim = select(first, backend, &ir.compute_features())?;
     let deck = netlist(ir, sim).map_err(|e| BackendError::SimulationError(e.to_string()))?;
     let mut plots = sim.run_all(&deck)?;
     // LTspice writes `.meas` results to its log, everyone else to stdout;
     // every plot carries the same run's text.
     let p = &plots[0];
-    let text = if sim == Dialect::Ltspice && !p.log_content.is_empty() { &p.log_content } else { &p.stdout };
-    let measures = if text.is_empty() { vec![] } else { crate::measure_parse::parse_measures(text, Some(sim)) };
+    let text = if sim == Dialect::Ltspice && !p.log_content.is_empty() {
+        &p.log_content
+    } else {
+        &p.stdout
+    };
+    let measures = if text.is_empty() {
+        vec![]
+    } else {
+        crate::measure_parse::parse_measures(text, Some(sim))
+    };
     for p in &mut plots {
         p.backend_hint = Some(sim);
         p.measures.clone_from(&measures);
@@ -47,7 +59,10 @@ pub fn run_all(ir: &CircuitIR, backend: Option<&str>) -> Result<Vec<RawData>, Ba
 /// among those the run wrote, or it is an analysis whose plot is not
 /// matched here (`pss`, `hb`, `stb`, transient noise, the Spectre-only
 /// ones) run beside others.
-pub fn run_each(ir: &CircuitIR, backend: Option<&str>) -> Result<Vec<Option<RawData>>, BackendError> {
+pub fn run_each(
+    ir: &CircuitIR,
+    backend: Option<&str>,
+) -> Result<Vec<Option<RawData>>, BackendError> {
     let analyses = ir.testbench.as_ref().map_or(&[][..], |tb| &tb.analyses);
     let mut plots: Vec<Option<RawData>> = run_all(ir, backend)?.into_iter().map(Some).collect();
     assert!(!plots.is_empty(), "a run returns at least one plot");
@@ -55,10 +70,16 @@ pub fn run_each(ir: &CircuitIR, backend: Option<&str>) -> Result<Vec<Option<RawD
         plots.truncate(1);
         return Ok(plots);
     }
-    let missing = |what: &str| BackendError::SimulationError(format!("no {what} plot among those the run wrote"));
+    let missing = |what: &str| {
+        BackendError::SimulationError(format!("no {what} plot among those the run wrote"))
+    };
     if plots[0].as_ref().and_then(|p| p.backend_hint) == Some(Dialect::Vacask) {
         if plots.len() != analyses.len() {
-            return Err(missing(&format!("one-per-analysis ({} plots, {} analyses)", plots.len(), analyses.len())));
+            return Err(missing(&format!(
+                "one-per-analysis ({} plots, {} analyses)",
+                plots.len(),
+                analyses.len()
+            )));
         }
         return Ok(plots);
     }
@@ -79,14 +100,27 @@ pub fn run_each(ir: &CircuitIR, backend: Option<&str>) -> Result<Vec<Option<RawD
             Analysis::PoleZero { .. } => "Pole-Zero Analysis",
             Analysis::Distortion { .. } => "DISTORTION",
             Analysis::SPar { .. } => "SP Analysis",
-            Analysis::Pss { .. } | Analysis::HarmonicBalance { .. } | Analysis::Stability { .. } | Analysis::TransientNoise { .. }
-            | Analysis::SpectreSweep { .. } | Analysis::SpectreMonteCarlo { .. } | Analysis::SpectrePac { .. }
-            | Analysis::SpectrePnoise { .. } | Analysis::SpectrePxf { .. } | Analysis::SpectrePstb { .. } => {
+            Analysis::Pss { .. }
+            | Analysis::HarmonicBalance { .. }
+            | Analysis::Stability { .. }
+            | Analysis::TransientNoise { .. }
+            | Analysis::SpectreSweep { .. }
+            | Analysis::SpectreMonteCarlo { .. }
+            | Analysis::SpectrePac { .. }
+            | Analysis::SpectrePnoise { .. }
+            | Analysis::SpectrePxf { .. }
+            | Analysis::SpectrePstb { .. } => {
                 let kind = format!("{a:?}");
-                return Err(missing(&format!("matchable {}", kind.split([' ', '{']).next().unwrap_or_default())));
+                return Err(missing(&format!(
+                    "matchable {}",
+                    kind.split([' ', '{']).next().unwrap_or_default()
+                )));
             }
         };
-        let i = plots.iter().position(|p| p.as_ref().is_some_and(|p| p.plot_name.starts_with(name))).ok_or_else(|| missing(name))?;
+        let i = plots
+            .iter()
+            .position(|p| p.as_ref().is_some_and(|p| p.plot_name.starts_with(name)))
+            .ok_or_else(|| missing(name))?;
         out.push(plots[i].take());
     }
     assert_eq!(out.len(), analyses.len());

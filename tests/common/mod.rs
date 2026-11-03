@@ -13,15 +13,23 @@ use spicerack::result::{MeasureResult, RawData};
 /// Runs `deck` on `d`.
 pub fn run(d: Dialect, deck: &str) -> RawData {
     let program = d.name();
-    let found = std::process::Command::new(program).arg("--version").output().is_ok_and(|o| o.status.success());
-    assert!(found, "{program} not on PATH: run the tests in `nix develop .#testing`");
-    d.run(deck).unwrap_or_else(|e| panic!("deck failed: {e}\n{deck}"))
+    let found = std::process::Command::new(program)
+        .arg("--version")
+        .output()
+        .is_ok_and(|o| o.status.success());
+    assert!(
+        found,
+        "{program} not on PATH: run the tests in `nix develop .#testing`"
+    );
+    d.run(deck)
+        .unwrap_or_else(|e| panic!("deck failed: {e}\n{deck}"))
 }
 
 /// `deck` as `simulation::run` hands it to `d`: read by the ngspice importer,
 /// passed through `edit`, written back by the codegen for `d`.
 pub fn emitted(d: Dialect, deck: &str, edit: impl FnOnce(&mut spicerack::ir::CircuitIR)) -> String {
-    let (mut ir, _) = spicerack::import::parse(deck, "deck", Dialect::Ngspice).unwrap_or_else(|e| panic!("{e}\n{deck}"));
+    let (mut ir, _) = spicerack::import::parse(deck, "deck", Dialect::Ngspice)
+        .unwrap_or_else(|e| panic!("{e}\n{deck}"));
     edit(&mut ir);
     spicerack::codegen::netlist(&ir, d).unwrap_or_else(|e| panic!("{e}\n{deck}"))
 }
@@ -40,7 +48,12 @@ pub fn index_of(raw: &RawData, name: &str) -> usize {
     raw.variables
         .iter()
         .position(|v| v.name.eq_ignore_ascii_case(name) || v.name.eq_ignore_ascii_case(&wrapped))
-        .unwrap_or_else(|| panic!("no vector '{name}' in {:?}", raw.variables.iter().map(|v| &v.name).collect::<Vec<_>>()))
+        .unwrap_or_else(|| {
+            panic!(
+                "no vector '{name}' in {:?}",
+                raw.variables.iter().map(|v| &v.name).collect::<Vec<_>>()
+            )
+        })
 }
 
 pub fn scalar(raw: &RawData, name: &str) -> f64 {

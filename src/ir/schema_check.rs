@@ -11,7 +11,19 @@
 use serde_json::Value;
 
 /// The keywords that only annotate, or that `check` reads beside another.
-const PASSIVE: [&str; 11] = ["$schema", "$id", "$defs", "title", "description", "default", "deprecated", "properties", "additionalProperties", "prefixItems", "items"];
+const PASSIVE: [&str; 11] = [
+    "$schema",
+    "$id",
+    "$defs",
+    "title",
+    "description",
+    "default",
+    "deprecated",
+    "properties",
+    "additionalProperties",
+    "prefixItems",
+    "items",
+];
 
 /// Every place `doc` breaks `root`, as `path: reason`; empty when it holds.
 pub(super) fn errors(root: &Value, doc: &Value) -> Vec<String> {
@@ -32,8 +44,13 @@ fn check(root: &Value, s: &Value, v: &Value, at: &str, depth: u32, out: &mut Vec
     for (k, kv) in s {
         match k.as_str() {
             "$ref" => {
-                let name = kv.as_str().and_then(|r| r.strip_prefix("#/$defs/")).unwrap_or_else(|| panic!("non-local $ref {kv} at {at}"));
-                let def = root["$defs"].get(name).unwrap_or_else(|| panic!("$ref to missing $defs/{name} at {at}"));
+                let name = kv
+                    .as_str()
+                    .and_then(|r| r.strip_prefix("#/$defs/"))
+                    .unwrap_or_else(|| panic!("non-local $ref {kv} at {at}"));
+                let def = root["$defs"]
+                    .get(name)
+                    .unwrap_or_else(|| panic!("$ref to missing $defs/{name} at {at}"));
                 check(root, def, v, at, depth + 1, out);
             }
             "type" => {
@@ -47,28 +64,57 @@ fn check(root: &Value, s: &Value, v: &Value, at: &str, depth: u32, out: &mut Vec
                 }
             }
             "const" if v != kv => out.push(format!("{at}: {v} is not {kv}")),
-            "enum" if !kv.as_array().expect("enum list").contains(v) => out.push(format!("{at}: {v} is not one of {kv}")),
+            "enum" if !kv.as_array().expect("enum list").contains(v) => {
+                out.push(format!("{at}: {v} is not one of {kv}"))
+            }
             "required" => {
-                for r in kv.as_array().expect("required list").iter().filter_map(Value::as_str) {
+                for r in kv
+                    .as_array()
+                    .expect("required list")
+                    .iter()
+                    .filter_map(Value::as_str)
+                {
                     if v.as_object().is_some_and(|o| !o.contains_key(r)) {
                         out.push(format!("{at}: missing {r}"));
                     }
                 }
             }
             "minItems" | "maxItems" => {
-                let (n, bound) = (v.as_array().map_or(0, Vec::len) as u64, kv.as_u64().expect("item count"));
-                let bad = v.is_array() && if k == "minItems" { n < bound } else { n > bound };
+                let (n, bound) = (
+                    v.as_array().map_or(0, Vec::len) as u64,
+                    kv.as_u64().expect("item count"),
+                );
+                let bad = v.is_array()
+                    && if k == "minItems" {
+                        n < bound
+                    } else {
+                        n > bound
+                    };
                 if bad {
                     out.push(format!("{at}: {n} items breaks {k} {bound}"));
                 }
             }
-            "minimum" if v.as_f64().is_some_and(|x| x < kv.as_f64().expect("minimum")) => out.push(format!("{at}: {v} < {kv}")),
+            "minimum"
+                if v.as_f64()
+                    .is_some_and(|x| x < kv.as_f64().expect("minimum")) =>
+            {
+                out.push(format!("{at}: {v} < {kv}"))
+            }
             "oneOf" => {
                 let branches = kv.as_array().expect("oneOf list");
-                let errs: Vec<Vec<String>> = branches.iter().map(|b| errors_under(root, b, v, at, depth)).collect();
+                let errs: Vec<Vec<String>> = branches
+                    .iter()
+                    .map(|b| errors_under(root, b, v, at, depth))
+                    .collect();
                 match errs.iter().filter(|e| e.is_empty()).count() {
                     1 => {}
-                    0 => out.push(format!("{at}: matches no oneOf branch: {}", errs.iter().map(|e| e.join("; ")).collect::<Vec<_>>().join(" | "))),
+                    0 => out.push(format!(
+                        "{at}: matches no oneOf branch: {}",
+                        errs.iter()
+                            .map(|e| e.join("; "))
+                            .collect::<Vec<_>>()
+                            .join(" | ")
+                    )),
                     n => out.push(format!("{at}: matches {n} oneOf branches")),
                 }
             }
@@ -90,7 +136,10 @@ fn check(root: &Value, s: &Value, v: &Value, at: &str, depth: u32, out: &mut Vec
     }
     // `items` checks the elements past `prefixItems`.
     if let Some(a) = v.as_array() {
-        let prefix = s.get("prefixItems").and_then(Value::as_array).map_or(&[][..], Vec::as_slice);
+        let prefix = s
+            .get("prefixItems")
+            .and_then(Value::as_array)
+            .map_or(&[][..], Vec::as_slice);
         for (i, x) in a.iter().enumerate() {
             let sub = format!("{at}[{i}]");
             match (prefix.get(i), s.get("items")) {
@@ -138,9 +187,21 @@ mod tests {
                 "d": { "enum": ["x", "y"] },
             },
         });
-        assert_eq!(errors(&root, &json!({ "a": 1, "b": "s", "c": [1], "d": "x" })), Vec::<String>::new());
-        for bad in [json!({}), json!({ "a": -1 }), json!({ "a": "1" }), json!({ "a": 1, "z": 0 }), json!({ "a": 1, "b": 1.5 }),
-                    json!({ "a": 1, "c": [2] }), json!({ "a": 1, "c": [1, 1] }), json!({ "a": 1, "c": [] }), json!({ "a": 1, "d": "z" })] {
+        assert_eq!(
+            errors(&root, &json!({ "a": 1, "b": "s", "c": [1], "d": "x" })),
+            Vec::<String>::new()
+        );
+        for bad in [
+            json!({}),
+            json!({ "a": -1 }),
+            json!({ "a": "1" }),
+            json!({ "a": 1, "z": 0 }),
+            json!({ "a": 1, "b": 1.5 }),
+            json!({ "a": 1, "c": [2] }),
+            json!({ "a": 1, "c": [1, 1] }),
+            json!({ "a": 1, "c": [] }),
+            json!({ "a": 1, "d": "z" }),
+        ] {
             assert!(!errors(&root, &bad).is_empty(), "{bad} passed");
         }
     }

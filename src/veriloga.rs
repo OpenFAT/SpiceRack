@@ -11,7 +11,7 @@
 //! under ngspice `d_cosim`) or synthesized by Yosys into standard cells.
 
 #[cfg(feature = "backend")]
-pub use run::{compile_osdi, lower, osdi_loads, resolve, Cell, Lowered};
+pub use run::{Cell, Lowered, compile_osdi, lower, osdi_loads, resolve};
 
 /// True for a load-list entry that is Verilog-A source rather than a binary.
 pub fn is_source(path: &str) -> bool {
@@ -42,7 +42,11 @@ mod run {
         if trimmed.ends_with(&format!(".{ext}")) && !trimmed.contains('\n') {
             let p = Path::new(trimmed);
             if !p.exists() {
-                return Err(format!("{} file not found: {}", if ext == "va" { "Verilog-A" } else { "Verilog" }, trimmed));
+                return Err(format!(
+                    "{} file not found: {}",
+                    if ext == "va" { "Verilog-A" } else { "Verilog" },
+                    trimmed
+                ));
             }
             return p.canonicalize().map_err(|e| format!("{}: {}", trimmed, e));
         }
@@ -55,12 +59,19 @@ mod run {
             h.finish()
         };
         let file = dir.join(format!("inline_{:016x}.{ext}", hash));
-        std::fs::write(&file, trimmed).map_err(|e| format!("Failed to write temp .{ext} file: {}", e))?;
+        std::fs::write(&file, trimmed)
+            .map_err(|e| format!("Failed to write temp .{ext} file: {}", e))?;
         Ok(file)
     }
 
     /// Run `tool args` to make `out` from `src`, skipped when `out` is newer.
-    fn run_tool(src: &Path, out: &Path, tool: &str, install: &str, args: &[&OsStr]) -> Result<String, String> {
+    fn run_tool(
+        src: &Path,
+        out: &Path,
+        tool: &str,
+        install: &str,
+        args: &[&OsStr],
+    ) -> Result<String, String> {
         let mtime = |p: &Path| p.metadata().and_then(|m| m.modified());
         let done = out.to_string_lossy().into_owned();
         if let (Ok(s), Ok(o)) = (mtime(src), mtime(out))
@@ -68,10 +79,13 @@ mod run {
         {
             return Ok(done);
         }
-        let output = Command::new(tool).args(args).output().map_err(|e| match e.kind() {
-            std::io::ErrorKind::NotFound => format!("{tool} not found on $PATH. {install}"),
-            _ => format!("Failed to run {tool}: {e}"),
-        })?;
+        let output = Command::new(tool)
+            .args(args)
+            .output()
+            .map_err(|e| match e.kind() {
+                std::io::ErrorKind::NotFound => format!("{tool} not found on $PATH. {install}"),
+                _ => format!("Failed to run {tool}: {e}"),
+            })?;
         if !output.status.success() {
             return Err(format!(
                 "{tool} failed (exit {}):\n{}\n{}",
@@ -86,14 +100,30 @@ mod run {
     /// Compile `va` to an `.osdi` beside it with OpenVAF.
     pub fn compile_osdi(va: &Path) -> Result<String, String> {
         let osdi = va.with_extension("osdi");
-        let install = "Install OpenVAF to compile Verilog-A models.\nSee: https://openvaf.semimod.de";
-        run_tool(va, &osdi, "openvaf", install, &[va.as_os_str(), "-o".as_ref(), osdi.as_os_str()])
+        let install =
+            "Install OpenVAF to compile Verilog-A models.\nSee: https://openvaf.semimod.de";
+        run_tool(
+            va,
+            &osdi,
+            "openvaf",
+            install,
+            &[va.as_os_str(), "-o".as_ref(), osdi.as_os_str()],
+        )
     }
 
     /// A load list with every Verilog-A source replaced by its compiled `.osdi`,
     /// for the backends that load OSDI.
     pub fn osdi_loads(loads: &[String]) -> Result<Vec<String>, String> {
-        loads.iter().map(|l| if is_source(l) { compile_osdi(Path::new(l)) } else { Ok(l.clone()) }).collect()
+        loads
+            .iter()
+            .map(|l| {
+                if is_source(l) {
+                    compile_osdi(Path::new(l))
+                } else {
+                    Ok(l.clone())
+                }
+            })
+            .collect()
     }
 
     /// What a digital Verilog block becomes in a netlist.
@@ -103,7 +133,10 @@ mod run {
         /// group per port.
         Cosim { vvp: String, ports: Vec<String> },
         /// Standard-cell subcircuit calls; `spice_models` holds the cell subckts.
-        Gates { spice_models: String, cells: Vec<Cell> },
+        Gates {
+            spice_models: String,
+            cells: Vec<Cell>,
+        },
     }
 
     /// One synthesized standard-cell instance.
@@ -128,8 +161,18 @@ mod run {
             let vvp = v.with_extension("vvp");
             let install = "Install Icarus Verilog for co-simulation.\n\
                  Install: sudo apt install iverilog (Debian/Ubuntu) or brew install icarus-verilog (macOS)";
-            let vvp = run_tool(&v, &vvp, "iverilog", install, &["-o".as_ref(), vvp.as_os_str(), v.as_os_str()])?;
-            let ports = vb.connections.values().map(|c| format!("[{}]", nets(c).join(" "))).collect();
+            let vvp = run_tool(
+                &v,
+                &vvp,
+                "iverilog",
+                install,
+                &["-o".as_ref(), vvp.as_os_str(), v.as_os_str()],
+            )?;
+            let ports = vb
+                .connections
+                .values()
+                .map(|c| format!("[{}]", nets(c).join(" ")))
+                .collect();
             return Ok(Lowered::Cosim { vvp, ports });
         }
 
@@ -141,10 +184,15 @@ mod run {
         let spice_models = match (&vb.spice_models, &vb.pdk) {
             (Some(s), _) => s.clone(),
             (None, Some(p)) => pdk_paths(p)?.1,
-            (None, None) => return Err("mode='synthesize' requires either pdk or both liberty and spice_models".into()),
+            (None, None) => {
+                return Err(
+                    "mode='synthesize' requires either pdk or both liberty and spice_models".into(),
+                );
+            }
         };
 
-        let text = std::fs::read_to_string(&v).map_err(|e| format!("Failed to read {}: {}", v.display(), e))?;
+        let text = std::fs::read_to_string(&v)
+            .map_err(|e| format!("Failed to read {}: {}", v.display(), e))?;
         let top = regex::Regex::new(r"(?m)^\s*module\s+(\w+)")
             .expect("static regex")
             .captures(&text)
@@ -158,8 +206,15 @@ mod run {
         );
         let install = "Install Yosys for Verilog synthesis.\n\
              Install: sudo apt install yosys (Debian/Ubuntu) or brew install yosys (macOS)";
-        let synth = run_tool(&v, &synth, "yosys", install, &["-p".as_ref(), script.as_ref()])?;
-        let netlist = std::fs::read_to_string(&synth).map_err(|e| format!("Failed to read synthesized netlist: {}", e))?;
+        let synth = run_tool(
+            &v,
+            &synth,
+            "yosys",
+            install,
+            &["-p".as_ref(), script.as_ref()],
+        )?;
+        let netlist = std::fs::read_to_string(&synth)
+            .map_err(|e| format!("Failed to read synthesized netlist: {}", e))?;
 
         // A synthesized net named like a user port lands on that port's first net;
         // every other net is prefixed with the instance name.
@@ -171,24 +226,43 @@ mod run {
                 cell,
                 nodes: ports
                     .into_iter()
-                    .map(|net| match vb.connections.get(&net).and_then(|c| nets(c).first()) {
-                        Some(n) => n.clone(),
-                        None => format!("{inst}_{net}"),
-                    })
+                    .map(
+                        |net| match vb.connections.get(&net).and_then(|c| nets(c).first()) {
+                            Some(n) => n.clone(),
+                            None => format!("{inst}_{net}"),
+                        },
+                    )
                     .collect(),
             })
             .collect();
-        Ok(Lowered::Gates { spice_models, cells })
+        Ok(Lowered::Gates {
+            spice_models,
+            cells,
+        })
     }
 
     /// Cell instances of a Yosys `write_verilog` netlist as (instance, cell, nets
     /// in port order), e.g. `sky130_fd_sc_hd__and2_1 _0_ ( .A(\a ), .X(\out ) );`.
     pub(super) fn gate_instances(netlist: &str) -> Vec<(String, String, Vec<String>)> {
-        let inst = regex::Regex::new(r"(?m)^\s+(\w+)\s+(\w+)\s*\(([^;]+)\);").expect("static regex");
+        let inst =
+            regex::Regex::new(r"(?m)^\s+(\w+)\s+(\w+)\s*\(([^;]+)\);").expect("static regex");
         let port = regex::Regex::new(r"\.\s*\w+\s*\(\s*\\?([^\s)]+)\s*\)").expect("static regex");
         inst.captures_iter(netlist)
-            .filter(|c| !matches!(&c[1], "wire" | "assign" | "input" | "output" | "module" | "endmodule" | "reg"))
-            .map(|c| (c[2].to_string(), c[1].to_string(), port.captures_iter(&c[3]).map(|p| p[1].to_string()).collect()))
+            .filter(|c| {
+                !matches!(
+                    &c[1],
+                    "wire" | "assign" | "input" | "output" | "module" | "endmodule" | "reg"
+                )
+            })
+            .map(|c| {
+                (
+                    c[2].to_string(),
+                    c[1].to_string(),
+                    port.captures_iter(&c[3])
+                        .map(|p| p[1].to_string())
+                        .collect(),
+                )
+            })
             .collect()
     }
 
@@ -227,7 +301,9 @@ pub fn osdi_loads(loads: &[String]) -> Result<Vec<String>, String> {
         .iter()
         .map(|l| {
             if is_source(l) {
-                Err(format!("{l}: compiling Verilog-A needs spicerack's `backend` feature"))
+                Err(format!(
+                    "{l}: compiling Verilog-A needs spicerack's `backend` feature"
+                ))
             } else {
                 Ok(l.clone())
             }
@@ -249,7 +325,10 @@ mod tests {
 
     #[test]
     fn binaries_pass_through_without_openvaf() {
-        assert_eq!(osdi_loads(&["/m/a.osdi".into()]).unwrap(), vec!["/m/a.osdi".to_string()]);
+        assert_eq!(
+            osdi_loads(&["/m/a.osdi".into()]).unwrap(),
+            vec!["/m/a.osdi".to_string()]
+        );
     }
 
     #[cfg(feature = "backend")]
@@ -267,7 +346,11 @@ mod tests {
         let n = "module top(a, b, out);\n  input a;\n  sky130_fd_sc_hd__and2_1 _0_ ( .A(\\a ), .B(b), .X(\\out ) );\nendmodule\n";
         assert_eq!(
             run::gate_instances(n),
-            vec![("_0_".into(), "sky130_fd_sc_hd__and2_1".into(), vec!["a".into(), "b".into(), "out".into()])]
+            vec![(
+                "_0_".into(),
+                "sky130_fd_sc_hd__and2_1".into(),
+                vec!["a".into(), "b".into(), "out".into()]
+            )]
         );
     }
 }

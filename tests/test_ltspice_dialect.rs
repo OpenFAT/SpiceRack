@@ -5,7 +5,7 @@
 //! against LTspice's *documented* syntax. Nothing below was run through
 //! LTspice.
 
-use spicerack::codegen::{netlist, CodeGenError, Dialect};
+use spicerack::codegen::{CodeGenError, Dialect, netlist};
 use spicerack::ir::*;
 
 /// One dialect, probed one piece at a time through a minimal deck.
@@ -28,19 +28,41 @@ impl Cg {
     fn body(&self, component: Option<&Component>, tb: Testbench) -> Result<String, CodeGenError> {
         let top = Subcircuit {
             name: "t".into(),
-            components: component.into_iter().cloned().collect(), ..Default::default() };
-        let ir = CircuitIR { top, testbench: Some(tb), ..Default::default() };
+            components: component.into_iter().cloned().collect(),
+            ..Default::default()
+        };
+        let ir = CircuitIR {
+            top,
+            testbench: Some(tb),
+            ..Default::default()
+        };
         let n = self.emit_netlist(&ir)?;
-        Ok(n.strip_prefix("* t\n").unwrap().strip_suffix("\n.end").unwrap().to_string())
+        Ok(n.strip_prefix("* t\n")
+            .unwrap()
+            .strip_suffix("\n.end")
+            .unwrap()
+            .to_string())
     }
 
     fn emit_step_param(&self, sp: &StepParam) -> Result<String, CodeGenError> {
-        self.body(None, Testbench { step_params: vec![sp.clone()], ..Default::default() })
+        self.body(
+            None,
+            Testbench {
+                step_params: vec![sp.clone()],
+                ..Default::default()
+            },
+        )
     }
 
     /// The last line: ngspice puts `.save all` ahead of a noise card.
     fn emit_analysis(&self, a: &Analysis) -> Result<String, CodeGenError> {
-        let b = self.body(None, Testbench { analyses: vec![a.clone()], ..Default::default() })?;
+        let b = self.body(
+            None,
+            Testbench {
+                analyses: vec![a.clone()],
+                ..Default::default()
+            },
+        )?;
         Ok(b.lines().last().unwrap().to_string())
     }
 
@@ -49,7 +71,13 @@ impl Cg {
     }
 
     fn emit_options(&self, o: &SimOptions) -> Result<String, CodeGenError> {
-        self.body(None, Testbench { options: o.clone(), ..Default::default() })
+        self.body(
+            None,
+            Testbench {
+                options: o.clone(),
+                ..Default::default()
+            },
+        )
     }
 }
 
@@ -84,7 +112,10 @@ fn ngspice_refuses_step_instead_of_commenting_it_out() {
     };
     let err = ng().emit_step_param(&sp).unwrap_err().to_string();
     assert!(err.contains("no `.step`"), "{err}");
-    assert!(err.contains(".dc"), "error should name the working alternative: {err}");
+    assert!(
+        err.contains(".dc"),
+        "error should name the working alternative: {err}"
+    );
 }
 
 // ── .four ──
@@ -112,12 +143,22 @@ fn noise_points_per_summary_is_ngspice_only() {
         output: "out".into(),
         reference: "0".into(),
         source: "V1".into(),
-        sweep: FreqSweep { variation: Sweep::Dec,
-        points: 10, start: 1.0, stop: 1e6 },
+        sweep: FreqSweep {
+            variation: Sweep::Dec,
+            points: 10,
+            start: 1.0,
+            stop: 1e6,
+        },
         points_per_summary: Some(5),
     };
-    assert_eq!(lt().emit_analysis(&noise).unwrap(), ".noise V(out) V1 dec 10 1 1meg");
-    assert_eq!(ng().emit_analysis(&noise).unwrap(), ".noise V(out) V1 dec 10 1 1meg 5");
+    assert_eq!(
+        lt().emit_analysis(&noise).unwrap(),
+        ".noise V(out) V1 dec 10 1 1meg"
+    );
+    assert_eq!(
+        ng().emit_analysis(&noise).unwrap(),
+        ".noise V(out) V1 dec 10 1 1meg 5"
+    );
 }
 
 // ── analyses LTspice does not have ──
@@ -134,11 +175,18 @@ fn pz_disto_and_sens_are_rejected_for_ltspice() {
             pz_type: PzKind::Pz,
         },
         Analysis::Distortion {
-            sweep: FreqSweep { variation: Sweep::Dec,
-            points: 10, start: 1e3, stop: 1e6 },
+            sweep: FreqSweep {
+                variation: Sweep::Dec,
+                points: 10,
+                start: 1e3,
+                stop: 1e6,
+            },
             f2overf1: None,
         },
-        Analysis::Sensitivity { output: "V(out)".into(), ac: None },
+        Analysis::Sensitivity {
+            output: "V(out)".into(),
+            ac: None,
+        },
     ];
     for a in &cases {
         assert!(lt().emit_analysis(a).is_err(), "ltspice must reject {a:?}");
@@ -157,18 +205,29 @@ fn noise_tb(saves: Vec<String>) -> CircuitIR {
                 n1: "in".into(),
                 n2: "out".into(),
                 value: IrValue::Numeric { value: 10e3 },
-                model: None, params: vec![],
-            }], ..Default::default() },
+                model: None,
+                params: vec![],
+            }],
+            ..Default::default()
+        },
         testbench: Some(Testbench {
             analyses: vec![Analysis::Noise {
                 output: "out".into(),
                 reference: "0".into(),
                 source: "V1".into(),
-                sweep: FreqSweep { variation: Sweep::Dec,
-                points: 10, start: 1.0, stop: 1e6 },
+                sweep: FreqSweep {
+                    variation: Sweep::Dec,
+                    points: 10,
+                    start: 1.0,
+                    stop: 1e6,
+                },
                 points_per_summary: None,
             }],
-            saves, ..Default::default() }), ..Default::default() }
+            saves,
+            ..Default::default()
+        }),
+        ..Default::default()
+    }
 }
 
 /// A node-name save list cannot name the noise output vectors, so it must not
@@ -183,7 +242,10 @@ fn noise_never_emits_a_node_save_list() {
     assert!(!ng_netlist.contains(".save V(out)"), "{ng_netlist}");
 
     let lt_netlist = lt().emit_netlist(&ir).unwrap();
-    assert!(!lt_netlist.contains(".save"), "ltspice has no .save all: {lt_netlist}");
+    assert!(
+        !lt_netlist.contains(".save"),
+        "ltspice has no .save all: {lt_netlist}"
+    );
 }
 
 // ── XSPICE and OSDI are ngspice-only ──

@@ -9,13 +9,21 @@
 //! Skipped automatically when ngspice is not on PATH.
 
 use spicerack::codegen::Dialect;
-use spicerack::ir::{Analysis, CircuitIR, Component, FreqSweep, IrValue, Subcircuit, Sweep, Testbench};
+use spicerack::ir::{
+    Analysis, CircuitIR, Component, FreqSweep, IrValue, Subcircuit, Sweep, Testbench,
+};
 use spicerack::result::RawData;
 
 /// Unsupported fails, never skips: no ngspice is a failure.
 fn require_ngspice() {
-    let ok = std::process::Command::new("ngspice").arg("--version").output().is_ok_and(|o| o.status.success());
-    assert!(ok, "ngspice not on PATH: run the tests in `nix develop .#testing`");
+    let ok = std::process::Command::new("ngspice")
+        .arg("--version")
+        .output()
+        .is_ok_and(|o| o.status.success());
+    assert!(
+        ok,
+        "ngspice not on PATH: run the tests in `nix develop .#testing`"
+    );
 }
 
 fn ngspice() -> Dialect {
@@ -31,24 +39,46 @@ struct Deck(Subcircuit);
 
 impl Deck {
     fn new(title: &str) -> Self {
-        Deck(Subcircuit { name: title.into(), ..Default::default() })
+        Deck(Subcircuit {
+            name: title.into(),
+            ..Default::default()
+        })
     }
     fn raw_spice(&mut self, line: &str) {
         self.0.raw_spice.push(line.into());
     }
     fn r(&mut self, name: &str, n1: &str, n2: &str, value: f64) {
         self.0.components.push(Component::Resistor {
-            name: name.into(), n1: n1.into(), n2: n2.into(), value: IrValue::Numeric { value }, model: None, params: vec![],
+            name: name.into(),
+            n1: n1.into(),
+            n2: n2.into(),
+            value: IrValue::Numeric { value },
+            model: None,
+            params: vec![],
         });
     }
     fn bv(&mut self, name: &str, np: &str, nm: &str, expression: impl Into<String>) {
-        self.0.components.push(Component::BehavioralVoltage { name: name.into(), np: np.into(), nm: nm.into(), expression: expression.into() });
+        self.0.components.push(Component::BehavioralVoltage {
+            name: name.into(),
+            np: np.into(),
+            nm: nm.into(),
+            expression: expression.into(),
+        });
     }
     fn bi(&mut self, name: &str, np: &str, nm: &str, expression: impl Into<String>) {
-        self.0.components.push(Component::BehavioralCurrent { name: name.into(), np: np.into(), nm: nm.into(), expression: expression.into() });
+        self.0.components.push(Component::BehavioralCurrent {
+            name: name.into(),
+            np: np.into(),
+            nm: nm.into(),
+            expression: expression.into(),
+        });
     }
     fn ir(&self) -> CircuitIR {
-        CircuitIR { top: self.0.clone(), ..Default::default() } }
+        CircuitIR {
+            top: self.0.clone(),
+            ..Default::default()
+        }
+    }
 }
 
 fn netlist(cg: &Dialect, c: &Deck) -> Result<String, String> {
@@ -57,7 +87,9 @@ fn netlist(cg: &Dialect, c: &Deck) -> Result<String, String> {
 
 fn run(deck: &str) -> RawData {
     require_ngspice();
-    Dialect::Ngspice.run(deck).unwrap_or_else(|e| panic!("deck failed: {e}\n{deck}"))
+    Dialect::Ngspice
+        .run(deck)
+        .unwrap_or_else(|e| panic!("deck failed: {e}\n{deck}"))
 }
 
 fn index_of(raw: &RawData, name: &str) -> usize {
@@ -109,7 +141,10 @@ fn single_pole_is_minus_3db_and_minus_45_degrees_at_the_corner() {
     assert!(deck.contains("s_xfer"), "{deck}");
     let raw = run(&deck);
     let (mag, phase) = ac(&raw, "out", 0);
-    assert!((mag - std::f64::consts::FRAC_1_SQRT_2).abs() < 1e-4, "|H| = {mag}");
+    assert!(
+        (mag - std::f64::consts::FRAC_1_SQRT_2).abs() < 1e-4,
+        "|H| = {mag}"
+    );
     assert!((phase + 45.0).abs() < 1e-3, "arg H = {phase} deg");
 }
 
@@ -138,9 +173,17 @@ fn lead_lag_matches_the_closed_form() {
     let raw = run(&netlist(&ngspice(), &c).unwrap());
     let (mag, phase) = ac(&raw, "out", 0);
     let w = 2.0 * std::f64::consts::PI * 1000.0;
-    let expect = num_complex::Complex64::new(1.0, w * 1e-3) / num_complex::Complex64::new(1.0, w * 1e-6);
-    assert!((mag - expect.norm()).abs() < 1e-4 * expect.norm(), "|H| = {mag}, want {}", expect.norm());
-    assert!((phase - expect.arg().to_degrees()).abs() < 1e-2, "arg H = {phase}");
+    let expect =
+        num_complex::Complex64::new(1.0, w * 1e-3) / num_complex::Complex64::new(1.0, w * 1e-6);
+    assert!(
+        (mag - expect.norm()).abs() < 1e-4 * expect.norm(),
+        "|H| = {mag}, want {}",
+        expect.norm()
+    );
+    assert!(
+        (phase - expect.arg().to_degrees()).abs() < 1e-2,
+        "arg H = {phase}"
+    );
 }
 
 #[test]
@@ -150,14 +193,25 @@ fn two_pole_butterworth_is_minus_3db_at_the_corner_and_minus_90_degrees() {
     let (a1, a2) = (std::f64::consts::SQRT_2 / w0, 1.0 / (w0 * w0));
     let mut c = Deck::new("butterworth");
     c.raw_spice("V1 in 0 AC 1");
-    c.bv("1", "out", "0", format!("Laplace(V(in), 1/(1+s*{a1}+s^2*{a2}))"));
+    c.bv(
+        "1",
+        "out",
+        "0",
+        format!("Laplace(V(in), 1/(1+s*{a1}+s^2*{a2}))"),
+    );
     c.r("l", "out", "0", 1e6);
     c.raw_spice(".ac lin 1 1000 1000");
     let deck = netlist(&ngspice(), &c).unwrap();
-    assert!(deck.contains("int_ic=[0 0]"), "two integrator stages expected:\n{deck}");
+    assert!(
+        deck.contains("int_ic=[0 0]"),
+        "two integrator stages expected:\n{deck}"
+    );
     let raw = run(&deck);
     let (mag, phase) = ac(&raw, "out", 0);
-    assert!((mag - std::f64::consts::FRAC_1_SQRT_2).abs() < 1e-5, "|H| = {mag}");
+    assert!(
+        (mag - std::f64::consts::FRAC_1_SQRT_2).abs() < 1e-5,
+        "|H| = {mag}"
+    );
     assert!((phase + 90.0).abs() < 1e-3, "arg H = {phase} deg");
 }
 
@@ -173,9 +227,16 @@ fn differentiator_with_a_pole_gives_plus_20db_per_decade() {
     for (i, f) in [100.0_f64, 1000.0].into_iter().enumerate() {
         let w = 2.0 * std::f64::consts::PI * f;
         let (mag, phase) = ac(&raw, "out", i);
-        let expect = num_complex::Complex64::new(0.0, w) / num_complex::Complex64::new(1.0, w * 1e-6);
-        assert!((mag - expect.norm()).abs() < 1e-4 * expect.norm(), "|H|({f}) = {mag}");
-        assert!((phase - expect.arg().to_degrees()).abs() < 1e-2, "arg H({f}) = {phase}");
+        let expect =
+            num_complex::Complex64::new(0.0, w) / num_complex::Complex64::new(1.0, w * 1e-6);
+        assert!(
+            (mag - expect.norm()).abs() < 1e-4 * expect.norm(),
+            "|H|({f}) = {mag}"
+        );
+        assert!(
+            (phase - expect.arg().to_degrees()).abs() < 1e-2,
+            "arg H({f}) = {phase}"
+        );
     }
 }
 
@@ -209,7 +270,10 @@ fn current_output_keeps_the_spice_b_source_sign_convention() {
     let raw = run(&deck);
     let (mag, phase) = ac(&raw, "out", 0);
     assert!((mag - 1.0).abs() < 1e-5, "|H| = {mag}");
-    assert!((phase.abs() - 180.0).abs() < 1e-3, "arg H = {phase} deg (expected +/-180)");
+    assert!(
+        (phase.abs() - 180.0).abs() < 1e-3,
+        "arg H = {phase} deg (expected +/-180)"
+    );
 }
 
 #[test]
@@ -263,7 +327,10 @@ fn dc_through_a_laplace_block_reads_zero_not_the_dc_gain() {
     c.raw_spice(".op");
     let raw = run(&netlist(&ngspice(), &c).unwrap());
     let out = raw.real_data[index_of(&raw, "out")][0];
-    assert_eq!(out, 0.0, "s_xfer started contributing at DC — revisit the ceiling note");
+    assert_eq!(
+        out, 0.0,
+        "s_xfer started contributing at DC — revisit the ceiling note"
+    );
 }
 
 // ── refusals ──
@@ -316,19 +383,35 @@ fn the_run_pipeline_emits_and_runs_the_translated_source() {
     c.r("l", "out", "0", 1e6);
     let mut ir = c.ir();
     ir.testbench = Some(Testbench {
-        analyses: vec![Analysis::Ac { sweep: FreqSweep { variation: Sweep::Lin, points: 1, start: 1000.0, stop: 1000.0 } }],
-        ..Default::default() });
+        analyses: vec![Analysis::Ac {
+            sweep: FreqSweep {
+                variation: Sweep::Lin,
+                points: 1,
+                start: 1000.0,
+                stop: 1000.0,
+            },
+        }],
+        ..Default::default()
+    });
     require_ngspice();
     let raw = spicerack::simulation::run(&ir, Some("ngspice")).expect("Laplace deck must run");
     let (mag, phase) = ac(&raw, "out", 0);
-    assert!((mag - std::f64::consts::FRAC_1_SQRT_2).abs() < 1e-4, "|H| = {mag}");
+    assert!(
+        (mag - std::f64::consts::FRAC_1_SQRT_2).abs() < 1e-4,
+        "|H| = {mag}"
+    );
     assert!((phase + 45.0).abs() < 1e-3, "arg H = {phase} deg");
 
     // What codegen refuses never reaches the simulator.
     ir.top.components[0] = Component::BehavioralVoltage {
-        name: "1".into(), np: "out".into(), nm: "0".into(), expression: "Laplace(V(in), 1/(1+s*tau))".into(),
+        name: "1".into(),
+        np: "out".into(),
+        nm: "0".into(),
+        expression: "Laplace(V(in), 1/(1+s*tau))".into(),
     };
-    let err = spicerack::simulation::run(&ir, Some("ngspice")).unwrap_err().to_string();
+    let err = spicerack::simulation::run(&ir, Some("ngspice"))
+        .unwrap_err()
+        .to_string();
     assert!(err.contains("tau"), "{err}");
 }
 
@@ -341,7 +424,10 @@ fn ltspice_emits_documented_laplace_syntax() {
     //   Exxx n+ n- nc+ nc- Laplace=<func(s)>
     // No numeric claim is made about LTspice anywhere in this repo.
     let deck = onepole_deck(&ltspice(), 1.59e-4, ".ac lin 1 1000 1000");
-    assert!(deck.contains("EB1 out 0 in 0 Laplace=1e0/(1.59e-4*s+1e0)"), "{deck}");
+    assert!(
+        deck.contains("EB1 out 0 in 0 Laplace=1e0/(1.59e-4*s+1e0)"),
+        "{deck}"
+    );
     assert!(!deck.contains("s_xfer"), "{deck}");
 
     let mut c = Deck::new("bi");
@@ -366,8 +452,13 @@ fn ltspice_emits_documented_laplace_syntax() {
 
 fn espice_run(c: &Deck) -> RawData {
     let deck = netlist(&Dialect::Espice, c).unwrap();
-    assert!(!deck.contains("s_xfer"), "ESPice cannot read XSPICE code models:\n{deck}");
-    Dialect::Espice.run(&deck).unwrap_or_else(|e| panic!("espice refused the deck: {e}\n{deck}"))
+    assert!(
+        !deck.contains("s_xfer"),
+        "ESPice cannot read XSPICE code models:\n{deck}"
+    );
+    Dialect::Espice
+        .run(&deck)
+        .unwrap_or_else(|e| panic!("espice refused the deck: {e}\n{deck}"))
 }
 
 #[test]
@@ -380,7 +471,10 @@ fn espice_single_pole_is_minus_3db_and_minus_45_degrees_at_the_corner() {
     // `select` routes a Laplace deck to ESPice now that it runs one.
     assert_eq!(c.ir().check_backend("espice"), vec![]);
     let (mag, phase) = ac(&espice_run(&c), "out", 0);
-    assert!((mag - std::f64::consts::FRAC_1_SQRT_2).abs() < 1e-4, "|H| = {mag}");
+    assert!(
+        (mag - std::f64::consts::FRAC_1_SQRT_2).abs() < 1e-4,
+        "|H| = {mag}"
+    );
     assert!((phase + 45.0).abs() < 1e-3, "arg H = {phase} deg");
 }
 
@@ -390,11 +484,19 @@ fn espice_two_pole_butterworth_is_minus_3db_and_minus_90_degrees_at_the_corner()
     let (a1, a2) = (std::f64::consts::SQRT_2 / w0, 1.0 / (w0 * w0));
     let mut c = Deck::new("espice butterworth");
     c.raw_spice("V1 in 0 AC 1");
-    c.bv("1", "out", "0", format!("Laplace(V(in), 1/(1+s*{a1}+s^2*{a2}))"));
+    c.bv(
+        "1",
+        "out",
+        "0",
+        format!("Laplace(V(in), 1/(1+s*{a1}+s^2*{a2}))"),
+    );
     c.r("l", "out", "0", 1e6);
     c.raw_spice(".ac lin 1 1000 1000");
     let (mag, phase) = ac(&espice_run(&c), "out", 0);
-    assert!((mag - std::f64::consts::FRAC_1_SQRT_2).abs() < 1e-5, "|H| = {mag}");
+    assert!(
+        (mag - std::f64::consts::FRAC_1_SQRT_2).abs() < 1e-5,
+        "|H| = {mag}"
+    );
     assert!((phase + 90.0).abs() < 1e-3, "arg H = {phase} deg");
 }
 
@@ -408,7 +510,10 @@ fn espice_current_output_keeps_the_spice_b_source_sign_convention() {
     c.raw_spice(".ac lin 1 1000 1000");
     let (mag, phase) = ac(&espice_run(&c), "out", 0);
     assert!((mag - 1.0).abs() < 1e-5, "|H| = {mag}");
-    assert!((phase.abs() - 180.0).abs() < 1e-3, "arg H = {phase} deg (expected +/-180)");
+    assert!(
+        (phase.abs() - 180.0).abs() < 1e-3,
+        "arg H = {phase} deg (expected +/-180)"
+    );
 }
 
 #[test]

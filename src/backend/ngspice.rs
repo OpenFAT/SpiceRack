@@ -4,8 +4,8 @@ use std::fmt::Write as _;
 use std::path::Path;
 use std::process::Command;
 
-use super::{exec, read_results, scratch, BackendError};
-use crate::codegen::spice3::{is_four, is_meas, runs_in_control, NGBEHAVIOR};
+use super::{BackendError, exec, read_results, scratch};
+use crate::codegen::spice3::{NGBEHAVIOR, is_four, is_meas, runs_in_control};
 use crate::result::RawData;
 
 /// Run a deck through `ngspice -b` and read back every plot of its rawfile.
@@ -28,7 +28,9 @@ use crate::result::RawData;
 /// compatibility mode for a mode the deck asked for (ngspice itself only
 /// notes it and reads the deck as plain ngspice).
 pub(super) fn run(netlist: &str) -> Result<Vec<RawData>, BackendError> {
-    if !runs_in_control(netlist.lines()) && let Some(card) = netlist.lines().find(|l| is_meas(l) || is_four(l)) {
+    if !runs_in_control(netlist.lines())
+        && let Some(card) = netlist.lines().find(|l| is_meas(l) || is_four(l))
+    {
         return Err(BackendError::SimulationError(format!(
             "'{}': ngspice drops .meas and .four results when it writes a rawfile (-r). \
              Run the analysis (ac, tran or dc) from a .control block, which the ngspice \
@@ -84,7 +86,11 @@ fn append_write_block(netlist: &str, raw_path: &Path) -> Option<String> {
     fn first(l: &str) -> &str {
         l.split_whitespace().next().unwrap_or("")
     }
-    if !runs_in_control(netlist.lines()) || netlist.lines().any(|l| first(l).eq_ignore_ascii_case("write")) {
+    if !runs_in_control(netlist.lines())
+        || netlist
+            .lines()
+            .any(|l| first(l).eq_ignore_ascii_case("write"))
+    {
         return None;
     }
     let block = format!(
@@ -120,12 +126,16 @@ mod deck_tests {
     fn appends_a_write_block_to_a_hand_written_control_deck() {
         let deck = "* t\nV1 a 0 3\n.control\nop\n.endc\n.end\n";
         let out = append_write_block(deck, Path::new(RAW)).expect("should append");
-        assert_eq!(out, format!("* t\nV1 a 0 3\n.control\nop\n.endc\n{WRITE}.end\n"));
+        assert_eq!(
+            out,
+            format!("* t\nV1 a 0 3\n.control\nop\n.endc\n{WRITE}.end\n")
+        );
     }
 
     #[test]
     fn appends_after_a_deck_with_no_end_card() {
-        let out = append_write_block("* t\n.control\nrun\n.endc", Path::new(RAW)).expect("should append");
+        let out =
+            append_write_block("* t\n.control\nrun\n.endc", Path::new(RAW)).expect("should append");
         assert_eq!(out, format!("* t\n.control\nrun\n.endc\n{WRITE}"));
     }
 

@@ -6,17 +6,22 @@
 use std::path::PathBuf;
 use std::process::Command;
 
-use super::{exec, is_on_path, read_results, scratch, BackendError};
+use super::{BackendError, exec, is_on_path, read_results, scratch};
 use crate::result::RawData;
 
 pub(super) fn run(netlist: &str) -> Result<Vec<RawData>, BackendError> {
-    let (exe, wine) = find().ok_or_else(|| BackendError::SimulationError("LTspice not found on this system".into()))?;
+    let (exe, wine) = find()
+        .ok_or_else(|| BackendError::SimulationError("LTspice not found on this system".into()))?;
     // `plotwinsize=0` disables waveform compression (lossy decimation) and
     // `numdgt=15` switches the raw file to double precision. Raw-file format
     // is run mechanics, so it is set here rather than in the dialect. Both go
     // after the title: line 1 of a SPICE deck is a comment.
     let (title, body) = netlist.split_once('\n').unwrap_or((netlist, ""));
-    let title = if title.is_empty() { "* spicerack" } else { title };
+    let title = if title.is_empty() {
+        "* spicerack"
+    } else {
+        title
+    };
     let deck = format!("{title}\n.options plotwinsize=0\n.options numdgt=15\n{body}");
     let (_dir, cir) = scratch(&deck, "deck.cir")?;
 
@@ -35,7 +40,9 @@ pub(super) fn run(netlist: &str) -> Result<Vec<RawData>, BackendError> {
     let stdout = exec(&mut cmd, "LTspice", Some(&cir.with_extension("log")))?;
     let log = std::fs::read_to_string(cir.with_extension("log")).unwrap_or_default();
     let mut plots = read_results(&cir.with_extension("raw"), stdout)?;
-    plots.iter_mut().for_each(|p| p.log_content.clone_from(&log));
+    plots
+        .iter_mut()
+        .for_each(|p| p.log_content.clone_from(&log));
     Ok(plots)
 }
 

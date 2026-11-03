@@ -10,8 +10,8 @@ macro_rules! w {
 }
 
 pub mod laplace;
-pub(crate) mod spice3;
 mod spectre;
+pub(crate) mod spice3;
 mod vacask;
 pub mod xschem;
 
@@ -49,8 +49,16 @@ fn check_caret_meaning(ir: &CircuitIR, d: Dialect) -> Result<(), CodeGenError> {
     let mut exprs: Vec<&str> = ir.functions.iter().map(|f| f.body.as_str()).collect();
     for sc in std::iter::once(&ir.top).chain(&ir.subcircuit_defs) {
         exprs.extend(sc.parameters.iter().filter_map(|p| p.default.as_deref()));
-        exprs.extend(sc.models.iter().flat_map(|m| m.parameters.iter().map(|(_, v)| v.as_str())));
-        exprs.extend(sc.instances.iter().flat_map(|i| i.parameters.iter().map(|(_, v)| v.as_str())));
+        exprs.extend(
+            sc.models
+                .iter()
+                .flat_map(|m| m.parameters.iter().map(|(_, v)| v.as_str())),
+        );
+        exprs.extend(
+            sc.instances
+                .iter()
+                .flat_map(|i| i.parameters.iter().map(|(_, v)| v.as_str())),
+        );
         exprs.extend(sc.components.iter().flat_map(Component::exprs));
     }
     if let Some(tb) = &ir.testbench {
@@ -59,7 +67,11 @@ fn check_caret_meaning(ir: &CircuitIR, d: Dialect) -> Result<(), CodeGenError> {
     if let Some(bad) = exprs.into_iter().find(|e| e.contains('^')) {
         return Err(CodeGenError::Other(format!(
             "expression '{bad}' uses '^', which means {} in {} but {} in {}; refusing to reinterpret it",
-            if caret_means_power(from) { "power" } else { "XOR" },
+            if caret_means_power(from) {
+                "power"
+            } else {
+                "XOR"
+            },
             from.name(),
             if caret_means_power(d) { "power" } else { "XOR" },
             d.name(),
@@ -73,7 +85,9 @@ fn check_caret_meaning(ir: &CircuitIR, d: Dialect) -> Result<(), CodeGenError> {
 pub fn netlist(ir: &CircuitIR, d: Dialect) -> Result<String, CodeGenError> {
     check_caret_meaning(ir, d)?;
     match d {
-        Dialect::Ngspice | Dialect::Ltspice | Dialect::Espice | Dialect::Hspice => spice3::netlist(d, ir),
+        Dialect::Ngspice | Dialect::Ltspice | Dialect::Espice | Dialect::Hspice => {
+            spice3::netlist(d, ir)
+        }
         Dialect::Spectre => spectre::netlist(ir),
         Dialect::Vacask => vacask::netlist(ir),
         // A Xyce deck with its analyses; `xschem::write` is the xschem layout.
@@ -91,15 +105,24 @@ pub fn card(comp: &Component, d: Dialect) -> Result<String, CodeGenError> {
             spice3::component(&mut s, d, false, comp)?;
             Ok(s)
         }
-        _ => Err(CodeGenError::Other(format!("card: {d:?} has no single-card writer"))),
+        _ => Err(CodeGenError::Other(format!(
+            "card: {d:?} has no single-card writer"
+        ))),
     }
 }
 
 /// An R/C/L naming a `.model` (ngspice's `R1 a b rmod`) has no spelling in
 /// `backend`'s element line; only spice3-family dialects write it.
-pub(crate) fn model_refuse(backend: &str, name: &str, model: &Option<String>) -> Result<(), CodeGenError> {
+pub(crate) fn model_refuse(
+    backend: &str,
+    name: &str,
+    model: &Option<String>,
+) -> Result<(), CodeGenError> {
     match model {
-        Some(m) => Err(CodeGenError::UnsupportedComponent { backend: backend.into(), component: format!("{name}: model reference '{m}'") }),
+        Some(m) => Err(CodeGenError::UnsupportedComponent {
+            backend: backend.into(),
+            component: format!("{name}: model reference '{m}'"),
+        }),
         None => Ok(()),
     }
 }
@@ -112,7 +135,9 @@ fn refuse_raw_spice(ir: &CircuitIR, backend: &str) -> Result<(), CodeGenError> {
     if ir.raw_dialect.map(Dialect::name) == Some(backend) {
         return Ok(());
     }
-    let sub = std::iter::once(&ir.top).chain(&ir.subcircuit_defs).find(|s| !s.raw_spice.is_empty());
+    let sub = std::iter::once(&ir.top)
+        .chain(&ir.subcircuit_defs)
+        .find(|s| !s.raw_spice.is_empty());
     match sub {
         Some(s) => Err(CodeGenError::UnsupportedComponent {
             backend: backend.into(),
@@ -145,7 +170,10 @@ pub fn format_spice_number(v: f64) -> String {
 /// `nodeset 7=0 out=1`, p.524 `sens (q1:betadc 2 Out) ...`.
 fn bare_node(s: &str) -> &str {
     let t = s.trim();
-    let inner = ["V(", "v(", "I(", "i("].into_iter().find_map(|p| t.strip_prefix(p)).and_then(|r| r.strip_suffix(')'));
+    let inner = ["V(", "v(", "I(", "i("]
+        .into_iter()
+        .find_map(|p| t.strip_prefix(p))
+        .and_then(|r| r.strip_suffix(')'));
     inner.map_or(t, str::trim)
 }
 
@@ -167,7 +195,11 @@ struct Params<'a>(&'a [(String, String)], fn(&str) -> Cow<'_, str>);
 impl std::fmt::Display for Params<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for (k, v) in self.0 {
-            if v.is_empty() { write!(f, " {k}")? } else { write!(f, " {k}={}", (self.1)(v))? }
+            if v.is_empty() {
+                write!(f, " {k}")?
+            } else {
+                write!(f, " {k}={}", (self.1)(v))?
+            }
         }
         Ok(())
     }
@@ -177,13 +209,26 @@ impl std::fmt::Display for Params<'_> {
 /// write `off=` or drop it.
 fn refuse_flags(ir: &CircuitIR, backend: &str) -> Result<(), CodeGenError> {
     for sc in std::iter::once(&ir.top).chain(&ir.subcircuit_defs) {
-        let model_flag = sc.models.iter().flat_map(|m| m.parameters.iter().map(move |(k, v)| (&m.name, k, v))).find(|(_, _, v)| v.is_empty());
+        let model_flag = sc
+            .models
+            .iter()
+            .flat_map(|m| m.parameters.iter().map(move |(k, v)| (&m.name, k, v)))
+            .find(|(_, _, v)| v.is_empty());
         if let Some((m, k, _)) = model_flag {
-            return Err(CodeGenError::UnsupportedComponent { backend: backend.into(), component: format!("model {m}: flag '{k}' has no {backend} spelling") });
+            return Err(CodeGenError::UnsupportedComponent {
+                backend: backend.into(),
+                component: format!("model {m}: flag '{k}' has no {backend} spelling"),
+            });
         }
         for c in &sc.components {
             if let Some((k, _)) = c.params().iter().find(|(_, v)| v.is_empty()) {
-                return Err(CodeGenError::UnsupportedComponent { backend: backend.into(), component: format!("{}: flag '{k}' has no {backend} spelling", c.name().unwrap_or("device")) });
+                return Err(CodeGenError::UnsupportedComponent {
+                    backend: backend.into(),
+                    component: format!(
+                        "{}: flag '{k}' has no {backend} spelling",
+                        c.name().unwrap_or("device")
+                    ),
+                });
             }
         }
     }
@@ -206,8 +251,18 @@ fn param_defs(out: &mut String, defs: &[ParamDef], respell: fn(&str) -> Cow<'_, 
 /// the ones only `backend` understands, verbatim.
 /// `key=value`, or the bare `key` of a flag (an empty value: `.options noacct`).
 fn option_pairs(opts: &SimOptions, backend: &str, map: fn(&str) -> &str) -> Vec<String> {
-    let portable = opts.portable.iter().map(|(k, v)| if v.is_empty() { map(k).to_string() } else { format!("{}={}", map(k), v) });
-    let specific = opts.backend_specific.get(backend).into_iter().flatten().map(|(k, v)| format!("{k}={v}"));
+    let portable = opts.portable.iter().map(|(k, v)| {
+        if v.is_empty() {
+            map(k).to_string()
+        } else {
+            format!("{}={}", map(k), v)
+        }
+    });
+    let specific = opts
+        .backend_specific
+        .get(backend)
+        .into_iter()
+        .flatten()
+        .map(|(k, v)| format!("{k}={v}"));
     portable.chain(specific).collect()
 }
-

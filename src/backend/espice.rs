@@ -6,14 +6,18 @@
 
 use std::process::Command;
 
-use super::{exec, read_results, scratch, BackendError};
+use super::{BackendError, exec, read_results, scratch};
 use crate::result::RawData;
 
 pub(super) fn run(netlist: &str) -> Result<Vec<RawData>, BackendError> {
     let (dir, deck) = scratch(netlist, "deck.sp")?;
     let raw = dir.path().join("out.raw");
     let stdout = exec(
-        Command::new("espice").arg(&deck).arg("--rawfile").arg(&raw).arg("--format=binary"),
+        Command::new("espice")
+            .arg(&deck)
+            .arg("--rawfile")
+            .arg(&raw)
+            .arg("--format=binary"),
         "espice",
         None,
     )?;

@@ -10,7 +10,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use super::{exec, read_results, scratch, sorted_files, BackendError};
+use super::{BackendError, exec, read_results, scratch, sorted_files};
 use crate::result::RawData;
 
 pub(super) fn run(netlist: &str) -> Result<Vec<RawData>, BackendError> {
@@ -18,13 +18,18 @@ pub(super) fn run(netlist: &str) -> Result<Vec<RawData>, BackendError> {
     let raw_dir = dir.path().join("raw");
     std::fs::create_dir(&raw_dir)?;
     let stdout = exec(
-        Command::new("spectre").args(["-format", "nutbin", "-raw"]).arg(&raw_dir).arg(&scs),
+        Command::new("spectre")
+            .args(["-format", "nutbin", "-raw"])
+            .arg(&raw_dir)
+            .arg(&scs),
         "spectre",
         None,
     )?;
     match find_output_file(&raw_dir) {
         Some(out) => read_results(&out, stdout),
-        None => Err(BackendError::SimulationError("No output file produced by spectre".into())),
+        None => Err(BackendError::SimulationError(
+            "No output file produced by spectre".into(),
+        )),
     }
 }
 
@@ -37,11 +42,24 @@ pub(super) fn run(netlist: &str) -> Result<Vec<RawData>, BackendError> {
 /// non-log file, here or in a `psf/` subdirectory (the Virtuoso layout).
 /// Nutmeg vs PSF is sniffed from content by `read_results`, not the extension.
 fn find_output_file(dir: &Path) -> Option<PathBuf> {
-    const ANALYSIS_EXT: [&str; 14] = ["ac", "dc", "noise", "op", "pac", "pnoise", "pss", "pstb", "pxf", "raw", "sp", "stb", "tran", "xf"];
-    let files: Vec<PathBuf> = sorted_files(dir).into_iter().chain(sorted_files(&dir.join("psf")))
-        .filter(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n != "logFile" && !n.ends_with(".log")))
+    const ANALYSIS_EXT: [&str; 14] = [
+        "ac", "dc", "noise", "op", "pac", "pnoise", "pss", "pstb", "pxf", "raw", "sp", "stb",
+        "tran", "xf",
+    ];
+    let files: Vec<PathBuf> = sorted_files(dir)
+        .into_iter()
+        .chain(sorted_files(&dir.join("psf")))
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n != "logFile" && !n.ends_with(".log"))
+        })
         .collect();
-    let typed = files.iter().find(|p| p.extension().and_then(|e| e.to_str()).is_some_and(|e| ANALYSIS_EXT.contains(&e)));
+    let typed = files.iter().find(|p| {
+        p.extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| ANALYSIS_EXT.contains(&e))
+    });
     typed.or(files.first()).cloned()
 }
 
@@ -55,7 +73,10 @@ mod tests {
         std::fs::write(dir.path().join("logFile"), b"log").unwrap();
         std::fs::write(dir.path().join("tran1.tran"), b"Title: x\n").unwrap();
         std::fs::write(dir.path().join("ac1.ac"), b"Title: x\n").unwrap();
-        assert_eq!(find_output_file(dir.path()).unwrap().file_name().unwrap(), "ac1.ac");
+        assert_eq!(
+            find_output_file(dir.path()).unwrap().file_name().unwrap(),
+            "ac1.ac"
+        );
     }
 
     #[test]

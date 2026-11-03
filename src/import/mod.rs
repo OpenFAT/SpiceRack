@@ -90,8 +90,14 @@ fn lang(d: Dialect) -> Result<&'static Lang, String> {
     };
     if !texts.is_empty() {
         return Ok(cell.get_or_init(|| {
-            let g = Grammar::compile(texts, Tag::of).unwrap_or_else(|e| panic!("{d:?} grammar: {e}"));
-            Lang { file: g.rule("file").unwrap(), deck: g.rule("deck").unwrap(), fold: false, g }
+            let g =
+                Grammar::compile(texts, Tag::of).unwrap_or_else(|e| panic!("{d:?} grammar: {e}"));
+            Lang {
+                file: g.rule("file").unwrap(),
+                deck: g.rule("deck").unwrap(),
+                fold: false,
+                g,
+            }
         }));
     }
     let (cell, text) = match d {
@@ -102,8 +108,14 @@ fn lang(d: Dialect) -> Result<&'static Lang, String> {
         other => return Err(format!("no {other:?} reader yet")),
     };
     Ok(cell.get_or_init(|| {
-        let g = Grammar::compile(&[peg!("spice.peg"), text], Tag::of).unwrap_or_else(|e| panic!("{d:?} grammar: {e}"));
-        Lang { file: g.rule("file").unwrap(), deck: g.rule("deck").unwrap(), fold: true, g }
+        let g = Grammar::compile(&[peg!("spice.peg"), text], Tag::of)
+            .unwrap_or_else(|e| panic!("{d:?} grammar: {e}"));
+        Lang {
+            file: g.rule("file").unwrap(),
+            deck: g.rule("deck").unwrap(),
+            fold: true,
+            g,
+        }
     }))
 }
 
@@ -120,7 +132,10 @@ pub struct Report {
 /// (LTspice's older netlists, SSR "Encoding"), so a `µ` survives.
 pub fn decode(bytes: &[u8]) -> String {
     if let Some(body) = bytes.strip_prefix(&[0xFF, 0xFE]) {
-        let units: Vec<u16> = body.chunks_exact(2).map(|p| u16::from_le_bytes([p[0], p[1]])).collect();
+        let units: Vec<u16> = body
+            .chunks_exact(2)
+            .map(|p| u16::from_le_bytes([p[0], p[1]]))
+            .collect();
         return String::from_utf16_lossy(&units);
     }
     match std::str::from_utf8(bytes) {
@@ -133,7 +148,10 @@ pub fn decode(bytes: &[u8]) -> String {
 /// `Piece` after a blank, a `Glue` (HSPICE's `\\`) with nothing.
 fn logical(t: &Tree) -> String {
     let mut out = String::new();
-    for row in t.children(None).filter(|&r| Tag::from_u8(t.tag(r)) == Tag::Line) {
+    for row in t
+        .children(None)
+        .filter(|&r| Tag::from_u8(t.tag(r)) == Tag::Line)
+    {
         let mut line = String::new();
         for part in t.children(Some(row)) {
             let text = t.text(part).trim();
@@ -153,10 +171,20 @@ fn logical(t: &Tree) -> String {
 /// Parses deck text in dialect `d` (line 1 is the title) into IR named `name`.
 pub fn parse(src: &str, name: &str, d: Dialect) -> Result<(CircuitIR, Report), String> {
     let lang = lang(d)?;
-    let lines = lang.g.parse(lang.file, src).map_err(|at| format!("line grammar stops at byte {at}"))?;
+    let lines = lang
+        .g
+        .parse(lang.file, src)
+        .map_err(|at| format!("line grammar stops at byte {at}"))?;
     let text = logical(&lines);
-    let folded = if lang.fold { text.to_ascii_lowercase() } else { text.clone() };
-    let deck = lang.g.parse(lang.deck, &folded).map_err(|at| format!("card grammar stops at byte {at}"))?;
+    let folded = if lang.fold {
+        text.to_ascii_lowercase()
+    } else {
+        text.clone()
+    };
+    let deck = lang
+        .g
+        .parse(lang.deck, &folded)
+        .map_err(|at| format!("card grammar stops at byte {at}"))?;
     Ok(lower::deck(&deck, &text, name, d, lang))
 }
 
@@ -167,10 +195,20 @@ mod tests;
 /// grammar made of `src` (debugging a grammar).
 pub fn dump(src: &str, d: Dialect) -> Result<String, String> {
     let lang = lang(d)?;
-    let lines = lang.g.parse(lang.file, src).map_err(|at| format!("line grammar stops at byte {at}"))?;
+    let lines = lang
+        .g
+        .parse(lang.file, src)
+        .map_err(|at| format!("line grammar stops at byte {at}"))?;
     let text = logical(&lines);
-    let folded = if lang.fold { text.to_ascii_lowercase() } else { text.clone() };
-    let t = lang.g.parse(lang.deck, &folded).map_err(|at| format!("card grammar stops at byte {at}"))?;
+    let folded = if lang.fold {
+        text.to_ascii_lowercase()
+    } else {
+        text.clone()
+    };
+    let t = lang
+        .g
+        .parse(lang.deck, &folded)
+        .map_err(|at| format!("card grammar stops at byte {at}"))?;
     let mut out = String::new();
     let mut open: Vec<u32> = Vec::new(); // ends of the rows enclosing this one
     for (i, r) in t.rows.iter().enumerate() {
@@ -178,7 +216,12 @@ pub fn dump(src: &str, d: Dialect) -> Result<String, String> {
             open.pop();
         }
         let s = &text[r.start as usize..r.end as usize];
-        out.push_str(&format!("{}{:?} {:?}\n", "  ".repeat(open.len()), Tag::from_u8(r.tag), s));
+        out.push_str(&format!(
+            "{}{:?} {:?}\n",
+            "  ".repeat(open.len()),
+            Tag::from_u8(r.tag),
+            s
+        ));
         open.push(r.next);
     }
     Ok(out)

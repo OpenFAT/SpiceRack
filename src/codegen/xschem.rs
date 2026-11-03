@@ -865,15 +865,21 @@ mod tests {
                 instances: vec![Instance {
                     name: "1".into(),
                     subcircuit: "inv".into(),
-                    port_mapping: vec!["in".into(), "out[3]".into()], ..Default::default() }],
+                    port_mapping: vec!["in".into(), "out[3]".into()],
+                    ..Default::default()
+                }],
                 osdi_loads: vec!["dev.va".into()],
                 models: vec![ModelDef {
                     name: "m1".into(),
-                    kind: "dev".into(), ..Default::default() }],
-                ..Subcircuit::default() },
+                    kind: "dev".into(),
+                    ..Default::default()
+                }],
+                ..Subcircuit::default()
+            },
             testbench: Some(Testbench {
                 extra_lines: vec![".op".into()],
-                ..Testbench::default() }),
+                ..Testbench::default()
+            }),
             subcircuit_defs: vec![Subcircuit {
                 name: "inv".into(),
                 ports: vec![
@@ -885,7 +891,8 @@ mod tests {
                 ..Subcircuit::default()
             }],
             ..CircuitIR::default()
-        } }
+        }
+    }
 
     fn deck(ir: &CircuitIR) -> Deck<'_> {
         let mut top = Lines::default();
@@ -941,7 +948,10 @@ mod tests {
             "{h}"
         );
         let l = emit(Dialect::Ltspice);
-        assert!(l.starts_with("* tb (test)\n.options plotwinsize=0 numdgt=15\n"), "{l}");
+        assert!(
+            l.starts_with("* tb (test)\n.options plotwinsize=0 numdgt=15\n"),
+            "{l}"
+        );
         assert!(
             l.contains("* error: ltspice loads no Verilog-A (dev.va)\n"),
             "{l}"
