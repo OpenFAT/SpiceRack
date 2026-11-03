@@ -4,7 +4,7 @@ One line per change, written by hand, citing its pull request. Every number is m
 
 ## Unreleased
 
-- internal: import lowering, IR and the VACASK run tests split by transform; house style across src, tests, tools (#?).
+- internal: import lowering, IR and the VACASK run tests split by transform; house style across src, tests, tools (#21).
 - style: `cargo fmt` over the whole tree; the commit is in `.git-blame-ignore-revs` (#19).
 - internal: src/python.rs split into src/python/ by owner (#20).
 - `TESTING.md` (tiers and oracles), this changelog, and `tools/check_style.py` vendored.
