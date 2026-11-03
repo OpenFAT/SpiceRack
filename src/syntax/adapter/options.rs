@@ -77,7 +77,7 @@ impl<'a> Cx<'a> {
 // ---- private ----
 
 impl<'a> Cx<'a> {
-    /// Whether the only tokens between the card's items (and after them)
+    /// quirk: whether the only tokens between the card's items (and after them)
     /// are commas: spice.peg `oitem` reads no stray `( ) =`.
     fn only_commas_between(&self, n: u32, items: &[u32]) -> bool {
         let mut prev = self.main(n);

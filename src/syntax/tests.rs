@@ -6,6 +6,8 @@
 //! A tree prints as `Tag"head"[children]`; a `Word` as `w"text"`, a number
 //! `n"text"`, a name `i"text"`, a string `s"text"`, an operator node as
 //! `(op lhs rhs)`.
+//!
+//! Contents: none (tests only).
 
 use crate::syntax::ast::{Ast, NONE, Node, PRIMITIVE, Tag};
 use crate::syntax::diag::Code;

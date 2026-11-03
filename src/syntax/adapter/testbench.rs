@@ -143,7 +143,7 @@ impl<'a> Cx<'a> {
 // ---- private ----
 
 impl<'a> Cx<'a> {
-    /// Whether every item follows the one before it (or the head) after
+    /// quirk: whether every item follows the one before it (or the head) after
     /// blanks only: the grammar's `s` between fields.
     fn spaced(&self, n: u32, items: &[u32]) -> bool {
         let mut prev = self.main(n);

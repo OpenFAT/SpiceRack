@@ -164,7 +164,7 @@ impl<'a> Cx<'a> {
         rest.iter().all(|&k| self.is_word(k) || self.pair_i_ok(k))
     }
 
-    /// Whether group `g` ends at its `)` (an unclosed one runs to the
+    /// quirk: whether group `g` ends at its `)` (spice.peg `group`; an unclosed one runs to the
     /// card's end).
     pub(super) fn group_closed(&self, g: u32) -> bool {
         self.ttag(self.ast.extra(self.ast.rhs(Node(g)))) == T::RParen

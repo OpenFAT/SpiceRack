@@ -117,7 +117,7 @@ impl Cx<'_> {
         if !self.is_word_item(*name) || !self.is_word_item(*kind) {
             return None;
         }
-        // spice.peg `mbody`: parentheses and commas separate, nothing else.
+        // quirk: spice.peg `mbody`: parentheses and commas separate, nothing else.
         let mut prev = self.last(*kind);
         for &k in rest {
             if !(prev + 1..self.first(k))
@@ -264,7 +264,7 @@ impl Cx<'_> {
         Ok(())
     }
 
-    /// Whether `a` is a `.param` function definition the grammar reads
+    /// quirk: whether `a` is a `.param` function definition the grammar reads
     /// (spice.peg `FuncDef`: a body that is delimited or one blank- and
     /// comma-free run).
     fn funcdef_ok(&self, a: u32) -> bool {
@@ -421,7 +421,7 @@ impl Cx<'_> {
         if end != last {
             return Err(Kept::Unparsed);
         }
-        // spice.peg `Body`: an `expr` to the end, a braced body to the end,
+        // quirk: spice.peg `Body`: an `expr` to the end, a braced body to the end,
         // else the text.
         let expr = items
             .iter()
