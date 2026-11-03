@@ -27,6 +27,7 @@
 pub mod capability;
 mod out;
 mod read;
+mod role;
 pub mod spelling;
 mod spice;
 

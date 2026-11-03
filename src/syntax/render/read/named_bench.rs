@@ -28,6 +28,10 @@ impl<'a> Rd<'a> {
             Bench::Save(n) => {
                 let outs = self.fields(n).iter().map(|&o| {
                     let s = self.name_of(o);
+                    // quirk: `dev:p` is `i(dev)` with `dev` as written, not as
+                    // the name map spells its declaration (`V1`, `Vin1`); any
+                    // other terminal (`main:d`) is kept as written, which no
+                    // SPICE output names. Phase 7: both through the map.
                     match s.split_once(':') {
                         Some((dev, "p")) => format!("i({dev})"),
                         _ => s,

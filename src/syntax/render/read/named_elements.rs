@@ -186,6 +186,9 @@ impl<'a> Rd<'a> {
             }
             "cccs" | "ccvs" => {
                 let (np, nm) = two()?;
+                // quirk: the controlling source as written, not as the name
+                // map spells its declaration (`in1` is `Vin1`, `v1` is `V1`);
+                // phase 7 spells the reference through the map.
                 let vsense = ident(keys.probe)?;
                 let (letter, gain) = match master.as_str() {
                     "cccs" => ('f', num("gain")?),
@@ -199,10 +202,12 @@ impl<'a> Rd<'a> {
                 }
             }
             m if m == keys.mutual && (self.d == Dialect::Spectre || ns.is_empty()) => {
+                let refs = [ident("ind1")?, ident("ind2")?];
                 Card::Coupling {
                     name: self.strip(&name, 'k'),
-                    l1: self.strip(&ident("ind1")?, 'l'),
-                    l2: self.strip(&ident("ind2")?, 'l'),
+                    l1: self.strip(&refs[0], 'l'),
+                    l2: self.strip(&refs[1], 'l'),
+                    refs,
                     k: num(keys.coupling)?,
                 }
             }

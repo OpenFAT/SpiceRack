@@ -43,11 +43,13 @@ pub(in crate::syntax::render) enum Card {
         charge: String,
         params: Vec<(String, String)>,
     },
-    /// `K1 L1 L2 k`: the inductor names after their letter.
+    /// `K1 L1 L2 k`: the inductor names after their letter, and as the
+    /// card wrote them (the references the name map looks up).
     Coupling {
         name: String,
         l1: String,
         l2: String,
+        refs: [String; 2],
         k: f64,
     },
     /// `V`, `I`.
@@ -232,6 +234,7 @@ impl<'a> Rd<'a> {
                     name,
                     l1: self.text(*a).get(1..)?.to_string(),
                     l2: self.text(*b).get(1..)?.to_string(),
+                    refs: [self.text(*a), self.text(*b)],
                     k: self.number(*k)?,
                 }
             }

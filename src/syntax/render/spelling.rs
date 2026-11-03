@@ -101,6 +101,13 @@ const XYCE: Spelling = Spelling {
     ..NGSPICE
 };
 
+/// CDL (the xschem layout): its elements are ngspice cards, its numbers
+/// spelled as a deck read with no ngspice arithmetic.
+const CDL: Spelling = Spelling {
+    target: Dialect::Cdl,
+    ..NGSPICE
+};
+
 const LTSPICE: Spelling = Spelling {
     target: Dialect::Ltspice,
     lexicon: &lexicon::LTSPICE,
@@ -111,7 +118,7 @@ const LTSPICE: Spelling = Spelling {
 /// Target `target`'s row.
 ///
 /// # Panics
-/// For CDL and Verilog, which the xschem layout writes.
+/// For Spectre, VACASK and Verilog, which have no row yet.
 pub const fn spelling(target: Dialect) -> &'static Spelling {
     match target {
         Dialect::Ngspice => &NGSPICE,
@@ -119,7 +126,8 @@ pub const fn spelling(target: Dialect) -> &'static Spelling {
         Dialect::Hspice => &HSPICE,
         Dialect::Xyce => &XYCE,
         Dialect::Ltspice => &LTSPICE,
-        Dialect::Spectre | Dialect::Vacask | Dialect::Cdl | Dialect::Verilog => {
+        Dialect::Cdl => &CDL,
+        Dialect::Spectre | Dialect::Vacask | Dialect::Verilog => {
             panic!("spelling: no row yet for this target")
         }
     }

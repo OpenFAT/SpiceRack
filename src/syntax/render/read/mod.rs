@@ -28,7 +28,7 @@
 //! - `pub(in crate::syntax::render) struct Rd`, `enum Kept`, `struct Deck`, `struct Block`, `enum Comp`,
 //!   `enum Raw`, `struct Cond`, `struct Section`, `enum Func`
 //! - `fn read(ast: &Ast, t: &Tokens, d: Dialect, name: &str, kit: Option<(&Kit, FileId)>) -> (Rd, Deck)`
-//! - `Rd::kit_split`, `Rd::master_name`, `Rd::named`, `Rd::tag`, `Rd::main`, `Rd::fields`, `Rd::body`,
+//! - `Rd::role`, `Rd::kit_split`, `Rd::master_name`, `Rd::named`, `Rd::tag`, `Rd::main`, `Rd::fields`, `Rd::body`,
 //!   `Rd::ttag`, `Rd::raw`, `Rd::unparsed`, `Rd::keep`, `Rd::card`, `Rd::section`, `Rd::if_head_ok`
 //! - `fn unwrapped(t: &str) -> String`
 
@@ -36,7 +36,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::codegen::Dialect;
 use crate::syntax::ast::{Ast, NONE, Node, Tag};
-use crate::syntax::resolve::{FileId, Kit, Split};
+use crate::syntax::resolve::{FileId, Kit, Role, Split};
 use crate::syntax::token::{Tag as T, Tokens};
 use blocks::Opened;
 
@@ -328,6 +328,15 @@ impl<'a> Rd<'a> {
 
     pub(in crate::syntax::render) fn ttag(&self, k: u32) -> T {
         self.t.tags()[k as usize]
+    }
+
+    /// What the file is: the kit's answer, or the same rule's for a file
+    /// read alone.
+    pub(in crate::syntax::render) fn role(&self) -> Role {
+        match self.kit {
+            Some((kit, f)) => kit.file(f).role,
+            None => crate::syntax::resolve::role(self.t, self.ast),
+        }
     }
 
     /// The kit's corrected split of element `n`.

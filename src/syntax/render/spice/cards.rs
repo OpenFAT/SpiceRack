@@ -72,7 +72,9 @@ impl W<'_, '_> {
                 };
                 format!("C{name} {n1} {n2} {q}{}", self.params(&params))
             }
-            Card::Coupling { name, l1, l2, k } => {
+            Card::Coupling {
+                name, l1, l2, k, ..
+            } => {
                 format!("K{name} L{l1} L{l2} {}", self.sp.decimal(k, self.x))
             }
             Card::Source {

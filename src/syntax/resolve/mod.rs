@@ -43,6 +43,7 @@
 //!   `Kit::target(&self, file: FileId, n: Node) -> Option<Target>`,
 //!   `Kit::node_count(&self, file: FileId) -> usize`
 //! - `Def::base(&self) -> &str`
+//! - `pub fn role(t: &Tokens, ast: &Ast) -> Role`
 //! - `pub(super) fn walk(ast: &Ast, visit: impl FnMut(u32, Scope, &[u32]))`,
 //!   `pub(super) fn key(name: &str, fold: bool) -> String`
 
@@ -53,6 +54,7 @@ use crate::codegen::Dialect;
 use crate::syntax::ast::{Ast, NONE, Node, Tag};
 use crate::syntax::device::Primitive;
 use crate::syntax::diag::{Code, Diag};
+use crate::syntax::token::Tokens;
 use crate::syntax::{lexicon, parse, tokenize};
 
 mod declare;
@@ -272,6 +274,17 @@ struct Open<'a> {
     /// Whether the block is a subcircuit.
     subckt: bool,
     node: u32,
+}
+
+/// What file `ast` (the parse of `t`) is when read alone: the rule
+/// [`Kit::load`] gives each file its [`Role`] by (a deck holds an analysis,
+/// a control block or a top-level independent source).
+///
+/// Cost: one walk of the tree, its declarations collected and dropped.
+pub fn role(t: &Tokens, ast: &Ast) -> Role {
+    let role = declare::declare(FileId(0), t, ast, false).role;
+    assert!(matches!(role, Role::Deck | Role::Library), "a file read is a deck or a library");
+    role
 }
 
 impl Kit {

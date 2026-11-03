@@ -11,9 +11,10 @@
 //! old writers behaved, where that drops something: each is marked
 //! `// quirk:` (the golden gate holds them until phase 7 decides).
 //!
-//! The rows for Spectre, VACASK, CDL and Verilog answer what their old
-//! writers did where the construct reaches them; their writers are not yet
-//! ported (`tests/fixtures/transpiler/PHASE4-STATUS.md`).
+//! CDL's row is the SPICE writer's (its elements are ngspice cards in the
+//! xschem layout). The rows for Spectre, VACASK and Verilog answer what
+//! their old writers did where the construct reaches them; their writers
+//! are not yet ported (`tests/fixtures/transpiler/PHASE4-STATUS.md`).
 //!
 //! Cites: `docs/research/transpiler-architecture.md` §2.5 (`Capability`);
 //! `compiler-architecture-reference.md` §9.1 (LLVM `LegalizeAction`),
@@ -144,7 +145,13 @@ pub const fn action(target: Dialect, c: Construct) -> Action {
     use Action::{Lift, Native, Refuse, Spell};
     use Dialect as D;
     match c {
-        Construct::ForeignText => Refuse(Code::W0001),
+        Construct::ForeignText => match target {
+            // quirk: the xschem layout (CDL) copies another family's text
+            // as written, as the old writer did; phase 7 refuses it.
+            D::Cdl => Native,
+            D::Ngspice | D::Espice | D::Hspice | D::Xyce | D::Ltspice => Refuse(Code::W0001),
+            D::Spectre | D::Vacask | D::Verilog => Refuse(Code::W0001),
+        },
         Construct::CaretReread => Refuse(Code::W0002),
         Construct::StatisticalCall => match target {
             D::Ltspice => Refuse(Code::W0003),
@@ -195,11 +202,12 @@ pub const fn action(target: Dialect, c: Construct) -> Action {
             D::Spectre | D::Vacask | D::Cdl | D::Verilog => Native,
         },
         Construct::Laplace => match target {
-            D::Ngspice => Lift(Rule::LaplaceXfer),
+            // CDL writes an element as its ngspice card.
+            D::Ngspice | D::Cdl => Lift(Rule::LaplaceXfer),
             D::Espice | D::Hspice => Lift(Rule::LaplaceTable),
             D::Ltspice => Lift(Rule::LaplaceAttr),
             D::Xyce => Refuse(Code::W0011),
-            D::Spectre | D::Vacask | D::Cdl | D::Verilog => Refuse(Code::W0011),
+            D::Spectre | D::Vacask | D::Verilog => Refuse(Code::W0011),
         },
         Construct::RfPort => match target {
             D::Ngspice | D::Espice => Native,
@@ -207,9 +215,9 @@ pub const fn action(target: Dialect, c: Construct) -> Action {
             D::Spectre | D::Vacask | D::Cdl | D::Verilog => Native,
         },
         Construct::PwlRepeatV => match target {
-            D::Ngspice | D::Espice => Native,
+            D::Ngspice | D::Espice | D::Cdl => Native,
             D::Hspice | D::Xyce | D::Ltspice => Refuse(Code::W0008),
-            D::Spectre | D::Vacask | D::Cdl | D::Verilog => Refuse(Code::W0008),
+            D::Spectre | D::Vacask | D::Verilog => Refuse(Code::W0008),
         },
         Construct::PwlRepeatI => match target {
             D::Espice => Native,
@@ -217,9 +225,9 @@ pub const fn action(target: Dialect, c: Construct) -> Action {
             D::Spectre | D::Vacask | D::Cdl | D::Verilog => Refuse(Code::W0008),
         },
         Construct::NoiseWave => match target {
-            D::Ngspice => Native,
+            D::Ngspice | D::Cdl => Native,
             D::Espice | D::Hspice | D::Xyce | D::Ltspice => Refuse(Code::W0009),
-            D::Spectre | D::Vacask | D::Cdl | D::Verilog => Refuse(Code::W0009),
+            D::Spectre | D::Vacask | D::Verilog => Refuse(Code::W0009),
         },
         Construct::Conditional => match target {
             D::Xyce | D::Ltspice => Refuse(Code::W0013),
