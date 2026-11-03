@@ -15,6 +15,8 @@ use pyo3::types::PyDict;
 use super::unit::PyUnitValue;
 use crate::ir::{self, IrValue};
 
+/// A value argument (`R(..., value)`, `V(..., value)`): tried as a number,
+/// then a `UnitValue`, then a string.
 #[derive(FromPyObject)]
 pub(super) enum PyValueArg {
     Float(f64),
@@ -46,11 +48,13 @@ pub(super) fn kw_volts(kwargs: Option<Bound<'_, PyDict>>) -> PyResult<Vec<(Strin
     Ok(out)
 }
 
+/// Shorthand for `IrValue::Numeric { value }`.
 pub(super) fn num(value: f64) -> IrValue {
     IrValue::Numeric { value }
 }
 
 impl PyValueArg {
+    /// The IR value; an expression loses one pair of enclosing braces.
     pub(super) fn ir(self) -> IrValue {
         match self {
             Self::Float(value) => IrValue::Numeric { value },

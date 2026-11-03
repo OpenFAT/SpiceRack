@@ -52,12 +52,14 @@ pub fn sweep(variation: &str, points: u32, start: f64, stop: f64) -> PyResult<Fr
     })
 }
 
+/// `.ac`; `variation` per [`sweep`].
 pub fn ac(variation: &str, points: u32, start: f64, stop: f64) -> PyResult<Analysis> {
     Ok(Analysis::Ac {
         sweep: sweep(variation, points, start, stop)?,
     })
 }
 
+/// `.tran step stop [start [max_step]] [uic]`.
 pub fn transient(
     step: f64,
     stop: f64,
@@ -74,6 +76,7 @@ pub fn transient(
     }
 }
 
+/// `.noise`; `variation` per [`sweep`].
 pub fn noise(
     output: &str,
     reference: &str,
@@ -94,6 +97,7 @@ pub fn noise(
     })
 }
 
+/// `.tf output source`.
 pub fn tf(output: &str, source: &str) -> Analysis {
     Analysis::Tf {
         output: output.into(),
@@ -127,6 +131,7 @@ pub fn polezero(nodes: [&str; 4], tf_type: &str, pz_type: &str) -> PyResult<Anal
     })
 }
 
+/// `.disto`; `variation` per [`sweep`].
 pub fn distortion(
     variation: &str,
     points: u32,
@@ -140,6 +145,8 @@ pub fn distortion(
     })
 }
 
+/// A Spectre `sweep` around `inner`; an `inner_type` that is not a Spectre
+/// analysis kind is a `ValueError`.
 pub fn spectre_sweep(
     param: &str,
     start: f64,
@@ -159,6 +166,8 @@ pub fn spectre_sweep(
     })
 }
 
+/// A Spectre `montecarlo` around `inner`; `inner_type` as in
+/// [`spectre_sweep`].
 pub fn spectre_monte_carlo(
     iterations: u32,
     inner: &str,

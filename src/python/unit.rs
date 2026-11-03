@@ -23,6 +23,8 @@ pub(super) struct PyUnitValue {
     pub(super) inner: u::UnitValue,
 }
 
+/// Adds one `Unit` per `crate::unit::UNITS` row as the `unit` submodule, and
+/// registers it in `sys.modules` so `from spicerack.unit import *` works.
 pub(super) fn create_unit_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let unit_mod = PyModule::new(m.py(), "unit")?;
     for &(name, mult, symbol) in u::UNITS {

@@ -29,10 +29,12 @@ pub(super) struct PySimulator {
 }
 
 impl PySimulator {
+    /// The deck's testbench, created empty on first use.
     pub(super) fn tb(&mut self) -> &mut ir::Testbench {
         self.ir.testbench.get_or_insert_with(Default::default)
     }
 
+    /// Appends `c` to the testbench stimulus, outside the DUT.
     pub(super) fn stim(&mut self, c: Component) {
         self.tb().stimulus.push(c);
     }

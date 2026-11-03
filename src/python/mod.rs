@@ -8,7 +8,8 @@
 //! Every class here builds `ir` data directly; netlists come only from codegen.
 //! Python classes and method names → the `spicerack._native` module. Each
 //! file's `#[pymethods]` sit below its separator: no Rust caller uses
-//! them, and Python reaches them through `add_class` here.
+//! them, and Python reaches them through `add_class` here. A `#[pyclass]`
+//! struct carries no `///`: pyo3 would publish it as the class `__doc__`.
 //!
 //! Files, by owner:
 //! - `unit.rs`: `Unit`, `UnitValue`, the `spicerack.unit` submodule

@@ -35,10 +35,12 @@ pub(super) fn emit_ir_netlist(ir: CircuitIR, backend: &str) -> PyResult<String> 
     crate::codegen::netlist(&ir, d).map_err(runtime_err)
 }
 
+/// Runs the lowered `ir`; `backend` `None` lets `simulation::run` choose.
 pub(super) fn run_deck(ir: CircuitIR, backend: Option<&str>) -> PyResult<RawData> {
     crate::simulation::run(&lowered(ir)?, backend).map_err(runtime_err)
 }
 
+/// `ir.check_backend(backend)` as `"Severity: message"` lines.
 pub(super) fn issues(ir: &CircuitIR, backend: &str) -> Vec<String> {
     ir.check_backend(backend)
         .into_iter()
@@ -61,6 +63,7 @@ pub(super) fn check_backend_name(name: &str) -> PyResult<()> {
     )))
 }
 
+/// Any error as a Python `RuntimeError` carrying its `Display` text.
 pub(super) fn runtime_err(e: impl std::fmt::Display) -> PyErr {
     PyRuntimeError::new_err(e.to_string())
 }
