@@ -4,7 +4,9 @@ SpiceRack: build SPICE circuits in Python, netlist them for any simulator
 (ngspice, HSPICE, LTspice, VACASK, Spectre, ESPice), run them and read the
 results back. The core is a Rust crate (edition 2024) with PyO3 bindings
 shipped as the `spicerack` Python package. `README.md` is the overview;
-`grammar/README.md` is the dialect readers' contract.
+`docs/research/transpiler-architecture.md` is the reader and writer design
+(tokenize → parse → AST → resolve → render), and `TESTING.md` "Golden gate" is its
+byte-identical migration gate.
 
 ## Skills to load first
 
@@ -34,7 +36,7 @@ Project-specific:
 
 | Skill | Use it for here |
 |---|---|
-| `compiler-construction` | `grammar/*.peg`, `src/import` and `src/codegen`: one schema every dialect captures into, lowering to `CircuitIR`, coded diagnostics, goldens |
+| `compiler-construction` | `src/syntax` (tokenizer, lexicons, parser, AST, device table) and `src/codegen`: one AST every dialect reads into, coded diagnostics, goldens |
 | `spice-engine` | Reading a simulator's result: which oracle (ngspice, VACASK, analytic) and at what tolerance |
 
 ## The method
