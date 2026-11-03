@@ -11,8 +11,8 @@
 //! - `pub const LTSPICE: Lexicon`
 
 use super::{
-    Arithmetic, Backslash, Caret, Dollar, End, Lexicon, Numbers, Quote, Quoting, SPICE_KEYWORDS,
-    SPICE_LETTERS, Scale, Tail,
+    Arithmetic, Backslash, Caret, Dollar, End, Lexicon, Numbers, Ops, Quote, Quoting,
+    SPICE_KEYWORDS, SPICE_LETTERS, Scale, Tail,
 };
 use crate::codegen::Dialect;
 use crate::syntax::token::Tag;
@@ -47,6 +47,7 @@ pub const LTSPICE: Lexicon = Lexicon {
         protects: true,
         across_breaks: false,
     },
+    string_expr: false,
     name_escape: false,
     ident_start: b"$",
     ident_continue: b"$.",
@@ -56,6 +57,33 @@ pub const LTSPICE: Lexicon = Lexicon {
     operators: OPERATORS,
     expr_braces: true,
     caret: Caret::Xor,
+    ops: Ops {
+        // CER "Supported Operators (ascending precedence)": `& | ^`,
+        // comparisons, `+ -`, `* / %`, `**`, `! ~`.
+        infix: &[
+            (Tag::Amp, 2),
+            (Tag::Pipe, 2),
+            (Tag::Caret, 2),
+            (Tag::EqualEqual, 3),
+            (Tag::BangEqual, 3),
+            (Tag::LessEqual, 3),
+            (Tag::GreaterEqual, 3),
+            (Tag::Less, 3),
+            (Tag::Greater, 3),
+            (Tag::Plus, 4),
+            (Tag::Minus, 4),
+            (Tag::Star, 5),
+            (Tag::Slash, 5),
+            (Tag::Percent, 5),
+            (Tag::StarStar, 6),
+        ],
+        right: &[],
+        prefix: &[Tag::Plus, Tag::Minus, Tag::Bang, Tag::Tilde],
+        prefix_bp: 7,
+        probes: &["v", "i"],
+        index: false,
+    },
+    lib_sections: false,
     numbers: Numbers {
         exponent: b"eE",
         scales: SCALES,

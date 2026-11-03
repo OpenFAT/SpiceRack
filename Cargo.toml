@@ -52,6 +52,12 @@ required-features = ["corpus"]
 name = "test_syntax_tokenize"
 required-features = ["corpus"]
 
+# The transpiler rewrite's parser and adapter against today's reader, in
+# process, over every golden-gate input (TESTING.md, "Golden gate").
+[[test]]
+name = "test_syntax_adapter"
+required-features = ["corpus"]
+
 [[bin]]
 name = "spice2rack"
 path = "tools/spice2rack/main.rs"

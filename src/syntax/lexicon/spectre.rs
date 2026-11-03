@@ -12,7 +12,8 @@
 //! - `pub const SPECTRE: Lexicon`
 
 use super::{
-    Arithmetic, Backslash, Caret, Dollar, HSPICE, Lexicon, Numbers, Quote, Quoting, Scale, Tail,
+    Arithmetic, Backslash, Caret, Dollar, HSPICE, Lexicon, Numbers, Ops, Quote, Quoting, Scale,
+    Tail,
 };
 use crate::codegen::Dialect;
 use crate::syntax::token::Tag;
@@ -43,6 +44,7 @@ pub const SPECTRE: Lexicon = Lexicon {
         protects: true,
         across_breaks: false,
     },
+    string_expr: false,
     name_escape: true,
     ident_start: b"$",
     ident_continue: b"!$",
@@ -60,6 +62,32 @@ pub const SPECTRE: Lexicon = Lexicon {
     ],
     expr_braces: false,
     caret: Caret::None,
+    ops: Ops {
+        // §6.1 (UG p.87), decreasing: unary, `**` (right), `* / %`, `+ -`,
+        // relational, equality, `&&`, `||`, `?:`.
+        infix: &[
+            (Tag::PipePipe, 2),
+            (Tag::AmpAmp, 3),
+            (Tag::EqualEqual, 4),
+            (Tag::BangEqual, 4),
+            (Tag::LessEqual, 5),
+            (Tag::GreaterEqual, 5),
+            (Tag::Less, 5),
+            (Tag::Greater, 5),
+            (Tag::Plus, 6),
+            (Tag::Minus, 6),
+            (Tag::Star, 7),
+            (Tag::Slash, 7),
+            (Tag::Percent, 7),
+            (Tag::StarStar, 8),
+        ],
+        right: &[Tag::StarStar],
+        prefix: &[Tag::Plus, Tag::Minus, Tag::Bang],
+        prefix_bp: 9,
+        probes: &[],
+        index: false,
+    },
+    lib_sections: true,
     numbers: Numbers {
         exponent: b"eE",
         scales: SCALES,

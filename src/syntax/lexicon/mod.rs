@@ -17,7 +17,7 @@
 //! - `pub struct Lexicon`, `Lexicon::keyword(&self, word: &str) -> Option<Tag>`,
 //!   `Lexicon::element(&self, letter: u8) -> Option<Element>`
 //! - `pub enum Dollar`, `pub enum Backslash`, `pub struct End`, `pub enum Quote`,
-//!   `pub struct Quoting`, `pub enum Caret`
+//!   `pub struct Quoting`, `pub enum Caret`, `pub struct Ops`
 //! - `pub struct Numbers`, `pub enum Scale`, `pub enum Tail`, `pub enum Arithmetic`
 //! - `pub enum Element`
 //! - `pub const NGSPICE`, `HSPICE`, `LTSPICE`, `XYCE`, `SPECTRE`, `VACASK: Lexicon`
@@ -87,6 +87,9 @@ pub struct Lexicon {
     pub quote: Quote,
     /// How a `"…"` string reads.
     pub string: Quoting,
+    /// A `"…"` string in a value position delimits an expression (HSPICE
+    /// T2, X1).
+    pub string_expr: bool,
     /// `\` before a printable byte is part of a name (`\2N2222`).
     pub name_escape: bool,
     /// Bytes past `[A-Za-z_]` and non-ASCII that start a name.
@@ -108,6 +111,11 @@ pub struct Lexicon {
     pub expr_braces: bool,
     /// What `^` means in an expression.
     pub caret: Caret,
+    /// The expression operators: precedence, grouping, prefix operators.
+    pub ops: Ops,
+    /// `.lib name` … `.endl` defines a section (all SPICE dialects but
+    /// LTspice, whose `.lib file` reads the whole file).
+    pub lib_sections: bool,
 
     /// The number grammar and its suffix table.
     pub numbers: Numbers,
@@ -194,6 +202,33 @@ pub enum Caret {
     Xor,
     /// No operator.
     None,
+}
+
+/// A dialect's expression operators, for the parser's precedence climb.
+#[derive(Clone, Copy, Debug)]
+pub struct Ops {
+    /// The binary operators and their binding power: a higher one binds
+    /// tighter; `?:` binds loosest of all, at [`Ops::TERNARY`].
+    pub infix: &'static [(Tag, u8)],
+    /// The binary operators that group to the right (`**` in Spectre).
+    pub right: &'static [Tag],
+    /// The prefix operators.
+    pub prefix: &'static [Tag],
+    /// A prefix operator's operand takes the infix operators that bind
+    /// tighter than this (ngspice `-2^2` is `-(2^2)`, LTspice `-2**1.5` is
+    /// `(-2)**1.5`).
+    pub prefix_bp: u8,
+    /// The call names read as probes, `v(a,b)` and `i(v1)`: their
+    /// arguments are node and device names, never expressions.
+    pub probes: &'static [&'static str],
+    /// `x[i]` selects an element (VACASK), and a vector's items are whole
+    /// expressions; else a vector holds signed atoms (Spectre `[1 -2]`).
+    pub index: bool,
+}
+
+impl Ops {
+    /// The binding power of `?:`.
+    pub const TERNARY: u8 = 1;
 }
 
 /// A dialect's number grammar: a mantissa, an exponent, a scale suffix from

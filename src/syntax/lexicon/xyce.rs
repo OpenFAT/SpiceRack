@@ -12,8 +12,8 @@
 //! - `pub const XYCE: Lexicon`
 
 use super::{
-    Arithmetic, Backslash, Caret, Dollar, End, Lexicon, Numbers, Quote, Quoting, SPICE_KEYWORDS,
-    SPICE_LETTERS, SPICE_OPERATORS, Scale, Tail,
+    Arithmetic, Backslash, Caret, Dollar, End, Lexicon, Numbers, Ops, Quote, Quoting,
+    SPICE_KEYWORDS, SPICE_LETTERS, SPICE_OPERATORS, Scale, Tail,
 };
 use crate::codegen::Dialect;
 use crate::syntax::token::Tag;
@@ -43,6 +43,7 @@ pub const XYCE: Lexicon = Lexicon {
     brackets_join: false,
     quote: Quote::Expr(UNPROTECTED),
     string: UNPROTECTED,
+    string_expr: false,
     name_escape: false,
     ident_start: b"$",
     ident_continue: b"$.:",
@@ -52,6 +53,38 @@ pub const XYCE: Lexicon = Lexicon {
     operators: SPICE_OPERATORS,
     expr_braces: true,
     caret: Caret::Xor,
+    ops: Ops {
+        // Table 2-32 (RG p.164), the levels measured on Xyce 7.10.
+        infix: &[
+            (Tag::PipePipe, 2),
+            (Tag::Pipe, 2),
+            (Tag::AmpAmp, 2),
+            (Tag::Amp, 2),
+            (Tag::Caret, 3),
+            (Tag::EqualEqual, 4),
+            (Tag::BangEqual, 4),
+            (Tag::LessGreater, 4),
+            (Tag::LessEqual, 4),
+            (Tag::GreaterEqual, 4),
+            (Tag::Less, 4),
+            (Tag::Greater, 4),
+            (Tag::Plus, 5),
+            (Tag::Minus, 5),
+            (Tag::Percent, 6),
+            (Tag::Star, 7),
+            (Tag::Slash, 7),
+            (Tag::StarStar, 9),
+        ],
+        right: &[Tag::StarStar],
+        prefix: &[Tag::Plus, Tag::Minus, Tag::Tilde],
+        prefix_bp: 8,
+        // RG §2.1.31 pp.130-133.
+        probes: &[
+            "v", "vr", "vi", "vm", "vp", "vdb", "i", "ir", "ii", "im", "ip", "idb", "n", "p", "w",
+        ],
+        index: false,
+    },
+    lib_sections: true,
     numbers: Numbers {
         exponent: b"eE",
         scales: SCALES,

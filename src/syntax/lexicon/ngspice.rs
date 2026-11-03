@@ -11,8 +11,8 @@
 //! - `pub const NGSPICE: Lexicon`
 
 use super::{
-    Arithmetic, Backslash, Caret, Dollar, End, Lexicon, Numbers, Quote, Quoting, SPICE_KEYWORDS,
-    SPICE_LETTERS, SPICE_OPERATORS, Scale, Tail,
+    Arithmetic, Backslash, Caret, Dollar, End, Lexicon, Numbers, Ops, Quote, Quoting,
+    SPICE_KEYWORDS, SPICE_LETTERS, SPICE_OPERATORS, Scale, Tail,
 };
 use crate::codegen::Dialect;
 use crate::syntax::token::Tag;
@@ -49,6 +49,7 @@ pub const NGSPICE: Lexicon = Lexicon {
     brackets_join: false,
     quote: Quote::Expr(QUOTED),
     string: QUOTED,
+    string_expr: false,
     name_escape: false,
     ident_start: b"$",
     ident_continue: b"$.",
@@ -58,6 +59,34 @@ pub const NGSPICE: Lexicon = Lexicon {
     operators: SPICE_OPERATORS,
     expr_braces: true,
     caret: Caret::Pow,
+    ops: Ops {
+        // §2.2, numparam precedence (ngspice.peg x_ternary .. x_unary).
+        infix: &[
+            (Tag::PipePipe, 2),
+            (Tag::AmpAmp, 3),
+            (Tag::EqualEqual, 4),
+            (Tag::BangEqual, 4),
+            (Tag::LessGreater, 4),
+            (Tag::LessEqual, 4),
+            (Tag::GreaterEqual, 4),
+            (Tag::Less, 4),
+            (Tag::Greater, 4),
+            (Tag::Plus, 5),
+            (Tag::Minus, 5),
+            (Tag::Star, 6),
+            (Tag::Slash, 6),
+            (Tag::Percent, 6),
+            (Tag::Backslash, 6),
+            (Tag::Caret, 7),
+            (Tag::StarStar, 7),
+        ],
+        right: &[],
+        prefix: &[Tag::Plus, Tag::Minus, Tag::Bang],
+        prefix_bp: 6,
+        probes: &["v", "i"],
+        index: false,
+    },
+    lib_sections: true,
     numbers: Numbers {
         exponent: b"eEdD",
         scales: SCALES,

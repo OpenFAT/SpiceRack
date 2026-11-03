@@ -11,7 +11,9 @@
 //! Contents:
 //! - `pub const VACASK: Lexicon`
 
-use super::{Arithmetic, Backslash, Caret, Dollar, Lexicon, Numbers, Quote, Quoting, Scale, Tail};
+use super::{
+    Arithmetic, Backslash, Caret, Dollar, Lexicon, Numbers, Ops, Quote, Quoting, Scale, Tail,
+};
 use crate::codegen::Dialect;
 use crate::syntax::token::Tag;
 
@@ -40,6 +42,7 @@ pub const VACASK: Lexicon = Lexicon {
         protects: true,
         across_breaks: false,
     },
+    string_expr: false,
     name_escape: false,
     ident_start: b"$",
     ident_continue: b"$",
@@ -59,6 +62,35 @@ pub const VACASK: Lexicon = Lexicon {
     ],
     expr_braces: false,
     caret: Caret::Xor,
+    ops: Ops {
+        // P216-P230, docs/expr-operators.md.
+        infix: &[
+            (Tag::PipePipe, 2),
+            (Tag::AmpAmp, 3),
+            (Tag::Pipe, 4),
+            (Tag::Caret, 5),
+            (Tag::Amp, 6),
+            (Tag::EqualEqual, 7),
+            (Tag::BangEqual, 7),
+            (Tag::LessEqual, 8),
+            (Tag::GreaterEqual, 8),
+            (Tag::Less, 8),
+            (Tag::Greater, 8),
+            (Tag::LessLess, 9),
+            (Tag::GreaterGreater, 9),
+            (Tag::Plus, 10),
+            (Tag::Minus, 10),
+            (Tag::Star, 11),
+            (Tag::Slash, 11),
+            (Tag::StarStar, 12),
+        ],
+        right: &[Tag::StarStar],
+        prefix: &[Tag::Plus, Tag::Minus, Tag::Bang, Tag::Tilde],
+        prefix_bp: 13,
+        probes: &[],
+        index: true,
+    },
+    lib_sections: true,
     numbers: Numbers {
         exponent: b"eE",
         scales: SCALES,

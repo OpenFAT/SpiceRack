@@ -7,12 +7,22 @@
 //! - `pub mod lexicon`, `pub mod token`
 //! - `pub use tokenize::tokenize`
 
+mod adapter;
+pub mod ast;
+pub mod diag;
+mod expr;
+mod fields;
 pub mod lexicon;
+mod named;
 mod number;
+mod parse;
 mod scan;
+mod spice;
 pub mod token;
 mod tokenize;
 
+pub use adapter::ast_to_ir;
+pub use parse::{DEPTH_MAX, parse};
 pub use tokenize::tokenize;
 
 // ---- private ----

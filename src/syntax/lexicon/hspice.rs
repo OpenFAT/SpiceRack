@@ -13,8 +13,8 @@
 //! - `pub const HSPICE: Lexicon`
 
 use super::{
-    Arithmetic, Backslash, Caret, Dollar, End, Lexicon, Numbers, Quote, Quoting, SPICE_KEYWORDS,
-    SPICE_LETTERS, Scale, Tail,
+    Arithmetic, Backslash, Caret, Dollar, End, Lexicon, Numbers, Ops, Quote, Quoting,
+    SPICE_KEYWORDS, SPICE_LETTERS, Scale, Tail,
 };
 use crate::codegen::Dialect;
 use crate::syntax::token::Tag;
@@ -45,6 +45,7 @@ pub const HSPICE: Lexicon = Lexicon {
     brackets_join: false,
     quote: Quote::Expr(QUOTED),
     string: QUOTED,
+    string_expr: true,
     name_escape: false,
     ident_start: b"$",
     ident_continue: b"$.",
@@ -54,6 +55,31 @@ pub const HSPICE: Lexicon = Lexicon {
     operators: OPERATORS,
     expr_braces: false,
     caret: Caret::Pow,
+    ops: Ops {
+        // X2 (UG08 pp.279-283, Table 19): no `%`, `\\` or unary `!`.
+        infix: &[
+            (Tag::PipePipe, 2),
+            (Tag::AmpAmp, 3),
+            (Tag::EqualEqual, 4),
+            (Tag::BangEqual, 4),
+            (Tag::LessEqual, 4),
+            (Tag::GreaterEqual, 4),
+            (Tag::Less, 4),
+            (Tag::Greater, 4),
+            (Tag::Plus, 5),
+            (Tag::Minus, 5),
+            (Tag::Star, 6),
+            (Tag::Slash, 6),
+            (Tag::Caret, 7),
+            (Tag::StarStar, 7),
+        ],
+        right: &[],
+        prefix: &[Tag::Plus, Tag::Minus],
+        prefix_bp: 6,
+        probes: &["v", "i"],
+        index: false,
+    },
+    lib_sections: true,
     numbers: Numbers {
         exponent: b"eEdD",
         scales: SCALES,
