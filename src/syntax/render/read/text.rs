@@ -13,7 +13,7 @@
 //! - `Rd::last(&self, n: u32) -> u32`
 //! - `Rd::text(&self, n: u32) -> String`
 //! - `Rd::span(&self, a: u32, b: u32) -> String`
-//! - `Rd::lines(&self, n: u32) -> Vec<String>`
+//! - `Rd::lines(&self, n: u32) -> Vec<String>`, `Rd::gap(&self, p: u32, k: u32) -> Cow<str>`
 
 use super::Rd;
 use crate::syntax::ast::{NONE, Node, Tag};
@@ -125,18 +125,9 @@ impl<'a> Rd<'a> {
         }
         out
     }
-}
-
-// ---- private ----
-
-impl<'a> Rd<'a> {
-    fn last_of_key(&self, n: Node) -> u32 {
-        // An `Assign` with no value ends at its `=`, the token after its key.
-        self.last(self.ast.lhs(n)) + 1
-    }
 
     /// What the line stage put between tokens `p` and `k`.
-    fn gap(&self, p: u32, k: u32) -> std::borrow::Cow<'a, str> {
+    pub(super) fn gap(&self, p: u32, k: u32) -> std::borrow::Cow<'a, str> {
         let src = self.t.source();
         let g = &src[self.t.end(p) as usize..self.t.start(k) as usize];
         let lex = self.t.lexicon_at(k);
@@ -172,5 +163,14 @@ impl<'a> Rd<'a> {
         } else {
             g.into()
         }
+    }
+}
+
+// ---- private ----
+
+impl<'a> Rd<'a> {
+    fn last_of_key(&self, n: Node) -> u32 {
+        // An `Assign` with no value ends at its `=`, the token after its key.
+        self.last(self.ast.lhs(n)) + 1
     }
 }

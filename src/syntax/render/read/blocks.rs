@@ -28,6 +28,9 @@ pub(super) enum Opened {
     /// A block whose head the grammar refused (its head already kept as a
     /// line): its body read as cards where it sits, its closer refused.
     Dissolve(u32),
+    /// A Spectre `library`: its sections, and its other statements as at
+    /// the top.
+    Library(u32),
 }
 
 /// An open block and the body it builds.
@@ -69,6 +72,8 @@ enum Work {
     Loose(u32),
     /// A dissolved block's closer.
     Closer(u32),
+    /// A library's section, with the library's name.
+    Section(u32, String),
 }
 
 impl<'a> Rd<'a> {
@@ -100,6 +105,11 @@ impl<'a> Rd<'a> {
                     self.keep(c, &mut top.body, k);
                     None
                 }
+                Work::Section(k, lib) => {
+                    let s = self.section(k, Some(lib), acc);
+                    acc.sections.push(s);
+                    None
+                }
             };
             if let Some(o) = opened {
                 self.open(o, direct, &mut stack, acc);
@@ -111,6 +121,9 @@ impl<'a> Rd<'a> {
     pub(in crate::syntax::render) fn condition(&self, b: u32) -> Option<String> {
         if self.tag(b) != Tag::If {
             return None;
+        }
+        if self.named() {
+            return Some(unwrapped(&self.text(self.fields(b)[0])));
         }
         let first = self.main(b);
         Some(unwrapped(&self.span(first + 1, self.line_last(first))))
@@ -164,6 +177,15 @@ impl<'a> Rd<'a> {
                 let body = self.body(n);
                 top.pending
                     .extend(body.iter().rev().map(|&s| Work::Loose(s)));
+            }
+            Opened::Library(n) => {
+                let lib = self.name_of(self.fields(n)[0]);
+                let body = self.body(n);
+                top.pending
+                    .extend(body.iter().rev().map(|&k| match self.tag(k) {
+                        Tag::Section => Work::Section(k, lib.clone()),
+                        _ => Work::Stmt(k),
+                    }));
             }
         }
     }

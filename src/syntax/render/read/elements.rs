@@ -163,6 +163,9 @@ impl<'a> Rd<'a> {
 impl<'a> Rd<'a> {
     /// What the old reader typed element `n` as; `None` for a raw one.
     fn try_card(&self, n: u32) -> Option<Card> {
+        if self.named() {
+            return self.named_inst(n);
+        }
         let h = self.ast.header(Node(n));
         match Element::from_u32(h.code) {
             None => None,

@@ -18,7 +18,7 @@ use super::W;
 use crate::codegen::Dialect;
 use crate::syntax::render::capability::{Action, Alt, Construct};
 use crate::syntax::render::out::Space;
-use crate::syntax::render::read::{Ana, BenchCard, Opt};
+use crate::syntax::render::read::{Ana, Bench, BenchCard, Opt};
 use crate::syntax::render::spelling::spelling;
 
 /// Control commands that start an analysis: a `.control` block issuing one
@@ -41,6 +41,8 @@ struct Tb {
     measures: Vec<String>,
     /// Each `.step`'s sweep, name, numbers and first token.
     steps: Vec<(Option<&'static str>, String, [f64; 3], u32)>,
+    /// VACASK control lines kept as text.
+    extra: Vec<String>,
 }
 
 /// True if `line` is a `.four` card (any case).
@@ -74,6 +76,7 @@ impl W<'_, '_> {
         for b in self.deck.defs.iter().chain(std::iter::once(&self.deck.top)) {
             lines.extend(self.raw_lines(&b.raw));
         }
+        lines.extend(tb.extra.iter().cloned());
         let raw = || lines.iter().map(String::as_str);
         let mut fourier = fourier_commands(raw());
         for (a, _) in &tb.analyses {
@@ -161,6 +164,7 @@ impl W<'_, '_> {
             };
             self.o.token(&line, Space::Line);
         }
+        self.write_raw(&tb.extra);
         match control {
             Some(fourier) => {
                 // `fourier` reads the current plot: it follows the first
@@ -202,11 +206,26 @@ impl W<'_, '_> {
     /// The deck's testbench statements, folded in read order.
     fn fold(&self) -> Tb {
         let mut tb = Tb::default();
-        for &n in &self.deck.bench {
-            let Some(card) = self.rd.bench_card(n) else {
-                continue;
+        for &b in &self.deck.bench {
+            let tok = match b {
+                Bench::Card(n)
+                | Bench::Meas(n)
+                | Bench::Save(n)
+                | Bench::Analysis(n)
+                | Bench::Options(n)
+                | Bench::NodeVals(n)
+                | Bench::Control(n) => self.rd.main(n),
             };
-            let tok = self.rd.main(n);
+            for card in self.rd.bench_cards(b) {
+                self.fold_one(&mut tb, card, tok);
+            }
+        }
+        tb
+    }
+
+    /// One testbench card into `tb`.
+    fn fold_one(&self, tb: &mut Tb, card: BenchCard, tok: u32) {
+        {
             match card {
                 BenchCard::Ana(a) => tb.analyses.push((a, tok)),
                 BenchCard::Options(opts) => {
@@ -216,6 +235,7 @@ impl W<'_, '_> {
                             Opt::Xyce(k, v) => tb.xyce.push((k, v)),
                             Opt::Temp(t) => tb.temp = Some(t),
                             Opt::Tnom(t) => tb.tnom = Some(t),
+                            Opt::Vacask(..) => {}
                         }
                     }
                 }
@@ -226,9 +246,9 @@ impl W<'_, '_> {
                 BenchCard::NodeVals(false, v) => tb.nodesets.extend(v),
                 BenchCard::Print(k, outs) => tb.prints.push((k, outs)),
                 BenchCard::Meas(m) => tb.measures.push(m),
+                BenchCard::Extra(l) => tb.extra.push(l),
             }
         }
-        tb
     }
 
     /// The save list. A noise run produces `onoise_spectrum`, not node

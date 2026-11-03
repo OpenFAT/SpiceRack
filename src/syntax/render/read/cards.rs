@@ -70,7 +70,7 @@ impl Rd<'_> {
             },
             _ => match (self.testbench_peg(n), self.testbench_ok(n)) {
                 (true, true) => {
-                    acc.bench.push(n);
+                    acc.bench.push(super::Bench::Card(n));
                     Ok(())
                 }
                 (true, false) => Err(Kept::Raw),
@@ -169,8 +169,12 @@ impl Rd<'_> {
         ok.then_some(Node(*name))
     }
 
-    /// A `.model` card's view (Xyce's BSIM3 level 8 or 9 read as 49).
-    pub(in crate::syntax::render) fn model_view(&self, n: u32) -> Model {
+    /// A `.model` card's view (Xyce's BSIM3 level 8 or 9 read as 49), or
+    /// a Spectre or VACASK model's, its bin `bin`'s (`NONE`: none).
+    pub(in crate::syntax::render) fn model_view(&self, n: u32, bin: u32) -> Model {
+        if self.named() {
+            return self.named_model_view(n, bin);
+        }
         let items = self.fields(n);
         let mut m = Model {
             name: self.text(items[0]),
@@ -192,6 +196,9 @@ impl Rd<'_> {
 
     /// An `.include` card's path (Xyce `.incl` takes the rest of the card).
     pub(in crate::syntax::render) fn include_path(&self, n: u32) -> String {
+        if self.named() {
+            return self.unquote(self.fields(n)[0]);
+        }
         let items = self.fields(n);
         let first = items[0];
         if self.d == Dialect::Xyce && self.head_word(n) == "incl" {
@@ -209,6 +216,12 @@ impl Rd<'_> {
     /// A `.lib path section` card's path and section (LTspice's whole-file
     /// `.lib path`: an empty section).
     pub(in crate::syntax::render) fn lib_view(&self, n: u32) -> (String, String) {
+        if self.named() {
+            let sec = self
+                .get(&self.pairs(n), "section")
+                .expect("an include with a section");
+            return (self.unquote(self.fields(n)[0]), self.text(sec));
+        }
         match self.fields(n) {
             [p] => (self.path_of(*p), String::new()),
             [p, s, ..] => (self.path_of(*p), self.text(*s)),
@@ -224,6 +237,7 @@ impl Rd<'_> {
                 let g = self.func_group(n).expect("func read it");
                 (g, self.func_body(n, g).expect("func read it"))
             }
+            Func::Real(n) => return self.real_func(n),
         };
         (
             self.text(self.ast.lhs(Node(g))),
@@ -308,7 +322,7 @@ impl Rd<'_> {
         let Some(_) = self.model_head(n) else {
             return Err(self.refused(n));
         };
-        here.models.push(n);
+        here.models.push((n, NONE));
         Ok(())
     }
 

@@ -44,6 +44,10 @@ mod blocks;
 mod cards;
 mod devices;
 mod elements;
+mod named;
+mod named_bench;
+mod named_blocks;
+mod named_elements;
 mod options;
 mod outputs;
 mod refused;
@@ -51,6 +55,7 @@ mod shapes;
 mod sources;
 mod testbench;
 mod text;
+mod unlift;
 mod values;
 
 pub(in crate::syntax::render) use elements::Card;
@@ -68,10 +73,15 @@ pub(in crate::syntax::render) struct Rd<'a> {
     pub(in crate::syntax::render) d: Dialect,
     /// The deck's `.model` names, lowercased (the old lowering).
     models: HashSet<String>,
+    /// Spectre/VACASK: model kinds by name, and subcircuit names.
+    kinds: HashMap<String, String>,
+    subckts: Vec<String>,
     kit: Option<(&'a Kit, FileId)>,
     /// The name map: an `X` card's master as written, after the renames of
     /// the hoisted subcircuits it names (`parent__name`).
     masters: HashMap<u32, String>,
+    /// The Monte Carlo read-back rule's fixups (`unlift`).
+    unlifted: unlift::Unlift,
 }
 
 /// What the reader made of a file: every block and the deck-wide lists, in
@@ -86,8 +96,27 @@ pub(in crate::syntax::render) struct Deck {
     pub(in crate::syntax::render) globals: Vec<String>,
     pub(in crate::syntax::render) funcs: Vec<Func>,
     /// The testbench statements at the top, in read order (`.control`'s
-    /// analyses among them); `BenchCard` reads each.
-    pub(in crate::syntax::render) bench: Vec<u32>,
+    /// analyses among them); [`Rd::bench_cards`] reads each.
+    pub(in crate::syntax::render) bench: Vec<Bench>,
+}
+
+/// A testbench item: a statement, and how it adds to the testbench.
+#[derive(Clone, Copy, Debug)]
+pub(in crate::syntax::render) enum Bench {
+    /// A SPICE testbench card (`BenchCard`).
+    Card(u32),
+    /// A `.meas` line of a Spectre `simulator lang=spice` region.
+    Meas(u32),
+    /// Spectre/VACASK `save`.
+    Save(u32),
+    /// A Spectre analysis.
+    Analysis(u32),
+    /// Spectre `options`.
+    Options(u32),
+    /// Spectre `ic`/`nodeset`.
+    NodeVals(u32),
+    /// A VACASK `control` block.
+    Control(u32),
 }
 
 /// One block's statements by place: a subcircuit, the top, a section's
@@ -103,8 +132,9 @@ pub(in crate::syntax::render) struct Block {
     pub(in crate::syntax::render) insts: Vec<(u32, u32)>,
     /// Its `.if` chains, each with the count of `comps` before it.
     pub(in crate::syntax::render) conds: Vec<(u32, Cond)>,
-    /// Its `.model` cards.
-    pub(in crate::syntax::render) models: Vec<u32>,
+    /// Its `.model` cards: the statement, and the bin of a Spectre model
+    /// group (`NONE`: none).
+    pub(in crate::syntax::render) models: Vec<(u32, u32)>,
     /// Its `.param` assignments (at a deck's or section's top).
     pub(in crate::syntax::render) params: Vec<u32>,
     /// Its `.param` assignments inside a subcircuit.
@@ -115,6 +145,10 @@ pub(in crate::syntax::render) struct Block {
     pub(in crate::syntax::render) libs: Vec<u32>,
     /// What it keeps as text, after its elements.
     pub(in crate::syntax::render) raw: Vec<Raw>,
+    /// Its Verilog-A loads (Spectre `ahdl_include`, VACASK `load`).
+    pub(in crate::syntax::render) loads: Vec<u32>,
+    /// Its Spectre `statistics` blocks.
+    pub(in crate::syntax::render) statistics: Vec<u32>,
 }
 
 /// One element of a block.
@@ -144,6 +178,9 @@ pub(in crate::syntax::render) struct Cond {
 
 /// A `.lib name` … `.endl` section.
 pub(in crate::syntax::render) struct Section {
+    /// The Spectre `library` it sits in.
+    #[expect(dead_code, reason = "the named writer reads it")]
+    pub(in crate::syntax::render) library: Option<String>,
     pub(in crate::syntax::render) body: Block,
     pub(in crate::syntax::render) defs: Vec<Block>,
     pub(in crate::syntax::render) funcs: Vec<Func>,
@@ -156,6 +193,8 @@ pub(in crate::syntax::render) enum Func {
     Param(u32),
     /// `.func f(x) body`.
     Card(u32),
+    /// Spectre `real f(real x) { return … }`.
+    Real(u32),
 }
 
 /// What the old reader made of a card it could not lower.
@@ -182,7 +221,7 @@ struct Acc {
     funcs: Vec<Func>,
     defs: Vec<Block>,
     sections: Vec<Section>,
-    bench: Vec<u32>,
+    bench: Vec<Bench>,
 }
 
 impl Default for Block {
@@ -199,6 +238,8 @@ impl Default for Block {
             includes: vec![],
             libs: vec![],
             raw: vec![],
+            loads: vec![],
+            statistics: vec![],
         }
     }
 }
@@ -225,18 +266,29 @@ pub(in crate::syntax::render) fn read<'a>(
         t,
         d,
         models: HashSet::new(),
+        kinds: HashMap::new(),
+        subckts: Vec::new(),
         kit,
         masters: HashMap::new(),
+        unlifted: unlift::Unlift::default(),
     };
     let top_stmts = ast.fields(ast.root()).to_vec();
-    rd.models = rd.model_names(&top_stmts);
+    if rd.named() {
+        (rd.kinds, rd.subckts) = rd.declarations(&top_stmts);
+    } else {
+        rd.models = rd.model_names(&top_stmts);
+    }
     let mut acc = Acc::default();
     let mut top = Block {
         name: name.into(),
         ..Block::default()
     };
     rd.cards(&top_stmts, &mut top, Scope::Top, &mut acc);
-    let deck = Deck {
+    if d == Dialect::Vacask {
+        // The old reader sorted the top's loads by path.
+        top.loads.sort_by_key(|&n| rd.unquote(rd.fields(n)[0]));
+    }
+    let mut deck = Deck {
         top,
         defs: acc.defs,
         sections: acc.sections,
@@ -244,6 +296,7 @@ pub(in crate::syntax::render) fn read<'a>(
         funcs: acc.funcs,
         bench: acc.bench,
     };
+    rd.unlift(&mut deck);
     (rd, deck)
 }
 
@@ -282,7 +335,7 @@ impl<'a> Rd<'a> {
     pub(in crate::syntax::render) fn master_name(&self, n: u32) -> String {
         match self.masters.get(&n) {
             Some(m) => m.clone(),
-            None => self.text(self.ast.header(Node(n)).master),
+            None => self.name_of(self.ast.header(Node(n)).master),
         }
     }
 }
@@ -341,7 +394,9 @@ impl<'a> Rd<'a> {
     /// One card, as the adapter's `Cx::card`; a block with a body of cards
     /// is handed back for [`Rd::cards`] to walk.
     fn card(&mut self, n: u32, here: &mut Block, scope: Scope, acc: &mut Acc) -> Option<Opened> {
-        assert!(!self.named(), "the named reader is not ported yet");
+        if self.named() {
+            return self.named_card(n, here, scope, acc);
+        }
         let inside = scope == Scope::Subckt;
         if scope == Scope::Section && self.leaks(n) {
             // A `.control` kept raw is one line holding its newlines
@@ -367,7 +422,7 @@ impl<'a> Rd<'a> {
             },
             Tag::Section if scope != Scope::Top => self.raw(n, here, true),
             Tag::Section => {
-                let s = self.section(n, acc);
+                let s = self.section(n, None, acc);
                 acc.sections.push(s);
             }
             Tag::If => match self.if_head_ok(n) {
@@ -380,7 +435,7 @@ impl<'a> Rd<'a> {
             Tag::Control => {
                 for &c in self.body(n) {
                     if self.tag(c) == Tag::Analysis && self.testbench_peg(c) {
-                        acc.bench.push(c);
+                        acc.bench.push(Bench::Card(c));
                     }
                 }
             }
@@ -392,7 +447,7 @@ impl<'a> Rd<'a> {
 
     /// `.lib name` … `.endl`: its cards read as at the top, into the
     /// section's own body and definitions (the old lowering's `section`).
-    fn section(&mut self, n: u32, acc: &mut Acc) -> Section {
+    fn section(&mut self, n: u32, library: Option<String>, acc: &mut Acc) -> Section {
         let name_item = self.fields(n)[0];
         let mut body = Block {
             name: self.name_of(name_item),
@@ -402,6 +457,7 @@ impl<'a> Rd<'a> {
         let stmts = self.body(n).to_vec();
         self.cards(&stmts, &mut body, Scope::Section, acc);
         Section {
+            library,
             body,
             defs: acc.defs.split_off(first),
             funcs: acc.funcs.split_off(first_f),

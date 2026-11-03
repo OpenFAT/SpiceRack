@@ -93,7 +93,7 @@ impl<'r> W<'_, 'r> {
     /// Every expression the deck's cards carry as text: functions,
     /// parameters, model, instance and element values. Text kept as lines
     /// is not: it reaches its own dialect only.
-    fn expressions(&self, blocks: &[&Block]) -> Vec<String> {
+    fn expressions(&mut self, blocks: &[&Block]) -> Vec<String> {
         let deck = self.deck;
         let funcs = deck
             .funcs
@@ -111,8 +111,14 @@ impl<'r> W<'_, 'r> {
             for &p in b.params.iter().chain(&b.locals) {
                 out.push(self.rd.param_view(p).1);
             }
-            for &m in &b.models {
-                out.extend(self.rd.model_view(m).params.into_iter().map(|(_, v)| v));
+            for &(m, bin) in &b.models {
+                out.extend(
+                    self.rd
+                        .model_view(m, bin)
+                        .params
+                        .into_iter()
+                        .map(|(_, v)| v),
+                );
             }
             for &(_, i) in &b.insts {
                 if let Card::Inst { params, .. } = self.rd.card_view(i) {
@@ -122,6 +128,17 @@ impl<'r> W<'_, 'r> {
             for &c in &b.comps {
                 if let Comp::Card(n) = c {
                     card_exprs(self.rd.card_view(n), &mut out);
+                }
+            }
+            if !b.statistics.is_empty() {
+                // ponytail: the statistics lowering (`Lift(StatisticsDraws)`)
+                // is not ported: a deck holding a block is refused, never
+                // written without its draws.
+                if let Action::Lift(_) = self.ask(Construct::Statistics, 0) {
+                    self.refuse(
+                        crate::syntax::diag::Code::W0018,
+                        self.rd.main(b.statistics[0]),
+                    );
                 }
             }
         }

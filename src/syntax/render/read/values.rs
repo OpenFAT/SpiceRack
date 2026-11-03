@@ -57,7 +57,7 @@ impl Rd<'_> {
         if let Some(value) = self.number(n) {
             return Val::Num(value);
         }
-        let text = self.text(n);
+        let text = self.etext(n);
         let text = text.trim();
         if self.named() {
             // Spectre's and VACASK's `Val` holds one `Expr` row (a vector
@@ -245,7 +245,7 @@ impl Rd<'_> {
 
 impl Rd<'_> {
     fn single_vtext(&self, n: u32) -> String {
-        let text = self.text(n);
+        let text = self.etext(n);
         let text = text.trim();
         if matches!(self.d, Dialect::Ngspice) {
             return one_group(text);
@@ -263,13 +263,13 @@ impl Rd<'_> {
     /// else after `blank`.
     fn seq_text(&self, n: u32, blank: &str) -> String {
         let parts = self.ast.list(self.ast.lhs(Node(n)));
-        let mut out = self.text(parts[0]).trim().to_string();
+        let mut out = self.etext(parts[0]).trim().to_string();
         for w in parts.windows(2) {
             let (prev, m) = (self.last(w[0]), self.main(w[1]));
             let gap = self.span(prev, m);
             let gap = &gap[self.t.text(prev).len()..gap.len() - self.t.text(m).len()];
             out.push_str(if gap.contains(',') { "," } else { blank });
-            out.push_str(&self.text(w[1]));
+            out.push_str(&self.etext(w[1]));
         }
         out
     }

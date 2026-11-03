@@ -28,6 +28,9 @@ pub(in crate::syntax::render) enum Opt {
     Temp(f64),
     /// Xyce `.options device tnom=`.
     Tnom(f64),
+    /// VACASK's own `options k=v`, its value as written.
+    #[expect(dead_code, reason = "the named writer reads it")]
+    Vacask(String, String),
 }
 
 impl<'a> Rd<'a> {

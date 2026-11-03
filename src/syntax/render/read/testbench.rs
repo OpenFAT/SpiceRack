@@ -44,6 +44,8 @@ pub(in crate::syntax::render) enum BenchCard {
     Print(String, Vec<String>),
     /// A `.meas` card's line.
     Meas(String),
+    /// A VACASK `control` line the IR had no field for, kept as text.
+    Extra(String),
 }
 
 /// An analysis as the old reader kept it.

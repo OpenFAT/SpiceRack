@@ -74,6 +74,7 @@ pub(super) fn write(rd: &Rd, deck: &Deck, target: Dialect) -> Result<String, Vec
     let control = w.control_run();
     w.drop_four = control.is_some();
     w.o.token(&format!("{} {}", sp.comment, deck.top.name), Space::Line);
+    w.loads();
     w.globals();
     w.funcs(&deck.funcs);
     w.file_cards(&deck.top);
@@ -117,6 +118,59 @@ impl W<'_, '_> {
         self.refused.push(Diag { code, token });
     }
 
+    /// Model loads that must precede any card instantiating them:
+    /// ngspice's `pre_osdi` control block, ESPice's and HSPICE's `.hdl`
+    /// (they compile Verilog-A themselves and load no OSDI binaries).
+    fn loads(&mut self) {
+        let deck = self.deck;
+        let path = |n: u32| self.rd.unquote(self.rd.fields(n)[0]);
+        let top: Vec<String> = deck.top.loads.iter().map(|&n| path(n)).collect();
+        let tok = deck.top.loads.first().map_or(0, |&n| self.rd.main(n));
+        let source = crate::veriloga::is_source;
+        match self.d {
+            Dialect::Ngspice if !top.is_empty() => match crate::veriloga::osdi_loads(&top) {
+                Ok(loads) => {
+                    self.o.token(".control", Space::Line);
+                    for p in &loads {
+                        self.o.token(&format!("pre_osdi {p}"), Space::Line);
+                    }
+                    self.o.token(".endc", Space::Line);
+                }
+                Err(_) => self.refuse(Code::W0004, tok),
+            },
+            Dialect::Espice => {
+                let all = deck
+                    .top
+                    .loads
+                    .iter()
+                    .chain(deck.defs.iter().flat_map(|s| &s.loads));
+                let mut seen: Vec<String> = Vec::new();
+                for &n in all {
+                    let l = path(n);
+                    if !source(&l) {
+                        self.ask(Construct::OsdiLoad, self.rd.main(n));
+                    } else if !seen.contains(&l) {
+                        self.o.token(&format!(".hdl \"{l}\""), Space::Line);
+                        seen.push(l);
+                    }
+                }
+            }
+            Dialect::Xyce if !top.is_empty() => {
+                self.ask(Construct::VerilogALoad, tok);
+            }
+            Dialect::Hspice => {
+                for l in &top {
+                    if !source(l) {
+                        self.ask(Construct::OsdiLoad, tok);
+                    } else {
+                        self.o.token(&format!(".hdl \"{l}\""), Space::Line);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn globals(&mut self) {
         if !self.deck.globals.is_empty() {
             let line = format!(".global {}", self.deck.globals.join(" "));
@@ -130,7 +184,7 @@ impl W<'_, '_> {
             let (name, args, body) = self.rd.func_view(f);
             let args = args.join(", ");
             let tok = match f {
-                Func::Param(a) | Func::Card(a) => self.rd.main(a),
+                Func::Param(a) | Func::Card(a) | Func::Real(a) => self.rd.main(a),
             };
             let line = match self.ask(Construct::Func, tok) {
                 Action::Spell(Alt::FuncParam) => {
@@ -182,8 +236,8 @@ impl W<'_, '_> {
     }
 
     fn models(&mut self, b: &Block) {
-        for &m in &b.models {
-            self.model(m);
+        for &(m, bin) in &b.models {
+            self.model(m, bin);
             self.o.token("", Space::Line);
         }
     }
@@ -192,8 +246,8 @@ impl W<'_, '_> {
     /// 49. The parameter list is separated from the type by a space:
     /// ngspice-45 drops the parameters of an OSDI model written
     /// `vres(r=3k)`.
-    fn model(&mut self, n: u32) {
-        let m = self.rd.model_view(n);
+    fn model(&mut self, n: u32, bin: u32) {
+        let m = self.rd.model_view(n, bin);
         let mos = m.kind.eq_ignore_ascii_case("nmos") || m.kind.eq_ignore_ascii_case("pmos");
         let mut line = format!(".model {} {}", m.name, m.kind);
         for (i, (k, v)) in m.params.iter().enumerate() {
@@ -229,12 +283,18 @@ impl W<'_, '_> {
             line.push(' ');
             line.push_str(p);
         }
-        if let (false, Some(word)) = (head.params.is_empty(), self.sp.subckt_params) {
+        let params = !head.params.is_empty() || !sc.params.is_empty();
+        if let (true, Some(word)) = (params, self.sp.subckt_params) {
             line.push(' ');
             line.push_str(word);
         }
         for (k, v) in &head.params {
             line.push_str(&format!(" {k}={}", self.spelled(v)));
+        }
+        // A Spectre or VACASK subcircuit's `parameters` are its defaults.
+        for &a in &sc.params {
+            let (k, v) = self.rd.param_view(a);
+            line.push_str(&format!(" {k}={}", self.spelled(&v)));
         }
         self.o.token(&line, Space::Line);
         self.file_cards(sc);
