@@ -540,6 +540,20 @@
         },
         {
           "type": "object",
+          "description": "A charge-defined capacitor (ngspice C n+ n- Q='expr'): charge is the charge from n1 to n2 as an expression, without SPICE delimiters.",
+          "required": ["type", "name", "n1", "n2", "charge"],
+          "properties": {
+            "type": { "const": "ChargeCapacitor" },
+            "name": { "type": "string" },
+            "n1": { "type": "string" },
+            "n2": { "type": "string" },
+            "charge": { "type": "string" },
+            "params": { "type": "array", "items": { "$ref": "#/$defs/StringPair" } }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
           "required": [
             "type",
             "name",

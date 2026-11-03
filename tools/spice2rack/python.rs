@@ -288,6 +288,7 @@ impl Py {
                 let ks: Vec<String> = coeffs.iter().map(|k| py_num(*k)).collect();
                 self.line(format!("{obj}.POLY({}, {}, {}, {}, [{}], [{}])", n(name), py_str(&letter.to_string()), n(np), n(nm), cs.join(", "), ks.join(", ")))
             }
+            Component::ChargeCapacitor { .. } => self.gap(obj, "charge-defined capacitor", &raw),
             Component::RawSpice { line } => self.gap(obj, "card with no IR form", line),
         }
     }

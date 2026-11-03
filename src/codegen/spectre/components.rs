@@ -65,6 +65,40 @@ pub(crate) fn emit_component(
                 ps(params)
             );
         }
+        // `[REF]` p.459 "Charge model for capacitor": `cap (n1 n2) bsource
+        // q=1.0e-6*v(n1,n2)`. Node voltages are lowercase `v(a,b)` there; a
+        // branch current, a braced parameter or SPICE's `time`, `temper`,
+        // `hertz` has no spelling the expression can be trusted to keep.
+        Component::ChargeCapacitor {
+            name,
+            n1,
+            n2,
+            charge,
+            params,
+        } => {
+            let q = charge.replace("V(", "v(");
+            let ident = |w: &str| {
+                q.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                    .any(|t| t.eq_ignore_ascii_case(w))
+            };
+            let bad = ["time", "temper", "hertz"].into_iter().find(|w| ident(w));
+            if q.contains("i(") || q.contains("I(") || q.contains('{') || bad.is_some() {
+                return Err(unsupported_component(&format!(
+                    "c{}: charge expression '{charge}' reads a branch current, a braced value or {} \
+                     (Spectre bsource spells these i(\"inst:1\"), plain names, $time/$temperature/$freq)",
+                    n.d(name),
+                    bad.unwrap_or("none of those")
+                )));
+            }
+            w!(
+                out,
+                "c{} ({} {}) bsource q={q}{}",
+                n.d(name),
+                n.n(n1),
+                n.n(n2),
+                ps(params)
+            );
+        }
         // `[CMP]` p.372 `l33 (0 net29) inductor l=10e-9 r=1 m=1`
         Component::Inductor {
             name,

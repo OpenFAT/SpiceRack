@@ -378,6 +378,67 @@ fn ngspice_value_forms_and_statistical_functions() {
     }
 }
 
+/// sky130's two element forms ngspice reads its own way:
+/// - a charge-defined capacitor (ngspice §3.3.9 `C a b q='expr'`) is a
+///   `ChargeCapacitor`; ngspice runs the deck written back to the same
+///   transient, and so does it read as HSPICE (`hsa`); Spectre gets a
+///   `bsource q=` (Reference 19.1 p.459); VACASK, with no charge element,
+///   refuses it by name;
+/// - an instance naming its subcircuit after its parameters (the
+///   `special_pfet_latch` alias, which ngspice 45 itself rejects: "unknown
+///   subckt") reads as that subcircuit; no other shape does.
+#[test]
+fn charge_capacitor_and_late_subcircuit_name() {
+    let deck = "q\nV1 a 0 pulse(0 1 0 1u 1u 1m 2m)\nR1 a b 1k\nCq b 0 q='1u*v(b)+0.5u*v(b)*v(b)'\n.tran 10u 2m\n.end\n";
+    let (ir, report) = parse(deck, "q", Dialect::Ngspice).unwrap();
+    assert_eq!(report, Default::default());
+    assert_eq!(
+        ir.top.components[2],
+        Component::ChargeCapacitor {
+            name: "q".into(),
+            n1: "b".into(),
+            n2: "0".into(),
+            charge: "1u*v(b)+0.5u*v(b)*v(b)".into(),
+            params: vec![]
+        }
+    );
+    let tran = |text: &str| {
+        let text = format!("{text}\n").replacen("\n", "\n*spicerack ngbehavior=hsa\n", 1);
+        let raw = Dialect::Ngspice
+            .run(&text)
+            .unwrap_or_else(|e| panic!("{e}\n{text}"));
+        raw.real_data
+            .iter()
+            .flatten()
+            .map(|x| x.to_bits())
+            .collect::<Vec<_>>()
+    };
+    let want = tran(deck);
+    assert_eq!(tran(&fixpoint(&ir, Dialect::Ngspice)), want);
+    let hs = netlist(&ir, Dialect::Hspice).unwrap();
+    assert!(hs.contains("\nCq b 0 Q='1u*v(b)+0.5u*v(b)*v(b)'\n"), "{hs}");
+    assert_eq!(tran(&hs), want);
+    let scs = netlist(&ir, Dialect::Spectre).unwrap();
+    assert!(
+        scs.contains("\ncq (b 0) bsource q=1u*v(b)+0.5u*v(b)*v(b)\n"),
+        "{scs}"
+    );
+    let err = netlist(&ir, Dialect::Vacask).unwrap_err().to_string();
+    assert!(err.contains("charge-defined capacitor"), "{err}");
+
+    let late = "t\n.subckt pass d g s b w=1\nR1 d s {w}\n.ends pass\n.subckt latch d g s b\nxp d g s b w = {2} pass\n.ends latch\n";
+    let (ir, report) = parse(late, "t", Dialect::Ngspice).unwrap();
+    assert_eq!(report, Default::default());
+    let i = &ir.subcircuit_defs[1].instances[0];
+    assert_eq!((i.subcircuit.as_str(), i.port_mapping.len()), ("pass", 4));
+    assert!(fixpoint(&ir, Dialect::Ngspice).contains("\nXp d g s b pass w={2}\n"));
+    // Two bare words after the parameters, or one before them: not that shape.
+    let (other, report) =
+        parse("t\nxq a b w=1 c d\nxr a b c w=1\n", "t", Dialect::Ngspice).unwrap();
+    assert_eq!(report.raw, 1, "{other:?}");
+    assert_eq!(other.top.instances[0].subcircuit, "c");
+}
+
 /// LTspice reads `.lib tt` as the file `tt`: no section form, so the
 /// codegen refuses rather than write a different deck.
 #[test]

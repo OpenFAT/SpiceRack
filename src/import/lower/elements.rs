@@ -67,6 +67,24 @@ impl Cx<'_> {
                         }
                     }
                     Some(v) => self.value(v),
+                    // ngspice §3.3.9 `C1 a b q='expr'`: a charge, no capacitance.
+                    None if tag == Tag::C
+                        && !params.iter().any(|(k, _)| k.eq_ignore_ascii_case("c"))
+                        && params.iter().any(|(k, _)| k.eq_ignore_ascii_case("q")) =>
+                    {
+                        let i = params
+                            .iter()
+                            .position(|(k, _)| k.eq_ignore_ascii_case("q"))?;
+                        let pair = self.all(card, Tag::Pair)[i];
+                        params.remove(i);
+                        return Some(Component::ChargeCapacitor {
+                            name,
+                            n1: node(0)?,
+                            n2: node(1)?,
+                            charge: self.body(self.kids(pair)[1]),
+                            params,
+                        });
+                    }
                     // ngspice `R1 a b r=1k`
                     None => {
                         let key = format!("{tag:?}").to_ascii_lowercase();

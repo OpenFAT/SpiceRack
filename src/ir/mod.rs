@@ -481,6 +481,13 @@ mod tests {
             .chain([
                 src("1", pwl(Some(0.0.into()), Some(x("td")))),
                 src("2", pwl(Some(x("r")), Some(1e-3.into()))),
+                Component::ChargeCapacitor {
+                    name: s("q"),
+                    n1: s("a"),
+                    n2: s("0"),
+                    charge: s("1u*v(a)"),
+                    params: kv(),
+                },
             ])
             .collect(),
             instances: vec![Instance {

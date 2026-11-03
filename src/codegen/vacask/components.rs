@@ -305,6 +305,14 @@ pub(super) fn emit_component(
                 Q(name, false)
             )));
         }
+        // VACASK's builtins (`docs/dev-builtin.md`) have no charge-defined
+        // element and no behavioural source to build one from.
+        Component::ChargeCapacitor { name, charge, .. } => {
+            return Err(unsupported_comp(format!(
+                "c{}: charge-defined capacitor q='{charge}' (VACASK has no charge-based element)",
+                q(name)
+            )));
+        }
         Component::BehavioralVoltage { name, .. } | Component::BehavioralCurrent { name, .. } => {
             return Err(unsupported_comp(format!(
                 "b{}: behavioural sources are an expression language VACASK does not share",

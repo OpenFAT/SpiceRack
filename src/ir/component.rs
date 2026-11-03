@@ -1,7 +1,8 @@
 //! One element card as data: every SPICE component kind the IR models, and
 //! the per-kind views passes run over them (names, parameters, expressions).
 //!
-//! Cites: ngspice manual §4.1.11 (RF ports); SPICE 2G6 `POLY` term order.
+//! Cites: ngspice manual §3.3.9 (charge-defined capacitors), §4.1.11 (RF
+//! ports); SPICE 2G6 `POLY` term order.
 //!
 //! Contents:
 //! - `pub enum Component`, `pub struct RfPort`
@@ -88,6 +89,18 @@ pub enum Component {
         np: String,
         nm: String,
         expression: String,
+    },
+    /// A charge-defined capacitor (ngspice §3.3.9 `C n+ n- Q='expr'`):
+    /// `charge` is the charge from `n1` to `n2` as an expression of node
+    /// voltages and parameters, without SPICE's delimiters; `params` the
+    /// card's others (`tc1`, `m`).
+    ChargeCapacitor {
+        name: String,
+        n1: String,
+        n2: String,
+        charge: String,
+        #[serde(default)]
+        params: Vec<(String, String)>,
     },
     Vcvs {
         name: String,
@@ -230,6 +243,7 @@ impl Component {
         match self {
             Resistor { name, n1, n2, .. }
             | Capacitor { name, n1, n2, .. }
+            | ChargeCapacitor { name, n1, n2, .. }
             | Inductor { name, n1, n2, .. } => vec![name, n1, n2],
             MutualInductor {
                 name,
@@ -365,6 +379,7 @@ impl Component {
         match self {
             Resistor { params, .. }
             | Capacitor { params, .. }
+            | ChargeCapacitor { params, .. }
             | Inductor { params, .. }
             | Diode { params, .. }
             | Bjt { params, .. }
@@ -393,6 +408,11 @@ impl Component {
             } => (Some(value), waveform.as_ref()),
             BehavioralVoltage { expression, .. } | BehavioralCurrent { expression, .. } => {
                 return vec![expression];
+            }
+            ChargeCapacitor { charge, params, .. } => {
+                return std::iter::once(charge.as_str())
+                    .chain(params.iter().map(|(_, v)| v.as_str()))
+                    .collect();
             }
             _ => (None, None),
         };
@@ -423,6 +443,11 @@ impl Component {
             } => (Some(value), &mut [], waveform.as_mut()),
             BehavioralVoltage { expression, .. } | BehavioralCurrent { expression, .. } => {
                 return vec![expression];
+            }
+            ChargeCapacitor { charge, params, .. } => {
+                return std::iter::once(charge)
+                    .chain(params.iter_mut().map(|(_, v)| v))
+                    .collect();
             }
             Diode { params, .. }
             | Bjt { params, .. }
@@ -456,6 +481,7 @@ impl Component {
         match self {
             Resistor { name, .. }
             | Capacitor { name, .. }
+            | ChargeCapacitor { name, .. }
             | Inductor { name, .. }
             | MutualInductor { name, .. }
             | VoltageSource { name, .. }

@@ -23,7 +23,7 @@ mod waveform;
 
 use crate::ir::*;
 
-use super::{CodeGenError, Dialect, param_defs, params, verbatim};
+use super::{CodeGenError, Dialect, param_defs, params};
 use analyses::{analysis, step_param};
 pub(crate) use components::component;
 use control::{control_run, raw_lines};
@@ -31,7 +31,7 @@ use sections::{param_cards, params_and_models, section};
 // The ngspice backend reads its own deck back with these.
 #[cfg(feature = "backend")]
 pub(crate) use control::{is_four, is_meas, runs_in_control};
-use values::{dec, key, ngspice, num};
+use values::{dec, key, ngspice, num, spelled};
 
 /// The comment that carries `Testbench::ngbehavior` in an ngspice deck.
 /// ngspice reads its compatibility mode only before parsing (no card sets
@@ -39,7 +39,8 @@ use values::{dec, key, ngspice, num};
 /// text stays the whole input of a run.
 pub(crate) const NGBEHAVIOR: &str = "*spicerack ngbehavior=";
 
-/// The whole deck for `d`, ending in `.end` with no line end after it.
+/// The whole deck for `d`, ending in `.end` with no line end after it (an
+/// HSPICE deck with no analysis, a library, ends without one).
 pub(super) fn netlist(d: Dialect, ir: &CircuitIR) -> Result<String, CodeGenError> {
     check_raw_dialect(d, ir)?;
     // Numbers read from an ngspice deck carry ngspice's arithmetic: written
@@ -218,7 +219,18 @@ pub(super) fn netlist(d: Dialect, ir: &CircuitIR) -> Result<String, CodeGenError
         }
     }
 
-    out.push_str(".end");
+    // HSPICE's `.END` ends the run, even in a file read by `.include` or
+    // `.lib` (hspice.peg L9; ESPice stops there): a deck with no analysis is
+    // a library, and ends without one.
+    let runs = ir
+        .testbench
+        .as_ref()
+        .is_some_and(|tb| !tb.analyses.is_empty());
+    if d == Dialect::Hspice && !runs {
+        out.pop();
+    } else {
+        out.push_str(".end");
+    }
     Ok(out)
 }
 
@@ -354,7 +366,7 @@ fn model(out: &mut String, d: Dialect, m: &ModelDef) {
         if v.is_empty() {
             w!(out, "{open}{k}")
         } else {
-            w!(out, "{open}{k}={v}")
+            w!(out, "{open}{k}={}", spelled(d)(v))
         }
     }
     if !m.parameters.is_empty() {
@@ -377,10 +389,10 @@ fn subcircuit(
     if !sc.parameters.is_empty() && d != Dialect::Hspice {
         out.push_str(" PARAMS:");
     }
-    param_defs(out, &sc.parameters, verbatim);
+    param_defs(out, &sc.parameters, spelled(d));
     out.push('\n');
     file_cards(out, d, sc)?;
-    param_cards(out, &sc.locals);
+    param_cards(out, d, &sc.locals);
     for m in &sc.models {
         model(out, d, m);
         out.push('\n');
@@ -402,7 +414,7 @@ fn body(
     for e in sc.elements() {
         match e {
             Element::Component(c) => component(out, d, x, c)?,
-            Element::Instance(i) => instance(out, i),
+            Element::Instance(i) => instance(out, d, i),
         }
         out.push('\n');
     }
@@ -410,7 +422,7 @@ fn body(
     Ok(())
 }
 
-fn instance(out: &mut String, inst: &Instance) {
+fn instance(out: &mut String, d: Dialect, inst: &Instance) {
     w!(out, "X{}", inst.name);
     for port in &inst.port_mapping {
         w!(out, " {port}");
@@ -419,7 +431,7 @@ fn instance(out: &mut String, inst: &Instance) {
         out,
         " {}{}",
         inst.subcircuit,
-        params(&inst.parameters, verbatim)
+        params(&inst.parameters, spelled(d))
     );
 }
 

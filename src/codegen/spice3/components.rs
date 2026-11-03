@@ -6,7 +6,7 @@
 
 use super::values::{dec, key, ngspice, num, value};
 use super::waveform::{refuse_wave, waveform};
-use crate::codegen::{CodeGenError, Dialect, laplace, params, verbatim};
+use crate::codegen::{CodeGenError, Dialect, laplace, params};
 use crate::ir::*;
 
 /// `comp`'s card, written onto `out` with no line end (a Laplace source is
@@ -17,7 +17,7 @@ pub(crate) fn component(
     x: bool,
     comp: &Component,
 ) -> Result<(), CodeGenError> {
-    let ps = |p| params(p, verbatim);
+    let ps = |p| params(p, super::values::spelled(d));
     match comp {
         Component::Resistor {
             name,
@@ -58,6 +58,21 @@ pub(crate) fn component(
             rclvalue(out, d, x, v, model);
             w!(out, "{}", ps(p));
         }
+        // ngspice §3.3.9 `C1 a b q='1u*V(a,b)'`; Xyce braces it (its
+        // SOLN_DEP_CAP regression deck reads `q='...'` too); LTspice's help
+        // spells it `Q=<expression>`; HSPICE is written as ngspice's form,
+        // which ESPice's HSPICE reader runs (`tests/test_sections_pdk`).
+        Component::ChargeCapacitor {
+            name,
+            n1,
+            n2,
+            charge,
+            params: p,
+        } => match d {
+            Dialect::Xyce => w!(out, "C{name} {n1} {n2} Q={{{charge}}}{}", ps(p)),
+            Dialect::Ltspice => w!(out, "C{name} {n1} {n2} Q={charge}{}", ps(p)),
+            _ => w!(out, "C{name} {n1} {n2} Q='{charge}'{}", ps(p)),
+        },
         Component::MutualInductor {
             name,
             inductor1,

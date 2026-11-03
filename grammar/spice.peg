@@ -205,7 +205,12 @@ Val_i      <- value ((s? ',' s? / s) &[+\-.0-9] More !(s? '='))*
 S          <- 's' Name_e s Node s Node s Node s Node s Mname s?
 W          <- 'w' Name_e s Node s Node s Name s Mname s?
 T          <- 't' Name_e s Node s Node s Node s Node (s Pair)* s?
-X          <- 'x' Name_e (s Node &(s !pairstart !'params:' word))* s Mname (s 'params:')? (s Pair)* s?
+# A card whose parameters come before one last bare word names that word as
+# the subcircuit (sky130's `special_pfet_latch` alias): read by its evident
+# intent, though ngspice 45 rejects it ("unknown subckt", run). Only that
+# shape (nodes, `k=v`s, one word, the card's end) reads so.
+X          <- 'x' Name_e (s Node &(s !pairstart !'params:' word))* s Mname (s 'params:')? (s Pair)* s? &nl
+            / 'x' Name_e (s !pairstart Node)* (s Pair)+ s Mname s? &nl
 element_any <- &[a-z] Name (s? field)+
 
 # ── Fields (§1.8) ──

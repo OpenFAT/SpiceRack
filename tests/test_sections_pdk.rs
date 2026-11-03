@@ -198,19 +198,24 @@ fn sky130_corner_file_reads_into_sections() {
 
 /// sky130's combined library (`libs.tech/combined/sky130.lib.spice`) and
 /// every file it reaches through `.include` and `.lib` (followed from the
-/// IR): each reads with nothing unparsed and nothing raw but the two
-/// charge-defined capacitors (`C ... q=`, no IR form) and the one instance
-/// naming its subcircuit after its parameters, which ngspice 45 refuses
-/// ("unknown subckt", run), is a fixpoint, and,
-/// written back as ngspice into a mirror of the tree, runs an NMOS on the
-/// `tt` corner to the same drain current as the PDK's own files, bit for
-/// bit. Each run loads the corner: about 34 s.
+/// IR): each reads with nothing unparsed and nothing raw, is a fixpoint,
+/// and is written as ngspice and as HSPICE (no refusal) into two mirrors of
+/// the tree. ngspice runs an NMOS on the `tt` corner to the same drain
+/// current from the PDK's own files, the ngspice mirror and the HSPICE
+/// mirror (read in its HSPICE mode, `hsa`), bit for bit.
+///
+/// Known gap: ESPice 0.3.0 reads the HSPICE mirror (`--tokenizer=hspice`)
+/// and runs it, but to a current 5.1% above ngspice's (1.8498e-4 against
+/// 1.7608e-4 A, measured; 2.3% at l=0.5); ngspice reading the same text
+/// agrees bit for bit, so the gap is ESPice's reading, unexplained. The
+/// test asserts the gap's band, so a fix fails it until this note goes.
 #[test]
 fn sky130_combined_library_converts_losslessly() {
     let root = std::env::var("PDK_ROOT")
         .expect("PDK_ROOT not set: run the tests in `nix develop .#testing`");
     let pdk = Path::new(&root).join("sky130A");
     let mirror = tempfile::tempdir().unwrap();
+    let hspice = tempfile::tempdir().unwrap();
     let entry = Path::new("libs.tech/combined/sky130.lib.spice");
     let (mut todo, mut seen) = (vec![entry.to_path_buf()], Vec::new());
     let mut raw = Vec::new();
@@ -254,29 +259,24 @@ fn sky130_combined_library_converts_losslessly() {
             );
         }
         let text = fixpoint(&ir, Dialect::Ngspice);
-        let out = mirror.path().join(&rel);
-        std::fs::create_dir_all(out.parent().unwrap()).unwrap();
-        std::fs::write(out, text).unwrap();
+        let hs = netlist(&ir, Dialect::Hspice)
+            .unwrap_or_else(|e| panic!("{}: HSPICE: {e}", rel.display()));
+        for (root, text) in [(mirror.path(), text), (hspice.path(), hs)] {
+            let out = root.join(&rel);
+            std::fs::create_dir_all(out.parent().unwrap()).unwrap();
+            std::fs::write(out, text).unwrap();
+        }
         seen.push(rel);
     }
-    raw.sort();
-    assert_eq!(
-        raw,
-        [
-            "libs.ref/sky130_fd_pr/spice/sky130_fd_pr__cap_var_hvt.model.spice: cg",
-            "libs.ref/sky130_fd_pr/spice/sky130_fd_pr__cap_var_lvt.model.spice: cg",
-            "libs.ref/sky130_fd_pr/spice/sky130_fd_pr__special_pfet_latch.pm3.spice: xsky130_fd_pr__special_pfet_pass",
-        ]
-    );
+    assert!(raw.is_empty(), "{raw:#?}");
     assert!(seen.len() > 100, "{} files reached", seen.len());
-    let id = |root: &Path| {
-        let deck = format!(
+    let deck = |root: &Path| {
+        format!(
             "sky130\n*spicerack ngbehavior=hsa\n.lib '{}' tt\nXn d g 0 0 sky130_fd_pr__nfet_01v8 w=1 l=0.15\nVd d 0 1.8\nVg g 0 1.2\n.op\n.end\n",
             root.join(entry).display()
-        );
-        let raw = Dialect::Ngspice
-            .run(&deck)
-            .unwrap_or_else(|e| panic!("{e}\n{deck}"));
+        )
+    };
+    let id = |raw: spicerack::result::RawData| {
         let i = raw
             .variables
             .iter()
@@ -286,9 +286,29 @@ fn sky130_combined_library_converts_losslessly() {
             .unwrap_or_else(|| panic!("{:?}", raw.variables));
         -raw.real_data[i][0]
     };
-    let (want, got) = (id(&pdk), id(mirror.path()));
+    let ngspice = |root: &Path| {
+        let deck = deck(root);
+        id(Dialect::Ngspice
+            .run(&deck)
+            .unwrap_or_else(|e| panic!("{e}\n{deck}")))
+    };
+    let want = ngspice(&pdk);
     assert!(want > 1e-6, "{want}");
-    assert_eq!(got.to_bits(), want.to_bits(), "{got} != {want}");
+    for root in [mirror.path(), hspice.path()] {
+        let got = ngspice(root);
+        assert_eq!(
+            got.to_bits(),
+            want.to_bits(),
+            "{}: {got} != {want}",
+            root.display()
+        );
+    }
+    let espice = id(espice_hspice(&deck(hspice.path())));
+    let gap = espice / want - 1.0;
+    assert!(
+        (0.04..0.06).contains(&gap),
+        "ESPice {espice} against ngspice {want}: {gap:+.4}"
+    );
 }
 
 /// VACASK's own corner library (`demo/cmos180n.lib` in `$VACASK_CORPUS`):
@@ -362,6 +382,27 @@ fn fixpoint(ir: &CircuitIR, d: Dialect) -> String {
     assert_eq!(&again, ir, "{d:?}:\n{text}");
     assert_eq!(netlist(&again, d).unwrap(), text, "{d:?}");
     text
+}
+
+/// ESPice reading `deck` as HSPICE (`--tokenizer=hspice`) and its run.
+fn espice_hspice(deck: &str) -> spicerack::result::RawData {
+    let dir = tempfile::tempdir().unwrap();
+    let (path, raw) = (dir.path().join("deck.sp"), dir.path().join("out.raw"));
+    std::fs::write(&path, deck).unwrap();
+    let out = std::process::Command::new("espice")
+        .arg("--tokenizer=hspice")
+        .arg(&path)
+        .arg("--rawfile")
+        .arg(&raw)
+        .arg("--format=binary")
+        .output()
+        .expect("espice not on PATH: run the tests in `nix develop .#testing`");
+    assert!(
+        out.status.success(),
+        "{}\n{deck}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    spicerack::rawfile::parse_raw(&std::fs::read(&raw).unwrap()).unwrap()
 }
 
 /// `p` with its `.` and `..` parts resolved, lexically.

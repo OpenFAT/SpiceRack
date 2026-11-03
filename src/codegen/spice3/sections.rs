@@ -7,10 +7,11 @@
 //!
 //! Contents:
 //! - `pub(super) fn params_and_models(out: &mut String, d: Dialect, sc: &Subcircuit)`
-//! - `pub(super) fn param_cards(out: &mut String, params: &[ParamDef])`
+//! - `pub(super) fn param_cards(out: &mut String, d: Dialect, params: &[ParamDef])`
 //! - `pub(super) fn section(out: &mut String, d: Dialect, x: bool, s: &LibSection,
 //!   drop_four: bool) -> Result<(), CodeGenError>`
 
+use super::values::spelled;
 use super::{body, file_cards, model, subcircuit};
 use crate::codegen::{CodeGenError, Dialect};
 use crate::ir::*;
@@ -18,7 +19,7 @@ use crate::ir::*;
 /// A block's `.param` cards and `.model` cards, as a deck's top and a
 /// library section hold them.
 pub(super) fn params_and_models(out: &mut String, d: Dialect, sc: &Subcircuit) {
-    param_cards(out, &sc.parameters);
+    param_cards(out, d, &sc.parameters);
     for m in &sc.models {
         model(out, d, m);
         out.push('\n');
@@ -27,10 +28,10 @@ pub(super) fn params_and_models(out: &mut String, d: Dialect, sc: &Subcircuit) {
 
 /// `.param name=value`, one card each, in order (a parameter with no value
 /// has none).
-pub(super) fn param_cards(out: &mut String, params: &[ParamDef]) {
+pub(super) fn param_cards(out: &mut String, d: Dialect, params: &[ParamDef]) {
     for p in params {
         if let Some(ref default) = p.default {
-            w!(out, ".param {}={}\n", p.name, default);
+            w!(out, ".param {}={}\n", p.name, spelled(d)(default));
         }
     }
 }
