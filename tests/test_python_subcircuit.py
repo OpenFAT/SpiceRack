@@ -561,9 +561,9 @@ class TestSubcircuitSerialization:
 
 class TestSubcircuitWaveforms:
     def test_every_source_on_both_builders(self):
-        """Subcircuit and Testbench get their twelve sources from one table."""
+        """Subcircuit and Testbench get their sixteen sources from one table."""
         ps = import_spicerack()
-        waves = ("Sinusoidal", "Pulse", "PieceWiseLinear", "Exponential", "SingleFrequencyFM", "AmplitudeModulated")
+        waves = ("Sinusoidal", "Pulse", "PieceWiseLinear", "Exponential", "SingleFrequencyFM", "AmplitudeModulated", "TransientNoise", "Random")
         names = [f"{w}{k}Source" for w in waves for k in ("Voltage", "Current")]
         for cls in (ps.Subcircuit, ps.Testbench):
             assert [n for n in names if hasattr(cls, n)] == names, cls.__name__
@@ -855,10 +855,10 @@ class TestTestbenchCreation:
         data = json.loads(tb.to_json())
         assert [a["type"] for a in data["testbench"]["analyses"]] == ["Op", "Ac"]
         netlist = tb.netlist("ngspice")
-        assert ".op" in netlist
-        # With a `.meas`, ngspice runs the AC from a `.control` block (it
-        # refuses `.measure` under `-b -r`); other dialects keep the card.
-        assert ".control\nac dec 10 1 1meg\n.endc" in netlist
+        # With a `.meas`, ngspice runs every analysis from one `.control`
+        # block (it refuses `.measure` under `-b -r`, and an analysis left as
+        # a card would run past the write); other dialects keep the cards.
+        assert ".control\nop\nac dec 10 1 1meg\n.endc" in netlist
         assert ".ac dec 10 1 1meg" in tb.netlist("ltspice")
         assert ".meas tran vmax MAX V(out)" in netlist
 

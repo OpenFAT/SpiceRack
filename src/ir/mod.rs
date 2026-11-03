@@ -220,7 +220,13 @@ pub enum Component {
     Capacitor { name: String, n1: String, n2: String, value: IrValue, #[serde(default)] model: Option<String>, params: Vec<(String, String)> },
     Inductor { name: String, n1: String, n2: String, value: IrValue, #[serde(default)] model: Option<String>, params: Vec<(String, String)> },
     MutualInductor { name: String, inductor1: String, inductor2: String, coupling: f64 },
-    VoltageSource { name: String, np: String, nm: String, value: IrValue, #[serde(default)] ac_magnitude: Option<f64>, #[serde(default)] ac_phase: Option<f64>, waveform: Option<IrWaveform> },
+    /// `port`: an RF port for `.sp` (ngspice `portnum n z0 x`, manual
+    /// §4.1.11), which puts `z0` in series with the source in every analysis.
+    VoltageSource {
+        name: String, np: String, nm: String, value: IrValue,
+        #[serde(default)] ac_magnitude: Option<f64>, #[serde(default)] ac_phase: Option<f64>, waveform: Option<IrWaveform>,
+        #[serde(default, skip_serializing_if = "Option::is_none")] port: Option<RfPort>,
+    },
     CurrentSource { name: String, np: String, nm: String, value: IrValue, #[serde(default)] ac_magnitude: Option<f64>, #[serde(default)] ac_phase: Option<f64>, waveform: Option<IrWaveform> },
     BehavioralVoltage { name: String, np: String, nm: String, expression: String },
     BehavioralCurrent { name: String, np: String, nm: String, expression: String },
@@ -330,6 +336,15 @@ impl Component {
     }
 }
 
+/// A voltage source's RF port (ngspice manual §4.1.11): its number among
+/// the deck's ports, which count from 1 with no repeat, and its reference
+/// impedance in ohms (ngspice's default is 50).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct RfPort {
+    pub num: u32,
+    pub z0: f64,
+}
+
 // ── Value and waveform types ──
 
 /// Component value in the IR -- numeric, expression, or raw
@@ -387,10 +402,83 @@ impl PartialEq<f64> for IrNum {
 pub enum IrWaveform {
     Sin { offset: IrNum, amplitude: IrNum, frequency: IrNum, delay: IrNum, damping: IrNum, phase: IrNum },
     Pulse { initial: IrNum, pulsed: IrNum, delay: IrNum, rise_time: IrNum, fall_time: IrNum, pulse_width: IrNum, period: IrNum },
-    Pwl { values: Vec<(IrNum, IrNum)> },
+    /// `repeat` is ngspice's `r=`: the time point the sequence repeats from,
+    /// forever (`0` repeats all of it; one of the times before the last).
+    /// `delay` is `td=`: the whole sequence shifted later. `None` is the
+    /// card without them (once, no delay), and JSON leaves it out.
+    Pwl {
+        values: Vec<(IrNum, IrNum)>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        repeat: Option<IrNum>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        delay: Option<IrNum>,
+    },
     Exp { initial: IrNum, pulsed: IrNum, rise_delay: IrNum, rise_tau: IrNum, fall_delay: IrNum, fall_tau: IrNum },
     Sffm { offset: IrNum, amplitude: IrNum, carrier_freq: IrNum, modulation_index: IrNum, signal_freq: IrNum },
     Am { amplitude: IrNum, offset: IrNum, modulating_freq: IrNum, carrier_freq: IrNum, delay: IrNum },
+    /// ngspice transient noise (manual §4.1.7): Gaussian white noise of rms
+    /// `na`, a new sample every `nt` seconds; 1/f noise of exponent `nalpha`
+    /// and rms `namp`; a random telegraph signal of amplitude `rtsam` with
+    /// mean capture and emission times `rtscapt`, `rtsemt` (0 for none),
+    /// added to the source's DC value. ngspice only: no other dialect has a source form.
+    TrNoise { na: IrNum, nt: IrNum, nalpha: IrNum, namp: IrNum, rtsam: IrNum, rtscapt: IrNum, rtsemt: IrNum },
+    /// ngspice random source (manual §4.1.8): a `kind` draw held for `ts`
+    /// seconds, starting after `td` (the output is `p2` until then), added
+    /// to the source's DC value as TRNOISE is. `p1`,
+    /// `p2`: range and offset (uniform, values within `p2 ± p1`), standard
+    /// deviation and mean (Gaussian), mean and offset (exponential), lambda
+    /// and offset (Poisson). ngspice only.
+    TrRandom { kind: RandomKind, ts: IrNum, td: IrNum, p1: IrNum, p2: IrNum },
+}
+
+/// TRRANDOM's distribution, its `TYPE` number in the deck and in JSON;
+/// any other number fails to load.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "u8", into = "u8")]
+#[repr(u8)]
+pub enum RandomKind {
+    Uniform = 1,
+    Gaussian = 2,
+    Exponential = 3,
+    Poisson = 4,
+}
+
+impl RandomKind {
+    /// The four kinds, in `TYPE` order.
+    pub const ALL: [RandomKind; 4] = [RandomKind::Uniform, RandomKind::Gaussian, RandomKind::Exponential, RandomKind::Poisson];
+
+    /// The lowercase name (`uniform`, ...), as Python spells it.
+    pub fn name(self) -> &'static str {
+        match self {
+            RandomKind::Uniform => "uniform",
+            RandomKind::Gaussian => "gaussian",
+            RandomKind::Exponential => "exponential",
+            RandomKind::Poisson => "poisson",
+        }
+    }
+}
+
+impl TryFrom<u8> for RandomKind {
+    type Error = String;
+
+    fn try_from(t: u8) -> Result<Self, String> {
+        Self::ALL.into_iter().find(|k| *k as u8 == t).ok_or_else(|| format!("unknown TRRANDOM type {t} (expected 1 to 4)"))
+    }
+}
+
+impl From<RandomKind> for u8 {
+    fn from(k: RandomKind) -> u8 {
+        k as u8
+    }
+}
+
+impl std::str::FromStr for RandomKind {
+    type Err = String;
+
+    /// Reads a [`RandomKind::name`] in any case.
+    fn from_str(s: &str) -> Result<Self, String> {
+        Self::ALL.into_iter().find(|k| k.name().eq_ignore_ascii_case(s)).ok_or_else(|| format!("unknown random type '{s}' (expected uniform, gaussian, exponential or poisson)"))
+    }
 }
 
 impl IrWaveform {
@@ -400,10 +488,12 @@ impl IrWaveform {
         match self {
             Sin { offset, amplitude, frequency, delay, damping, phase } => vec![offset, amplitude, frequency, delay, damping, phase],
             Pulse { initial, pulsed, delay, rise_time, fall_time, pulse_width, period } => vec![initial, pulsed, delay, rise_time, fall_time, pulse_width, period],
-            Pwl { values } => values.iter().flat_map(|(t, v)| [t, v]).collect(),
+            Pwl { values, repeat, delay } => values.iter().flat_map(|(t, v)| [t, v]).chain(repeat).chain(delay).collect(),
             Exp { initial, pulsed, rise_delay, rise_tau, fall_delay, fall_tau } => vec![initial, pulsed, rise_delay, rise_tau, fall_delay, fall_tau],
             Sffm { offset, amplitude, carrier_freq, modulation_index, signal_freq } => vec![offset, amplitude, carrier_freq, modulation_index, signal_freq],
             Am { amplitude, offset, modulating_freq, carrier_freq, delay } => vec![amplitude, offset, modulating_freq, carrier_freq, delay],
+            TrNoise { na, nt, nalpha, namp, rtsam, rtscapt, rtsemt } => vec![na, nt, nalpha, namp, rtsam, rtscapt, rtsemt],
+            TrRandom { ts, td, p1, p2, .. } => vec![ts, td, p1, p2],
         }
     }
 
@@ -414,10 +504,12 @@ impl IrWaveform {
         match self {
             Sin { offset, amplitude, frequency, delay, damping, phase } => vec![offset, amplitude, frequency, delay, damping, phase],
             Pulse { initial, pulsed, delay, rise_time, fall_time, pulse_width, period } => vec![initial, pulsed, delay, rise_time, fall_time, pulse_width, period],
-            Pwl { values } => values.iter_mut().flat_map(|(t, v)| [t, v]).collect(),
+            Pwl { values, repeat, delay } => values.iter_mut().flat_map(|(t, v)| [t, v]).chain(repeat).chain(delay).collect(),
             Exp { initial, pulsed, rise_delay, rise_tau, fall_delay, fall_tau } => vec![initial, pulsed, rise_delay, rise_tau, fall_delay, fall_tau],
             Sffm { offset, amplitude, carrier_freq, modulation_index, signal_freq } => vec![offset, amplitude, carrier_freq, modulation_index, signal_freq],
             Am { amplitude, offset, modulating_freq, carrier_freq, delay } => vec![amplitude, offset, modulating_freq, carrier_freq, delay],
+            TrNoise { na, nt, nalpha, namp, rtsam, rtscapt, rtsemt } => vec![na, nt, nalpha, namp, rtsam, rtscapt, rtsemt],
+            TrRandom { ts, td, p1, p2, .. } => vec![ts, td, p1, p2],
         }
     }
 
@@ -429,15 +521,18 @@ impl IrWaveform {
         }).collect()
     }
 
-    /// The value at t=0, which SPICE takes as the DC value of a card that
-    /// gives none (AM starts at 0).
+    /// The DC value SPICE takes for a card that gives none: the value at
+    /// t=0 (AM starts at 0), and 0 for TRNOISE and TRRANDOM, which add to it.
     pub fn at_zero(&self) -> IrValue {
         use IrWaveform::*;
         match self {
             Sin { offset, .. } | Sffm { offset, .. } => offset.into(),
             Pulse { initial, .. } | Exp { initial, .. } => initial.into(),
-            Pwl { values } => values.first().map_or(IrValue::Numeric { value: 0.0 }, |p| (&p.1).into()),
-            Am { .. } => IrValue::Numeric { value: 0.0 },
+            Pwl { values, .. } => values.first().map_or(IrValue::Numeric { value: 0.0 }, |p| (&p.1).into()),
+            // TRNOISE and TRRANDOM add to the card's DC value instead of
+            // replacing it (ngspice 45: `V1 a 0 3 TRRANDOM(1 1u 10u 2 3)`
+            // holds 6 V before TD), so a card with none has DC 0.
+            Am { .. } | TrNoise { .. } | TrRandom { .. } => IrValue::Numeric { value: 0.0 },
         }
     }
 }
@@ -481,7 +576,8 @@ pub struct StepParam {
     pub start: f64,
     pub stop: f64,
     pub step: f64,
-    pub sweep_type: Option<String>,
+    /// `lin`, `dec`, `oct` (or Spectre's `log`); `None` is linear.
+    pub sweep_type: Option<Sweep>,
 }
 
 // ── Analysis types ──
@@ -497,17 +593,26 @@ pub enum Analysis {
     Noise { output: String, reference: String, source: String, #[serde(flatten)] sweep: FreqSweep, points_per_summary: Option<u32> },
     Tf { output: String, source: String },
     Sensitivity { output: String, ac: Option<FreqSweep> },
-    PoleZero { node1: String, node2: String, node3: String, node4: String, tf_type: String, pz_type: String },
+    PoleZero { node1: String, node2: String, node3: String, node4: String, tf_type: PzTransfer, pz_type: PzKind },
     Distortion { #[serde(flatten)] sweep: FreqSweep, f2overf1: Option<f64> },
-    Pss { fundamental: f64, stabilization: f64, observe_node: String, points_per_period: u32, harmonics: u32 },
+    /// `sc_iter` (shooting iterations, ngspice's default 50), `steady_coeff`
+    /// (the convergence weight, default 1e-3) and `uic` are ngspice's
+    /// `.pss … sciter steadycoeff <uic>` (manual §11.3.12); JSON leaves them
+    /// out when unset.
+    Pss {
+        fundamental: f64, stabilization: f64, observe_node: String, points_per_period: u32, harmonics: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")] sc_iter: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")] steady_coeff: Option<f64>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")] uic: bool,
+    },
     HarmonicBalance { frequencies: Vec<f64>, harmonics: Vec<u32> },
     SPar { #[serde(flatten)] sweep: FreqSweep },
     Stability { probe: String, #[serde(flatten)] sweep: FreqSweep },
     TransientNoise { step: f64, stop: f64 },
     Fourier { fundamental: f64, outputs: Vec<String>, num_harmonics: Option<u32> },
     // Vendor-specific
-    SpectreSweep { param: String, start: f64, stop: f64, step: f64, inner: String, inner_type: String },
-    SpectreMonteCarlo { iterations: u32, inner: String, inner_type: String, seed: Option<u64> },
+    SpectreSweep { param: String, start: f64, stop: f64, step: f64, inner: String, inner_type: SpectreAnalysis },
+    SpectreMonteCarlo { iterations: u32, inner: String, inner_type: SpectreAnalysis, seed: Option<u64> },
     SpectrePac { #[serde(flatten)] pss: PssBase, #[serde(flatten)] sweep: FreqSweep, sweep_type: String },
     SpectrePnoise { #[serde(flatten)] pss: PssBase, output: String, reference: String, #[serde(flatten)] sweep: FreqSweep },
     SpectrePxf { #[serde(flatten)] pss: PssBase, output: String, source: String, #[serde(flatten)] sweep: FreqSweep },
@@ -562,47 +667,101 @@ pub struct FreqSweep {
     pub stop: f64,
 }
 
-/// How a frequency sweep spaces its points. JSON spells it lowercase and
-/// reads any case; anything else fails to load.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase", try_from = "String")]
-pub enum Sweep {
-    Dec,
-    Oct,
-    Lin,
-    /// Spectre's `log=N`: N points in total, log-spaced.
-    Log,
-}
+/// A closed set of deck keywords: `name()` is the keyword, `FromStr` and
+/// JSON read it in any case (anything else fails, naming the choices), and
+/// JSON writes it lowercase, so the text is parsed once, where it enters.
+macro_rules! keywords {
+    ($(#[$m:meta])* $name:ident, $what:literal { $($(#[$vm:meta])* $v:ident = $s:literal),+ $(,)? }) => {
+        $(#[$m])*
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+        #[serde(try_from = "String", into = "&'static str")]
+        pub enum $name { $($(#[$vm])* $v),+ }
 
-impl Sweep {
-    /// The SPICE keyword: `dec`, `oct`, `lin`, `log`.
-    pub fn name(self) -> &'static str {
-        match self {
-            Sweep::Dec => "dec",
-            Sweep::Oct => "oct",
-            Sweep::Lin => "lin",
-            Sweep::Log => "log",
+        impl $name {
+            /// Every keyword, in declaration order.
+            pub const ALL: &'static [$name] = &[$($name::$v),+];
+
+            /// The keyword as a deck and JSON spell it.
+            pub fn name(self) -> &'static str {
+                match self { $($name::$v => $s),+ }
+            }
         }
+
+        impl std::str::FromStr for $name {
+            type Err = String;
+
+            /// Reads a [`Self::name`] in any case.
+            fn from_str(s: &str) -> Result<Self, String> {
+                Self::ALL.iter().copied().find(|k| k.name().eq_ignore_ascii_case(s)).ok_or_else(|| {
+                    let names: Vec<&str> = Self::ALL.iter().map(|k| k.name()).collect();
+                    let (last, rest) = names.split_last().expect("a keyword set is never empty");
+                    format!("unknown {} '{s}' (expected {} or {last})", $what, rest.join(", "))
+                })
+            }
+        }
+
+        impl TryFrom<String> for $name {
+            type Error = String;
+
+            fn try_from(s: String) -> Result<Self, String> {
+                s.parse()
+            }
+        }
+
+        impl From<$name> for &'static str {
+            fn from(k: $name) -> Self {
+                k.name()
+            }
+        }
+    };
+}
+
+keywords! {
+    /// How a sweep spaces its points: a frequency sweep, or a `.step`.
+    Sweep, "sweep" {
+        Dec = "dec",
+        Oct = "oct",
+        Lin = "lin",
+        /// Spectre's `log=N`: N points in total, log-spaced.
+        Log = "log",
     }
 }
 
-impl std::str::FromStr for Sweep {
-    type Err = String;
-
-    /// Reads a [`Sweep::name`] in any case.
-    fn from_str(s: &str) -> Result<Self, String> {
-        [Sweep::Dec, Sweep::Oct, Sweep::Lin, Sweep::Log]
-            .into_iter()
-            .find(|w| w.name().eq_ignore_ascii_case(s))
-            .ok_or_else(|| format!("unknown sweep '{s}' (expected dec, oct, lin or log)"))
+keywords! {
+    /// What a `.pz` transfer function relates (ngspice manual §11.3.6):
+    /// output over input voltage, or output voltage over input current.
+    PzTransfer, "transfer type" {
+        Vol = "vol",
+        Cur = "cur",
     }
 }
 
-impl TryFrom<String> for Sweep {
-    type Error = String;
+keywords! {
+    /// What a `.pz` finds: poles, zeros, or both.
+    PzKind, "pole-zero type" {
+        Pol = "pol",
+        Zer = "zer",
+        Pz = "pz",
+    }
+}
 
-    fn try_from(s: String) -> Result<Self, String> {
-        s.parse()
+keywords! {
+    /// The analysis a Spectre `sweep` or `montecarlo` runs inside it, as
+    /// its statement keyword (`[REF]` analysis statements).
+    SpectreAnalysis, "Spectre analysis" {
+        Dc = "dc",
+        Ac = "ac",
+        Tran = "tran",
+        Noise = "noise",
+        Xf = "xf",
+        Sp = "sp",
+        Stb = "stb",
+        Pss = "pss",
+        Pac = "pac",
+        Pnoise = "pnoise",
+        Pxf = "pxf",
+        Pstb = "pstb",
+        Hb = "hb",
     }
 }
 
@@ -975,6 +1134,80 @@ mod tests {
         }
     }
 
+    /// A PWL written before `repeat`/`delay` existed loads with neither and
+    /// writes back byte for byte; a set one is written after the values.
+    #[test]
+    fn pwl_json_without_repeat_or_delay_round_trips_byte_for_byte() {
+        let old = r#"{"type":"Pwl","values":[[0.0,0.0],[0.001,"vdd"]]}"#;
+        let w: IrWaveform = serde_json::from_str(old).unwrap();
+        assert_eq!(w, IrWaveform::Pwl { values: vec![(0.0.into(), 0.0.into()), (0.001.into(), IrNum::Expr("vdd".into()))], repeat: None, delay: None });
+        assert_eq!(serde_json::to_string(&w).unwrap(), old);
+        let IrWaveform::Pwl { values, .. } = w else { unreachable!() };
+        let set = IrWaveform::Pwl { values, repeat: Some(0.0.into()), delay: Some(IrNum::Expr("td".into())) };
+        assert_eq!(serde_json::to_string(&set).unwrap(), r#"{"type":"Pwl","values":[[0.0,0.0],[0.001,"vdd"]],"repeat":0.0,"delay":"td"}"#);
+    }
+
+    /// The keyword fields that were strings (`.pz` types, a `.step` sweep,
+    /// a Spectre child analysis) load from the JSON the string code wrote
+    /// (0.1.2, the test suite's own values) and write it back byte for byte;
+    /// a keyword no simulator has fails the load.
+    #[test]
+    fn keyword_json_from_0_1_2_round_trips_byte_for_byte() {
+        let old = [
+            r#"{"type":"PoleZero","node1":"in","node2":"0","node3":"out","node4":"0","tf_type":"vol","pz_type":"pz"}"#,
+            r#"{"type":"PoleZero","node1":"in","node2":"0","node3":"out","node4":"0","tf_type":"cur","pz_type":"pol"}"#,
+            r#"{"type":"PoleZero","node1":"in","node2":"0","node3":"out","node4":"0","tf_type":"vol","pz_type":"zer"}"#,
+            r#"{"type":"SpectreSweep","param":"R1","start":1000.0,"stop":10000.0,"step":1000.0,"inner":"dc1","inner_type":"dc"}"#,
+            r#"{"type":"SpectreSweep","param":"rload","start":1000.0,"stop":10000.0,"step":1000.0,"inner":"ac1","inner_type":"ac"}"#,
+            r#"{"type":"SpectreMonteCarlo","iterations":100,"inner":"tran1","inner_type":"tran","seed":42}"#,
+        ];
+        for s in old {
+            let a: Analysis = serde_json::from_str(s).unwrap_or_else(|e| panic!("{s}: {e}"));
+            assert_eq!(serde_json::to_string(&a).unwrap(), s);
+        }
+        let pz: Analysis = serde_json::from_str(old[1]).unwrap();
+        assert!(matches!(pz, Analysis::PoleZero { tf_type: PzTransfer::Cur, pz_type: PzKind::Pol, .. }));
+        let mc: Analysis = serde_json::from_str(old[5]).unwrap();
+        assert!(matches!(mc, Analysis::SpectreMonteCarlo { inner_type: SpectreAnalysis::Tran, .. }));
+        for s in [r#"{"param":"R1","start":100.0,"stop":10000.0,"step":100.0,"sweep_type":"dec"}"#, r#"{"param":"R1","start":100.0,"stop":10000.0,"step":100.0,"sweep_type":null}"#] {
+            let sp: StepParam = serde_json::from_str(s).unwrap();
+            assert_eq!(serde_json::to_string(&sp).unwrap(), s);
+        }
+        let err = serde_json::from_str::<Analysis>(&old[0].replace("\"vol\"", "\"volt\"")).unwrap_err().to_string();
+        assert!(err.contains("unknown transfer type 'volt' (expected vol or cur)"), "{err}");
+        let err = serde_json::from_str::<Analysis>(&old[5].replace("\"tran\"", "\"op\"")).unwrap_err().to_string();
+        assert!(err.contains("unknown Spectre analysis 'op'"), "{err}");
+    }
+
+    /// A `.pss` and a V source written before the shooting controls and RF
+    /// ports existed load with them unset and write back byte for byte.
+    #[test]
+    fn pss_and_source_json_without_the_new_fields_round_trip_byte_for_byte() {
+        let pss = r#"{"type":"Pss","fundamental":1000000000.0,"stabilization":1e-7,"observe_node":"out","points_per_period":128,"harmonics":10}"#;
+        let a: Analysis = serde_json::from_str(pss).unwrap();
+        assert!(matches!(a, Analysis::Pss { sc_iter: None, steady_coeff: None, uic: false, .. }));
+        assert_eq!(serde_json::to_string(&a).unwrap(), pss);
+        let v = r#"{"type":"VoltageSource","name":"1","np":"in","nm":"0","value":{"type":"Numeric","value":0.0},"ac_magnitude":1.0,"ac_phase":null,"waveform":null}"#;
+        let c: Component = serde_json::from_str(v).unwrap();
+        assert!(matches!(c, Component::VoltageSource { port: None, .. }));
+        assert_eq!(serde_json::to_string(&c).unwrap(), v);
+        let Component::VoltageSource { name, np, nm, value, ac_magnitude, ac_phase, waveform, .. } = c else { unreachable!() };
+        let rf = Component::VoltageSource { name, np, nm, value, ac_magnitude, ac_phase, waveform, port: Some(RfPort { num: 1, z0: 50.0 }) };
+        assert!(serde_json::to_string(&rf).unwrap().ends_with(r#""waveform":null,"port":{"num":1,"z0":50.0}}"#));
+    }
+
+    /// TRRANDOM's type is its deck number in JSON; one ngspice does not
+    /// define fails the load.
+    #[test]
+    fn trrandom_kind_is_its_type_number() {
+        let j = r#"{"type":"TrRandom","kind":2,"ts":1e-6,"td":0.0,"p1":1.0,"p2":0.0}"#;
+        let w: IrWaveform = serde_json::from_str(j).unwrap();
+        assert!(matches!(w, IrWaveform::TrRandom { kind: RandomKind::Gaussian, .. }));
+        assert_eq!(serde_json::to_string(&w).unwrap(), j);
+        let err = serde_json::from_str::<IrWaveform>(&j.replace(":2,", ":7,")).unwrap_err().to_string();
+        assert!(err.contains("unknown TRRANDOM type 7"), "{err}");
+    }
+
     /// The sweep name is parsed where JSON is read: any case loads, and a
     /// name no simulator has fails the load instead of reaching a deck.
     #[test]
@@ -1005,7 +1238,7 @@ mod tests {
             Component::Capacitor { name: "1".into(), n1: "a".into(), n2: "b".into(), value: IrValue::Expression { expr: "cap_val".into() }, model: None, params: vec![] },
             Component::Inductor { name: "1".into(), n1: "a".into(), n2: "b".into(), value: IrValue::Raw { text: "10u".into() }, model: None, params: vec![] },
             Component::MutualInductor { name: "1".into(), inductor1: "L1".into(), inductor2: "L2".into(), coupling: 0.95 },
-            Component::VoltageSource { name: "1".into(), np: "a".into(), nm: "b".into(), value: IrValue::Numeric { value: 5.0 }, ac_magnitude: None, ac_phase: None, waveform: None },
+            Component::VoltageSource { name: "1".into(), np: "a".into(), nm: "b".into(), value: IrValue::Numeric { value: 5.0 }, ac_magnitude: None, ac_phase: None, waveform: None, port: None },
             Component::CurrentSource { name: "1".into(), np: "a".into(), nm: "b".into(), value: IrValue::Numeric { value: 1e-3 }, ac_magnitude: None, ac_phase: None, waveform: Some(IrWaveform::Pulse { initial: 0.0.into(), pulsed: 1e-3.into(), delay: 0.0.into(), rise_time: 1e-9.into(), fall_time: 1e-9.into(), pulse_width: 5e-6.into(), period: 10e-6.into() }) },
             Component::BehavioralVoltage { name: "1".into(), np: "a".into(), nm: "b".into(), expression: "V(x)*2+1".into() },
             Component::BehavioralCurrent { name: "1".into(), np: "a".into(), nm: "b".into(), expression: "I(V1)*10".into() },
@@ -1029,12 +1262,14 @@ mod tests {
         let waveforms = [
             IrWaveform::Sin { offset: x(), amplitude: 1.0.into(), frequency: 1e3.into(), delay: 0.0.into(), damping: 0.0.into(), phase: 90.0.into() },
             IrWaveform::Pulse { initial: 0.0.into(), pulsed: x(), delay: 0.0.into(), rise_time: 1e-9.into(), fall_time: 1e-9.into(), pulse_width: 5e-6.into(), period: 10e-6.into() },
-            IrWaveform::Pwl { values: vec![(0.0.into(), 0.0.into()), (1e-6.into(), x())] },
+            IrWaveform::Pwl { values: vec![(0.0.into(), 0.0.into()), (1e-6.into(), x())], repeat: None, delay: None },
             IrWaveform::Exp { initial: 0.0.into(), pulsed: 1.0.into(), rise_delay: x(), rise_tau: 1e-9.into(), fall_delay: 1e-6.into(), fall_tau: 1e-9.into() },
             IrWaveform::Sffm { offset: 0.0.into(), amplitude: 1.0.into(), carrier_freq: 1e6.into(), modulation_index: x(), signal_freq: 1e3.into() },
             IrWaveform::Am { amplitude: 1.0.into(), offset: 0.0.into(), modulating_freq: 1e3.into(), carrier_freq: 1e6.into(), delay: x() },
+            IrWaveform::TrNoise { na: x(), nt: 1e-9.into(), nalpha: 1.0.into(), namp: 1e-3.into(), rtsam: 0.0.into(), rtscapt: 0.0.into(), rtsemt: 0.0.into() },
+            IrWaveform::TrRandom { kind: RandomKind::Exponential, ts: 1e-6.into(), td: 0.0.into(), p1: x(), p2: 0.5.into() },
         ];
-        let sources = waveforms.into_iter().map(|w| Component::VoltageSource { name: "w".into(), np: "a".into(), nm: "0".into(), value: w.at_zero(), ac_magnitude: Some(1.0), ac_phase: None, waveform: Some(w) });
+        let sources = waveforms.into_iter().map(|w| Component::VoltageSource { name: "w".into(), np: "a".into(), nm: "0".into(), value: w.at_zero(), ac_magnitude: Some(1.0), ac_phase: None, waveform: Some(w), port: None });
         let all_components: Vec<Component> = all_components.into_iter().chain(sources).collect();
 
         // The JSON tags each variant by name: every component, waveform and value.
@@ -1072,16 +1307,16 @@ mod tests {
             Analysis::Noise { output: "V(out)".into(), reference: "0".into(), source: "V1".into(), sweep: FreqSweep { variation: Sweep::Dec, points: 10, start: 1.0, stop: 1e6 }, points_per_summary: None },
             Analysis::Tf { output: "V(out)".into(), source: "Vin".into() },
             Analysis::Sensitivity { output: "V(out)".into(), ac: Some(FreqSweep { variation: Sweep::Dec, points: 10, start: 1.0, stop: 1e6 }) },
-            Analysis::PoleZero { node1: "in".into(), node2: "0".into(), node3: "out".into(), node4: "0".into(), tf_type: "vol".into(), pz_type: "pz".into() },
+            Analysis::PoleZero { node1: "in".into(), node2: "0".into(), node3: "out".into(), node4: "0".into(), tf_type: PzTransfer::Vol, pz_type: PzKind::Pz },
             Analysis::Distortion { sweep: FreqSweep { variation: Sweep::Dec, points: 10, start: 1.0, stop: 1e6 }, f2overf1: Some(0.9) },
-            Analysis::Pss { fundamental: 1e6, stabilization: 100e-6, observe_node: "out".into(), points_per_period: 100, harmonics: 10 },
+            Analysis::Pss { fundamental: 1e6, stabilization: 100e-6, observe_node: "out".into(), points_per_period: 100, harmonics: 10, sc_iter: None, steady_coeff: None, uic: false },
             Analysis::HarmonicBalance { frequencies: vec![1e6, 2e6], harmonics: vec![5, 3] },
             Analysis::SPar { sweep: FreqSweep { variation: Sweep::Lin, points: 201, start: 1e6, stop: 10e9 } },
             Analysis::Stability { probe: "iprobe".into(), sweep: FreqSweep { variation: Sweep::Dec, points: 100, start: 1.0, stop: 1e9 } },
             Analysis::TransientNoise { step: 1e-9, stop: 1e-6 },
             Analysis::Fourier { fundamental: 1e3, outputs: vec!["V(out)".into()], num_harmonics: Some(10) },
-            Analysis::SpectreSweep { param: "R1".into(), start: 1e3, stop: 10e3, step: 1e3, inner: "dc1".into(), inner_type: "dc".into() },
-            Analysis::SpectreMonteCarlo { iterations: 100, inner: "tran1".into(), inner_type: "tran".into(), seed: Some(42) },
+            Analysis::SpectreSweep { param: "R1".into(), start: 1e3, stop: 10e3, step: 1e3, inner: "dc1".into(), inner_type: SpectreAnalysis::Dc },
+            Analysis::SpectreMonteCarlo { iterations: 100, inner: "tran1".into(), inner_type: SpectreAnalysis::Tran, seed: Some(42) },
             Analysis::SpectrePac { pss: PssBase { pss_fundamental: 1e6, pss_stabilization: 100e-6, pss_harmonics: 10 }, sweep: FreqSweep { variation: Sweep::Dec, points: 100, start: 1.0, stop: 1e9 }, sweep_type: "relative".into() },
             Analysis::SpectrePnoise { pss: PssBase { pss_fundamental: 1e6, pss_stabilization: 100e-6, pss_harmonics: 10 }, output: "out".into(), reference: "0".into(), sweep: FreqSweep { variation: Sweep::Dec, points: 100, start: 1.0, stop: 1e9 } },
             Analysis::SpectrePxf { pss: PssBase { pss_fundamental: 1e6, pss_stabilization: 100e-6, pss_harmonics: 10 }, output: "out".into(), source: "V1".into(), sweep: FreqSweep { variation: Sweep::Dec, points: 100, start: 1.0, stop: 1e9 } },
@@ -1131,7 +1366,7 @@ mod tests {
             "noise"
         );
         assert_eq!(
-            Analysis::Pss { fundamental: 1e6, stabilization: 10e-6, observe_node: "out".into(), points_per_period: 100, harmonics: 10 }.kind_str(),
+            Analysis::Pss { fundamental: 1e6, stabilization: 10e-6, observe_node: "out".into(), points_per_period: 100, harmonics: 10, sc_iter: None, steady_coeff: None, uic: false }.kind_str(),
             "pss"
         );
         assert_eq!(
@@ -1159,6 +1394,7 @@ mod tests {
             value: IrValue::Numeric { value: 0.0 },
             ac_magnitude: Some(1.0), ac_phase: Some(45.0),
             waveform: None,
+            port: None,
         };
         let json = serde_json::to_string(&v_with_ac).unwrap();
         assert!(json.contains("\"ac_magnitude\":1.0"), "json has ac_magnitude: {}", json);
@@ -1173,6 +1409,7 @@ mod tests {
             value: IrValue::Numeric { value: 3.3 },
             ac_magnitude: None, ac_phase: None,
             waveform: None,
+            port: None,
         };
         let json_no_ac = serde_json::to_string(&v_no_ac).unwrap();
         let rt_no_ac: Component = serde_json::from_str(&json_no_ac).unwrap();

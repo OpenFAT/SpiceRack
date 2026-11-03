@@ -80,6 +80,11 @@ endc       <- '.endc' !namechar
 CtlCmd     <- &(('noise' / 'disto' / 'tran' / 'sens' / 'four' / 'meas' / 'op' / 'dc' / 'ac' / 'tf'
             / 'pz') !namechar) rest
 
+# §4.1.7, §4.1.8: the transient noise and random sources, ngspice's own.
+wave       <- Pulse / Sin / Pwl / Exp / Sffm / Am / Trnoise / Trrandom
+Trnoise    <- 'trnoise' wargs
+Trrandom   <- 'trrandom' wargs
+
 # §1.10: INPevaluate's number. `d` is an exponent letter; the scale factor is
 # T G MEG K MIL M U N P F A, and the rest of the token is ignored (`10v`,
 # `1k5` = 1000). INPgetTok ends a token at `*`, `/` and `^` but not at `%`

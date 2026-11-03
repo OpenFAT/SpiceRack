@@ -13,7 +13,7 @@ use std::process::Command;
 use super::{exec, read_results, scratch, sorted_files, BackendError};
 use crate::result::RawData;
 
-pub(super) fn run(netlist: &str) -> Result<RawData, BackendError> {
+pub(super) fn run(netlist: &str) -> Result<Vec<RawData>, BackendError> {
     let (dir, scs) = scratch(netlist, "circuit.scs")?;
     let raw_dir = dir.path().join("raw");
     std::fs::create_dir(&raw_dir)?;

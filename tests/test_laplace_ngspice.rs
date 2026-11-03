@@ -355,3 +355,71 @@ fn ltspice_emits_documented_laplace_syntax() {
     c.bv("1", "out", "0", "Laplace(V(in), 1/(1+s*tau))");
     assert!(netlist(&ltspice(), &c).is_err());
 }
+
+// ── ESPice: its own `E/G … LAPLACE` card, the same closed forms ──
+//
+// ESPice has no XSPICE code models; it reads `E/G n+ n- LAPLACE c+ c-
+// num… / den…` with ascending coefficients (ESPice `docs/using/reference.md`,
+// controlled sources; `src/frontend/builder.zig` `addLaplace`). Unlike
+// `s_xfer`, that block carries its DC gain into `.op`. A missing `espice` is
+// a failure, not a skip.
+
+fn espice_run(c: &Deck) -> RawData {
+    let deck = netlist(&Dialect::Espice, c).unwrap();
+    assert!(!deck.contains("s_xfer"), "ESPice cannot read XSPICE code models:\n{deck}");
+    Dialect::Espice.run(&deck).unwrap_or_else(|e| panic!("espice refused the deck: {e}\n{deck}"))
+}
+
+#[test]
+fn espice_single_pole_is_minus_3db_and_minus_45_degrees_at_the_corner() {
+    let mut c = Deck::new("espice onepole");
+    c.raw_spice("V1 in 0 AC 1");
+    c.bv("1", "out", "0", "Laplace(V(in), 1/(1+s*1.591549431e-4))");
+    c.r("l", "out", "0", 1e6);
+    c.raw_spice(".ac lin 1 1000 1000");
+    // `select` routes a Laplace deck to ESPice now that it runs one.
+    assert_eq!(c.ir().check_backend("espice"), vec![]);
+    let (mag, phase) = ac(&espice_run(&c), "out", 0);
+    assert!((mag - std::f64::consts::FRAC_1_SQRT_2).abs() < 1e-4, "|H| = {mag}");
+    assert!((phase + 45.0).abs() < 1e-3, "arg H = {phase} deg");
+}
+
+#[test]
+fn espice_two_pole_butterworth_is_minus_3db_and_minus_90_degrees_at_the_corner() {
+    let w0 = 2.0 * std::f64::consts::PI * 1000.0;
+    let (a1, a2) = (std::f64::consts::SQRT_2 / w0, 1.0 / (w0 * w0));
+    let mut c = Deck::new("espice butterworth");
+    c.raw_spice("V1 in 0 AC 1");
+    c.bv("1", "out", "0", format!("Laplace(V(in), 1/(1+s*{a1}+s^2*{a2}))"));
+    c.r("l", "out", "0", 1e6);
+    c.raw_spice(".ac lin 1 1000 1000");
+    let (mag, phase) = ac(&espice_run(&c), "out", 0);
+    assert!((mag - std::f64::consts::FRAC_1_SQRT_2).abs() < 1e-5, "|H| = {mag}");
+    assert!((phase + 90.0).abs() < 1e-3, "arg H = {phase} deg");
+}
+
+#[test]
+fn espice_current_output_keeps_the_spice_b_source_sign_convention() {
+    // `B np nm I=` sinks current out of np: 1 mA/V into 1k is -1 V.
+    let mut c = Deck::new("espice bi");
+    c.raw_spice("V1 in 0 AC 1");
+    c.bi("1", "out", "0", "Laplace(V(in), 1e-3/(1+s*1.591549431e-9))");
+    c.r("l", "out", "0", 1e3);
+    c.raw_spice(".ac lin 1 1000 1000");
+    let (mag, phase) = ac(&espice_run(&c), "out", 0);
+    assert!((mag - 1.0).abs() < 1e-5, "|H| = {mag}");
+    assert!((phase.abs() - 180.0).abs() < 1e-3, "arg H = {phase} deg (expected +/-180)");
+}
+
+#[test]
+fn espice_carries_the_dc_gain_into_the_operating_point() {
+    // H(0) = 3, driven by 2 V: 6 V (where ngspice's s_xfer reads 0).
+    let mut c = Deck::new("espice dc");
+    c.raw_spice("V1 in 0 2");
+    c.bv("1", "out", "0", "Laplace(V(in), 3/(1+s*1.591549431e-6))");
+    c.r("l", "out", "0", 1e6);
+    c.raw_spice(".op");
+    let raw = espice_run(&c);
+    let out = raw.real_data[index_of(&raw, "out")][0];
+    assert!((out - 6.0).abs() < 1e-9, "v(out) = {out}");
+}

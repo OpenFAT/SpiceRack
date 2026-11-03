@@ -34,10 +34,14 @@ nz   = tb.noise("vout", "0", "Vin", variation="dec", points=20, start_frequency=
 | `polezero(n1, n2, n3, n4, tf_type, pz_type)` | `PoleZeroAnalysis` |
 | `distortion(...)` | `DistortionAnalysis` |
 | `pss`, `s_param`, `harmonic_balance`, `stability`, `transient_noise`, `network_params` | RF and periodic analyses; each runs only where a backend supports it (see below) |
-| `spectre_sweep`, `spectre_montecarlo`, `spectre_pac`, `spectre_pnoise`, `spectre_pxf`, `spectre_pstb` | Spectre only |
+| `spectre_sweep`, `spectre_monte_carlo` (`spectre_montecarlo` is a deprecated alias), `spectre_pac`, `spectre_pnoise`, `spectre_pxf`, `spectre_pstb` | Spectre only |
 
 `variation` is `"dec"`, `"oct"`, `"lin"` or `"log"` (Spectre only), in any
-case; any other name raises `ValueError` when the analysis is built.
+case; any other name raises `ValueError` when the analysis is built. The same
+holds for the other keywords: `polezero`/`add_polezero` `tf_type` (`vol`, `cur`)
+and `pz_type` (`pol`, `zer`, `pz`), `step_sweep` (`lin`, `dec`, `oct`, `log`),
+and the Spectre `inner_type` (`dc`, `ac`, `tran`, `noise`, `xf`, `sp`, `stb`,
+`pss`, `pac`, `pnoise`, `pxf`, `pstb`, `hb`).
 
 Set `max_time` on every transient you measure from: without it the simulator
 picks its own grid, and edges and peaks move with it.
@@ -114,7 +118,7 @@ sets the default for every run. A flat `Circuit` takes it as
 | XSPICE `A` elements, control blocks | yes | no | no | no | no |
 | `.meas` | yes | yes | no | yes | yes |
 | `.step` sweeps | no | yes | yes | yes | no |
-| Laplace sources | yes | yes | no | no | no |
+| Laplace sources | yes | yes | no | no | yes |
 | Digital Verilog | yes | no | no | yes | no |
 
 The same design runs on several simulators with a loop:

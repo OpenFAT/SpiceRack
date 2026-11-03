@@ -38,6 +38,11 @@
   },
   "additionalProperties": false,
   "$defs": {
+    "SpectreAnalysis": {
+      "type": "string",
+      "description": "The analysis a Spectre sweep or montecarlo runs inside it. SpiceRack writes it lowercase and also reads other cases.",
+      "enum": ["dc", "ac", "tran", "noise", "xf", "sp", "stb", "pss", "pac", "pnoise", "pxf", "pstb", "hb"]
+    },
     "Sweep": {
       "type": "string",
       "description": "How a frequency sweep spaces its points: per decade, per octave, in total (lin), or log-spaced in total (Spectre). SpiceRack writes it lowercase and also reads other cases.",
@@ -376,6 +381,18 @@
             "type": {
               "const": "VoltageSource"
             },
+            "ac_magnitude": { "type": ["number", "null"] },
+            "ac_phase": { "type": ["number", "null"] },
+            "port": {
+              "description": "An RF port for .sp (ngspice portnum n z0 x, manual 4.1.11): z0 ohms in series in every analysis. Absent: no port.",
+              "type": "object",
+              "required": ["num", "z0"],
+              "properties": {
+                "num": { "type": "integer", "minimum": 1 },
+                "z0": { "type": "number" }
+              },
+              "additionalProperties": false
+            },
             "name": {
               "type": "string"
             },
@@ -414,6 +431,8 @@
             "type": {
               "const": "CurrentSource"
             },
+            "ac_magnitude": { "type": ["number", "null"] },
+            "ac_phase": { "type": ["number", "null"] },
             "name": {
               "type": "string"
             },
@@ -1126,6 +1145,14 @@
               "items": {
                 "$ref": "#/$defs/NumberPair"
               }
+            },
+            "repeat": {
+              "description": "ngspice r=: the time the sequence repeats from, forever. Absent: once.",
+              "type": ["number", "string"]
+            },
+            "delay": {
+              "description": "ngspice td=: the whole sequence delayed by this time. Absent: no delay.",
+              "type": ["number", "string"]
             }
           },
           "additionalProperties": false
@@ -1229,6 +1256,36 @@
             }
           },
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "description": "ngspice TRNOISE(NA NT NALPHA NAMP RTSAM RTSCAPT RTSEMT), added to the DC value (ngspice manual 4.1.7). ngspice only.",
+          "required": ["type", "na", "nt", "nalpha", "namp", "rtsam", "rtscapt", "rtsemt"],
+          "properties": {
+            "type": { "const": "TrNoise" },
+            "na": { "type": ["number", "string"] },
+            "nt": { "type": ["number", "string"] },
+            "nalpha": { "type": ["number", "string"] },
+            "namp": { "type": ["number", "string"] },
+            "rtsam": { "type": ["number", "string"] },
+            "rtscapt": { "type": ["number", "string"] },
+            "rtsemt": { "type": ["number", "string"] }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "description": "ngspice TRRANDOM(TYPE TS TD PARAM1 PARAM2), added to the DC value (ngspice manual 4.1.8). ngspice only.",
+          "required": ["type", "kind", "ts", "td", "p1", "p2"],
+          "properties": {
+            "type": { "const": "TrRandom" },
+            "kind": { "description": "1 uniform, 2 Gaussian, 3 exponential, 4 Poisson.", "enum": [1, 2, 3, 4] },
+            "ts": { "type": ["number", "string"] },
+            "td": { "type": ["number", "string"] },
+            "p1": { "type": ["number", "string"] },
+            "p2": { "type": ["number", "string"] }
+          },
+          "additionalProperties": false
         }
       ]
     },
@@ -1322,7 +1379,24 @@
           "items": {
             "type": "string"
           }
+        },
+        "prints": {
+          "description": ".print/.plot cards: what a SPICE run prints to stdout. Absent: none.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PrintCard"
+          }
         }
+      },
+      "additionalProperties": false
+    },
+    "PrintCard": {
+      "type": "object",
+      "description": "One .print card: the analysis (tran, dc, ...; empty if none named) and its output expressions.",
+      "required": ["analysis", "outputs"],
+      "properties": {
+        "analysis": { "type": "string" },
+        "outputs": { "type": "array", "items": { "type": "string" } }
       },
       "additionalProperties": false
     },
@@ -1350,7 +1424,7 @@
         "sweep_type": {
           "oneOf": [
             {
-              "type": "string"
+              "$ref": "#/$defs/Sweep"
             },
             {
               "type": "null"
@@ -1593,10 +1667,12 @@
               "type": "string"
             },
             "tf_type": {
-              "type": "string"
+              "description": "vol or cur (any case on load).",
+              "enum": ["vol", "cur"]
             },
             "pz_type": {
-              "type": "string"
+              "description": "pol, zer or pz (any case on load).",
+              "enum": ["pol", "zer", "pz"]
             }
           },
           "additionalProperties": false
@@ -1670,7 +1746,10 @@
             "harmonics": {
               "type": "integer",
               "minimum": 0
-            }
+            },
+            "sc_iter": { "description": "ngspice sciter: shooting iterations (default 50). Absent: unset.", "type": "integer", "minimum": 0 },
+            "steady_coeff": { "description": "ngspice steadycoeff: the convergence weight (default 1e-3). Absent: unset.", "type": "number" },
+            "uic": { "description": "ngspice uic: skip the operating point. Absent: false.", "type": "boolean" }
           },
           "additionalProperties": false
         },
@@ -1848,7 +1927,7 @@
               "type": "string"
             },
             "inner_type": {
-              "type": "string"
+              "$ref": "#/$defs/SpectreAnalysis"
             }
           },
           "additionalProperties": false
@@ -1873,7 +1952,7 @@
               "type": "string"
             },
             "inner_type": {
-              "type": "string"
+              "$ref": "#/$defs/SpectreAnalysis"
             },
             "seed": {
               "oneOf": [

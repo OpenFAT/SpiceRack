@@ -61,6 +61,18 @@ def test_promised_values():
     assert tb.operating_point()["out"] == pytest.approx(0.2, abs=1e-9)
 
 
+def test_skill_names_every_backend_name():
+    """Regression: the skill listed the ngspice aliases but not `vacask-shared`.
+    Oracle: the module's own refusal, which names every accepted backend."""
+    import spicerack as ps
+
+    with pytest.raises(ValueError) as e:
+        ps.Circuit("t").simulator(simulator="nope")
+    names = str(e.value).split("expected one of ", 1)[1].split(", ")
+    skill = (ROOT / "skills" / "spicerack" / "SKILL.md").read_text()
+    assert [n for n in names if f"`{n}`" not in skill] == []
+
+
 def test_not_run_blocks_are_rare():
     """A `not run` block is untested prose; keep the list short and named."""
     marked = {p.name: len(re.findall(r"<!--\s*not run:", p.read_text())) for p in PAGES}

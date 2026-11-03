@@ -324,6 +324,10 @@ fn wave(name: &dyn std::fmt::Display, wf: &IrWaveform, low: bool) -> Result<Stri
                 name
             )));
         }
+        // VACASK's trannoise injects device noise; it has no noise or
+        // random source (dev/research/ir-gaps.md §2).
+        IrWaveform::TrNoise { .. } => return Err(unsupported_comp(format!("{name}: TRNOISE source (ngspice only)"))),
+        IrWaveform::TrRandom { .. } => return Err(unsupported_comp(format!("{name}: TRRANDOM source (ngspice only)"))),
     })
 }
 
@@ -371,15 +375,15 @@ fn sweep_line(scale: &str, target: &str, name: &str, param: &str, start: f64, st
 fn step_sweep(sp: &StepParam) -> Result<String, CodeGenError> {
     let name = sp.param.to_ascii_lowercase();
     let scale = format!("step_{}", sanitize(&name));
-    match sp.sweep_type.as_deref().map(str::to_ascii_lowercase).as_deref() {
-        Some("dec") | Some("oct") => {
-            let mode = sp.sweep_type.as_deref().unwrap().to_ascii_lowercase();
-            Ok(format!(
-                "sweep {} variable=\"{}\" from={} to={} mode=\"{}\" points={}",
-                scale, name, num(sp.start), num(sp.stop), mode, sp.step as u64,
-            ))
-        }
-        _ => Ok(format!(
+    match sp.sweep_type {
+        Some(mode @ (Sweep::Dec | Sweep::Oct)) => Ok(format!(
+            "sweep {} variable=\"{}\" from={} to={} mode=\"{}\" points={}",
+            scale, name, num(sp.start), num(sp.stop), mode.name(), sp.step as u64,
+        )),
+        // Spectre's total-count log sweep; it used to fall through to a
+        // linear step here.
+        Some(Sweep::Log) => Err(unsupported_analysis(format!("step '{name}': log sweep (VACASK sweeps lin, dec or oct)"))),
+        Some(Sweep::Lin) | None => Ok(format!(
             "sweep {} variable=\"{}\" from={} to={} step={}",
             scale, name, num(sp.start), num(sp.stop), num(sp.step),
         )),
@@ -882,7 +886,10 @@ fn emit_component(out: &mut String, comp: &Component, low: bool) -> Result<(), C
             "k{} () {} k={} ind1=\"l{}\" ind2=\"l{}\"",
             q(name), auto(Need::Builtin("mutual")), num(*coupling), q(inductor1), q(inductor2),
         ),
-        Component::VoltageSource { name, np, nm, value, ac_magnitude, ac_phase, waveform }
+        // VACASK's `acsp` ports are not ngspice's `portnum` (ir-gaps §2):
+        // refused, not dropped.
+        Component::VoltageSource { name, port: Some(_), .. } => return Err(unsupported_comp(format!("v{}: RF port", q(name)))),
+        Component::VoltageSource { name, np, nm, value, ac_magnitude, ac_phase, waveform, port: None }
         | Component::CurrentSource { name, np, nm, value, ac_magnitude, ac_phase, waveform } => {
             let (l, m) = if matches!(comp, Component::VoltageSource { .. }) { ('v', "vsource") } else { ('i', "isource") };
             let wave = match waveform {
@@ -1029,7 +1036,7 @@ mod tests {
             Component::Inductor { name: s("1"), n1: s("a"), n2: s("b"), value: v(1e-6), model: None, params: vec![] },
             Component::Inductor { name: s("2"), n1: s("a"), n2: s("b"), value: v(1e-6), model: None, params: vec![] },
             Component::MutualInductor { name: s("1"), inductor1: s("1"), inductor2: s("2"), coupling: 0.9 },
-            Component::VoltageSource { name: s("1"), np: s("a"), nm: s("0"), value: v(1.0), ac_magnitude: None, ac_phase: None, waveform: None },
+            Component::VoltageSource { name: s("1"), np: s("a"), nm: s("0"), value: v(1.0), ac_magnitude: None, ac_phase: None, waveform: None, port: None },
             Component::CurrentSource { name: s("1"), np: s("a"), nm: s("0"), value: v(1.0), ac_magnitude: None, ac_phase: None, waveform: None },
             Component::Vcvs { name: s("1"), np: s("a"), nm: s("b"), ncp: s("c"), ncm: s("d"), gain: 2.0 },
             Component::Vccs { name: s("1"), np: s("a"), nm: s("b"), ncp: s("c"), ncm: s("d"), transconductance: 2.0 },
@@ -1142,7 +1149,8 @@ mod tests {
         let c = Component::VoltageSource {
             name: "1".into(), np: "a".into(), nm: "0".into(),
             value: IrValue::Numeric { value: 0.0 }, ac_magnitude: None, ac_phase: None,
-            waveform: Some(IrWaveform::Pwl { values: vec![((0.0).into(), (0.0).into()), ((1e-3).into(), (1.0).into())] }),
+            waveform: Some(IrWaveform::Pwl { values: vec![((0.0).into(), (0.0).into()), ((1e-3).into(), (1.0).into())], repeat: None, delay: None }),
+            port: None,
         };
         let err = emit_component(&mut String::new(), &c, true).unwrap_err();
         assert!(err.to_string().to_lowercase().contains("pwl"), "{}", err);
@@ -1168,6 +1176,12 @@ mod tests {
         assert!(n.contains("sweep step_rval variable=\"rval\""), "{}", n);
         // A stepped name must not also be a netlist parameter.
         assert!(!n.contains("parameters rval"), "{}", n);
+        // VACASK sweeps lin, dec or oct: a log step is refused, not run linear.
+        let mut log = ir.clone();
+        log.testbench.as_mut().unwrap().step_params[0].sweep_type = Some(Sweep::Log);
+        assert!(netlist(&log).unwrap_err().to_string().contains("log sweep"));
+        log.testbench.as_mut().unwrap().step_params[0].sweep_type = Some(Sweep::Oct);
+        assert!(netlist(&log).unwrap().contains("mode=\"oct\""));
     }
 
     #[test]

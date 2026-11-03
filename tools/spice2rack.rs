@@ -88,7 +88,11 @@ impl Py {
             Component::MutualInductor { name, inductor1, inductor2, coupling } => {
                 self.line(format!("{obj}.K(name={}, inductor1={}, inductor2={}, coupling={})", n(name), n(inductor1), n(inductor2), py_num(*coupling)))
             }
-            Component::VoltageSource { name, np, nm, value, ac_magnitude, ac_phase, waveform } | Component::CurrentSource { name, np, nm, value, ac_magnitude, ac_phase, waveform } => {
+            Component::VoltageSource { name, np, nm, value, ac_magnitude, ac_phase, waveform, .. } | Component::CurrentSource { name, np, nm, value, ac_magnitude, ac_phase, waveform } => {
+                let port = match c {
+                    Component::VoltageSource { port: Some(p), .. } => format!(", portnum={}, z0={}", p.num, py_num(p.z0)),
+                    _ => String::new(),
+                };
                 let current = matches!(c, Component::CurrentSource { .. });
                 let (letter, kind) = if current { ("I", "Current") } else { ("V", "Voltage") };
                 let ac = match (ac_magnitude, ac_phase) {
@@ -100,18 +104,22 @@ impl Py {
                 let head = format!("name={}, positive={}, negative={}", n(name), n(np), n(nm));
                 match (waveform, dc) {
                     (None, _) => match py_value(value) {
-                        Some(v) => self.line(format!("{obj}.{letter}({head}, value={v}{ac})")),
+                        Some(v) => self.line(format!("{obj}.{letter}({head}, value={v}{ac}{port})")),
                         None => self.gap(obj, "raw element value", &raw),
                     },
+                    (Some(_), _) if !port.is_empty() => self.gap(obj, "RF port on a waveform source", &raw),
                     (Some(wf), dc) => {
                         let w = |x: &IrNum| py_value(&x.into()).unwrap_or_default();
                         let (stem, args) = match wf {
                             IrWaveform::Pulse { initial, pulsed, delay, rise_time, fall_time, pulse_width, period } => ("Pulse", format!(
                                 "initial_value={}, pulsed_value={}, delay={}, pulse_width={}, period={}, rise_time={}, fall_time={}",
                                 w(initial), w(pulsed), w(delay), w(pulse_width), w(period), w(rise_time), w(fall_time))),
-                            IrWaveform::Pwl { values } => {
+                            IrWaveform::Pwl { values, repeat, delay } => {
                                 let pts: Vec<String> = values.iter().map(|(t, y)| format!("({}, {})", w(t), w(y))).collect();
-                                ("PieceWiseLinear", format!("values=[{}]", pts.join(", ")))
+                                let mut args = format!("values=[{}]", pts.join(", "));
+                                repeat.iter().for_each(|r| args += &format!(", repeat_time={}", w(r)));
+                                delay.iter().for_each(|d| args += &format!(", delay_time={}", w(d)));
+                                ("PieceWiseLinear", args)
                             }
                             IrWaveform::Sin { offset, amplitude, frequency, delay, damping, phase } => ("Sinusoidal", format!(
                                 "offset={}, amplitude={}, frequency={}, delay={}, damping_factor={}, phase={}",
@@ -125,6 +133,12 @@ impl Py {
                             IrWaveform::Am { amplitude, offset, modulating_freq, carrier_freq, delay } => ("AmplitudeModulated", format!(
                                 "offset={}, amplitude={}, modulating_frequency={}, carrier_frequency={}, signal_delay={}",
                                 w(offset), w(amplitude), w(modulating_freq), w(carrier_freq), w(delay))),
+                            IrWaveform::TrNoise { na, nt, nalpha, namp, rtsam, rtscapt, rtsemt } => ("TransientNoise", format!(
+                                "noise_rms={}, time_step={}, flicker_exponent={}, flicker_rms={}, rts_amplitude={}, rts_capture_time={}, rts_emission_time={}",
+                                w(na), w(nt), w(nalpha), w(namp), w(rtsam), w(rtscapt), w(rtsemt))),
+                            IrWaveform::TrRandom { kind, ts, td, p1, p2 } => ("Random", format!(
+                                "random_type={}, duration={}, time_delay={}, parameter1={}, parameter2={}",
+                                py_str(kind.name()), w(ts), w(td), w(p1), w(p2))),
                         };
                         // `dc=` only when it is not what the waveform starts at.
                         let dc = match dc {
@@ -229,7 +243,7 @@ impl Py {
                 py_str(output), py_str(a.variation.name()), a.points, py_num(a.start), py_num(a.stop)
             )),
             Analysis::PoleZero { node1, node2, node3, node4, tf_type, pz_type } => self.line(format!(
-                "tb.add_polezero({}, {}, {}, {}, {}, {})", py_str(node1), py_str(node2), py_str(node3), py_str(node4), py_str(tf_type), py_str(pz_type)
+                "tb.add_polezero({}, {}, {}, {}, {}, {})", py_str(node1), py_str(node2), py_str(node3), py_str(node4), py_str(tf_type.name()), py_str(pz_type.name())
             )),
             Analysis::Distortion { sweep: FreqSweep { variation, points, start, stop }, f2overf1 } => self.line(format!(
                 "tb.add_distortion(variation={}, points={points}, start_frequency={}, stop_frequency={}, f2overf1={})",

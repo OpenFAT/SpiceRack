@@ -9,7 +9,7 @@ Available on `Circuit` and `Subcircuit`. `Testbench` carries only the rows marke
 
 | Method | Emits | Signature |
 |---|---|---|
-| `V` **TB** | `V` | `(name, positive, negative, value, ac=None, ac_phase=None)` |
+| `V` **TB** | `V` | `(name, positive, negative, value, ac=None, ac_phase=None, portnum=None, z0=50.0)`; `portnum` makes it an RF port for `s_param` (ngspice/ESPice) |
 | `I` **TB** | `I` | `(name, positive, negative, value, ac=None, ac_phase=None)` |
 | `R` **TB** | `R` | `(name, positive, negative, value, raw_spice=None)` — `raw_spice` on `Circuit`/`Subcircuit` only |
 | `C` **TB** | `C` | `(name, positive, negative, value)` |
@@ -53,8 +53,14 @@ tb.SinusoidalVoltageSource(name=, positive=, negative=, dc_offset=0, offset=0,
                            amplitude=1, frequency=1000, ac=, ac_phase=)   # no delay/damping/phase
 tb.PulseVoltageSource(name=, positive=, negative=, initial_value=0, pulsed_value=1,
                       pulse_width=50e-9, period=100e-9, rise_time=1e-9, fall_time=1e-9)  # no delay_time
-tb.PieceWiseLinearVoltageSource(name=, positive=, negative=, values=[(t, v), ...])
+tb.PieceWiseLinearVoltageSource(name=, positive=, negative=, values=[(t, v), ...],
+                               repeat_time=None, delay_time=None)  # ngspice r=/td=; ngspice + ESPice only
+tb.TransientNoiseVoltageSource(name=, positive=, negative=, noise_rms=, time_step=)  # ngspice TRNOISE only
+tb.RandomVoltageSource(name=, positive=, negative=, random_type="uniform", duration=,
+                       time_delay=0, parameter1=1, parameter2=0)              # ngspice TRRANDOM only
 ```
+The noise and random sources add to the DC value (default 0); every dialect but ngspice
+(ESPice included) refuses them.
 Current variants replace `Voltage` with `Current`. `dc_offset` is the DC (operating-point)
 value; `offset` is the SIN offset. `PieceWiseLinearCurrentSource` exists on `Testbench`
 only, and `ac=`/`ac_phase=` on the sinusoid only on `Testbench`/`Subcircuit`.
@@ -90,13 +96,15 @@ Queue on a `Testbench` with `add_*`; run on a `Testbench` or `CircuitSimulator` 
 | `distortion(...)` | — | — | `DistortionAnalysis` |
 
 `variation` is `"dec"`, `"oct"`, `"lin"` or `"log"` (Spectre only), any
-case; any other name raises `ValueError` at the call, before anything runs.
+case; any other name raises `ValueError` at the call, before anything runs. So
+do the `.pz` types (`vol`/`cur`, `pol`/`zer`/`pz`), a `step_sweep` type and a
+Spectre `inner_type` (`dc`, `ac`, `tran`, `noise`, `xf`, `sp`, `stb`, `pss`, ...).
 
 `add_fourier` emits ngspice's `.four`, whose output table is not parsed — the
 harmonics are unreachable. For THD, compute a Goertzel over the transient
 waveform.
 
-Backend-specific, `CircuitSimulator` only: `spectre_sweep`, `spectre_montecarlo`,
+Backend-specific, `CircuitSimulator` only: `spectre_sweep`, `spectre_monte_carlo` (`spectre_montecarlo` warns, deprecated),
 `spectre_pac`, `spectre_pnoise`, `spectre_pstb`, `spectre_pxf`, `network_params`.
 `Testbench` queues the sweep and Monte Carlo forms with `add_spectre_sweep` and
 `add_spectre_monte_carlo`.
@@ -172,7 +180,7 @@ Declared in `src/backend/*.rs`; these gate automatic backend selection.
 | `.measure` | yes | yes | **no** | yes | yes |
 | `.step` params | **no** | yes | yes | yes | **no** |
 | control blocks | yes | no | no | no | no |
-| Laplace sources | yes | yes | no | no | no |
+| Laplace sources | yes | yes | no | no | yes |
 | Verilog co-sim | yes | no | no | yes | no |
 
 `ps.lint(netlist, backend=None)` takes the **netlist text**, not a `Circuit` —

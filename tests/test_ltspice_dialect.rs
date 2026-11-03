@@ -66,7 +66,7 @@ fn step_keeps_the_param_keyword_in_every_form() {
             start: 1e3,
             stop: 1e4,
             step: 10.0,
-            sweep_type: Some(sweep.into()),
+            sweep_type: Some(sweep.parse().unwrap()),
         };
         let emitted = lt().emit_step_param(&sp).unwrap();
         assert_eq!(emitted, format!(".step {sweep} param rval 1000 10000 10"));
@@ -130,8 +130,8 @@ fn pz_disto_and_sens_are_rejected_for_ltspice() {
             node2: "0".into(),
             node3: "3".into(),
             node4: "0".into(),
-            tf_type: "vol".into(),
-            pz_type: "pz".into(),
+            tf_type: PzTransfer::Vol,
+            pz_type: PzKind::Pz,
         },
         Analysis::Distortion {
             sweep: FreqSweep { variation: Sweep::Dec,

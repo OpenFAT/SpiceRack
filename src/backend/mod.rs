@@ -61,7 +61,8 @@ const VACASK_CAPS: u8 = OSDI | STEP_PARAMS;
 const SPECTRE_CAPS: u8 = OSDI | MEASURES | STEP_PARAMS | VERILOG_COSIM;
 // ESPice: Verilog-A via VerA `.hdl` (counts as osdi); `.step` lands every
 // point as a separate plot in one raw file, which parse_raw does not split.
-const ESPICE_CAPS: u8 = OSDI | MEASURES;
+// Laplace: its own `E/G … LAPLACE` card (codegen `spice3::laplace_source`).
+const ESPICE_CAPS: u8 = OSDI | MEASURES | LAPLACE;
 
 /// The dialects that run `a`, in preference order, and the workaround to
 /// suggest without one. A universal analysis runs on every [`RUNNABLE`].
@@ -121,6 +122,17 @@ impl Dialect {
     /// `SimulationError` for a dialect outside [`RUNNABLE`] (HSPICE, Xyce,
     /// CDL, Verilog), and whatever the simulator run returns.
     pub fn run(self, netlist: &str) -> Result<RawData, BackendError> {
+        let first = self.run_all(netlist)?.into_iter().next();
+        Ok(first.expect("a raw file read holds at least one plot"))
+    }
+
+    /// [`Self::run`], returning every plot of the run's raw file in file
+    /// order (ngspice: one per analysis, `noise` two), each with the run's
+    /// stdout. VACASK reads one of its per-analysis files, as [`Self::run`].
+    ///
+    /// # Errors
+    /// As [`Self::run`].
+    pub fn run_all(self, netlist: &str) -> Result<Vec<RawData>, BackendError> {
         match self {
             Dialect::Ngspice => ngspice::run(netlist),
             Dialect::Ltspice => ltspice::run(netlist),
@@ -241,7 +253,7 @@ fn tail(s: &str) -> &str {
 }
 
 /// Read a result file, nutmeg raw or PSF (sniffed from its content).
-fn read_results(path: &Path, stdout: String) -> Result<RawData, BackendError> {
+fn read_results(path: &Path, stdout: String) -> Result<Vec<RawData>, BackendError> {
     let bytes = std::fs::read(path).map_err(|e| {
         BackendError::SimulationError(format!("no result file '{}': {e}\nstdout: {}", path.display(), tail(&stdout)))
     })?;
@@ -250,9 +262,9 @@ fn read_results(path: &Path, stdout: String) -> Result<RawData, BackendError> {
     if bytes.len() >= 12 && &bytes[bytes.len() - 12..bytes.len() - 4] == b"Clarissa" {
         return Err(BackendError::SimulationError("PSF output is not read; run Spectre with -format nutbin".into()));
     }
-    let mut raw = rawfile::parse_raw(&bytes)?;
-    raw.stdout = stdout;
-    Ok(raw)
+    let mut plots = rawfile::parse_raw_all(&bytes)?;
+    plots.iter_mut().for_each(|p| p.stdout.clone_from(&stdout));
+    Ok(plots)
 }
 
 /// Regular files directly inside `dir`, sorted (read_dir order is not stable).
@@ -282,7 +294,7 @@ mod tests {
     }
 
     fn pz() -> Analysis {
-        Analysis::PoleZero { node1: "a".into(), node2: "0".into(), node3: "b".into(), node4: "0".into(), tf_type: "vol".into(), pz_type: "pz".into() }
+        Analysis::PoleZero { node1: "a".into(), node2: "0".into(), node3: "b".into(), node4: "0".into(), tf_type: crate::ir::PzTransfer::Vol, pz_type: crate::ir::PzKind::Pz }
     }
 
     #[test]

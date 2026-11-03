@@ -47,6 +47,7 @@ fn circuit(analyses: Vec<Analysis>) -> CircuitIR {
             ac_magnitude: Some(1.0),
             ac_phase: None,
             waveform: None,
+            port: None,
         },
         Component::Resistor {
             name: "1".into(),
@@ -233,7 +234,6 @@ fn node(raw: &spicerack::result::RawData, name: &str) -> f64 {
 /// line goes.
 const ESPICE_REFUSES: &[(Dialect, &str)] = &[
     (Dialect::Ngspice, "ESPice has no XSPICE code models; ngspice spells the Laplace block as an `s_xfer` A element"),
-    (Dialect::Espice, "codegen bug: the ESPice deck spells the Laplace block as an XSPICE `s_xfer` A element, which ESPice cannot read"),
     (Dialect::Spectre, "codegen refuses a B source for Spectre (`v(mid)` has no safe Spectre spelling)"),
 ];
 

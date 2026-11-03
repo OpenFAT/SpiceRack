@@ -282,8 +282,16 @@ fn spectre_primitives_match_documented_instance_forms() {
             name: "1".into(), inp: "1".into(), inm: "0".into(),
             outp: "2".into(), outm: "0".into(), z0: 100.0, td: 1e-9,
         }),
-        "t1 (1 0 2 0) tline z0=100 td=0.000000001",
+        "t1 (1 0 2 0) tline z0=100 td=1n",
     );
+    // Every number goes through the one Spectre formatter: scale suffixes,
+    // with Spectre's capital M for mega (`[KUN]` B.2).
+    assert_eq!(component(Component::Vcvs { name: "2".into(), np: "a".into(), nm: "0".into(), ncp: "b".into(), ncm: "0".into(), gain: 2e6 }), "e2 (a 0 b 0) vcvs gain=2M");
+    assert_eq!(component(Component::Vccs { name: "2".into(), np: "a".into(), nm: "0".into(), ncp: "b".into(), ncm: "0".into(), transconductance: 1e-3 }), "g2 (a 0 b 0) vccs gm=1m");
+    assert_eq!(component(Component::Cccs { name: "2".into(), np: "a".into(), nm: "0".into(), vsense: "V1".into(), gain: 1e-6 }), "f2 (a 0) cccs probe=v1 gain=1u");
+    assert_eq!(component(Component::Ccvs { name: "2".into(), np: "a".into(), nm: "0".into(), vsense: "V1".into(), transresistance: 1e3 }), "h2 (a 0) ccvs probe=v1 rm=1k");
+    assert_eq!(component(Component::MutualInductor { name: "2".into(), inductor1: "1".into(), inductor2: "2".into(), coupling: 1e-3 }), "k2 mutual_inductor coupling=1m ind1=l1 ind2=l2");
+    assert_eq!(component(Component::TLine { name: "2".into(), inp: "1".into(), inm: "0".into(), outp: "2".into(), outm: "0".into(), z0: 1e6, td: 2.5e-12 }), "t2 (1 0 2 0) tline z0=1M td=2.5p");
     assert_eq!(
         component(Component::VSwitch {
             name: "1".into(), np: "1".into(), nm: "2".into(),
@@ -307,6 +315,7 @@ fn spectre_vsource_waveforms_match_documented_parameters() {
             name: "1".into(), np: "1".into(), nm: "0".into(),
             value: IrValue::Numeric { value: 0.0 },
             ac_magnitude: mag, ac_phase: ph, waveform: wf,
+            port: None,
         })
     };
 
@@ -319,7 +328,7 @@ fn spectre_vsource_waveforms_match_documented_parameters() {
     );
 
     assert_eq!(
-        v(Some(IrWaveform::Pwl { values: vec![((1e-9).into(), (0.0).into()), ((1.5e-9).into(), (0.5).into())] }), None, None),
+        v(Some(IrWaveform::Pwl { values: vec![((1e-9).into(), (0.0).into()), ((1.5e-9).into(), (0.5).into())], repeat: None, delay: None }), None, None),
         "v1 (1 0) vsource dc=0 type=pwl wave=[1n 0 1.5n 500m]",
     );
 
@@ -379,6 +388,7 @@ fn spectre_refuses_constructs_without_a_documented_spelling() {
                 amplitude: 1.0.into(), offset: 0.5.into(), modulating_freq: 1e3.into(),
                 carrier_freq: 1e6.into(), delay: 0.0.into(),
             }),
+            port: None,
         },
     ];
 
@@ -499,6 +509,7 @@ fn spectre_rf_large_signal_analyses_match_documented_parameters() {
         analysis(Analysis::Pss {
             fundamental: 1e9, stabilization: 1e-7,
             observe_node: "out".into(), points_per_period: 128, harmonics: 10,
+            sc_iter: None, steady_coeff: None, uic: false,
         }),
         "pss1 (out 0) pss fund=1G tstab=100n harms=10",
     );
@@ -586,19 +597,19 @@ fn spectre_sweep_and_montecarlo_blocks_match_documented_forms() {
     assert_eq!(
         analysis(Analysis::SpectreSweep {
             param: "rload".into(), start: 1e3, stop: 10e3, step: 1e3,
-            inner: "ac1".into(), inner_type: "ac".into(),
+            inner: "ac1".into(), inner_type: SpectreAnalysis::Ac,
         }),
         "sweep1 sweep param=rload start=1k stop=10k step=1k {\n  ac1 ac\n}",
     );
     assert_eq!(
         analysis(Analysis::SpectreMonteCarlo {
-            iterations: 200, inner: "tran1".into(), inner_type: "tran".into(), seed: Some(1234),
+            iterations: 200, inner: "tran1".into(), inner_type: SpectreAnalysis::Tran, seed: Some(1234),
         }),
         "mc1 montecarlo numruns=200 seed=1234 {\n  tran1 tran\n}",
     );
     assert_eq!(
         analysis(Analysis::SpectreMonteCarlo {
-            iterations: 8, inner: "tran1".into(), inner_type: "tran".into(), seed: None,
+            iterations: 8, inner: "tran1".into(), inner_type: SpectreAnalysis::Tran, seed: None,
         }),
         "mc1 montecarlo numruns=8 {\n  tran1 tran\n}",
     );
@@ -635,7 +646,7 @@ fn spectre_refuses_transient_noise() {
 fn spectre_refuses_foreign_analyses() {
     let r = try_analysis(&Analysis::PoleZero {
         node1: "1".into(), node2: "0".into(), node3: "3".into(), node4: "0".into(),
-        tf_type: "vol".into(), pz_type: "pz".into(),
+        tf_type: PzTransfer::Vol, pz_type: PzKind::Pz,
     });
     assert!(matches!(r, Err(CodeGenError::UnsupportedAnalysis { .. })), "{r:?}");
 }

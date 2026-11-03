@@ -208,7 +208,7 @@ fn source(
     if current {
         Component::CurrentSource { name, np, nm, value, ac_magnitude, ac_phase, waveform }
     } else {
-        Component::VoltageSource { name, np, nm, value, ac_magnitude, ac_phase, waveform }
+        Component::VoltageSource { name, np, nm, value, ac_magnitude, ac_phase, waveform, port: None }
     }
 }
 
@@ -401,21 +401,26 @@ mod card {
         Analysis::Sensitivity { output: output.into(), ac }
     }
 
-    pub fn polezero(nodes: [&str; 4], tf_type: &str, pz_type: &str) -> Analysis {
+    /// `tf_type` is vol or cur, `pz_type` pol, zer or pz (any case); else
+    /// a `ValueError`.
+    pub fn polezero(nodes: [&str; 4], tf_type: &str, pz_type: &str) -> PyResult<Analysis> {
         let [node1, node2, node3, node4] = nodes.map(String::from);
-        Analysis::PoleZero { node1, node2, node3, node4, tf_type: tf_type.into(), pz_type: pz_type.into() }
+        let (tf_type, pz_type) = (tf_type.parse().map_err(PyValueError::new_err)?, pz_type.parse().map_err(PyValueError::new_err)?);
+        Ok(Analysis::PoleZero { node1, node2, node3, node4, tf_type, pz_type })
     }
 
     pub fn distortion(variation: &str, points: u32, start: f64, stop: f64, f2overf1: Option<f64>) -> PyResult<Analysis> {
         Ok(Analysis::Distortion { sweep: sweep(variation, points, start, stop)?, f2overf1 })
     }
 
-    pub fn spectre_sweep(param: &str, start: f64, stop: f64, step: f64, inner: &str, inner_type: &str) -> Analysis {
-        Analysis::SpectreSweep { param: param.into(), start, stop, step, inner: inner.into(), inner_type: inner_type.into() }
+    pub fn spectre_sweep(param: &str, start: f64, stop: f64, step: f64, inner: &str, inner_type: &str) -> PyResult<Analysis> {
+        let inner_type = inner_type.parse().map_err(PyValueError::new_err)?;
+        Ok(Analysis::SpectreSweep { param: param.into(), start, stop, step, inner: inner.into(), inner_type })
     }
 
-    pub fn spectre_monte_carlo(iterations: u32, inner: &str, inner_type: &str, seed: Option<u64>) -> Analysis {
-        Analysis::SpectreMonteCarlo { iterations, inner: inner.into(), inner_type: inner_type.into(), seed }
+    pub fn spectre_monte_carlo(iterations: u32, inner: &str, inner_type: &str, seed: Option<u64>) -> PyResult<Analysis> {
+        let inner_type = inner_type.parse().map_err(PyValueError::new_err)?;
+        Ok(Analysis::SpectreMonteCarlo { iterations, inner: inner.into(), inner_type, seed })
     }
 }
 
@@ -517,10 +522,10 @@ impl PySimulator {
     }
 
     #[pyo3(signature = (param, start, stop, step, sweep_type))]
-    fn step_sweep(&mut self, param: &str, start: f64, stop: f64, step: f64, sweep_type: &str) {
-        self.tb().step_params.push(ir::StepParam {
-            param: param.to_string(), start, stop, step, sweep_type: Some(sweep_type.to_string()),
-        });
+    fn step_sweep(&mut self, param: &str, start: f64, stop: f64, step: f64, sweep_type: &str) -> PyResult<()> {
+        let sweep_type = Some(sweep_type.parse().map_err(PyValueError::new_err)?);
+        self.tb().step_params.push(ir::StepParam { param: param.to_string(), start, stop, step, sweep_type });
+        Ok(())
     }
 
     // ── Analyses ──
@@ -587,7 +592,7 @@ impl PySimulator {
     fn polezero(
         &self, node1: &str, node2: &str, node3: &str, node4: &str, tf_type: &str, pz_type: &str,
     ) -> PyResult<PyPoleZeroAnalysis> {
-        let a = card::polezero([node1, node2, node3, node4], tf_type, pz_type);
+        let a = card::polezero([node1, node2, node3, node4], tf_type, pz_type)?;
         Ok(PyPoleZeroAnalysis { inner: Results::from_raw(self.run(a)?) })
     }
 
@@ -599,14 +604,16 @@ impl PySimulator {
         Ok(PyDistortionAnalysis { inner: Results::from_raw(self.run(a)?) })
     }
 
-    #[pyo3(signature = (fundamental_frequency, stabilization_time, observe_node, points_per_period=128, harmonics=10))]
+    /// `sc_iter`, `steady_coeff`, `uic`: ngspice's shooting controls
+    /// (`sciter`, `steadycoeff`, `uic`; defaults 50 and 1e-3 when unset).
+    #[pyo3(signature = (fundamental_frequency, stabilization_time, observe_node, points_per_period=128, harmonics=10, sc_iter=None, steady_coeff=None, uic=false))]
     fn pss(
         &self, fundamental_frequency: f64, stabilization_time: f64, observe_node: &str,
-        points_per_period: u32, harmonics: u32,
+        points_per_period: u32, harmonics: u32, sc_iter: Option<u32>, steady_coeff: Option<f64>, uic: bool,
     ) -> PyResult<PyPssAnalysis> {
         let a = Analysis::Pss {
             fundamental: fundamental_frequency, stabilization: stabilization_time,
-            observe_node: observe_node.into(), points_per_period, harmonics,
+            observe_node: observe_node.into(), points_per_period, harmonics, sc_iter, steady_coeff, uic,
         };
         Ok(PyPssAnalysis { inner: Results::from_raw(self.run(a)?) })
     }
@@ -660,13 +667,22 @@ impl PySimulator {
     fn spectre_sweep(
         &self, param: &str, start: f64, stop: f64, step: f64, inner_analysis: &str, inner_type: &str,
     ) -> PyResult<PyRawData> {
-        Ok(PyRawData { inner: self.run_spectre(card::spectre_sweep(param, start, stop, step, inner_analysis, inner_type))? })
+        Ok(PyRawData { inner: self.run_spectre(card::spectre_sweep(param, start, stop, step, inner_analysis, inner_type)?)? })
     }
 
     /// Spectre Monte Carlo wrapping an inner analysis.
     #[pyo3(signature = (num_iterations, inner_analysis, inner_type="ac", seed=None))]
-    fn spectre_montecarlo(&self, num_iterations: u32, inner_analysis: &str, inner_type: &str, seed: Option<u64>) -> PyResult<PyRawData> {
-        Ok(PyRawData { inner: self.run_spectre(card::spectre_monte_carlo(num_iterations, inner_analysis, inner_type, seed))? })
+    fn spectre_monte_carlo(&self, num_iterations: u32, inner_analysis: &str, inner_type: &str, seed: Option<u64>) -> PyResult<PyRawData> {
+        Ok(PyRawData { inner: self.run_spectre(card::spectre_monte_carlo(num_iterations, inner_analysis, inner_type, seed)?)? })
+    }
+
+    /// Deprecated: [`Self::spectre_monte_carlo`], the spelling
+    /// `Testbench.add_spectre_monte_carlo` uses. Warns `DeprecationWarning`.
+    #[pyo3(signature = (num_iterations, inner_analysis, inner_type="ac", seed=None))]
+    fn spectre_montecarlo(&self, py: Python<'_>, num_iterations: u32, inner_analysis: &str, inner_type: &str, seed: Option<u64>) -> PyResult<PyRawData> {
+        let category = py.get_type::<pyo3::exceptions::PyDeprecationWarning>();
+        PyErr::warn(py, &category, c"spectre_montecarlo is deprecated; use spectre_monte_carlo", 1)?;
+        self.spectre_monte_carlo(num_iterations, inner_analysis, inner_type, seed)
     }
 
     /// SpectreRF Periodic AC (PAC) analysis with automatic PSS prerequisite.
@@ -1014,7 +1030,7 @@ fn verilog_block(
 
 // ── High-level waveform sources ──
 
-/// `#[pymethods] impl $ty { ... }` with the twelve waveform sources (six
+/// `#[pymethods] impl $ty { ... }` with the sixteen waveform sources (eight
 /// waveforms, each as a V and an I) appended: one table for Subcircuit and
 /// Testbench, which each add the built source with their own `place_wave`.
 /// Every source takes `dc=` (else its waveform's t=0 value, as SPICE reads a
@@ -1026,10 +1042,10 @@ fn verilog_block(
 macro_rules! pymethods_with_waves {
     ($hash:tt $attr:tt impl $ty:ty { $($body:tt)* }) => {
         pymethods_with_waves!(@emit $hash $attr $ty { $($body)* }
-            [SinusoidalVoltageSource PulseVoltageSource PieceWiseLinearVoltageSource ExponentialVoltageSource SingleFrequencyFMVoltageSource AmplitudeModulatedVoltageSource false]
-            [SinusoidalCurrentSource PulseCurrentSource PieceWiseLinearCurrentSource ExponentialCurrentSource SingleFrequencyFMCurrentSource AmplitudeModulatedCurrentSource true]);
+            [SinusoidalVoltageSource PulseVoltageSource PieceWiseLinearVoltageSource ExponentialVoltageSource SingleFrequencyFMVoltageSource AmplitudeModulatedVoltageSource TransientNoiseVoltageSource RandomVoltageSource false]
+            [SinusoidalCurrentSource PulseCurrentSource PieceWiseLinearCurrentSource ExponentialCurrentSource SingleFrequencyFMCurrentSource AmplitudeModulatedCurrentSource TransientNoiseCurrentSource RandomCurrentSource true]);
     };
-    (@emit $hash:tt $attr:tt $ty:ty { $($body:tt)* } $([$sin:ident $pulse:ident $pwl:ident $exp:ident $sffm:ident $am:ident $current:literal])*) => {
+    (@emit $hash:tt $attr:tt $ty:ty { $($body:tt)* } $([$sin:ident $pulse:ident $pwl:ident $exp:ident $sffm:ident $am:ident $noise:ident $random:ident $current:literal])*) => {
         $hash $attr
         impl $ty {
             $($body)*
@@ -1054,12 +1070,14 @@ macro_rules! pymethods_with_waves {
                 Ok(())
             }
 
-            #[pyo3(signature = (name, positive, negative, *, values, dc=None, ac=None, ac_phase=None))]
+            // `repeat_time`/`delay_time`: PySpice's names for ngspice's `r=`/`td=`.
+            #[pyo3(signature = (name, positive, negative, *, values, repeat_time=None, delay_time=None, dc=None, ac=None, ac_phase=None))]
             fn $pwl(
                 slf: PyRefMut<'_, Self>, name: &str, positive: &str, negative: &str,
-                values: Vec<(IrNum, IrNum)>, dc: Option<f64>, ac: Option<f64>, ac_phase: Option<f64>,
+                values: Vec<(IrNum, IrNum)>, repeat_time: Option<IrNum>, delay_time: Option<IrNum>, dc: Option<f64>, ac: Option<f64>, ac_phase: Option<f64>,
             ) -> PyResult<()> {
-                Self::place_wave(slf, $current, name, positive, negative, IrWaveform::Pwl { values }, dc, ac, ac_phase);
+                let wf = IrWaveform::Pwl { values, repeat: repeat_time, delay: delay_time };
+                Self::place_wave(slf, $current, name, positive, negative, wf, dc, ac, ac_phase);
                 Ok(())
             }
 
@@ -1092,6 +1110,30 @@ macro_rules! pymethods_with_waves {
                 Self::place_wave(slf, $current, name, positive, negative, wf, dc, ac, ac_phase);
                 Ok(())
             }
+
+            // ngspice TRNOISE(NA NT NALPHA NAMP RTSAM RTSCAPT RTSEMT), by meaning.
+            #[pyo3(signature = (name, positive, negative, *, noise_rms, time_step, flicker_exponent=IrNum::Num(0.0), flicker_rms=IrNum::Num(0.0), rts_amplitude=IrNum::Num(0.0), rts_capture_time=IrNum::Num(0.0), rts_emission_time=IrNum::Num(0.0), dc=None, ac=None, ac_phase=None))]
+            fn $noise(
+                slf: PyRefMut<'_, Self>, name: &str, positive: &str, negative: &str,
+                noise_rms: IrNum, time_step: IrNum, flicker_exponent: IrNum, flicker_rms: IrNum, rts_amplitude: IrNum, rts_capture_time: IrNum, rts_emission_time: IrNum, dc: Option<f64>, ac: Option<f64>, ac_phase: Option<f64>,
+            ) -> PyResult<()> {
+                let wf = IrWaveform::TrNoise { na: noise_rms, nt: time_step, nalpha: flicker_exponent, namp: flicker_rms, rtsam: rts_amplitude, rtscapt: rts_capture_time, rtsemt: rts_emission_time };
+                Self::place_wave(slf, $current, name, positive, negative, wf, dc, ac, ac_phase);
+                Ok(())
+            }
+
+            // ngspice TRRANDOM(TYPE TS TD PARAM1 PARAM2), PySpice's names;
+            // `random_type` is uniform, gaussian, exponential or poisson.
+            #[pyo3(signature = (name, positive, negative, *, random_type, duration, time_delay=IrNum::Num(0.0), parameter1=IrNum::Num(1.0), parameter2=IrNum::Num(0.0), dc=None, ac=None, ac_phase=None))]
+            fn $random(
+                slf: PyRefMut<'_, Self>, name: &str, positive: &str, negative: &str,
+                random_type: &str, duration: IrNum, time_delay: IrNum, parameter1: IrNum, parameter2: IrNum, dc: Option<f64>, ac: Option<f64>, ac_phase: Option<f64>,
+            ) -> PyResult<()> {
+                let kind = random_type.parse().map_err(PyValueError::new_err)?;
+                let wf = IrWaveform::TrRandom { kind, ts: duration, td: time_delay, p1: parameter1, p2: parameter2 };
+                Self::place_wave(slf, $current, name, positive, negative, wf, dc, ac, ac_phase);
+                Ok(())
+            }
             )*
         }
     };
@@ -1107,9 +1149,14 @@ struct PySubcircuit {
     ground_alias: bool,
 }
 
+/// A node name at the top level: `gnd` (any case) is the global ground `0`.
+fn top_net(n: &str) -> String {
+    if n.eq_ignore_ascii_case("gnd") { "0".into() } else { n.into() }
+}
+
 impl PySubcircuit {
     fn net(&self, n: &str) -> String {
-        if self.ground_alias && n.eq_ignore_ascii_case("gnd") { "0".into() } else { n.into() }
+        if self.ground_alias { top_net(n) } else { n.into() }
     }
 
     fn push(&mut self, c: Component) {
@@ -1197,9 +1244,15 @@ impl PySubcircuit {
         self.push(Component::MutualInductor { name: name.into(), inductor1: inductor1.into(), inductor2: inductor2.into(), coupling });
     }
 
-    #[pyo3(signature = (name, positive, negative, value, *, ac=None, ac_phase=None))]
-    fn V(&mut self, name: &str, positive: &str, negative: &str, value: PyValueArg, ac: Option<f64>, ac_phase: Option<f64>) {
+    /// `portnum` makes the source RF port `portnum` (from 1) for
+    /// `s_param`, with `z0` ohms in series in every analysis (ngspice's
+    /// `portnum n z0 x`; ngspice and ESPice only).
+    #[pyo3(signature = (name, positive, negative, value, *, ac=None, ac_phase=None, portnum=None, z0=50.0))]
+    fn V(&mut self, name: &str, positive: &str, negative: &str, value: PyValueArg, ac: Option<f64>, ac_phase: Option<f64>, portnum: Option<u32>, z0: f64) {
         self.src(false, name, positive, negative, value.ir(), ac, ac_phase, None);
+        if let Some(Component::VoltageSource { port, .. }) = self.inner.components.last_mut() {
+            *port = portnum.map(|num| ir::RfPort { num, z0 });
+        }
     }
 
     #[pyo3(signature = (name, positive, negative, value, *, ac=None, ac_phase=None))]
@@ -1494,7 +1547,7 @@ impl PyTestbench {
     /// methods call it.
     fn place_wave(mut slf: PyRefMut<'_, Self>, current: bool, name: &str, p: &str, n: &str, wf: IrWaveform,
                   dc: Option<f64>, ac: Option<f64>, ac_phase: Option<f64>) {
-        slf.as_super().stim(wave_source(current, name, p.into(), n.into(), wf, dc, ac, ac_phase));
+        slf.as_super().stim(wave_source(current, name, top_net(p), top_net(n), wf, dc, ac, ac_phase));
     }
 }
 
@@ -1521,24 +1574,28 @@ impl PyTestbench {
 
     // ── Stimulus ──
 
-    #[pyo3(signature = (name, positive, negative, value, *, ac=None, ac_phase=None))]
-    fn V(mut slf: PyRefMut<'_, Self>, name: &str, positive: &str, negative: &str, value: PyValueArg, ac: Option<f64>, ac_phase: Option<f64>) {
-        slf.as_super().stim(source(false, name, positive.into(), negative.into(), value.ir(), ac, ac_phase, None));
+    #[pyo3(signature = (name, positive, negative, value, *, ac=None, ac_phase=None, portnum=None, z0=50.0))]
+    fn V(mut slf: PyRefMut<'_, Self>, name: &str, positive: &str, negative: &str, value: PyValueArg, ac: Option<f64>, ac_phase: Option<f64>, portnum: Option<u32>, z0: f64) {
+        let mut v = source(false, name, top_net(positive), top_net(negative), value.ir(), ac, ac_phase, None);
+        if let Component::VoltageSource { port, .. } = &mut v {
+            *port = portnum.map(|num| ir::RfPort { num, z0 });
+        }
+        slf.as_super().stim(v);
     }
 
     #[pyo3(signature = (name, positive, negative, value, *, ac=None, ac_phase=None))]
     fn I(mut slf: PyRefMut<'_, Self>, name: &str, positive: &str, negative: &str, value: PyValueArg, ac: Option<f64>, ac_phase: Option<f64>) {
-        slf.as_super().stim(source(true, name, positive.into(), negative.into(), value.ir(), ac, ac_phase, None));
+        slf.as_super().stim(source(true, name, top_net(positive), top_net(negative), value.ir(), ac, ac_phase, None));
     }
 
     #[pyo3(signature = (name, positive, negative, value))]
     fn R(mut slf: PyRefMut<'_, Self>, name: &str, positive: &str, negative: &str, value: PyValueArg) {
-        slf.as_super().stim(Component::Resistor { name: name.into(), n1: positive.into(), n2: negative.into(), value: value.ir(), model: None, params: vec![] });
+        slf.as_super().stim(Component::Resistor { name: name.into(), n1: top_net(positive), n2: top_net(negative), value: value.ir(), model: None, params: vec![] });
     }
 
     #[pyo3(signature = (name, positive, negative, value))]
     fn C(mut slf: PyRefMut<'_, Self>, name: &str, positive: &str, negative: &str, value: PyValueArg) {
-        slf.as_super().stim(Component::Capacitor { name: name.into(), n1: positive.into(), n2: negative.into(), value: value.ir(), model: None, params: vec![] });
+        slf.as_super().stim(Component::Capacitor { name: name.into(), n1: top_net(positive), n2: top_net(negative), value: value.ir(), model: None, params: vec![] });
     }
 
     // ── Config ──
@@ -1620,8 +1677,9 @@ impl PyTestbench {
     }
 
     #[pyo3(signature = (node1, node2, node3, node4, tf_type, pz_type))]
-    fn add_polezero(mut slf: PyRefMut<'_, Self>, node1: &str, node2: &str, node3: &str, node4: &str, tf_type: &str, pz_type: &str) {
-        slf.as_super().tb().analyses.push(card::polezero([node1, node2, node3, node4], tf_type, pz_type));
+    fn add_polezero(mut slf: PyRefMut<'_, Self>, node1: &str, node2: &str, node3: &str, node4: &str, tf_type: &str, pz_type: &str) -> PyResult<()> {
+        slf.as_super().tb().analyses.push(card::polezero([node1, node2, node3, node4], tf_type, pz_type)?);
+        Ok(())
     }
 
     #[pyo3(signature = (variation="dec", points=10, start_frequency=100.0, stop_frequency=1e8, f2overf1=None))]
@@ -1646,13 +1704,15 @@ impl PyTestbench {
     }
 
     #[pyo3(signature = (param, start, stop, step, inner_analysis, inner_type))]
-    fn add_spectre_sweep(mut slf: PyRefMut<'_, Self>, param: &str, start: f64, stop: f64, step: f64, inner_analysis: &str, inner_type: &str) {
-        slf.as_super().tb().analyses.push(card::spectre_sweep(param, start, stop, step, inner_analysis, inner_type));
+    fn add_spectre_sweep(mut slf: PyRefMut<'_, Self>, param: &str, start: f64, stop: f64, step: f64, inner_analysis: &str, inner_type: &str) -> PyResult<()> {
+        slf.as_super().tb().analyses.push(card::spectre_sweep(param, start, stop, step, inner_analysis, inner_type)?);
+        Ok(())
     }
 
     #[pyo3(signature = (num_iterations, inner_analysis, inner_type, seed=None))]
-    fn add_spectre_monte_carlo(mut slf: PyRefMut<'_, Self>, num_iterations: u32, inner_analysis: &str, inner_type: &str, seed: Option<u64>) {
-        slf.as_super().tb().analyses.push(card::spectre_monte_carlo(num_iterations, inner_analysis, inner_type, seed));
+    fn add_spectre_monte_carlo(mut slf: PyRefMut<'_, Self>, num_iterations: u32, inner_analysis: &str, inner_type: &str, seed: Option<u64>) -> PyResult<()> {
+        slf.as_super().tb().analyses.push(card::spectre_monte_carlo(num_iterations, inner_analysis, inner_type, seed)?);
+        Ok(())
     }
 
     // ── Serialization ──

@@ -99,6 +99,7 @@ fn vsrc(name: &str, np: &str, nm: &str, dc: f64) -> Component {
         name: name.into(), np: np.into(), nm: nm.into(),
         value: IrValue::Numeric { value: dc },
         ac_magnitude: None, ac_phase: None, waveform: None,
+        port: None,
     }
 }
 
@@ -193,6 +194,7 @@ fn ac_finds_the_rc_corner() {
         name: "dd".into(), np: "vdd".into(), nm: "0".into(),
         value: IrValue::Numeric { value: 0.0 },
         ac_magnitude: Some(1.0), ac_phase: Some(0.0), waveform: None,
+        port: None,
     }];
     let ir = CircuitIR { top, testbench: Some(tb), ..Default::default() };
     let raw = run(&ir);
@@ -223,6 +225,7 @@ fn ac_phase_on_a_source_is_honoured() {
         name: "1".into(), np: "vin".into(), nm: "0".into(),
         value: IrValue::Numeric { value: 0.0 },
         ac_magnitude: Some(2.0), ac_phase: Some(90.0), waveform: None,
+        port: None,
     }];
     let ir = CircuitIR { top, testbench: Some(tb), ..Default::default() };
     let raw = run(&ir);
@@ -246,6 +249,7 @@ fn tran_follows_the_rc_step_response() {
             initial: 0.0.into(), pulsed: 1.0.into(), delay: 0.0.into(), rise_time: 1e-9.into(),
             fall_time: 1e-9.into(), pulse_width: 1.0.into(), period: 0.0.into(),
         }),
+        port: None,
     }];
     let ir = CircuitIR { top, testbench: Some(tb), ..Default::default() };
     let raw = run(&ir);
@@ -293,6 +297,7 @@ fn noise_matches_a_resistors_thermal_floor() {
         name: "1".into(), np: "vin".into(), nm: "0".into(),
         value: IrValue::Numeric { value: 0.0 },
         ac_magnitude: Some(1.0), ac_phase: None, waveform: None,
+        port: None,
     }];
     tb.temperature = Some(27.0);
     let ir = CircuitIR { top, testbench: Some(tb), ..Default::default() };
@@ -443,6 +448,7 @@ fn an_inductor_and_its_mutual_coupling_run() {
         name: "1".into(), np: "drive".into(), nm: "0".into(),
         value: IrValue::Numeric { value: 0.0 },
         ac_magnitude: Some(1.0), ac_phase: None, waveform: None,
+        port: None,
     }];
     let ir = CircuitIR { top, testbench: Some(tb), ..Default::default() };
     let netlist = emit(&ir, Dialect::Vacask).unwrap();
@@ -587,7 +593,8 @@ fn refusals_are_errors_not_broken_decks() {
     top.components = vec![Component::VoltageSource {
         name: "1".into(), np: "a".into(), nm: "0".into(),
         value: IrValue::Numeric { value: 0.0 }, ac_magnitude: None, ac_phase: None,
-        waveform: Some(IrWaveform::Pwl { values: vec![((0.0).into(), (0.0).into()), ((1e-3).into(), (1.0).into())] }),
+        waveform: Some(IrWaveform::Pwl { values: vec![((0.0).into(), (0.0).into()), ((1e-3).into(), (1.0).into())], repeat: None, delay: None }),
+        port: None,
     }];
     let ir = CircuitIR { top, ..Default::default() };
     assert!(refuses(&ir), "PWL must refuse");
@@ -609,12 +616,13 @@ fn refusals_are_errors_not_broken_decks() {
         waveform: Some(IrWaveform::Sin {
             offset: 0.0.into(), amplitude: 1.0.into(), frequency: 1e3.into(), delay: 0.0.into(), damping: 0.0.into(), phase: 90.0.into(),
         }),
+        port: None,
     };
     assert!(refuses(&with(sin)), "a nonzero SIN phase must refuse");
 
     // Analyses VACASK does not implement.
     for a in [
-        Analysis::PoleZero { node1: "a".into(), node2: "0".into(), node3: "b".into(), node4: "0".into(), tf_type: "vol".into(), pz_type: "pz".into() },
+        Analysis::PoleZero { node1: "a".into(), node2: "0".into(), node3: "b".into(), node4: "0".into(), tf_type: PzTransfer::Vol, pz_type: PzKind::Pz },
         Analysis::Distortion { sweep: FreqSweep { variation: Sweep::Dec, points: 10, start: 1.0, stop: 1e3 }, f2overf1: None },
         Analysis::Sensitivity { output: "v(out)".into(), ac: None },
     ] {
@@ -637,6 +645,7 @@ fn a_sine_source_runs_with_delay_and_damping() {
         waveform: Some(IrWaveform::Sin {
             offset: 0.5.into(), amplitude: 2.0.into(), frequency: 1e3.into(), delay: 0.0.into(), damping: 0.0.into(), phase: 0.0.into(),
         }),
+        port: None,
     }];
     let ir = CircuitIR { top, testbench: Some(tb), ..Default::default() };
     let raw = run(&ir);
@@ -662,6 +671,7 @@ fn a_pulse_train_runs() {
             initial: 0.0.into(), pulsed: 1.0.into(), delay: 1e-4.into(), rise_time: 1e-6.into(),
             fall_time: 1e-6.into(), pulse_width: 1e-4.into(), period: 2e-4.into(),
         }),
+        port: None,
     }];
     let ir = CircuitIR { top, testbench: Some(tb), ..Default::default() };
     let raw = run(&ir);

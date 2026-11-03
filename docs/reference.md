@@ -24,7 +24,7 @@ nodes are positional; everything after `*` is keyword-only.
 | `R` | `(name, positive, negative, value, *, raw_spice=None, **params)` |
 | `C`, `L` | `(name, positive, negative, value, **params)` |
 | `K` | `(name, inductor1, inductor2, *, coupling)` |
-| `V`, `I` | `(name, positive, negative, value, *, ac=None, ac_phase=None)` |
+| `V`, `I` | `(name, positive, negative, value, *, ac=None, ac_phase=None)`; `V` also takes `portnum=None, z0=50.0`: an RF port for `s_param`, with `z0` in series in every analysis (ngspice and ESPice only) |
 | `BV`, `BI` | `(name, positive, negative, *, expression)` |
 | `E` | `(name, positive, negative, *, control_positive, control_negative, voltage_gain)` |
 | `G` | `(name, positive, negative, *, control_positive, control_negative, transconductance)` |
@@ -49,10 +49,12 @@ Waveform sources, each a `...VoltageSource` and a `...CurrentSource`, also on
 | --- | --- |
 | `Sinusoidal` | `offset, amplitude, frequency, delay, damping_factor, phase` |
 | `Pulse` | `initial_value, pulsed_value, delay, pulse_width, period, rise_time, fall_time` |
-| `PieceWiseLinear` | `values=[(t, v), ...]` |
+| `PieceWiseLinear` | `values=[(t, v), ...], repeat_time, delay_time` (ngspice `r=`, `td=`: ngspice and ESPice only; ngspice on a voltage source only) |
 | `Exponential` | `initial_value, pulsed_value, rise_delay_time, rise_time_constant, fall_delay_time, fall_time_constant` |
 | `SingleFrequencyFM` | `offset, amplitude, carrier_frequency, modulation_index, signal_frequency` |
 | `AmplitudeModulated` | `offset, amplitude, modulating_frequency, carrier_frequency, signal_delay` |
+| `TransientNoise` | `noise_rms, time_step, flicker_exponent=0, flicker_rms=0, rts_amplitude=0, rts_capture_time=0, rts_emission_time=0`: ngspice `TRNOISE`, added to `dc`; other dialects refuse it |
+| `Random` | `random_type, duration, time_delay=0, parameter1=1, parameter2=0`: ngspice `TRRANDOM`, `random_type` one of `uniform`, `gaussian`, `exponential`, `poisson`; added to `dc`; other dialects refuse it |
 
 ## Directives and models (`Circuit`, `Subcircuit`)
 
@@ -106,13 +108,13 @@ Waveform sources, each a `...VoltageSource` and a `...CurrentSource`, also on
 | `dc_sensitivity(var)`, `ac_sensitivity(var, ...)` | `SensitivityAnalysis` |
 | `polezero(node1, node2, node3, node4, tf_type, pz_type)` | `PoleZeroAnalysis` (`pz["pole(1)"]`) |
 | `distortion(variation="dec", points=10, start_frequency=100.0, stop_frequency=1e8, f2overf1=None)` | `DistortionAnalysis` |
-| `pss(fundamental_frequency, stabilization_time, observe_node, points_per_period=128, harmonics=10)` | `PssAnalysis` |
+| `pss(fundamental_frequency, stabilization_time, observe_node, points_per_period=128, harmonics=10, sc_iter=None, steady_coeff=None, uic=False)` | `PssAnalysis`; the last three are ngspice's `sciter`, `steadycoeff`, `uic` |
 | `s_param(variation="dec", number_of_points=10, start_frequency=1e6, stop_frequency=1e10)` | `SParamAnalysis` |
 | `harmonic_balance(fundamental_frequencies, num_harmonics=None)` | `HarmonicBalanceAnalysis` |
 | `stability(probe, variation="dec", number_of_points=10, start_frequency=1.0, stop_frequency=1e10)` | `StabilityAnalysis` |
 | `transient_noise(step_time, end_time)` | `TransientNoiseAnalysis` |
 | `network_params(output_current, input_source, z_in=50.0, z_out=50.0, ...)` | `SParamAnalysis` (LTspice `.net`) |
-| `spectre_sweep`, `spectre_montecarlo` | `RawData` (Spectre) |
+| `spectre_sweep`, `spectre_monte_carlo` | `RawData` (Spectre); `spectre_montecarlo` is a deprecated alias that warns |
 | `spectre_pac`, `spectre_pnoise`, `spectre_pxf`, `spectre_pstb` | periodic small-signal (Spectre) |
 
 `variation` is `"dec"`, `"oct"`, `"lin"` or `"log"` (Spectre only), in any

@@ -516,6 +516,75 @@ class TestWaveformSources:
         n = tb.netlist("ngspice")
         for card in (".tf v(out) Vin", ".sens v(out)", ".pz in 0 out 0 vol pz", ".disto dec 10 100 1meg"):
             assert card in n, n
+        # Keywords are parsed at the call: any case reads, a wrong one raises.
+        tb.add_polezero("in", "0", "out", "0", "CUR", "Zer")
+        assert ".pz in 0 out 0 cur zer" in tb.netlist("ngspice")
+        with pytest.raises(ValueError, match="unknown transfer type 'volt'"):
+            tb.add_polezero("in", "0", "out", "0", "volt", "pz")
+        with pytest.raises(ValueError, match="unknown Spectre analysis 'op'"):
+            tb.add_spectre_sweep("r", 1.0, 2.0, 1.0, "op1", "op")
+        with pytest.raises(ValueError, match="unknown sweep 'decade'"):
+            ps().Circuit("t").simulator().step_sweep("r", 1.0, 10.0, 2.0, "decade")
+
+    def test_pwl_repeat_and_delay_reach_the_card(self):
+        # PySpice's repeat_time/delay_time are ngspice's r=/td= (manual 4.1.4),
+        # on the builders and on a Testbench; LTspice has no such card.
+        c = ps().Circuit("t")
+        c.PieceWiseLinearVoltageSource("w", "w", c.gnd, values=[(0, 0), (1e-3, 1), (2e-3, 0)],
+                                       repeat_time=0, delay_time=5e-4)
+        assert "Vw w 0 0 PWL(0 0 0.001 1 0.002 0) r=0 td=0.0005" in str(c)
+        dut = ps().Subcircuit("d")
+        dut.R("1", "w", "0", 1e3)
+        tb = ps().Testbench(dut)
+        tb.PieceWiseLinearVoltageSource("w", "w", "0", values=[(0, 0), (1e-3, 1)], repeat_time="tr")
+        assert "PWL(0 0 0.001 1) r={tr}" in tb.netlist("ngspice")
+        with pytest.raises(Exception, match="PWL"):
+            tb.netlist("ltspice")
+
+    def test_rf_ports_and_s_param_on_ngspice(self):
+        # ngspice manual 4.1.11: `portnum n z0 x`. A matched T pad for K = 2 in
+        # 50 ohm (arms 50/3, shunt 200/3) has |S11| = 0 and |S21| = 1/K = 0.5.
+        c = ps().Circuit("pad")
+        c.V("1", "in", c.gnd, 0.0, ac=1.0, portnum=1)
+        c.V("2", "out", c.gnd, 0.0, ac=1.0, portnum=2, z0=50.0)
+        c.R("1", "in", "mid", 50 / 3)
+        c.R("2", "mid", "out", 50 / 3)
+        c.R("3", "mid", c.gnd, 200 / 3)
+        assert "V1 in 0 0 AC 1 portnum 1 z0 50" in str(c)
+        sp = c.simulator(simulator="ngspice").s_param("lin", 3, 1e3, 3e3)
+        assert all(abs(m) < 1e-9 for m in sp.magnitude("S_1_1"))
+        assert all(abs(m - 0.5) < 1e-9 for m in sp.magnitude("S_2_1"))
+        dut = ps().Subcircuit("d")
+        dut.R("1", "a", "0", 50.0)
+        tb = ps().Testbench(dut)
+        tb.V("p", "a", "0", 0.0, ac=1.0, portnum=1, z0=75.0)
+        assert "Vp a 0 0 AC 1 portnum 1 z0 75" in tb.netlist("ngspice")
+        with pytest.raises(Exception, match="RF port"):
+            tb.netlist("ltspice")
+
+    def test_trnoise_and_trrandom_sources(self):
+        # ngspice manual 4.1.7/4.1.8. Both add to the DC value (ngspice 45
+        # holds `3 TRRANDOM(.. 3)` at 6 V), so the default DC is 0. ngspice only.
+        c = ps().Circuit("t")
+        c.TransientNoiseVoltageSource("n", "n", c.gnd, noise_rms=0.1, time_step=1e-6)
+        c.TransientNoiseCurrentSource("rts", "r", c.gnd, noise_rms=1e-3, time_step=1e-6, flicker_exponent=1.0,
+                                      flicker_rms=1e-4, rts_amplitude=15e-3, rts_capture_time=22e-6, rts_emission_time=50e-6)
+        c.RandomVoltageSource("u", "u", c.gnd, random_type="uniform", duration=1e-6, parameter1=2, parameter2=3)
+        c.RandomCurrentSource("g", "g", c.gnd, random_type="Gaussian", duration="ts")
+        n = str(c)
+        assert "Vn n 0 0 TRNOISE(0.1 0.000001 0 0)\n" in n
+        assert "Irts r 0 0 TRNOISE(0.001 0.000001 1 0.0001 0.015 0.000022 0.00005)" in n
+        assert "Vu u 0 0 TRRANDOM(1 0.000001 0 2 3)" in n
+        assert "Ig g 0 0 TRRANDOM(2 {ts} 0 1 0)" in n
+        with pytest.raises(ValueError, match="random type 'normal'"):
+            c.RandomVoltageSource("x", "x", c.gnd, random_type="normal", duration=1e-6)
+        dut = ps().Subcircuit("d")
+        dut.R("1", "n", "0", 1e3)
+        tb = ps().Testbench(dut)
+        tb.TransientNoiseVoltageSource("n", "n", "0", noise_rms=0.1, time_step=1e-6)
+        assert "TRNOISE(" in tb.netlist("ngspice")
+        with pytest.raises(Exception, match="TRNOISE"):
+            tb.netlist("espice")
 
     def test_pwl_voltage(self):
         c = ps().Circuit("t")
@@ -695,6 +764,22 @@ class TestGroundAliasing:
             value=1e3,
         )
         assert "R1 a 0" in str(c)
+
+    def test_testbench_stimulus_maps_gnd_like_circuit(self):
+        # A Testbench is a top level, so `gnd` is the global ground there
+        # too, on every stimulus method and both nodes.
+        dut = ps().Subcircuit("d")
+        dut.R("1", "a", "0", 1e3)
+        tb = ps().Testbench(dut)
+        tb.V("1", "a", "gnd", 1.0)
+        tb.I("1", "GND", "a", 1e-3)
+        tb.R("2", "a", "Gnd", 1e3)
+        tb.C("2", "gnd", "a", 1e-12)
+        tb.PulseVoltageSource("p", "b", "gnd")
+        n = tb.netlist("ngspice")
+        for card in ("V1 a 0 1", "I1 0 a 1m", "R2 a 0 1k", "C2 0 a 1p", "Vp b 0 0 PULSE("):
+            assert card in n, n
+        assert "gnd" not in n.lower(), n
 
     def test_circuit_gnd_property(self):
         c = ps().Circuit("t")

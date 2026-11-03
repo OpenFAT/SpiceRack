@@ -160,7 +160,12 @@ fn emit_waveform_params(wf: &IrWaveform) -> Result<String, CodeGenError> {
         }
         // `[CMP]` p.683: `vpwl1 (1 0) vsource type=pwl
         //  wave=[1n 0 1.1n 2 1.5n 0.5 2n 3 5n 5]`
-        IrWaveform::Pwl { values } => {
+        // Spectre's `pwlperiod` repeats from time 0 only, unlike ngspice's
+        // `r=` from any point; refused rather than half-mapped.
+        IrWaveform::Pwl { repeat, delay, .. } if repeat.is_some() || delay.is_some() => {
+            return Err(unsupported_component("PWL r=/td= (repeat, delay)"));
+        }
+        IrWaveform::Pwl { values, .. } => {
             let mut s = String::from("type=pwl wave=[");
             for (i, (t, v)) in values.iter().enumerate() {
                 if i > 0 {
@@ -199,6 +204,10 @@ fn emit_waveform_params(wf: &IrWaveform) -> Result<String, CodeGenError> {
         // Spectre has ammodindex/ammodfreq/ammodphase (`[CMP]` p.685) but
         // publishes no waveform equation, and SPICE's own AM() definition
         // varies between simulators. Refusing beats guessing the mapping.
+        // Spectre's `noisefile`/`noisevec` are small-signal spot noise, not a
+        // transient source (dev/research/ir-gaps.md §2).
+        IrWaveform::TrNoise { .. } => return Err(unsupported_component("TRNOISE source (ngspice only)")),
+        IrWaveform::TrRandom { .. } => return Err(unsupported_component("TRRANDOM source (ngspice only)")),
         IrWaveform::Am { .. } => {
             return Err(unsupported_component(
                 "AM source (Spectre documents ammodindex/ammodfreq but no waveform equation; \
@@ -219,14 +228,12 @@ fn emit_sweep_header(idx: usize, sp: &StepParam) -> Result<String, CodeGenError>
     let suffix: String = sp.param.chars()
         .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '_' })
         .collect();
-    let sweep = match sp.sweep_type.as_deref() {
-        Some("dec") | Some("DEC") => format!("dec={}", spectre_num(sp.step)),
-        Some("lin") | Some("LIN") | None => format!("step={}", spectre_num(sp.step)),
-        Some("log") | Some("LOG") => format!("log={}", spectre_num(sp.step)),
-        Some(other) => {
-            return Err(unsupported_analysis(&format!(
-                "parameter sweep type '{other}' (Spectre sweep accepts step/lin/dec/log)"
-            )));
+    let sweep = match sp.sweep_type {
+        Some(Sweep::Dec) => format!("dec={}", spectre_num(sp.step)),
+        Some(Sweep::Lin) | None => format!("step={}", spectre_num(sp.step)),
+        Some(Sweep::Log) => format!("log={}", spectre_num(sp.step)),
+        Some(Sweep::Oct) => {
+            return Err(unsupported_analysis("parameter sweep type 'oct' (Spectre sweep accepts step/lin/dec/log)"));
         }
     };
     Ok(format!(
@@ -660,13 +667,16 @@ pub(crate) fn emit_component(out: &mut String, comp: &Component, n: Names) -> Re
         }
         // `[CMP]` p.577 `ml1 mutual_inductor coupling=1 ind1=l1 ind2=l2`
         Component::MutualInductor { name, inductor1, inductor2, coupling } => {
-            w!(out, "k{} mutual_inductor coupling={} ind1=l{} ind2=l{}", n.d(name), coupling, n.d(inductor1), n.d(inductor2));
+            w!(out, "k{} mutual_inductor coupling={} ind1=l{} ind2=l{}", n.d(name), spectre_num(*coupling), n.d(inductor1), n.d(inductor2));
         }
         // `[CMP]` p.683 `Name p n vsource parameter=value ...`; `dc` is
         // instance parameter #1, `mag`/`phase` are the small-signal
         // parameters #39/#40 (p.685).
         // `[CMP]` p.380 `i1 (in 0) isource dc=0 type=pulse delay=10n ...`
-        Component::VoltageSource { name, np, nm, value, ac_magnitude, ac_phase, waveform }
+        // An RF port is Spectre's `port` instance, whose mapping from
+        // ngspice's `portnum`/`z0` is unverified: refused, not dropped.
+        Component::VoltageSource { name, port: Some(_), .. } => return Err(unsupported_component(&format!("V{name}: RF port"))),
+        Component::VoltageSource { name, np, nm, value, ac_magnitude, ac_phase, waveform, port: None }
         | Component::CurrentSource { name, np, nm, value, ac_magnitude, ac_phase, waveform } => {
             let (l, master) = if matches!(comp, Component::VoltageSource { .. }) { ('v', "vsource") } else { ('i', "isource") };
             let wave = waveform.as_ref().map(emit_waveform_params).transpose()?;
@@ -696,15 +706,15 @@ pub(crate) fn emit_component(out: &mut String, comp: &Component, n: Names) -> Re
         }
         // `[CMP]` p.680 `e1 (out1 0 pos neg) vcvs gain=10`
         Component::Vcvs { name, np, nm, ncp, ncm, gain } => {
-            w!(out, "e{} ({} {} {} {}) vcvs gain={}", n.d(name), n.n(np), n.n(nm), n.n(ncp), n.n(ncm), gain)
+            w!(out, "e{} ({} {} {} {}) vcvs gain={}", n.d(name), n.n(np), n.n(nm), n.n(ncp), n.n(ncm), spectre_num(*gain))
         }
         // `[CMP]` p.678 `Name sink src ps ns ... vccs`, parameter `gm`
         Component::Vccs { name, np, nm, ncp, ncm, transconductance } => {
-            w!(out, "g{} ({} {} {} {}) vccs gm={}", n.d(name), n.n(np), n.n(nm), n.n(ncp), n.n(ncm), transconductance)
+            w!(out, "g{} ({} {} {} {}) vccs gm={}", n.d(name), n.n(np), n.n(nm), n.n(ncp), n.n(ncm), spectre_num(*transconductance))
         }
         // `[CMP]` p.286 `vcs (pos gnd) cccs gain=2.5 probe=v1`
         Component::Cccs { name, np, nm, vsense, gain } => {
-            w!(out, "f{} ({} {}) cccs probe={} gain={}", n.d(name), n.n(np), n.n(nm), n.d(vsense), gain)
+            w!(out, "f{} ({} {}) cccs probe={} gain={}", n.d(name), n.n(np), n.n(nm), n.d(vsense), spectre_num(*gain))
         }
         // R5 pp.590-616: `pvcvs`/`pvccs` take the controlling pairs as
         // terminals, `pcccs`/`pccvs` the sensing sources as `probes`; both
@@ -735,7 +745,7 @@ pub(crate) fn emit_component(out: &mut String, comp: &Component, n: Names) -> Re
         }
         // `[CMP]` p.288 `vvs (pos gnd) ccvs rm=1 probe=v1`
         Component::Ccvs { name, np, nm, vsense, transresistance } => {
-            w!(out, "h{} ({} {}) ccvs probe={} rm={}", n.d(name), n.n(np), n.n(nm), n.d(vsense), transresistance)
+            w!(out, "h{} ({} {}) ccvs probe={} rm={}", n.d(name), n.n(np), n.n(nm), n.d(vsense), spectre_num(*transresistance))
         }
         // `[CMP]` p.302 `Name a c ModelName parameter=value ...`,
         // `d0 (dp dn) pdiode l=3e-4 w=2.5e-4 area=1`
@@ -785,7 +795,7 @@ pub(crate) fn emit_component(out: &mut String, comp: &Component, n: Names) -> Re
         // `[CMP]` p.644-645 `t1 (1 0 2 0) tline z0=100`, instance params
         // `z0` (#1) and `td` (#2).
         Component::TLine { name, inp, inm, outp, outm, z0, td } => {
-            w!(out, "t{} ({} {} {} {}) tline z0={} td={}", n.d(name), n.n(inp), n.n(inm), n.n(outp), n.n(outm), z0, td)
+            w!(out, "t{} ({} {} {} {}) tline z0={} td={}", n.d(name), n.n(inp), n.n(inm), n.n(outp), n.n(outm), spectre_num(*z0), spectre_num(*td))
         }
         Component::Xspice { .. } => {
             return Err(unsupported_component(
@@ -925,7 +935,11 @@ fn emit_analysis(analysis: &Analysis, keep_case: bool) -> Result<String, CodeGen
         // `probe` parameter (the previous version emitted both); for an
         // autonomous circuit the observed node goes in the terminal list.
         // `points_per_period` has no documented pss parameter and is
-        // dropped.
+        // dropped. ngspice's shooting controls (`sciter`, `steadycoeff`,
+        // `uic`) have no mapped Spectre parameter and are refused.
+        Analysis::Pss { sc_iter, steady_coeff, uic, .. } if sc_iter.is_some() || steady_coeff.is_some() || *uic => {
+            return Err(unsupported_analysis("pss sciter/steadycoeff/uic (ngspice shooting controls)"));
+        }
         Analysis::Pss { fundamental, stabilization, observe_node, harmonics, .. } => {
             let terms = if observe_node.is_empty() {
                 String::new()
@@ -1013,7 +1027,7 @@ fn emit_analysis(analysis: &Analysis, keep_case: bool) -> Result<String, CodeGen
                 spectre_num(*stop),
                 spectre_num(*step),
                 inner,
-                inner_type,
+                inner_type.name(),
             )
         }
 
@@ -1029,7 +1043,7 @@ fn emit_analysis(analysis: &Analysis, keep_case: bool) -> Result<String, CodeGen
             let seed_str = seed.map(|s| format!(" seed={s}")).unwrap_or_default();
             format!(
                 "mc1 montecarlo numruns={}{} {{\n  {} {}\n}}",
-                iterations, seed_str, inner, inner_type,
+                iterations, seed_str, inner, inner_type.name(),
             )
         }
 
@@ -1175,7 +1189,7 @@ mod tests {
             Component::Inductor { name: s("1"), n1: s("a"), n2: s("b"), value: v(1e-6), model: None, params: vec![] },
             Component::Inductor { name: s("2"), n1: s("a"), n2: s("b"), value: v(1e-6), model: None, params: vec![] },
             Component::MutualInductor { name: s("1"), inductor1: s("1"), inductor2: s("2"), coupling: 0.9 },
-            Component::VoltageSource { name: s("1"), np: s("a"), nm: s("0"), value: v(1.0), ac_magnitude: None, ac_phase: None, waveform: None },
+            Component::VoltageSource { name: s("1"), np: s("a"), nm: s("0"), value: v(1.0), ac_magnitude: None, ac_phase: None, waveform: None, port: None },
             Component::CurrentSource { name: s("1"), np: s("a"), nm: s("0"), value: v(1.0), ac_magnitude: None, ac_phase: None, waveform: None },
             Component::Vcvs { name: s("1"), np: s("a"), nm: s("b"), ncp: s("c"), ncm: s("d"), gain: 2.0 },
             Component::Vccs { name: s("1"), np: s("a"), nm: s("b"), ncp: s("c"), ncm: s("d"), transconductance: 2.0 },
@@ -1223,6 +1237,7 @@ mod tests {
                         ac_magnitude: None,
                         ac_phase: None,
                         waveform: None,
+                        port: None,
                     },
                     Component::Resistor {
                         name: "1".into(),
@@ -1293,6 +1308,7 @@ mod tests {
                 damping: 0.0.into(),
                 phase: 0.0.into(),
             }),
+            port: None,
         };
 
         let pulse_comp = Component::VoltageSource {
@@ -1311,6 +1327,7 @@ mod tests {
                 pulse_width: 5e-7.into(),
                 period: 1e-6.into(),
             }),
+            port: None,
         };
 
         let sin_str = emit_component(&sin_comp).unwrap();
@@ -1352,6 +1369,7 @@ mod tests {
             observe_node: "out".into(),
             points_per_period: 128,
             harmonics: 10,
+            sc_iter: None, steady_coeff: None, uic: false,
         };
         let pss_str = emit_analysis(&pss, false).unwrap();
         assert!(pss_str.contains("pss1 (out 0) pss"), "pss: {}", pss_str);
@@ -1492,6 +1510,7 @@ mod tests {
             value: IrValue::Numeric { value: 0.0 },
             ac_magnitude: Some(1.0), ac_phase: Some(45.0),
             waveform: None,
+            port: None,
         };
         let s = emit_component(&v).unwrap();
         assert!(s.contains("mag=1"), "spectre ac mag: {}", s);
@@ -1502,6 +1521,7 @@ mod tests {
             value: IrValue::Numeric { value: 3.3 },
             ac_magnitude: None, ac_phase: None,
             waveform: None,
+            port: None,
         };
         let s = emit_component(&v_no_ac).unwrap();
         assert!(!s.contains("mag="), "no mag without ac: {}", s);

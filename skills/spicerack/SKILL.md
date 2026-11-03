@@ -15,7 +15,7 @@ SpiceRack builds a **deck** (SPICE netlist text), hands it to a simulator, and p
 
 `Circuit.simulator()` returns a `CircuitSimulator`; `Testbench` runs analyses directly.
 
-**`Testbench` carries only stimulus: `V I R C` and the Sinusoidal/Pulse/PieceWiseLinear source builders.** Everything else — `L K M D Q J Z E F G H T S W A X BV BI`, plus `model include lib parameter raw_spice gnd veriloga osdi verilog` — lives on `Circuit` and `Subcircuit`. Put devices in the DUT, stimulus in the bench. Reaching for `tb.model(...)` or `tb.gnd` is the most common `AttributeError` here.
+**`Testbench` carries only stimulus: `V I R C` and the waveform source builders.** Everything else — `L K M D Q J Z E F G H T S W A X BV BI`, plus `model include lib parameter raw_spice gnd veriloga osdi verilog` — lives on `Circuit` and `Subcircuit`. Put devices in the DUT, stimulus in the bench. Reaching for `tb.model(...)` or `tb.gnd` is the most common `AttributeError` here; write the node `"0"` (or `"gnd"`, which a `Testbench` maps to `0` as a `Circuit` does).
 
 ## Build and simulate
 
@@ -49,13 +49,13 @@ Each of these returns a plausible wrong number rather than an error.
 
 `tb.measure("ac", "gain", "find", "vdb(vout)", "at=1k")` is a raw passthrough to the SPICE `.measure` card, so the full grammar is available — `TRIG/TARG`, `WHEN`, `FIND…AT`, `AVG`, `RMS`, `INTEG`, `DERIV`, `MAX/MIN/PP`. Results land in `result.measures`.
 
-For extraction in Python, `spicerack.testbenches.analysis` provides `crossings`, `ac_gain_db`, `ac_passband_db`, `ac_bandwidth_hz`, `ac_unity_gain_hz`, `ac_phase_margin_deg`, and `extract_metrics` with `MetricSpec`.
+For extraction in Python, `spicerack.testbenches` (defined in `spicerack.testbenches.analysis`) provides `crossings`, `ac_gain_db`, `ac_passband_db`, `ac_bandwidth_hz`, `ac_unity_gain_hz`, `ac_phase_margin_deg`, and `extract_metrics` with `MetricSpec`.
 
 Bandwidth defaults to the half-power point, `HALF_POWER_DB` = 3.0103 dB. A round 3.0 dB puts a single-pole corner 0.23 % low — a systematic error that does not shrink with sweep density.
 
 ## Backends
 
-Names: `ngspice` (aliases `ngspice-subprocess`, `ngspice-shared`), `ltspice`, `vacask`, `spectre`, `espice` — nothing else (no Xyce); `with_backend()` / `simulator()` raise `ValueError` on any other name. Pick one with `tb.with_backend(name)`, or for every run that names none with `SPICERACK_BACKEND=<name>`. On `espice`, `veriloga()` becomes `.hdl` (VerA, no OpenVAF) and `osdi()` is refused. Forced `vacask` rejects `dc`. `ngspice` is the default and the only one assumed present. Declared features gate backend selection, so a bench that asks for `.measure` support will not route to vacask. Check with `tb.check_backend(name)` and `ps.CircuitSimulator.available_backends()`.
+Names: `ngspice` (aliases `ngspice-subprocess`, `ngspice-shared`), `ltspice`, `vacask` (alias `vacask-shared`), `spectre`, `espice` — nothing else (no Xyce); `with_backend()` / `simulator()` raise `ValueError` on any other name. Pick one with `tb.with_backend(name)`, or for every run that names none with `SPICERACK_BACKEND=<name>`. On `espice`, `veriloga()` becomes `.hdl` (VerA, no OpenVAF) and `osdi()` is refused. Forced `vacask` rejects `dc`. `ngspice` is the default and the only one assumed present. Declared features gate backend selection, so a bench that asks for `.measure` support will not route to vacask. Check with `tb.check_backend(name)` and `ps.CircuitSimulator.available_backends()`.
 
 → Element signatures per class, analysis signatures, the unit list, and the backend capability matrix: [`REFERENCE.md`](REFERENCE.md)
 

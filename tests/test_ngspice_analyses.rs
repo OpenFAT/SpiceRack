@@ -204,3 +204,142 @@ fn xspice_s_xfer_is_the_working_laplace_path() {
     let db = 20.0 * raw.complex_data[index_of(&raw, "out")][0].norm().log10();
     assert!((db + 3.0103).abs() < 1e-2, "s_xfer corner {db} dB");
 }
+
+// ── several analyses beside a .meas ──
+
+/// Regression: with a `.meas`, the codegen moved one analysis into the
+/// `.control` block and wrote only its plot; the `.op` ran afterwards and
+/// never reached the result. Closed forms: a 1k/1k divider from 2 V is
+/// 1 V at `out`; `a` follows the 1 V, 1 kHz sine exactly (a source across a
+/// resistor); its sampled maximum at a 1 µs step is within
+/// 1 - cos(pi * 1e-3) = 4.9e-6 of 1.
+#[test]
+fn every_analysis_of_a_measured_testbench_reaches_the_result() {
+    use spicerack::ir::*;
+    let v = |name: &str, np: &str, value: f64, waveform: Option<IrWaveform>| Component::VoltageSource {
+        name: name.into(), np: np.into(), nm: "0".into(), value: IrValue::Numeric { value }, ac_magnitude: None, ac_phase: None, waveform, port: None,
+    };
+    let r = |name: &str, n1: &str, n2: &str| Component::Resistor { name: name.into(), n1: n1.into(), n2: n2.into(), value: IrValue::Numeric { value: 1e3 }, model: None, params: vec![] };
+    let sin = IrWaveform::Sin { offset: 0.0.into(), amplitude: 1.0.into(), frequency: 1e3.into(), delay: 0.0.into(), damping: 0.0.into(), phase: 0.0.into() };
+    let top = Subcircuit {
+        name: "op and tran".into(),
+        components: vec![v("1", "in", 2.0, None), r("1", "in", "out"), r("2", "out", "0"), v("2", "a", 0.0, Some(sin)), r("3", "a", "0")],
+        ..Default::default()
+    };
+    let tb = Testbench {
+        analyses: vec![Analysis::Op, Analysis::Transient { step: 1e-6, stop: 1e-3, start: None, max_step: Some(1e-6), uic: false }],
+        measures: vec!["tran vmax MAX v(a)".into()],
+        ..Default::default()
+    };
+    let ir = CircuitIR { top, testbench: Some(tb), ..Default::default() };
+    let deck = spicerack::codegen::netlist(&ir, Dialect::Ngspice).unwrap();
+    assert!(deck.contains(".control\nop\ntran 1u 1m 0 1u\n.endc\n"), "every analysis runs in the block:\n{deck}");
+    let plots = spicerack::simulation::run_all(&ir, Some("ngspice")).unwrap_or_else(|e| panic!("{e}\n{deck}"));
+    let names: Vec<&str> = plots.iter().map(|p| p.plot_name.as_str()).collect();
+    assert_eq!(names, ["Operating Point", "Transient Analysis"]);
+    assert!(close(scalar(&plots[0], "out"), 1.0, 1e-12), "op v(out) = {}", scalar(&plots[0], "out"));
+    let (time, a) = (column(&plots[1], "time"), column(&plots[1], "a"));
+    for (t, x) in time.iter().zip(a) {
+        assert!((x - (2.0 * std::f64::consts::PI * 1e3 * t).sin()).abs() < 1e-9, "t={t}: v(a) = {x}");
+    }
+    let vmax = plots[0].measures.iter().find(|m| m.name == "vmax").unwrap_or_else(|| panic!("{:?}", plots[0].measures));
+    assert!((vmax.value - 1.0).abs() < 5e-6, "vmax = {}", vmax.value);
+}
+
+// ── .sp and RF ports ──
+
+/// A voltage source as an RF port, written by the codegen (manual §4.1.11).
+fn port(name: &str, node: &str, num: u32) -> spicerack::ir::Component {
+    use spicerack::ir::*;
+    Component::VoltageSource {
+        name: name.into(), np: node.into(), nm: "0".into(), value: IrValue::Numeric { value: 0.0 },
+        ac_magnitude: Some(1.0), ac_phase: None, waveform: None, port: Some(RfPort { num, z0: 50.0 }),
+    }
+}
+
+#[test]
+fn sp_of_a_matched_t_attenuator_reflects_nothing_and_passes_half() {
+    // A T pad for K = 2 in Z0 = 50: series arms Z0 (K-1)/(K+1) = 50/3, shunt
+    // 2 Z0 K/(K^2-1) = 200/3. Matched both ways, so S11 = S22 = 0 and
+    // S21 = S12 = 1/K = 0.5, real, at every frequency.
+    use spicerack::ir::*;
+    let r = |name: &str, n1: &str, n2: &str, value: f64| Component::Resistor { name: name.into(), n1: n1.into(), n2: n2.into(), value: IrValue::Numeric { value }, model: None, params: vec![] };
+    let top = Subcircuit {
+        name: "t pad".into(),
+        components: vec![port("1", "in", 1), port("2", "out", 2), r("1", "in", "mid", 50.0 / 3.0), r("2", "mid", "out", 50.0 / 3.0), r("3", "mid", "0", 200.0 / 3.0)],
+        ..Default::default()
+    };
+    let sp = Analysis::SPar { sweep: FreqSweep { variation: Sweep::Lin, points: 3, start: 1e3, stop: 3e3 } };
+    let ir = CircuitIR { top, testbench: Some(Testbench { analyses: vec![sp], ..Default::default() }), ..Default::default() };
+    let deck = spicerack::codegen::netlist(&ir, Dialect::Ngspice).unwrap();
+    assert!(deck.contains("V1 in 0 0 AC 1 portnum 1 z0 50\n"), "{deck}");
+    let raw = Dialect::Ngspice.run(&deck).unwrap_or_else(|e| panic!("{e}\n{deck}"));
+    for (s, want) in [("S_1_1", 0.0), ("S_2_2", 0.0), ("S_2_1", 0.5), ("S_1_2", 0.5)] {
+        for z in &raw.complex_data[index_of(&raw, s)] {
+            assert!((z.re - want).abs() < 1e-9 && z.im.abs() < 1e-9, "{s} = {z}, want {want}");
+        }
+    }
+}
+
+/// An RF port puts Z0 in series with the source in every analysis (manual
+/// §4.1.11), so a dialect that cannot write one refuses rather than drop it.
+#[test]
+fn rf_ports_are_refused_where_no_dialect_form_exists() {
+    use spicerack::ir::*;
+    let ir = CircuitIR { top: Subcircuit { name: "p".into(), components: vec![port("1", "in", 1)], ..Default::default() }, ..Default::default() };
+    assert!(spicerack::codegen::netlist(&ir, Dialect::Espice).unwrap().contains("V1 in 0 0 AC 1 portnum 1 z0 50"));
+    for d in [Dialect::Ltspice, Dialect::Hspice, Dialect::Xyce, Dialect::Spectre, Dialect::Vacask] {
+        let e = spicerack::codegen::netlist(&ir, d).unwrap_err().to_string();
+        assert!(e.contains("RF port"), "{d:?}: {e}");
+    }
+}
+
+// ── .pss ──
+
+/// ngspice-45 as built here answers `.pss` with "unimplemented dot command"
+/// (the manual calls PSS experimental, §11.3.12), so the oracle is the
+/// manual's own example card, `.pss 624e6 1u v_plus 1024 10 150 5e-3 uic`:
+/// the card written for the same fields reads, token by token, as the same
+/// numbers ngspice would parse.
+#[test]
+fn pss_card_matches_the_manual_example() {
+    use spicerack::ir::*;
+    let pss = Analysis::Pss {
+        fundamental: 624e6, stabilization: 1e-6, observe_node: "v_plus".into(), points_per_period: 1024, harmonics: 10,
+        sc_iter: Some(150), steady_coeff: Some(5e-3), uic: true,
+    };
+    let ir = CircuitIR { testbench: Some(Testbench { analyses: vec![pss], ..Default::default() }), ..Default::default() };
+    let deck = spicerack::codegen::netlist(&ir, Dialect::Ngspice).unwrap();
+    let card = deck.lines().find(|l| l.starts_with(".pss")).unwrap_or_else(|| panic!("{deck}"));
+    let manual = ".pss 624e6 1u v_plus 1024 10 150 5e-3 uic";
+    let (got, want): (Vec<&str>, Vec<&str>) = (card.split_whitespace().collect(), manual.split_whitespace().collect());
+    assert_eq!(got.len(), want.len(), "{card}");
+    for (g, w) in got.iter().zip(&want) {
+        let n = spicerack::unit::ngspice_value;
+        match (n(g), n(w)) {
+            (Some(a), Some(b)) => assert_eq!(a, b, "{card}"),
+            _ => assert_eq!(g, w, "{card}"),
+        }
+    }
+    // Positional: STEADYCOEFF alone still needs SCITER before it (default
+    // 50), and `uic` alone both (default 1e-3).
+    let only = |sc_iter, steady_coeff, uic| {
+        let a = Analysis::Pss { fundamental: 1e3, stabilization: 1e-3, observe_node: "o".into(), points_per_period: 64, harmonics: 5, sc_iter, steady_coeff, uic };
+        let ir = CircuitIR { testbench: Some(Testbench { analyses: vec![a], ..Default::default() }), ..Default::default() };
+        spicerack::codegen::netlist(&ir, Dialect::Ngspice).unwrap().lines().find(|l| l.starts_with(".pss")).unwrap().to_string()
+    };
+    assert_eq!(only(None, None, false), ".pss 1000 0.001 o 64 5");
+    assert_eq!(only(None, Some(5e-3), false), ".pss 1000 0.001 o 64 5 50 0.005");
+    assert_eq!(only(Some(9), None, false), ".pss 1000 0.001 o 64 5 9 0.001");
+    assert_eq!(only(None, None, true), ".pss 1000 0.001 o 64 5 50 0.001 uic");
+}
+
+/// ngspice-45 here has no `.pss` at all: pinned, so a build that grows it
+/// fails this test and the manual-example golden above can become a run.
+#[test]
+fn this_ngspice_has_no_pss() {
+    let deck = "* pss\nV1 in 0 SIN(0 1 1k)\nR1 in out 1k\nC1 out 0 159.15n\n.pss 1k 5m out 128 5 50 1e-3\n.end\n";
+    let err = Dialect::Ngspice.run(deck).expect_err("ngspice-45 ran .pss: replace the golden with a run").to_string();
+    // Line 5 is the `.pss` card ("unimplemented dot command '.pss'").
+    assert!(err.contains("Error on line 5"), "{err}");
+}

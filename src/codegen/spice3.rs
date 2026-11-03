@@ -61,6 +61,25 @@ fn rclvalue(out: &mut String, d: Dialect, x: bool, v: &IrValue, model: &Option<S
     }
 }
 
+/// Refuses a waveform `d` has no card for, before anything is written.
+/// PWL `r=`/`td=`: ngspice reads them on a V source only (manual §4.1.4;
+/// ngspice 45 answers an I source with "unknown parameter (r)"), ESPice on
+/// both; no other dialect here has been shown to repeat the same way.
+fn refuse_wave(d: Dialect, letter: char, name: &str, wf: &IrWaveform) -> Result<(), CodeGenError> {
+    let why = match wf {
+        IrWaveform::Pwl { repeat, delay, .. } if repeat.is_some() || delay.is_some() => match (d, letter) {
+            (Dialect::Espice, _) | (Dialect::Ngspice, 'V') => return Ok(()),
+            _ => "PWL r=/td= (repeat, delay)",
+        },
+        // ESPice 0.3.0 refuses both cards ("the trnoise source waveform is
+        // not supported"); HSPICE, LTspice and Xyce have no source form.
+        IrWaveform::TrNoise { .. } if d != Dialect::Ngspice => "TRNOISE (ngspice only)",
+        IrWaveform::TrRandom { .. } if d != Dialect::Ngspice => "TRRANDOM (ngspice only)",
+        _ => return Ok(()),
+    };
+    Err(CodeGenError::UnsupportedComponent { backend: d.name().into(), component: format!("{letter}{name}: {why}") })
+}
+
 fn waveform(out: &mut String, d: Dialect, x: bool, wf: &IrWaveform) {
     let w = |n: &IrNum| match n {
         IrNum::Num(v) => dec(d, x, *v).into(),
@@ -73,12 +92,18 @@ fn waveform(out: &mut String, d: Dialect, x: bool, wf: &IrWaveform) {
         IrWaveform::Pulse { initial, pulsed, delay, rise_time, fall_time, pulse_width, period } => {
             w!(out, "PULSE({} {} {} {} {} {} {})", w(initial), w(pulsed), w(delay), w(rise_time), w(fall_time), w(pulse_width), w(period))
         }
-        IrWaveform::Pwl { values } => {
+        IrWaveform::Pwl { values, repeat, delay } => {
             out.push_str("PWL(");
             for (i, (t, v)) in values.iter().enumerate() {
                 w!(out, "{}{} {}", if i == 0 { "" } else { " " }, w(t), w(v));
             }
             out.push(')');
+            if let Some(r) = repeat {
+                w!(out, " r={}", w(r));
+            }
+            if let Some(td) = delay {
+                w!(out, " td={}", w(td));
+            }
         }
         IrWaveform::Exp { initial, pulsed, rise_delay, rise_tau, fall_delay, fall_tau } => {
             w!(out, "EXP({} {} {} {} {} {})", w(initial), w(pulsed), w(rise_delay), w(rise_tau), w(fall_delay), w(fall_tau))
@@ -88,6 +113,18 @@ fn waveform(out: &mut String, d: Dialect, x: bool, wf: &IrWaveform) {
         }
         IrWaveform::Am { amplitude, offset, modulating_freq, carrier_freq, delay } => {
             w!(out, "AM({} {} {} {} {})", w(amplitude), w(offset), w(modulating_freq), w(carrier_freq), w(delay))
+        }
+        // The RTS fields are left off when all zero, as the manual's
+        // white and 1/f examples write the card.
+        IrWaveform::TrNoise { na, nt, nalpha, namp, rtsam, rtscapt, rtsemt } => {
+            w!(out, "TRNOISE({} {} {} {}", w(na), w(nt), w(nalpha), w(namp));
+            if !(*rtsam == 0.0 && *rtscapt == 0.0 && *rtsemt == 0.0) {
+                w!(out, " {} {} {}", w(rtsam), w(rtscapt), w(rtsemt));
+            }
+            out.push(')');
+        }
+        IrWaveform::TrRandom { kind, ts, td, p1, p2 } => {
+            w!(out, "TRRANDOM({} {} {} {} {})", *kind as u8, w(ts), w(td), w(p1), w(p2))
         }
     }
 }
@@ -102,6 +139,8 @@ fn waveform(out: &mut String, d: Dialect, x: bool, wf: &IrWaveform) {
 ///
 /// * ngspice: the XSPICE `s_xfer` code model, two lines (instance +
 ///   `.model`). Verified numerically.
+/// * HSPICE and ESPice: `E/G … LAPLACE c+ c- num… / den…`. ESPice verified
+///   numerically (`tests/test_laplace_ngspice.rs`).
 /// * LTspice: `Laplace=` on an E/G source. **Unverified** — LTspice cannot
 ///   be run here. The expression is still parsed first, so what goes out is
 ///   a transfer function we understand rather than an opaque string.
@@ -136,8 +175,10 @@ fn laplace_source(
             laplace::horner(&den),
         ));
     }
-    // `E1 b 0 LAPLACE a 0 k0 k1 ... / d0 d1 ...`, ascending powers.
-    if d == Dialect::Hspice {
+    // `E1 b 0 LAPLACE a 0 k0 k1 ... / d0 d1 ...`, ascending powers. ESPice
+    // reads the same card in its ngspice tokenizer and has no XSPICE
+    // `s_xfer` (ESPice `docs/using/reference.md`, controlled sources).
+    if matches!(d, Dialect::Hspice | Dialect::Espice) {
         let asc = |c: &[f64]| laplace::coeff_array(&c.iter().rev().copied().collect::<Vec<_>>());
         return Ok(format!("{letter}B{name} {np} {nm} LAPLACE {ip} {im} {} / {}", asc(&num), asc(&den)));
     }
@@ -256,9 +297,14 @@ fn step_param(d: Dialect, sp: &StepParam) -> Result<String, CodeGenError> {
             sp.param,
         )));
     }
+    // Xyce and LTspice step lin, dec or oct only; Spectre's `log` is not
+    // theirs.
+    if sp.sweep_type == Some(Sweep::Log) && matches!(d, Dialect::Xyce | Dialect::Ltspice) {
+        return Err(CodeGenError::Other(format!("{} `.step` has no log sweep (stepping '{}')", d.name(), sp.param)));
+    }
     // Xyce: `.step [lin|dec|oct] <name> <start> <stop> <inc>`, no `param` (RG p.155).
     if d == Dialect::Xyce {
-        let sweep = sp.sweep_type.as_ref().map(|t| format!("{t} ")).unwrap_or_default();
+        let sweep = sp.sweep_type.map(|t| format!("{} ", t.name())).unwrap_or_default();
         return Ok(format!(".step {sweep}{} {} {} {}", sp.param, sp.start, sp.stop, sp.step));
     }
     if d != Dialect::Ltspice {
@@ -272,7 +318,7 @@ fn step_param(d: Dialect, sp: &StepParam) -> Result<String, CodeGenError> {
     // LTspice: `.step [lin|oct|dec] param <name> <start> <stop> <inc>`.
     // The `param` keyword is mandatory in both forms.
     Ok(match sp.sweep_type {
-        Some(ref sweep) => format!(".step {} param {} {} {} {}", sweep, sp.param, sp.start, sp.stop, sp.step),
+        Some(sweep) => format!(".step {} param {} {} {} {}", sweep.name(), sp.param, sp.start, sp.stop, sp.step),
         None => format!(".step param {} {} {} {}", sp.param, sp.start, sp.stop, sp.step),
     })
 }
@@ -471,24 +517,24 @@ fn raw_lines(out: &mut String, lines: &[String], drop_four: bool) {
     }
 }
 
-/// Where an ngspice deck runs its analysis from a `.control` block: the
-/// index in `tb.analyses` of the analysis to move there, and the `fourier`
-/// commands to follow it, one per `.four` (an `Analysis::Fourier`, or a raw
-/// or extra line, with its `+` continuations).
+/// Whether an ngspice deck runs its analyses from a `.control` block, and
+/// the `fourier` commands to run there, one per `.four` (an
+/// `Analysis::Fourier`, or a raw or extra line, with its `+` continuations).
 ///
 /// ngspice refuses `.measure` ("No .measure possible in batch mode (-b) with
 /// -r rawfile set!") and ignores `.four` (".fourier line ignored since
 /// rawfile was produced") under `-b -r`, so a deck with either (from the
-/// testbench or a raw line) runs its first `.ac`/`.tran`/`.dc` from a block,
-/// where `.four` has to be the `fourier` command (there is no `four`
-/// command); `.meas` cards stay where they are. The backend appends the
-/// `write`: only it knows the rawfile's path. Only those three analyses:
-/// `.measure` takes no other one, and `write` keeps only the current plot,
-/// which for `noise`, `disto` and `pz` would drop the others. `None` when
-/// nothing needs a block, no such analysis exists, or a raw control block
-/// already runs the deck (the backend refuses a deck left with a `.meas` or
-/// `.four` and no block that runs it, rather than lose its results).
-fn control_run(x: bool, ir: &CircuitIR, tb: &Testbench) -> Option<(usize, Vec<String>)> {
+/// testbench or a raw line) runs every analysis from one block, in card
+/// order, where `.four` has to be the `fourier` command (there is no `four`
+/// command); `.meas` cards stay where they are. Every analysis goes in: one
+/// left as a dot card would run after the block, past the backend's
+/// `write`, and its plot would be lost. The backend appends the `write` of
+/// every plot: only it knows the rawfile's path. `None` when nothing needs a
+/// block, the deck has no `.ac`/`.tran`/`.dc` for a `.measure` to read, or a
+/// raw control block already runs the deck (the backend refuses a deck left
+/// with a `.meas` or `.four` and no block that runs it, rather than lose its
+/// results).
+fn control_run(x: bool, ir: &CircuitIR, tb: &Testbench) -> Option<Vec<String>> {
     let raw = || ir.subcircuit_defs.iter().chain(std::iter::once(&ir.top)).flat_map(|s| &s.raw_spice).chain(&tb.extra_lines).map(String::as_str);
     let mut fourier = fourier_commands(raw());
     for a in &tb.analyses {
@@ -501,8 +547,7 @@ fn control_run(x: bool, ir: &CircuitIR, tb: &Testbench) -> Option<(usize, Vec<St
     if (tb.measures.is_empty() && !raw().any(is_meas) && fourier.is_empty()) || runs_in_control(raw()) {
         return None;
     }
-    let at = tb.analyses.iter().position(|a| matches!(a, Analysis::Ac { .. } | Analysis::Transient { .. } | Analysis::Dc { .. }))?;
-    Some((at, fourier))
+    tb.analyses.iter().any(|a| matches!(a, Analysis::Ac { .. } | Analysis::Transient { .. } | Analysis::Dc { .. })).then_some(fourier)
 }
 
 pub(super) fn netlist(d: Dialect, ir: &CircuitIR) -> Result<String, CodeGenError> {
@@ -638,19 +683,32 @@ pub(super) fn netlist(d: Dialect, ir: &CircuitIR) -> Result<String, CodeGenError
             w!(out, "{}\n", step_param(d, sp)?);
         }
         raw_lines(&mut out, &tb.extra_lines, drop_four);
-        for (i, a) in tb.analyses.iter().enumerate() {
-            match &control {
-                Some((at, fourier)) if i == *at => {
-                    // `.tran 1u 1m` -> bare `tran 1u 1m` inside the block.
-                    w!(out, ".control\n{}\n", analysis(d, x, a)?.trim_start_matches('.'));
-                    for f in fourier {
-                        w!(out, "{f}\n");
+        match &control {
+            Some(fourier) => {
+                // `fourier` reads the current plot: it follows the first
+                // transient (at the end of the block when there is none).
+                let at = tb.analyses.iter().position(|a| matches!(a, Analysis::Transient { .. }));
+                let four = |out: &mut String| fourier.iter().for_each(|f| w!(out, "{f}\n"));
+                out.push_str(".control\n");
+                for (i, a) in tb.analyses.iter().enumerate() {
+                    // As a command, `.four` would run the transient again.
+                    if !matches!(a, Analysis::Fourier { .. }) {
+                        // `.tran 1u 1m` -> bare `tran 1u 1m` inside the block.
+                        w!(out, "{}\n", analysis(d, x, a)?.trim_start_matches('.'));
                     }
-                    out.push_str(".endc\n");
+                    if at == Some(i) {
+                        four(&mut out);
+                    }
                 }
-                // Left as a dot-card, `.four` runs the analysis a second time.
-                Some(_) if matches!(a, Analysis::Fourier { .. }) => {}
-                _ => w!(out, "{}\n", analysis(d, x, a)?),
+                if at.is_none() {
+                    four(&mut out);
+                }
+                out.push_str(".endc\n");
+            }
+            None => {
+                for a in &tb.analyses {
+                    w!(out, "{}\n", analysis(d, x, a)?);
+                }
             }
         }
     }
@@ -678,15 +736,31 @@ pub(crate) fn component(out: &mut String, d: Dialect, x: bool, comp: &Component)
         Component::MutualInductor { name, inductor1, inductor2, coupling } => {
             w!(out, "K{} L{} L{} {}", name, inductor1, inductor2, dec(d, x, *coupling))
         }
-        Component::VoltageSource { name, np, nm, value: v, ac_magnitude, ac_phase, waveform: wf }
+        Component::VoltageSource { name, np, nm, value: v, ac_magnitude, ac_phase, waveform: wf, .. }
         | Component::CurrentSource { name, np, nm, value: v, ac_magnitude, ac_phase, waveform: wf } => {
             let letter = if matches!(comp, Component::VoltageSource { .. }) { 'V' } else { 'I' };
+            if let Some(wf) = wf {
+                refuse_wave(d, letter, name, wf)?;
+            }
+            let port = match comp {
+                Component::VoltageSource { port, .. } => port.as_ref(),
+                _ => None,
+            };
+            // ngspice and ESPice only (manual §4.1.11; ESPice reference,
+            // `portnum n z0 Z`); HSPICE's is a `P` element, and dropping the
+            // port would lose its series Z0.
+            if port.is_some() && !ngspice(d) {
+                return Err(CodeGenError::UnsupportedComponent { backend: d.name().into(), component: format!("V{name}: RF port") });
+            }
             w!(out, "{}{} {} {} {}", letter, name, np, nm, value(d, x, v));
             if let Some(mag) = ac_magnitude {
                 w!(out, " AC {}", dec(d, x, *mag));
                 if let Some(phase) = ac_phase {
                     w!(out, " {}", dec(d, x, *phase));
                 }
+            }
+            if let Some(p) = port {
+                w!(out, " portnum {} z0 {}", p.num, dec(d, x, p.z0));
             }
             if let Some(wf) = wf {
                 out.push(' ');
@@ -871,7 +945,7 @@ fn analysis(d: Dialect, x: bool, a: &Analysis) -> Result<String, CodeGenError> {
             s
         }
         Analysis::PoleZero { node1, node2, node3, node4, tf_type, pz_type } if ng => {
-            format!(".pz {} {} {} {} {} {}", node1, node2, node3, node4, tf_type, pz_type)
+            format!(".pz {} {} {} {} {} {}", node1, node2, node3, node4, tf_type.name(), pz_type.name())
         }
         Analysis::Distortion { sweep: FreqSweep { variation, points, start, stop }, f2overf1 } if ng => {
             let mut s = format!(".disto {} {} {} {}", variation.name(), points, num(d, x, *start), num(d, x, *stop));
@@ -882,8 +956,17 @@ fn analysis(d: Dialect, x: bool, a: &Analysis) -> Result<String, CodeGenError> {
         }
         // ponytail: Rust `{}` numbers, byte-for-byte what the retired string
         // path sent ngspice for these two cards.
-        Analysis::Pss { fundamental, stabilization, observe_node, points_per_period, harmonics } if ng => {
-            format!(".pss {} {} {} {} {}", fundamental, stabilization, observe_node, points_per_period, harmonics)
+        Analysis::Pss { fundamental, stabilization, observe_node, points_per_period, harmonics, sc_iter, steady_coeff, uic } if ng => {
+            let mut s = format!(".pss {} {} {} {} {}", fundamental, stabilization, observe_node, points_per_period, harmonics);
+            // SCITER and STEADYCOEFF are positional (manual §11.3.12): one
+            // given, or `uic`, writes both, the other at ngspice's default.
+            if sc_iter.is_some() || steady_coeff.is_some() || *uic {
+                w!(s, " {} {}", sc_iter.unwrap_or(50), steady_coeff.unwrap_or(1e-3));
+            }
+            if *uic {
+                s.push_str(" uic");
+            }
+            s
         }
         Analysis::SPar { sweep: FreqSweep { variation, points, start, stop } } if ng => {
             format!(".sp {} {} {} {}", variation.name(), points, start, stop)
@@ -918,6 +1001,7 @@ mod tests {
                         ac_magnitude: None,
                         ac_phase: None,
                         waveform: None,
+                        port: None,
                     },
                     Component::Resistor {
                         name: "1".into(),
@@ -998,6 +1082,7 @@ mod tests {
                         ac_magnitude: None,
                         ac_phase: None,
                         waveform: None,
+                        port: None,
                     },
                 ],
                 models: vec![
@@ -1036,6 +1121,7 @@ mod tests {
                         ac_magnitude: None,
                         ac_phase: None,
                         waveform: None,
+                        port: None,
                     },
                 ],
                 instances: vec![
@@ -1109,6 +1195,7 @@ mod tests {
                             damping: 0.0.into(),
                             phase: 0.0.into(),
                         }),
+                        port: None,
                     },
                     Component::VoltageSource {
                         name: "pulse".into(),
@@ -1126,6 +1213,7 @@ mod tests {
                             pulse_width: 5e-7.into(),
                             period: 1e-6.into(),
                         }),
+                        port: None,
                     },
                     Component::VoltageSource {
                         name: "pwl".into(),
@@ -1136,7 +1224,10 @@ mod tests {
                         ac_phase: None,
                         waveform: Some(IrWaveform::Pwl {
                             values: vec![((0.0).into(), (0.0).into()), ((1e-6).into(), (3.3).into()), ((2e-6).into(), (0.0).into())],
+                            repeat: None,
+                            delay: None,
                         }),
+                        port: None,
                     },
                 ], ..Default::default() }, ..Default::default() };
 
@@ -1199,7 +1290,7 @@ mod tests {
         // PoleZero
         let pz = Analysis::PoleZero {
             node1: "1".into(), node2: "0".into(), node3: "3".into(), node4: "0".into(),
-            tf_type: "vol".into(), pz_type: "pz".into(),
+            tf_type: PzTransfer::Vol, pz_type: PzKind::Pz,
         };
         assert_eq!(analysis(cg, false, &pz).unwrap(), ".pz 1 0 3 0 vol pz");
 
@@ -1349,7 +1440,7 @@ mod tests {
             start: 1000.0,
             stop: 10000.0,
             step: 10.0,
-            sweep_type: Some("dec".into()),
+            sweep_type: Some(Sweep::Dec),
         };
         assert_eq!(step_param(cg, &sp).unwrap(), ".step dec param rval 1000 10000 10");
     }
@@ -1393,10 +1484,10 @@ mod tests {
     }
 
     #[test]
-    fn measures_move_the_first_ac_tran_or_dc_into_a_control_block() {
+    fn measures_move_every_analysis_into_a_control_block() {
         let ir = divider(vec![Analysis::Op, ac(), tran()], &["ac g find vdb(output) at=100"], &[]);
         let deck = netlist(Dialect::Ngspice, &ir).unwrap();
-        assert!(deck.ends_with(".meas ac g find vdb(output) at=100\n.op\n.control\nac dec 10 1 1k\n.endc\n.tran 1u 10m\n.end"), "{deck}");
+        assert!(deck.ends_with(".meas ac g find vdb(output) at=100\n.control\nop\nac dec 10 1 1k\ntran 1u 10m\n.endc\n.end"), "{deck}");
         // ESPice and LTspice read `.measure` under their rawfile option.
         for d in [Dialect::Espice, Dialect::Ltspice] {
             assert!(!netlist(d, &ir).unwrap().contains(".control"), "{d:?}");
@@ -1573,7 +1664,7 @@ mod tests {
         let pz = Analysis::PoleZero {
             node1: "1".into(), node2: "0".into(),
             node3: "3".into(), node4: "0".into(),
-            tf_type: "vol".into(), pz_type: "pz".into(),
+            tf_type: PzTransfer::Vol, pz_type: PzKind::Pz,
         };
         assert!(analysis(cg_xy, false, &pz).is_err(), "pz should error on ltspice");
 
@@ -1592,7 +1683,7 @@ mod tests {
         let pz = Analysis::PoleZero {
             node1: "1".into(), node2: "0".into(),
             node3: "3".into(), node4: "0".into(),
-            tf_type: "vol".into(), pz_type: "pz".into(),
+            tf_type: PzTransfer::Vol, pz_type: PzKind::Pz,
         };
         assert!(analysis(cg_ng, false, &pz).is_ok(), "pz should work on ngspice");
     }
@@ -1607,6 +1698,7 @@ mod tests {
             value: IrValue::Numeric { value: 0.0 },
             ac_magnitude: Some(1.0), ac_phase: None,
             waveform: None,
+            port: None,
         };
         let s = crate::codegen::card(&v_ac, cg).unwrap();
         assert_eq!(s, "Vin inp 0 0 AC 1", "ac mag only: {}", s);
@@ -1617,6 +1709,7 @@ mod tests {
             value: IrValue::Numeric { value: 0.0 },
             ac_magnitude: Some(1.0), ac_phase: Some(45.0),
             waveform: None,
+            port: None,
         };
         let s = crate::codegen::card(&v_ac_phase, cg).unwrap();
         assert_eq!(s, "Vin inp 0 0 AC 1 45", "ac mag+phase: {}", s);
@@ -1627,6 +1720,7 @@ mod tests {
             value: IrValue::Numeric { value: 3.3 },
             ac_magnitude: None, ac_phase: None,
             waveform: None,
+            port: None,
         };
         let s = crate::codegen::card(&v_dc, cg).unwrap();
         assert_eq!(s, "Vdd vdd 0 3.3", "dc only: {}", s);
@@ -1662,6 +1756,7 @@ mod tests {
                         value: IrValue::Numeric { value: 1.8 },
                         ac_magnitude: None, ac_phase: None,
                         waveform: None,
+                        port: None,
                     },
                 ],
                 analyses: vec![Analysis::Op], ..Default::default() }),
@@ -1770,6 +1865,7 @@ mod tests {
         let pss = Analysis::Pss {
             fundamental: 1e9, stabilization: 1e-7, observe_node: "v(out)".into(),
             points_per_period: 128, harmonics: 10,
+            sc_iter: None, steady_coeff: None, uic: false,
         };
         let sp = Analysis::SPar { sweep: FreqSweep { variation: Sweep::Dec, points: 10, start: 1e6, stop: 1e10 } };
         assert_eq!(analysis(Dialect::Ngspice, false, &pss).unwrap(), ".pss 1000000000 0.0000001 v(out) 128 10");
