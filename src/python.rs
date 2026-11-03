@@ -443,14 +443,19 @@ impl PySimulator {
         self.tb().stimulus.push(c);
     }
 
+    /// A copy of the deck with every queued analysis.
+    fn deck_as_queued(&self) -> CircuitIR {
+        let mut ir = self.ir.clone();
+        if self.save_currents {
+            ir.testbench.get_or_insert_with(Default::default).saves = vec!["all".into(), "@all[i]".into()];
+        }
+        ir
+    }
+
     /// A copy of the deck that runs `analysis` alone.
     fn deck(&self, analysis: Analysis) -> CircuitIR {
-        let mut ir = self.ir.clone();
-        let tb = ir.testbench.get_or_insert_with(Default::default);
-        tb.analyses = vec![analysis];
-        if self.save_currents {
-            tb.saves = vec!["all".into(), "@all[i]".into()];
-        }
+        let mut ir = self.deck_as_queued();
+        ir.testbench.get_or_insert_with(Default::default).analyses = vec![analysis];
         ir
     }
 
@@ -935,6 +940,30 @@ analysis_class!(PySParamAnalysis, "SParamAnalysis", frequency);
 analysis_class!(PyHarmonicBalanceAnalysis, "HarmonicBalanceAnalysis", frequency);
 analysis_class!(PyStabilityAnalysis, "StabilityAnalysis", frequency);
 analysis_class!(PyTransientNoiseAnalysis, "TransientNoiseAnalysis", time);
+
+/// `raw` as the result class `a`'s single-analysis method returns; `None`
+/// (a Fourier's missing plot) as Python's `None`.
+fn typed_result(py: Python<'_>, a: &Analysis, raw: Option<RawData>) -> PyResult<Py<PyAny>> {
+    let Some(raw) = raw else { return Ok(py.None()) };
+    let r = || Results::from_raw(raw);
+    Ok(match a {
+        Analysis::Op => Py::new(py, PyOperatingPoint { inner: r() })?.into_any(),
+        Analysis::Dc { .. } => Py::new(py, PyDcAnalysis { inner: r() })?.into_any(),
+        Analysis::Ac { .. } | Analysis::SpectrePac { .. } | Analysis::SpectrePxf { .. } => Py::new(py, PyAcAnalysis { inner: r() })?.into_any(),
+        Analysis::Transient { .. } | Analysis::Fourier { .. } => Py::new(py, PyTransientAnalysis { inner: r() })?.into_any(),
+        Analysis::Noise { .. } | Analysis::SpectrePnoise { .. } => Py::new(py, PyNoiseAnalysis { inner: r() })?.into_any(),
+        Analysis::Tf { .. } => Py::new(py, PyTransferFunctionAnalysis { inner: r() })?.into_any(),
+        Analysis::Sensitivity { .. } => Py::new(py, PySensitivityAnalysis { inner: r() })?.into_any(),
+        Analysis::PoleZero { .. } => Py::new(py, PyPoleZeroAnalysis { inner: r() })?.into_any(),
+        Analysis::Distortion { .. } => Py::new(py, PyDistortionAnalysis { inner: r() })?.into_any(),
+        Analysis::Pss { .. } => Py::new(py, PyPssAnalysis { inner: r() })?.into_any(),
+        Analysis::SPar { .. } => Py::new(py, PySParamAnalysis { inner: r() })?.into_any(),
+        Analysis::HarmonicBalance { .. } => Py::new(py, PyHarmonicBalanceAnalysis { inner: r() })?.into_any(),
+        Analysis::Stability { .. } | Analysis::SpectrePstb { .. } => Py::new(py, PyStabilityAnalysis { inner: r() })?.into_any(),
+        Analysis::TransientNoise { .. } => Py::new(py, PyTransientNoiseAnalysis { inner: r() })?.into_any(),
+        Analysis::SpectreSweep { .. } | Analysis::SpectreMonteCarlo { .. } => Py::new(py, PyRawData { inner: r().raw })?.into_any(),
+    })
+}
 
 // ── Module-level functions ──
 
@@ -1713,6 +1742,22 @@ impl PyTestbench {
     fn add_spectre_monte_carlo(mut slf: PyRefMut<'_, Self>, num_iterations: u32, inner_analysis: &str, inner_type: &str, seed: Option<u64>) -> PyResult<()> {
         slf.as_super().tb().analyses.push(card::spectre_monte_carlo(num_iterations, inner_analysis, inner_type, seed)?);
         Ok(())
+    }
+
+    /// Runs every queued analysis (`add_*`) as one deck and returns one
+    /// result per analysis, in queue order, each the type its single-analysis
+    /// twin returns (`op, tran = tb.run()`); `None` for `add_fourier`, whose
+    /// table goes to stdout. `ValueError` with nothing queued.
+    fn run(slf: PyRef<'_, Self>, py: Python<'_>) -> PyResult<Vec<Py<PyAny>>> {
+        let sim = slf.as_super();
+        let ir = sim.deck_as_queued();
+        let analyses = ir.testbench.as_ref().map(|tb| tb.analyses.clone()).unwrap_or_default();
+        if analyses.is_empty() {
+            return Err(PyValueError::new_err("no analyses queued: add one with add_operating_point, add_transient, ..."));
+        }
+        let plots = crate::simulation::run_each(&lowered(ir)?, sim.backend.as_deref()).map_err(runtime_err)?;
+        assert_eq!(plots.len(), analyses.len(), "run_each returns one entry per analysis");
+        analyses.iter().zip(plots).map(|(a, raw)| typed_result(py, a, raw)).collect()
     }
 
     // ── Serialization ──

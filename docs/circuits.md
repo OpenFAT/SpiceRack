@@ -94,7 +94,7 @@ Each comes as `...VoltageSource` and `...CurrentSource`, on all three objects:
 | --- | --- |
 | `SinusoidalVoltageSource` | `offset, amplitude, frequency, delay, damping_factor, phase` |
 | `PulseVoltageSource` | `initial_value, pulsed_value, delay, rise_time, fall_time, pulse_width, period` |
-| `PieceWiseLinearVoltageSource` | `values=[(t, v), ...], repeat_time, delay_time` (ngspice `r=`, `td=`; ngspice repeats a voltage source only, ESPice both) |
+| `PieceWiseLinearVoltageSource` | `values=[(t, v), ...], repeat_time, delay_time` (ngspice `r=`, `td=`; ngspice repeats a voltage source only, ESPice both; Spectre takes `delay_time`, and `repeat_time=0` when the points start at 0 and end on their first value, as `pwlperiod`) |
 | `ExponentialVoltageSource` | `initial_value, pulsed_value, rise_delay_time, rise_time_constant, fall_delay_time, fall_time_constant` |
 | `SingleFrequencyFMVoltageSource` | `offset, amplitude, carrier_frequency, modulation_index, signal_frequency` |
 | `AmplitudeModulatedVoltageSource` | `offset, amplitude, modulating_frequency, carrier_frequency, signal_delay` |

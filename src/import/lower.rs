@@ -536,6 +536,7 @@ impl Cx<'_> {
                 }).collect::<Option<_>>()?,
             },
             Tag::Ac => Analysis::Ac { sweep: FreqSweep { variation: word(0)?.parse().ok()?, points: self.count(k[1])?, start: n(2)?, stop: n(3)? } },
+            Tag::Sp => Analysis::SPar { sweep: FreqSweep { variation: word(0)?.parse().ok()?, points: self.count(k[1])?, start: n(2)?, stop: n(3)? } },
             Tag::Tran => {
                 let uic = self.kid(card, Tag::Uic).is_some();
                 let p: Vec<f64> = self.all(card, Tag::Num).into_iter().map(|r| self.num(r)).collect::<Option<_>>()?;
@@ -663,8 +664,22 @@ impl Cx<'_> {
             Tag::V | Tag::I => {
                 let (np, nm) = (node(0)?, node(1)?);
                 let (mut value, mut dc_given, mut ac_magnitude, mut ac_phase, mut wf) = (IrValue::Numeric { value: 0.0 }, false, None, None, None);
+                // ngspice's named fields (§4.1.4, §4.1.11), applied once the
+                // whole card is read: they may come before the PWL.
+                let (mut repeat, mut delay, mut portnum, mut z0) = (None, None, None, None);
                 for &f in &k[3..] {
                     match self.tag(f) {
+                        Tag::Pair => {
+                            let [key, val] = self.kids(f)[..] else { return None };
+                            let v = self.irnum(val)?;
+                            match self.text(key).to_ascii_lowercase().as_str() {
+                                "r" => repeat = Some(v),
+                                "td" => delay = Some(v),
+                                "portnum" => portnum = Some(self.count(val)?),
+                                "z0" => z0 = Some(v.num()?),
+                                _ => return None,
+                            }
+                        }
                         Tag::Val => (value, dc_given) = (self.value(f), true),
                         Tag::Sdc => {
                             if let Some(v) = self.kid(f, Tag::Val) {
@@ -686,8 +701,19 @@ impl Cx<'_> {
                 if !dc_given && let Some(w) = &wf {
                     value = w.at_zero();
                 }
+                if repeat.is_some() || delay.is_some() {
+                    let Some(IrWaveform::Pwl { repeat: r, delay: d, .. }) = &mut wf else { return None };
+                    (*r, *d) = (repeat, delay);
+                }
+                // A z0 with no port, or a port on an I source, has no IR field.
+                let port = match (portnum, z0) {
+                    (Some(num), z0) => Some(RfPort { num, z0: z0.unwrap_or(50.0) }),
+                    (None, None) => None,
+                    (None, Some(_)) => return None,
+                };
                 match tag {
-                    Tag::V => Component::VoltageSource { name, np, nm, value, ac_magnitude, ac_phase, waveform: wf, port: None },
+                    Tag::V => Component::VoltageSource { name, np, nm, value, ac_magnitude, ac_phase, waveform: wf, port },
+                    _ if port.is_some() => return None,
                     _ => Component::CurrentSource { name, np, nm, value, ac_magnitude, ac_phase, waveform: wf },
                 }
             }
@@ -786,7 +812,7 @@ struct Keys {
 }
 
 const SPECTRE: Keys = Keys {
-    source: &["dc", "mag", "phase", "type", "val0", "val1", "delay", "rise", "fall", "width", "period", "sinedc", "ampl", "freq", "damp", "sinephase", "fmmodindex", "fmmodfreq", "td1", "tau1", "td2", "tau2", "wave"],
+    source: &["dc", "mag", "phase", "type", "val0", "val1", "delay", "rise", "fall", "width", "period", "sinedc", "ampl", "freq", "damp", "sinephase", "fmmodindex", "fmmodfreq", "td1", "tau1", "td2", "tau2", "wave", "pwlperiod"],
     damp: "damp",
     gm: "gm",
     rm: "rm",
@@ -986,6 +1012,17 @@ impl Cx<'_> {
         let keys = self.keys();
         let f = |k: &str| self.get(p, k).map_or(Some(IrNum::Num(0.0)), |v| self.irnum(v));
         let ty = self.get(p, "type").map(|t| self.text(t).trim_matches('"').to_string());
+        // A waveform whose IR form has no delay field (SFFM; Spectre's exp,
+        // where `delay` is the general waveform delay, [CMP] #4) keeps a
+        // nonzero `delay` raw; `pwlperiod` belongs to PWL alone.
+        let fm = ty.as_deref() == Some("fm") || (ty.as_deref() == Some("sine") && self.get(p, "fmmodindex").is_some());
+        let spectre_exp = self.d == Dialect::Spectre && ty.as_deref() == Some("exp");
+        if (fm || spectre_exp) && self.get(p, "delay").is_some_and(|v| self.number(v) != Some(0.0)) {
+            return None;
+        }
+        if ty.as_deref() != Some("pwl") && self.get(p, "pwlperiod").is_some() {
+            return None;
+        }
         Some(Some(match ty.as_deref() {
             None | Some("dc") => return Some(None),
             Some("pulse") => IrWaveform::Pulse { initial: f("val0")?, pulsed: f("val1")?, delay: f("delay")?, rise_time: f("rise")?, fall_time: f("fall")?, pulse_width: f("width")?, period: f("period")? },
@@ -1000,13 +1037,25 @@ impl Cx<'_> {
             Some("exp") => IrWaveform::Exp { initial: f("val0")?, pulsed: f("val1")?, rise_delay: f("td1")?, rise_tau: f("tau1")?, fall_delay: f("td2")?, fall_tau: f("tau2")? },
             Some("fm") => IrWaveform::Sffm { offset: f("sinedc")?, amplitude: f("ampl")?, carrier_freq: f("freq")?, modulation_index: f("modindex")?, signal_freq: f("modfreq")? },
             Some("am") => IrWaveform::Am { offset: f("sinedc")?, amplitude: f("ampl")?, carrier_freq: f("freq")?, modulating_freq: f("modfreq")?, delay: f("delay")? },
+            // `delay` is ngspice's `td=`; `pwlperiod` is its `r=0` only where
+            // `spectre_pwl_period` says the two repeat alike, else raw.
             Some("pwl") if self.d == Dialect::Spectre => {
                 let w = self.get(p, "wave")?;
                 let xs: Vec<IrNum> = self.velems(w).into_iter().map(|x| self.irnum(x)).collect::<Option<_>>()?;
                 if !xs.len().is_multiple_of(2) {
                     return None;
                 }
-                IrWaveform::Pwl { values: xs.chunks(2).map(|c| (c[0].clone(), c[1].clone())).collect(), repeat: None, delay: None }
+                let values: Vec<(IrNum, IrNum)> = xs.chunks(2).map(|c| (c[0].clone(), c[1].clone())).collect();
+                let repeat = match self.get(p, "pwlperiod") {
+                    Some(v) if IrWaveform::spectre_pwl_period(&values)? == self.number(v)? => Some(IrNum::Num(0.0)),
+                    Some(_) => return None,
+                    None => None,
+                };
+                let delay = match self.get(p, "delay") {
+                    Some(v) => Some(self.irnum(v)?).filter(|d| *d != 0.0),
+                    None => None,
+                };
+                IrWaveform::Pwl { values, repeat, delay }
             }
             Some(_) => return None,
         }))

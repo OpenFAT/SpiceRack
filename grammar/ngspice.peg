@@ -74,16 +74,25 @@ l_eolx     <- l_eol / !.
 # `.tran` would (CtlCmd: the lowering reads it as the dot card); the rest is
 # scripting (§4.1). The keyword exactly: inp.c's prefix match
 # (`.controls`) is undocumented (§16.4).
-dialect    <- Control
+dialect    <- Control / Sp &nl
 Control    <- '.control' !namechar rest (nl !endc (CtlCmd / rest))* (nl endc rest)?
 endc       <- '.endc' !namechar
 CtlCmd     <- &(('noise' / 'disto' / 'tran' / 'sens' / 'four' / 'meas' / 'op' / 'dc' / 'ac' / 'tf'
             / 'pz') !namechar) rest
+# §11.3.11: `.sp dec|oct|lin n fstart fstop`, over the deck's RF ports; the
+# `donoise` flag has no IR field, so a card with it stays raw.
+Sp         <- '.sp' s Word s Num s Num s Num s?
 
 # §4.1.7, §4.1.8: the transient noise and random sources, ngspice's own.
 wave       <- Pulse / Sin / Pwl / Exp / Sffm / Am / Trnoise / Trrandom
 Trnoise    <- 'trnoise' wargs
 Trrandom   <- 'trrandom' wargs
+
+# §4.1.4, §4.1.11: a source's named fields, in any order among the rest:
+# PWL's `r=` and `td=`, an RF port's `portnum n` and `z0 x` (`=` or a blank).
+spec       <- Sdc / Sac / wave / Pair_src
+Pair_src   <- Key_src (s? '=' s? / s) Val
+Key_src    <- ('portnum' / 'z0' / 'td' / 'r') !namechar
 
 # §1.10: INPevaluate's number. `d` is an exponent letter; the scale factor is
 # T G MEG K MIL M U N P F A, and the rest of the token is ignored (`10v`,

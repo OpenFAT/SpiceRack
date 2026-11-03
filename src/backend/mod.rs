@@ -126,9 +126,11 @@ impl Dialect {
         Ok(first.expect("a raw file read holds at least one plot"))
     }
 
-    /// [`Self::run`], returning every plot of the run's raw file in file
-    /// order (ngspice: one per analysis, `noise` two), each with the run's
-    /// stdout. VACASK reads one of its per-analysis files, as [`Self::run`].
+    /// [`Self::run`], returning every plot of the run in file order, each
+    /// with the run's stdout. ngspice writes one per analysis (`noise` and
+    /// `disto` two) in its own order (`ac`, `dc`, `op`, `tran`, `tf`,
+    /// `noise`, `sens` for a deck without a `.control` block), not the
+    /// deck's; VACASK one raw file per analysis, read in deck order.
     ///
     /// # Errors
     /// As [`Self::run`].

@@ -160,12 +160,16 @@ fn emit_waveform_params(wf: &IrWaveform) -> Result<String, CodeGenError> {
         }
         // `[CMP]` p.683: `vpwl1 (1 0) vsource type=pwl
         //  wave=[1n 0 1.1n 2 1.5n 0.5 2n 3 5n 5]`
-        // Spectre's `pwlperiod` repeats from time 0 only, unlike ngspice's
-        // `r=` from any point; refused rather than half-mapped.
-        IrWaveform::Pwl { repeat, delay, .. } if repeat.is_some() || delay.is_some() => {
-            return Err(unsupported_component("PWL r=/td= (repeat, delay)"));
-        }
-        IrWaveform::Pwl { values, .. } => {
+        // `delay` (#4) is ngspice's `td=`. `pwlperiod` (#17) repeats from
+        // time 0 with a `twidth` ramp (#18, p.686), which is ngspice's `r=0`
+        // only where `spectre_pwl_period` says so; any other repeat is
+        // refused rather than half-mapped.
+        IrWaveform::Pwl { values, repeat, delay } => {
+            let period = match repeat {
+                Some(r) if *r == 0.0 => Some(IrWaveform::spectre_pwl_period(values).ok_or_else(|| unsupported_component("PWL r=0 (no exact pwlperiod)"))?),
+                Some(_) => return Err(unsupported_component("PWL r= other than 0 (pwlperiod repeats from 0)")),
+                None => None,
+            };
             let mut s = String::from("type=pwl wave=[");
             for (i, (t, v)) in values.iter().enumerate() {
                 if i > 0 {
@@ -174,6 +178,12 @@ fn emit_waveform_params(wf: &IrWaveform) -> Result<String, CodeGenError> {
                 w!(s, "{} {}", sn(t), sn(v));
             }
             s.push(']');
+            if let Some(d) = delay {
+                w!(s, " delay={}", sn(d));
+            }
+            if let Some(p) = period {
+                w!(s, " pwlperiod={}", sn(&IrNum::Num(p)));
+            }
             s
         }
         // `[CMP]` p.685 "Exponential waveform parameters": td1 tau1 td2 tau2,

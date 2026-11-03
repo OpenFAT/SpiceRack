@@ -54,7 +54,7 @@ tb.SinusoidalVoltageSource(name=, positive=, negative=, dc_offset=0, offset=0,
 tb.PulseVoltageSource(name=, positive=, negative=, initial_value=0, pulsed_value=1,
                       pulse_width=50e-9, period=100e-9, rise_time=1e-9, fall_time=1e-9)  # no delay_time
 tb.PieceWiseLinearVoltageSource(name=, positive=, negative=, values=[(t, v), ...],
-                               repeat_time=None, delay_time=None)  # ngspice r=/td=; ngspice + ESPice only
+                               repeat_time=None, delay_time=None)  # ngspice r=/td=; ngspice + ESPice; Spectre delay, and r=0 as pwlperiod when the points start at 0 and end on their first value
 tb.TransientNoiseVoltageSource(name=, positive=, negative=, noise_rms=, time_step=)  # ngspice TRNOISE only
 tb.RandomVoltageSource(name=, positive=, negative=, random_type="uniform", duration=,
                        time_delay=0, parameter1=1, parameter2=0)              # ngspice TRRANDOM only
@@ -82,6 +82,11 @@ injection, propagation delay and pedestal all track them.
 ## Analyses
 
 Queue on a `Testbench` with `add_*`; run on a `Testbench` or `CircuitSimulator` directly.
+`tb.run()` runs everything queued as one deck and returns a list, one result per
+analysis in queue order, typed as the run method's (`None` for `add_fourier`):
+`op, tran = tb.run()`. Results are matched to analyses by plot name (ngspice
+reorders analyses); `pss`, `hb`, `stb`, transient noise and Spectre-only analyses
+queued beside others raise instead.
 
 | Run method | Queue method | Signature | Result |
 |---|---|---|---|
