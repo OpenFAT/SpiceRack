@@ -1,7 +1,7 @@
 //! Spectre and VACASK blocks → the IR: `model` statements and model groups
-//! (one model per bin), `statistics` blocks, `real` functions, `if` chains
-//! and `@if` blocks, VACASK `control` blocks (options and analyses, the
-//! rest kept as lines).
+//! (one model per bin), `statistics` blocks, `real` functions, VACASK
+//! `control` blocks (options and analyses, the rest kept as lines); `if`
+//! chains and `@if` blocks are `blocks`'.
 //!
 //! Cites: the old lowering (`named_model`, `one_model`,
 //! `ControlBlock`), `statistics.rs`, `conditionals.rs` (ported); Spectre
@@ -11,14 +11,13 @@
 //! - `Cx::named_model(&mut self, n: u32, here: &mut Subcircuit) -> bool`
 //! - `Cx::statistics(&self, n: u32) -> Statistics`
 //! - `Cx::real_func(&self, n: u32) -> FuncDef`
-//! - `Cx::named_conditional(&mut self, n: u32, scope: Scope) -> Conditional`
 //! - `Cx::vacask_control_block(&mut self, n: u32)`
 
+use super::Cx;
 use super::named::{spectre_kind, vacask_builtin, vacask_kind};
-use super::{Cx, Scope};
 use crate::codegen::Dialect;
 use crate::ir::*;
-use crate::syntax::ast::{Node, Tag};
+use crate::syntax::ast::Tag;
 use crate::syntax::token::Tag as T;
 
 impl<'a> Cx<'a> {
@@ -114,24 +113,6 @@ impl<'a> Cx<'a> {
             args,
             body,
         }
-    }
-
-    /// A Spectre `if` chain or a VACASK `@if` block (the old lowering).
-    pub(super) fn named_conditional(&mut self, n: u32, scope: Scope) -> Conditional {
-        let mut c = Conditional::default();
-        let mut branch = Some(Node(n));
-        while let Some(b) = branch {
-            let condition = match self.tag(b.0) {
-                Tag::If => Some(super::unwrapped(&self.text(self.fields(b.0)[0]))),
-                _ => None,
-            };
-            let mut body = Subcircuit::default();
-            let stmts = self.body(b.0).to_vec();
-            self.cards(&stmts, &mut body, scope);
-            c.branches.push(Branch { condition, body });
-            branch = self.ast.next(b);
-        }
-        c
     }
 
     /// A VACASK `control` block: its options and analyses, the rest kept as

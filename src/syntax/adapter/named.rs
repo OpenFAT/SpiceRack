@@ -16,13 +16,14 @@
 //! - `fn vacask_kind(module: &str, ty: Option<f64>) -> Option<(String, Option<&'static str>)>`
 //! - `fn vacask_builtin(module: &str) -> Option<&'static str>`
 //! - `Cx::declarations(&self, stmts: &[u32]) -> (HashMap<String, String>, Vec<String>)`
-//! - `Cx::named_card_spine(&mut self, n: u32, here: &mut Subcircuit, scope: Scope)`
+//! - `Cx::named_card_spine(&mut self, n: u32, here: &mut Subcircuit, scope: Scope) -> Option<Opened>`
 //! - `Cx::pairs(&self, n: u32) -> Vec<(String, u32)>`
 //! - `Cx::get(&self, p: &[(String, u32)], k: &str) -> Option<u32>`
 //! - `Cx::analysis_kind(&self, n: u32) -> bool`
 
 use std::collections::HashMap;
 
+use super::blocks::Opened;
 use super::{Cx, Scope};
 use crate::codegen::Dialect;
 use crate::ir::*;
@@ -159,16 +160,24 @@ impl<'a> Cx<'a> {
         (kinds, subckts)
     }
 
-    /// One Spectre or VACASK statement (the old lowering's `card`, named).
-    pub(super) fn named_card_spine(&mut self, n: u32, here: &mut Subcircuit, scope: Scope) {
+    /// One Spectre or VACASK statement (the old lowering's `card`, named);
+    /// a block of cards is handed back, as [`Cx::card`] does.
+    pub(super) fn named_card_spine(
+        &mut self,
+        n: u32,
+        here: &mut Subcircuit,
+        scope: Scope,
+    ) -> Option<Opened> {
         let tag = self.tag(n);
         if tag.has_header() && self.ast.rhs(Node(n)) != NONE {
             // quirk: the old Spectre grammar's `Block`: a `name master … {`
             // statement is kept whole, its body unread.
-            return self.raw(n, here, true);
+            self.raw(n, here, true);
+            return None;
         }
         if scope == Scope::Section && self.named_leaks(n) {
-            return self.raw(n, here, matches!(tag, Tag::Region | Tag::Control));
+            self.raw(n, here, matches!(tag, Tag::Region | Tag::Control));
+            return None;
         }
         match tag {
             Tag::Title | Tag::End => {}
@@ -204,29 +213,17 @@ impl<'a> Cx<'a> {
                 }
             }
             Tag::If => {
-                let c = Conditional {
-                    at: Some(here.components.len() as u32),
-                    ..self.named_conditional(n, scope)
-                };
-                here.conditionals.push(c);
+                return Some(Opened::If {
+                    node: n,
+                    named: true,
+                });
             }
             Tag::Statistics => {
                 let st = self.statistics(n);
                 here.statistics.push(st);
             }
             Tag::Library | Tag::Section if scope != Scope::Top => self.raw(n, here, true),
-            Tag::Library => {
-                let lib = self.name_of(self.fields(n)[0]);
-                for &k in self.body(n).to_vec().iter() {
-                    match self.tag(k) {
-                        Tag::Section => {
-                            let s = self.section(k, Some(lib.clone()));
-                            self.sections.push(s);
-                        }
-                        _ => self.card(k, here, Scope::Top),
-                    }
-                }
-            }
+            Tag::Library => return Some(Opened::Library(n)),
             Tag::Section => {
                 let s = self.section(n, None);
                 self.sections.push(s);
@@ -235,8 +232,7 @@ impl<'a> Cx<'a> {
                 let head = self
                     .subckt_head(n)
                     .expect("a named subckt head is its fields");
-                let sc = self.subckt(n, head);
-                self.defs.push(sc);
+                return Some(Opened::Subckt(n, head));
             }
             Tag::Include => {
                 let f = self.fields(n);
@@ -279,6 +275,7 @@ impl<'a> Cx<'a> {
                 }
             }
         }
+        None
     }
 
     /// `k=v` items of a statement, by key, values as written.

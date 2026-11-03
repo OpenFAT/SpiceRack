@@ -17,8 +17,9 @@
 //! phase 7 turns the wrong ones into behaviour changes (`migration.xfail`
 //! lists what this cannot reproduce).
 //!
-//! This file is the spine: the per-deck state and the walk over statements
-//! and blocks (`.subckt`, sections, `.if`). `text` joins tokens as the line
+//! This file is the spine: the per-deck state and the card dispatch;
+//! `blocks` walks the blocks (`.subckt`, `.if`, libraries) on a heap stack.
+//! `text` joins tokens as the line
 //! stage did, `refused` sorts what the grammar refused into `Raw` and
 //! `Unparsed`, `values` reads values, `shapes`, `elements`, `devices` and
 //! `sources` SPICE element cards, `cards`, `testbench`, `outputs` and
@@ -36,14 +37,12 @@
 //! - `Cx::fields(&self, n: u32) -> &'a [u32]`
 //! - `Cx::body(&self, n: u32) -> &'a [u32]`
 //! - `Cx::ttag(&self, k: u32) -> T`
-//! - `Cx::cards(&mut self, stmts: &[u32], here: &mut Subcircuit, scope: Scope)`
 //! - `Cx::raw(&mut self, n: u32, here: &mut Subcircuit, block: bool)`
 //! - `Cx::unparsed(&mut self, n: u32, here: &mut Subcircuit)`
 //! - `Cx::keep(&mut self, n: u32, here: &mut Subcircuit, k: Kept)`
-//! - `Cx::card(&mut self, n: u32, here: &mut Subcircuit, scope: Scope)`
+//! - `Cx::card(&mut self, n: u32, here: &mut Subcircuit, scope: Scope) -> Option<Opened>`
 //! - `Cx::section(&mut self, n: u32, library: Option<String>) -> LibSection`
 //! - `Cx::if_head_ok(&self, n: u32) -> bool`
-//! - `Cx::subckt(&mut self, n: u32, head: SubcktHead) -> Subcircuit`
 
 use std::collections::{HashMap, HashSet};
 
@@ -52,7 +51,9 @@ use crate::import::Report;
 use crate::ir::*;
 use crate::syntax::ast::{Ast, Node, Tag};
 use crate::syntax::token::{Tag as T, Tokens};
+use blocks::Opened;
 
+mod blocks;
 mod cards;
 mod devices;
 mod elements;
@@ -102,18 +103,6 @@ enum Kept {
     Raw,
     /// The grammar refused it: an `Unparsed` line.
     Unparsed,
-}
-
-/// A definition [`Cx::subckt`] has open: its node, the body read so far,
-/// and what its nested definitions renamed.
-struct OpenSubckt {
-    node: u32,
-    /// The next body statement to read.
-    next: usize,
-    sc: Subcircuit,
-    /// `self.defs.len()` when it opened: its hoisted definitions follow.
-    first: usize,
-    renames: Vec<(String, String)>,
 }
 
 /// A `.subckt` head the grammar read: its name, ports and defaults.
@@ -216,13 +205,6 @@ impl<'a> Cx<'a> {
         self.t.tags()[k as usize]
     }
 
-    /// Each statement of `stmts`, in order.
-    pub(super) fn cards(&mut self, stmts: &[u32], here: &mut Subcircuit, scope: Scope) {
-        for &s in stmts {
-            self.card(s, here, scope);
-        }
-    }
-
     /// A card kept as text (the old lowering's `raw`): a block one raw line per
     /// line, a SPICE element in its place among the components.
     pub(super) fn raw(&mut self, n: u32, here: &mut Subcircuit, block: bool) {
@@ -253,8 +235,10 @@ impl<'a> Cx<'a> {
         }
     }
 
-    /// One card, as `lower::Cx::card`.
-    pub(super) fn card(&mut self, n: u32, here: &mut Subcircuit, scope: Scope) {
+    /// One card, as `lower::Cx::card`; a block with a body of cards
+    /// (`.subckt`, `.if`, a refused head, a library) is handed back for
+    /// [`Cx::cards`] to walk.
+    pub(super) fn card(&mut self, n: u32, here: &mut Subcircuit, scope: Scope) -> Option<Opened> {
         if self.named() {
             return self.named_card_spine(n, here, scope);
         }
@@ -262,26 +246,27 @@ impl<'a> Cx<'a> {
         if scope == Scope::Section && self.leaks(n) {
             // A `.control` kept raw is one line holding its newlines
             // (quirk: the old lowering's `raw` splits only `Block`-like rows).
-            return match self.tag(n) {
+            match self.tag(n) {
                 Tag::Control => {
                     self.report.raw += 1;
                     here.raw_spice.push(self.lines(n).join("\n"));
                 }
                 _ => self.raw(n, here, false),
-            };
+            }
+            return None;
         }
         match self.tag(n) {
             Tag::Title | Tag::End => {}
             Tag::Verbatim | Tag::Line => self.unparsed(n, here),
             Tag::Subckt => match self.subckt_head(n) {
-                Some(head) => {
-                    let sc = self.subckt(n, head);
-                    self.defs.push(sc);
-                }
+                Some(head) => return Some(Opened::Subckt(n, head)),
                 // quirk: a `.subckt` head the old SPICE grammar does not read is
                 // `Unparsed`; its body then reads as cards here, and its
                 // `.ends` is a `Raw` card.
-                None => self.dissolve(n, here, scope),
+                None => {
+                    self.unparsed(n, here);
+                    return Some(Opened::Dissolve(n));
+                }
             },
             Tag::Section if scope != Scope::Top => self.raw(n, here, true),
             Tag::Section => {
@@ -290,11 +275,10 @@ impl<'a> Cx<'a> {
             }
             Tag::If => match self.if_head_ok(n) {
                 true => {
-                    let c = Conditional {
-                        at: Some(here.components.len() as u32),
-                        ..self.conditional(n, scope)
-                    };
-                    here.conditionals.push(c);
+                    return Some(Opened::If {
+                        node: n,
+                        named: false,
+                    });
                 }
                 // quirk: the old SPICE grammar's `ifblock`: an `.if` with no
                 // condition in parentheses is a `Block`, kept whole.
@@ -311,6 +295,7 @@ impl<'a> Cx<'a> {
             Tag::Instance => self.element(n, here),
             _ => self.dot_card(n, here, scope, inside),
         }
+        None
     }
 
     /// `.lib name` … `.endl`: its cards lowered as at the top, into the
@@ -340,93 +325,11 @@ impl<'a> Cx<'a> {
             && self.ttag(first + 1) == T::LParen
             && self.paren_close(first + 1) == Some(last)
     }
-
-    /// `.subckt` … `.ends` (the old lowering's `subckt`): nested definitions
-    /// hoisted as `<parent>__<name>`, the parent's references renamed. The
-    /// nesting is walked on a heap stack of open definitions, so a deck
-    /// nested 10⁴ deep needs no deeper native stack than a flat one.
-    pub(super) fn subckt(&mut self, n: u32, head: SubcktHead) -> Subcircuit {
-        let mut stack = vec![self.open_subckt(n, head)];
-        loop {
-            let top = stack.last_mut().expect("a definition is open");
-            if let Some(&k) = self.body(top.node).get(top.next) {
-                top.next += 1;
-                if self.tag(k) == Tag::Subckt
-                    && let Some(h) = self.subckt_head(k)
-                {
-                    let inner = self.open_subckt(k, h);
-                    stack.push(inner);
-                } else {
-                    self.card(k, &mut top.sc, Scope::Subckt);
-                }
-                continue;
-            }
-            let done = stack.pop().expect("the top definition");
-            let mut sc = self.close_subckt(done);
-            let Some(parent) = stack.last_mut() else {
-                return sc;
-            };
-            let scoped = format!("{}__{}", parent.sc.name, sc.name);
-            parent
-                .renames
-                .push((std::mem::replace(&mut sc.name, scoped.clone()), scoped));
-            self.defs.push(sc);
-        }
-    }
 }
 
 // ---- private ----
 
 impl<'a> Cx<'a> {
-    fn open_subckt(&self, node: u32, head: SubcktHead) -> OpenSubckt {
-        let mut sc = sub(&head.name);
-        sc.ports = head.ports;
-        sc.parameters = head.params;
-        OpenSubckt {
-            node,
-            next: 0,
-            sc,
-            first: self.defs.len(),
-            renames: Vec::new(),
-        }
-    }
-
-    /// The finished definition, its and its hoisted definitions'
-    /// references to the nested ones renamed.
-    fn close_subckt(&mut self, f: OpenSubckt) -> Subcircuit {
-        let OpenSubckt {
-            mut sc,
-            first,
-            renames,
-            ..
-        } = f;
-        for inst in sc.instances.iter_mut().chain(
-            self.defs[first..]
-                .iter_mut()
-                .flat_map(|d| d.instances.iter_mut()),
-        ) {
-            if let Some((_, to)) = renames
-                .iter()
-                .find(|(from, _)| from.eq_ignore_ascii_case(&inst.subcircuit))
-            {
-                inst.subcircuit = to.clone();
-            }
-        }
-        sc
-    }
-
-    /// A block whose head the grammar refused: the head `Unparsed`, the
-    /// body read as cards where the block sits, the closer refused too.
-    fn dissolve(&mut self, n: u32, here: &mut Subcircuit, scope: Scope) {
-        self.unparsed(n, here);
-        let body = self.body(n).to_vec();
-        self.cards(&body, here, scope);
-        if let Some(c) = self.ast.closer(Node(n)) {
-            let k = self.refused(c.0);
-            self.keep(c.0, here, k);
-        }
-    }
-
     /// Whether a card in a section would reach past it (the old lowering's
     /// `leaks`).
     fn leaks(&self, n: u32) -> bool {
@@ -454,27 +357,6 @@ impl<'a> Cx<'a> {
             }
         }
         None
-    }
-
-    /// A `.if` chain → a `Conditional` (the old lowering).
-    fn conditional(&mut self, n: u32, scope: Scope) -> Conditional {
-        let mut c = Conditional::default();
-        let mut branch = Some(Node(n));
-        while let Some(b) = branch {
-            let condition = match self.tag(b.0) {
-                Tag::If => {
-                    let first = self.main(b.0);
-                    Some(unwrapped(&self.span(first + 1, self.line_last(first))))
-                }
-                _ => None,
-            };
-            let mut body = Subcircuit::default();
-            let stmts = self.body(b.0).to_vec();
-            self.cards(&stmts, &mut body, scope);
-            c.branches.push(Branch { condition, body });
-            branch = self.ast.next(b);
-        }
-        c
     }
 
     /// The `.model` names the grammar read, lowercased, anywhere in the
