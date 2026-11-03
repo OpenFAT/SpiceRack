@@ -8,7 +8,7 @@
 //! `.end`) and the block-level cards; `cards` writes elements and
 //! waveforms, `bench` the testbench and analyses, `checks` the deck-wide
 //! refusals (another family's text, `^`, statistical calls), `draws` the
-//! `statistics` lift.
+//! `statistics` lift, `laplace` the transfer function a Laplace lift reads.
 //!
 //! Cites: ngspice manual ch.2 (the deck), §2.4.3 (`.subckt`), §2.6, §2.7
 //! (`.include`, `.lib`), §2.15 (`.if`); HSPICE `.END` (a library ends
@@ -22,6 +22,7 @@ mod bench;
 mod cards;
 mod checks;
 mod draws;
+mod laplace;
 
 use super::capability::{Action, Alt, Construct, Rule, action};
 use super::out::{Out, Space};

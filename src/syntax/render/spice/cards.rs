@@ -14,8 +14,8 @@
 //! - `W::card(&mut self, n: u32)`, `W::spelled(&self, v: &str) -> String`
 
 use super::W;
+use super::laplace::{self, Laplace};
 use crate::codegen::Dialect;
-use crate::codegen::laplace;
 use crate::syntax::render::capability::{Action, Alt, Construct, Rule};
 use crate::syntax::render::out::Space;
 use crate::syntax::render::read::WaveKind;
@@ -117,10 +117,10 @@ impl W<'_, '_> {
                 np,
                 nm,
                 expr,
-                ..
+                value,
             } => {
-                if laplace::is_laplace(&expr) {
-                    self.laplace(&name, &np, &nm, &expr, current, tok)
+                if laplace::has_laplace(self.rd, value) {
+                    self.laplace(&name, &np, &nm, value, current, tok)
                 } else {
                     let key = if current { 'I' } else { 'V' };
                     match self.ask(Construct::BehaviouralSource, tok) {
@@ -321,27 +321,26 @@ impl W<'_, '_> {
         name: &str,
         np: &str,
         nm: &str,
-        expr: &str,
+        value: u32,
         current: bool,
         tok: u32,
     ) -> String {
         let letter = if current { 'G' } else { 'E' };
-        let parsed = match laplace::parse(expr) {
-            Ok(p) => p,
-            Err(_) => {
-                self.refuse(crate::syntax::diag::Code::W0010, tok);
-                return String::new();
-            }
-        };
-        let (ip, im) = parsed.input().clone();
-        let (num, den) = match parsed {
-            laplace::Laplace::Gain { gain, .. } => {
+        let ((ip, im), num, den) = match laplace::read(self.rd, value) {
+            Some(Laplace::Gain {
+                input: (ip, im),
+                gain,
+            }) => {
                 return format!(
                     "{letter}B{name} {np} {nm} {ip} {im} {}",
                     self.sp.number(gain, self.x)
                 );
             }
-            laplace::Laplace::Xfer { num, den, .. } => (num, den),
+            Some(Laplace::Xfer { input, num, den }) => (input, num, den),
+            None => {
+                self.refuse(crate::syntax::diag::Code::W0010, tok);
+                return String::new();
+            }
         };
         match self.ask(Construct::Laplace, tok) {
             Action::Lift(Rule::LaplaceAttr) => format!(

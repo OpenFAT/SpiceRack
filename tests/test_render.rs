@@ -101,3 +101,60 @@ fn statistics_the_spice_family_cannot_hold_are_refused_by_code() {
         );
     }
 }
+
+#[test]
+fn laplace_sources_are_written_as_the_old_writer_wrote_them() {
+    let h = [
+        "Laplace(v(in), 1/(1+s*1.59e-4))",
+        "Laplace(V(in), (1+s*1e-3)/(1+s*1e-6))",
+        "Laplace(v(in), 4/(1+s*2+s^2*3))",
+        "Laplace(v(a), 1/(1+s**2))",
+        "Laplace(v(a), 1/(1+s*s))",
+        "Laplace(v(in), s/(1+s*1e-3))",
+        "Laplace(v(in), 1/(1+s*159u))",
+        "Laplace(v(in), 1/(1+s/1meg))",
+        "LAPLACE (V(A,B), 2/(1+s*1.591549431e-9))",
+        "Laplace(v(in), 2.5)",
+        "Laplace(v(in), 10/4)",
+        "laplace(v(in), (s+1)^-1)",
+        "{Laplace(v(in), 1/(1+s))}",
+        // Refused by both: symbolic, improper, current input, arithmetic
+        // around the call, a zero denominator, a fractional power.
+        "Laplace(v(in), 1/(1+s*tau))",
+        "Laplace(v(in), s^2)",
+        "Laplace(I(V1), 1/(1+s))",
+        "2*Laplace(v(in), 1/(1+s))",
+        "Laplace(v(in), 1/(1+s)) + 1",
+        "Laplace(v(in), 1/(s-s))",
+        "Laplace(v(in), s^0.5/(1+s))",
+        "Laplace(v(in))",
+    ];
+    let mut lifted = 0;
+    for e in h {
+        for key in ["V", "I"] {
+            let deck =
+                format!("t\nV1 in 0 1\nB1 out 0 {key}={e}\nR1 out 0 1k\n.tran 1u 1m\n.end\n");
+            let (ir, _) = parse(&deck, "t", Dialect::Ngspice).unwrap();
+            for d in SPICE {
+                let old = netlist(&ir, d).map_err(|e| e.to_string());
+                let new = render_text(&deck, Dialect::Ngspice, "t", d);
+                match (&old, &new) {
+                    (Ok(a), Ok(b)) => {
+                        assert_eq!(a, b, "{d:?}\n{deck}");
+                        lifted += usize::from(
+                            ["_xfer", "LAPLACE", "Laplace="]
+                                .iter()
+                                .any(|w| a.contains(w)),
+                        );
+                    }
+                    (Err(_), Err(_)) => {}
+                    _ => panic!("{d:?}: old {old:?}, new {new:?}\n{deck}"),
+                }
+            }
+        }
+    }
+    // The 11 transfer functions, as V and I, on ngspice, ESPice, HSPICE and
+    // LTspice (Xyce refuses every one, LTspice the two with `^`, which it
+    // reads as XOR).
+    assert_eq!(lifted, (11 * 4 - 2) * 2);
+}
