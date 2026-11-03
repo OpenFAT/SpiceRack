@@ -2,8 +2,9 @@
 //!
 //! Each physical line is a comment, a blank, a stop, the `.end` card, or the
 //! start of a logical statement. A statement runs on through `+` lines and
-//! backslash breaks (and, in VACASK, through newlines inside brackets) and
-//! ends with an [`Tag::EndOfStatement`]. Comments, blank lines and the
+//! backslash breaks (and, by [`Join`], through newlines inside VACASK's
+//! brackets or into the next statement while Spectre's parentheses are
+//! open) and ends with an [`Tag::EndOfStatement`], the only one it holds. Comments, blank lines and the
 //! continuation marks are skipped, never tokens. A number is decoded once,
 //! here (`number::value`). The tokenizer never fails: a byte no rule reads
 //! is an [`Tag::Invalid`] token.
@@ -21,7 +22,7 @@
 //! Contents:
 //! - `pub fn tokenize<'s>(source: &'s str, lexicon: &'static Lexicon) -> Tokens<'s>`
 
-use crate::syntax::lexicon::{Backslash, Dollar, Lexicon, Quote};
+use crate::syntax::lexicon::{Backslash, Dollar, Join, Lexicon, Quote};
 use crate::syntax::number;
 use crate::syntax::scan::{backslash_break, blanks, is_blank, line_end, token_at};
 use crate::syntax::token::{Tag, Tokens};
@@ -119,7 +120,12 @@ impl Lexer<'_> {
 
     /// What the line at `self.pos` is, by the lexicon's line rules.
     fn line(&self) -> Line {
-        let (src, lex, at) = (self.src, self.lex, self.pos);
+        self.line_at(self.pos)
+    }
+
+    /// What the line starting at `at` is.
+    fn line_at(&self, at: usize) -> Line {
+        let (src, lex) = (self.src, self.lex);
         let lead = blanks(src, at);
         let first = at + lead;
         let rest = &src[first..line_end(src, at)];
@@ -191,6 +197,7 @@ impl Lexer<'_> {
         let mut quote = false;
         let mut dquote = false;
         let mut depth = 0u32;
+        let mut parens = 0i32;
         let mut head = true;
         loop {
             while self.pos < self.src.len() && is_blank(self.src[self.pos]) {
@@ -206,6 +213,14 @@ impl Lexer<'_> {
                 if let Some(plus) = self.plus_line(p) {
                     self.pos = plus + 1;
                     piece = self.pos;
+                    continue;
+                }
+                if parens > 0
+                    && switch.is_none()
+                    && let Some(next) = self.joined_line(p)
+                {
+                    // The next statement's first word is at a head again.
+                    (self.pos, piece, head) = (next, next, true);
                     continue;
                 }
                 break;
@@ -239,12 +254,14 @@ impl Lexer<'_> {
                 quote = !quote;
             }
             dquote ^= tag == Tag::DoubleQuote;
-            if self.lex.brackets_join {
-                match tag {
-                    Tag::LParen | Tag::LBracket | Tag::LBrace => depth += 1,
-                    Tag::RParen | Tag::RBracket | Tag::RBrace => depth = depth.saturating_sub(1),
-                    _ => {}
+            match (self.lex.join, tag) {
+                (Join::Brackets, Tag::LParen | Tag::LBracket | Tag::LBrace) => depth += 1,
+                (Join::Brackets, Tag::RParen | Tag::RBracket | Tag::RBrace) => {
+                    depth = depth.saturating_sub(1)
                 }
+                (Join::Parens, Tag::LParen) => parens += 1,
+                (Join::Parens, Tag::RParen) => parens -= 1,
+                _ => {}
             }
             head = self.lex.heads_after.contains(&tag);
             self.pos = end;
@@ -260,6 +277,21 @@ impl Lexer<'_> {
                 None => (self.lex.lang_spice.unwrap_or(self.lex), Some(self.lex)),
             };
         }
+    }
+
+    /// [`Join::Parens`]: the start of the statement line after the line
+    /// ending at `nl`, past comment and blank lines; `None` at a stop, an
+    /// `.end`, a `simulator lang=` switch or the text's end.
+    fn joined_line(&self, nl: usize) -> Option<usize> {
+        let mut at = nl + 1;
+        while at < self.src.len() {
+            match self.line_at(at) {
+                Line::Skip => at = line_end(self.src, at) + 1,
+                Line::Stop | Line::End => return None,
+                Line::Statement => return self.switch_at(at).is_none().then_some(at),
+            }
+        }
+        None
     }
 
     /// Spectre's hook: the switch the statement at `at` makes, read off the

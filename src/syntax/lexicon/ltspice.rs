@@ -11,7 +11,7 @@
 //! - `pub const LTSPICE: Lexicon`
 
 use super::{
-    Arithmetic, Backslash, Caret, Dollar, End, Lexicon, Numbers, Ops, Quote, Quoting,
+    Arithmetic, Backslash, Caret, Dollar, End, Join, Lexicon, Numbers, Ops, Quote, Quoting,
     SPICE_KEYWORDS, Scale, Tail,
 };
 use crate::codegen::Dialect;
@@ -40,7 +40,7 @@ pub const LTSPICE: Lexicon = Lexicon {
         stops: true,
     }),
     stop: None,
-    brackets_join: false,
+    join: Join::None,
     quote: Quote::Plain,
     // A `;` inside double quotes (a path) is no comment (unverified).
     string: Quoting {

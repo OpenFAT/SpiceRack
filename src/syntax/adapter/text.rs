@@ -1,8 +1,7 @@
 //! Tokens → the text `import::logical` gave them: the source inside one
 //! physical piece, one blank between pieces, nothing across an HSPICE `\\`
 //! glue, VACASK's brackets glued to what precedes them; and the token
-//! extent of every statement, item and expression (a Spectre statement runs
-//! on while its parentheses are open).
+//! extent of every statement, item and expression.
 //!
 //! Cites: `import/mod.rs` `logical` and the line stage of each
 //! `grammar/*.peg` (`Line`, `Piece`, `Glue`).
@@ -21,28 +20,13 @@ use crate::syntax::ast::{NONE, Node, Tag};
 use crate::syntax::token::Tag as T;
 
 impl<'a> Cx<'a> {
-    /// The last token of the statement starting at token `first` (a
-    /// Spectre statement runs on while parentheses are open, as the parser
-    /// joins it).
+    /// The last token of the statement starting at token `first`.
     pub(super) fn line_last(&self, first: u32) -> u32 {
         let tags = self.t.tags();
-        let named = self.t.lexicon_at(first).named;
-        let mut depth = 0i32;
-        let mut k = first as usize;
-        loop {
-            match tags[k] {
-                T::LParen if named => depth += 1,
-                T::RParen if named => depth -= 1,
-                T::EndOfStatement => {
-                    let more = tags[k + 1..].contains(&T::EndOfStatement);
-                    if depth <= 0 || !more || matches!(tags[k + 1], T::LangSpice | T::LangSpectre) {
-                        return k as u32 - 1;
-                    }
-                }
-                _ => {}
-            }
-            k += 1;
-        }
+        let eos = (first as usize..tags.len())
+            .find(|&k| tags[k] == T::EndOfStatement)
+            .expect("every statement ends with an EndOfStatement");
+        eos as u32 - 1
     }
 
     /// A flat statement's (or a block head's) logical-line text.
@@ -156,7 +140,7 @@ impl<'a> Cx<'a> {
         let src = self.t.source();
         let g = &src[self.t.end(p) as usize..self.t.start(k) as usize];
         let lex = self.t.lexicon_at(k);
-        if lex.brackets_join {
+        if lex.join == crate::syntax::lexicon::Join::Brackets {
             // quirk: vacask.peg `Glue`, a bracket, is joined with nothing;
             // the `Piece` after one gets a blank (import/mod.rs `logical`).
             let bracket = |t: T| {

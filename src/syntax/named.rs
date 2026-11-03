@@ -36,10 +36,6 @@ impl Parser<'_, '_> {
         let stmt_end = self.end;
         let braces = self.t.lexicon_at(self.i).heads_after.contains(&T::LBrace);
         while self.i < stmt_end {
-            if self.t.tags()[self.i as usize] == T::EndOfStatement {
-                self.i += 1;
-                continue;
-            }
             self.first = self.i;
             let top = stack.last().expect("the root frame stays");
             let tag = self.t.tags()[self.i as usize];

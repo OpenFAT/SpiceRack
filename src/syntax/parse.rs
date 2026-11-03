@@ -295,35 +295,9 @@ impl<'s> Parser<'_, 's> {
         if first >= tags.len() {
             return None;
         }
-        let mut eos = (first..tags.len())
+        let eos = (first..tags.len())
             .find(|&k| tags[k] == T::EndOfStatement)
             .expect("every statement ends with an EndOfStatement");
-        // Spectre: an end of statement inside open parentheses is a blank
-        // (`if (a &&` ⏎ `b) {`); VACASK's lexicon already joins such lines.
-        if self.t.lexicon_at(first as u32).named {
-            let mut depth = 0i32;
-            let mut k = first;
-            loop {
-                match tags[k] {
-                    T::LParen => depth += 1,
-                    T::RParen => depth -= 1,
-                    T::EndOfStatement if k == eos => {
-                        let more = tags[k + 1..].iter().position(|&t| t == T::EndOfStatement);
-                        match more {
-                            Some(m)
-                                if depth > 0
-                                    && !matches!(tags[k + 1], T::LangSpice | T::LangSpectre) =>
-                            {
-                                eos = k + 1 + m
-                            }
-                            _ => break,
-                        }
-                    }
-                    _ => {}
-                }
-                k += 1;
-            }
-        }
         *s = eos as u32 + 1;
         Some((first as u32, eos as u32))
     }

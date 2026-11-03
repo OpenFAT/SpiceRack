@@ -93,12 +93,8 @@ impl Parser<'_, '_> {
         (k < self.end).then(|| self.t.tags()[k as usize])
     }
 
-    /// The tag at the cursor, past the ends of statement a Spectre line
-    /// join leaves inside open parentheses.
-    fn peek(&mut self) -> Option<T> {
-        while self.tag_at(self.i) == Some(T::EndOfStatement) {
-            self.i += 1;
-        }
+    /// The tag at the cursor.
+    fn peek(&self) -> Option<T> {
         self.tag_at(self.i)
     }
 

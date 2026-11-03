@@ -12,7 +12,7 @@
 //! - `pub const VACASK: Lexicon`
 
 use super::{
-    Arithmetic, Backslash, Caret, Dollar, Lexicon, Numbers, Ops, Quote, Quoting, Scale, Tail,
+    Arithmetic, Backslash, Caret, Dollar, Join, Lexicon, Numbers, Ops, Quote, Quoting, Scale, Tail,
 };
 use crate::codegen::Dialect;
 use crate::syntax::statement::Analysis;
@@ -36,7 +36,7 @@ pub const VACASK: Lexicon = Lexicon {
     backslash: Backslash::Tight,
     end: None,
     stop: None,
-    brackets_join: true,
+    join: Join::Brackets,
     quote: Quote::Name,
     string: Quoting {
         escapes: true,

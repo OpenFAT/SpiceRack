@@ -18,7 +18,7 @@
 //!   `Lexicon::device(&self, word: &str) -> Option<&'static Device>`,
 //!   `Lexicon::master(&self, word: &str) -> Option<Statement>`,
 //!   `Lexicon::analysis(&self, word: &str) -> Option<Analysis>`
-//! - `pub enum Dollar`, `pub enum Backslash`, `pub struct End`, `pub enum Quote`,
+//! - `pub enum Join`, `pub enum Dollar`, `pub enum Backslash`, `pub struct End`, `pub enum Quote`,
 //!   `pub struct Quoting`, `pub enum Caret`, `pub struct Ops`, `Ops::TERNARY: u8`
 //! - `pub struct Numbers`, `pub enum Scale`, `pub enum Tail`, `pub enum Arithmetic`
 //! - `pub const NGSPICE`, `HSPICE`, `LTSPICE`, `XYCE`, `SPECTRE`, `VACASK: Lexicon`
@@ -83,8 +83,8 @@ pub struct Lexicon {
     pub end: Option<End>,
     /// A line whose first non-blank is this byte ends the file (ngspice `@`).
     pub stop: Option<u8>,
-    /// A newline inside `()`, `[]` or `{}` does not end the statement.
-    pub brackets_join: bool,
+    /// Which open brackets carry a statement past its line's end.
+    pub join: Join,
 
     /// What `'` delimits.
     pub quote: Quote,
@@ -142,6 +142,19 @@ pub struct Lexicon {
     /// The lexicon a `simulator lang=spice` statement switches to, and the
     /// one `simulator lang=spectre` switches back from: Spectre's hook.
     pub lang_spice: Option<&'static Lexicon>,
+}
+
+/// Which open brackets carry a statement past its line's end.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Join {
+    /// None: a statement ends with its line (and its continuations).
+    None,
+    /// A newline inside `()`, `[]` or `{}` is a blank (VACASK).
+    Brackets,
+    /// A statement whose `(`s are not all closed when it ends runs on into
+    /// the next one, past comment and blank lines, but never into a
+    /// `simulator lang=` switch (Spectre `if (a &&` ⏎ `b) {`).
+    Parens,
 }
 
 /// When `$` starts a comment.

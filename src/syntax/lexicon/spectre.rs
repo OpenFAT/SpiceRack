@@ -12,8 +12,8 @@
 //! - `pub const SPECTRE: Lexicon`
 
 use super::{
-    Arithmetic, Backslash, Caret, Dollar, HSPICE, Lexicon, Numbers, Ops, Quote, Quoting, Scale,
-    Tail,
+    Arithmetic, Backslash, Caret, Dollar, HSPICE, Join, Lexicon, Numbers, Ops, Quote, Quoting,
+    Scale, Tail,
 };
 use crate::codegen::Dialect;
 use crate::syntax::device;
@@ -39,7 +39,7 @@ pub const SPECTRE: Lexicon = Lexicon {
     backslash: Backslash::Join,
     end: None,
     stop: None,
-    brackets_join: false,
+    join: Join::Parens,
     quote: Quote::Plain,
     string: Quoting {
         escapes: true,
@@ -248,6 +248,24 @@ mod tests {
         assert_eq!(tags[2], Tag::KwInclude);
         assert_eq!(tags[4], Tag::Ident);
         assert_eq!(tags[9], Tag::KwElse);
+    }
+
+    #[test]
+    fn open_parentheses_join_the_next_line() {
+        // R19 p.491: a condition runs on over lines; comment lines between
+        // are skipped; a statement holds one end of statement, its last.
+        let src = "t\nif (a &&\n// c\n b) {\nr1 (x y) resistor\n}\n";
+        assert_eq!(
+            words(src, &SPECTRE),
+            ["if ( a && b ) {", "r1 ( x y ) resistor", "}"]
+        );
+        let t = tokenize(src, &SPECTRE);
+        let ends = t
+            .tags()
+            .iter()
+            .filter(|&&x| x == Tag::EndOfStatement)
+            .count();
+        assert_eq!(ends, 4, "the title and three statements");
     }
 
     #[test]

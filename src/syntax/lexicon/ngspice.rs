@@ -11,7 +11,7 @@
 //! - `pub const NGSPICE: Lexicon`
 
 use super::{
-    Arithmetic, Backslash, Caret, Dollar, End, Lexicon, Numbers, Ops, Quote, Quoting,
+    Arithmetic, Backslash, Caret, Dollar, End, Join, Lexicon, Numbers, Ops, Quote, Quoting,
     SPICE_KEYWORDS, SPICE_OPERATORS, Scale, Tail,
 };
 use crate::codegen::Dialect;
@@ -47,7 +47,7 @@ pub const NGSPICE: Lexicon = Lexicon {
         stops: false,
     }),
     stop: Some(b'@'),
-    brackets_join: false,
+    join: Join::None,
     quote: Quote::Expr(QUOTED),
     string: QUOTED,
     string_expr: false,
