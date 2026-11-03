@@ -106,22 +106,24 @@ Rp p 0 1k
     }
 
     /// The converted ngspice deck must solve to the original deck's operating
-    /// point. Skipped without ngspice on PATH.
+    /// point. Unsupported fails, never skips: without ngspice on PATH it fails.
     #[test]
     fn ngspice_round_trip_keeps_the_op() {
-        let run = |deck: &str| -> Option<crate::result::RawData> {
+        let run = |deck: &str| -> crate::result::RawData {
             let dir = tempfile::TempDir::new().unwrap();
             let (p, r) = (dir.path().join("d.sp"), dir.path().join("d.raw"));
             std::fs::write(&p, deck).unwrap();
-            let out = std::process::Command::new("ngspice").arg("-b").arg("-r").arg(&r).arg(&p).output().ok()?;
+            let out = std::process::Command::new("ngspice")
+                .args(["-b", "-n", "-r"])
+                .arg(&r)
+                .arg(&p)
+                .output()
+                .expect("ngspice not on PATH: run the tests in `nix develop .#testing`");
             assert!(out.status.success(), "{}\n{deck}", String::from_utf8_lossy(&out.stdout));
-            Some(crate::rawfile::parse_raw(&std::fs::read(&r).unwrap()).unwrap())
+            crate::rawfile::parse_raw(&std::fs::read(&r).unwrap()).unwrap()
         };
         let converted = netlist(&parse(DECK, "divider", Dialect::Ngspice).unwrap().0, Dialect::Ngspice).unwrap();
-        let (Some(a), Some(b)) = (run(DECK), run(&converted)) else {
-            eprintln!("ngspice not on PATH — skipping");
-            return;
-        };
+        let (a, b) = (run(DECK), run(&converted));
         for node in ["v(mid)", "v(dn)", "v(b)", "v(c)", "v(dd)", "v(p)"] {
             let at = |r: &crate::result::RawData| r.variables.iter().position(|v| v.name.eq_ignore_ascii_case(node)).map(|i| r.real_data[i][0]);
             let (x, y) = (at(&a).unwrap(), at(&b).unwrap_or_else(|| panic!("{node} missing:\n{converted}")));

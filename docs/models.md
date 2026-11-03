@@ -5,7 +5,6 @@
 A `ModelLibrary` names a PDK's model file and corner. Attach it to a bench; the
 netlist gets the right `.lib` line for whichever simulator runs it.
 
-<!-- not run: needs the sky130 PDK under $PDK_ROOT -->
 ```python
 import os
 import spicerack as ps
@@ -37,7 +36,6 @@ For every corner, temperature and supply at once, build the list with
 `pdk_corners` and run it with `run_corners` (see
 [Testbenches](testbenches.md#corners-and-monte-carlo)):
 
-<!-- not run: needs the sky130 PDK under $PDK_ROOT -->
 ```python
 from spicerack.testbenches import pdk_corners
 

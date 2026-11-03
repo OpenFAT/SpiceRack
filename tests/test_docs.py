@@ -88,7 +88,7 @@ def test_skill_names_every_backend_name():
 def test_not_run_blocks_are_rare():
     """A `not run` block is untested prose; keep the list short and named."""
     marked = {p.name: len(re.findall(r"<!--\s*not run:", p.read_text())) for p in PAGES}
-    assert {k: v for k, v in marked.items() if v} == {"models.md": 3}
+    assert {k: v for k, v in marked.items() if v} == {"models.md": 1}
 
 
 def test_verilog_a_model_parameter_reaches_ngspice():

@@ -40,6 +40,7 @@ One line per change, written by hand, citing its pull request. Every number is m
 - nix: PDKs pinned by content hash; the testing shell no longer pip-installs ciel or fetches over the network (audit #36, #37) (#16).
 - backend: ngspice runs with `-n`, so a `./.spiceinit` or `~/.spiceinit` no longer changes a result; `Testbench.ngbehavior` sets ngspice's compatibility mode as `-D ngbehavior=<mode>`, and a mode ngspice rejects fails the run (#16).
 - examples: 20 and 21 simulate sky130 (an `X` FET, `ngbehavior="hsa"`) and gf180mcu (`design.ngspice` as a setup include) on every run and fail on a missing PDK; the tests check V(vout) against goldens at 1e-3 and ESPice against ngspice on sky130 (#16).
+- tests: the sky130 blocks in `docs/models.md` run in `test_docs.py` (55 s under load); `ngspice_round_trip_keeps_the_op` fails without ngspice instead of skipping (#16).
 
 ## 0.1.2 (2026-10-31)
 

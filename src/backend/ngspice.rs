@@ -149,8 +149,17 @@ mod deck_tests {
             }),
             ..Default::default()
         };
-        let tran = Analysis::Transient { step: 1e-6, stop: 1e-3, start: None, max_step: None, uic: false };
-        for ir in [bench(vec![Analysis::Op], vec![]), bench(vec![Analysis::Op, tran], vec!["tran m max v(a)".into()])] {
+        let tran = Analysis::Transient {
+            step: 1e-6,
+            stop: 1e-3,
+            start: None,
+            max_step: None,
+            uic: false,
+        };
+        for ir in [
+            bench(vec![Analysis::Op], vec![]),
+            bench(vec![Analysis::Op, tran], vec!["tran m max v(a)".into()]),
+        ] {
             let deck = netlist(&ir, Dialect::Ngspice).unwrap();
             assert_eq!(super::ngbehavior(&deck), Some("hsa"), "{deck}");
             for d in [Dialect::Espice, Dialect::Ltspice, Dialect::Hspice] {

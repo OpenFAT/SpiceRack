@@ -60,8 +60,11 @@ corpora, and the sky130 `8afc834` and gf180mcu `1e35547` PDKs as `PDK_ROOT`,
 pinned by content hash in `nix/pdks.nix`); outside it those tests fail, they
 never skip.
 
-- Examples 20 and 21 load sky130's whole `tt` corner in ngspice, about 35 s
-  each: together about 70 s of the merge tier.
+- Three tests load sky130's whole `tt` corner in ngspice: examples 20 and 21
+  and the `docs/models.md` blocks (`test_docs.py`). Each takes 34 s on an
+  idle 20-thread machine and 49 to 55 s under load (load average 10), about
+  2.5 min of the merge tier together. With them, pytest took 198 s and
+  `cargo test` 37 s, so the merge tier stays well under its 15 min budget.
 - ESPice 0.3.0 refuses gf180mcu's FET subcircuits (the BSIM4 instance
   parameter `mulu0`), so example 21 runs gf180mcu on ngspice alone and its
   ngspice number is checked against the golden only.
