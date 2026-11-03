@@ -7,7 +7,7 @@ trusts. The rules behind it are in `AGENTS.md` (Testing).
 
 | Tier | Runs | Command | Where |
 |---|---|---|---|
-| pre-commit | format, house style | `cargo fmt --check && python3 tools/check_style.py src` | local |
+| pre-commit | format, lints, house style | `cargo fmt --check && cargo clippy --all-targets --all-features -- -D warnings && python3 tools/check_style.py src tests tools` | local; the same three run as the `lint` job in `.github/workflows/test.yaml` on every PR |
 | merge | both suites in the testing shell | `nix develop .#testing -c cargo test`, then `maturin develop && python3 -m pytest` in a `--system-site-packages` venv | `.github/workflows/test.yaml`, every PR and every push to `main` |
 | docs | the site builds strictly; every Python example in it runs | `nix develop .#docs -c mkdocs build --strict`; `tests/test_docs.py` | `.github/workflows/docs.yaml`; pytest |
 | release | tag matches `Cargo.toml` and `pyproject.toml`, wheels for every target, sdist | `tools/bump_version.py`, then the release workflow | `.github/workflows/tags.yaml`, `publish.yaml` |
