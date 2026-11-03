@@ -100,6 +100,10 @@ pub enum Code {
     W0017,
     /// A Spectre `statistics` block a SPICE or VACASK deck cannot hold.
     W0018,
+    /// A Spectre `vary` of a parameter no `parameters` of its scope declares.
+    W0019,
+    /// A Spectre `correlate` whose correlation matrix is not positive definite.
+    W0020,
 }
 
 /// A code's fixed text.
@@ -260,6 +264,14 @@ pub const fn info(c: Code) -> Info {
             "a statistics block the target cannot hold",
             "docs/research/monte-carlo-spectre.md §10.5; Spectre Reference 19.1 pp.175-179",
         ),
+        Code::W0019 => (
+            "a vary of an undeclared parameter",
+            "Spectre Reference 19.1 p.176 (vary names a parameter)",
+        ),
+        Code::W0020 => (
+            "a correlation matrix that is not positive definite",
+            "Spectre Reference 19.1 p.177 (correlate); docs/research/monte-carlo-spectre.md §6b",
+        ),
     };
     Info { title, cite }
 }
@@ -275,7 +287,7 @@ mod tests {
             P0001, P0002, P0003, P0004, P0005, P0006, P0007, P0008, P0009, R0001, R0002, R0003,
             R0004, R0005, R0006, R0007, R0008, R0009, R0010, W0001, W0002, W0003, W0004, W0005,
             W0006, W0007, W0008, W0009, W0010, W0011, W0012, W0013, W0014, W0015, W0016, W0017,
-            W0018,
+            W0018, W0019, W0020,
         ] {
             let i = info(c);
             assert!(!i.title.is_empty());

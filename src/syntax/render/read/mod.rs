@@ -59,6 +59,7 @@ mod unlift;
 mod values;
 
 pub(in crate::syntax::render) use elements::Card;
+pub(in crate::syntax::render) use named_blocks::{Stats, Vary};
 pub(in crate::syntax::render) use options::Opt;
 pub(in crate::syntax::render) use sources::{Num, Wave, WaveKind};
 pub(in crate::syntax::render) use testbench::{Ana, BenchCard, Sweep};
@@ -82,6 +83,9 @@ pub(in crate::syntax::render) struct Rd<'a> {
     masters: HashMap<u32, String>,
     /// The Monte Carlo read-back rule's fixups (`unlift`).
     unlifted: unlift::Unlift,
+    /// A writer's `Lift` fixups: a token of a value spelled as other text
+    /// (a reference renamed with its declaration).
+    respelled: HashMap<u32, String>,
 }
 
 /// What the reader made of a file: every block and the deck-wide lists, in
@@ -271,6 +275,7 @@ pub(in crate::syntax::render) fn read<'a>(
         kit,
         masters: HashMap::new(),
         unlifted: unlift::Unlift::default(),
+        respelled: HashMap::new(),
     };
     let top_stmts = ast.fields(ast.root()).to_vec();
     if rd.named() {

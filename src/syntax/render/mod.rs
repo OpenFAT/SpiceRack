@@ -56,8 +56,8 @@ pub struct Source<'a> {
 /// `src.ast`'s.
 pub fn render(src: &Source, target: Dialect) -> Result<String, Vec<Diag>> {
     assert!(writes(target), "render: a target with a writer");
-    let (rd, deck) = read::read(src.ast, src.tokens, src.dialect, src.name, src.kit);
-    spice::write(&rd, &deck, target)
+    let (mut rd, deck) = read::read(src.ast, src.tokens, src.dialect, src.name, src.kit);
+    spice::write(&mut rd, &deck, target)
 }
 
 /// File `file` of `kit` written for `target`, its deck named `name`.

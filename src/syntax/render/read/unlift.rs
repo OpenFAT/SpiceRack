@@ -6,7 +6,8 @@
 //! touching the tree: each such `Call` node's replacement (its new name and
 //! the token where its last argument starts), the variables it used (their
 //! `parameters` and `vary` rows go), and the `rack_*` functions nothing
-//! calls any more (they go). [`Rd::etext`] spells a value with them.
+//! calls any more (they go). [`Rd::etext`] spells a value with them, and
+//! with the tokens a writer's `Lift` rule respells ([`Rd::respell_token`]).
 //!
 //! Cites: monte-carlo-spectre.md §5.2 (the `rack_*` functions), §6a; the
 //! old writer's `statistics::unlift`, which did this over the IR's text.
@@ -15,6 +16,7 @@
 //! - `pub(super) struct Unlift`
 //! - `Rd::unlift(&mut self, deck: &mut Deck)`
 //! - `Rd::etext(&self, n: u32) -> String`, `Rd::unlifted_var(&self, p: &str) -> bool`
+//! - `Rd::respell_token(&mut self, k: u32, text: String)`, `Rd::value_roots(&self, b: &Block, out: &mut Vec<u32>)`
 
 use std::collections::{HashMap, HashSet};
 
@@ -165,7 +167,7 @@ impl<'a> Rd<'a> {
     /// the statistical call (`rack_agauss(1k, 100, 3, v)` is
     /// `agauss(1k, 100, 3)`).
     pub(in crate::syntax::render) fn etext(&self, n: u32) -> String {
-        if self.unlifted.calls.is_empty() {
+        if self.unlifted.calls.is_empty() && self.respelled.is_empty() {
             return self.text(n);
         }
         self.espan(self.first(n), self.last(n))
@@ -174,6 +176,45 @@ impl<'a> Rd<'a> {
     /// Whether the read-back rule dropped `vary` rows of variable `p`.
     pub(super) fn unlifted_var(&self, p: &str) -> bool {
         self.unlifted.used.contains(p)
+    }
+
+    /// Token `k` of a value is spelled `text` wherever [`Rd::etext`] spells
+    /// it: a writer's `Lift` fixup, recorded before it writes.
+    ///
+    /// # Panics
+    /// When `k` is no identifier token.
+    pub(in crate::syntax::render) fn respell_token(&mut self, k: u32, text: String) {
+        assert_eq!(
+            self.ttag(k),
+            crate::syntax::token::Tag::Ident,
+            "an identifier"
+        );
+        assert!(!text.is_empty(), "a token spelled as something");
+        self.respelled.insert(k, text);
+    }
+
+    /// The value nodes of block `b` the old IR held as expressions:
+    /// parameter values, model and instance parameters, element fields.
+    pub(in crate::syntax::render) fn value_roots(&self, b: &Block, out: &mut Vec<u32>) {
+        out.extend(
+            b.params
+                .iter()
+                .chain(&b.locals)
+                .map(|&a| self.ast.rhs(Node(a))),
+        );
+        for &(m, bin) in &b.models {
+            out.extend(self.pairs(m).into_iter().map(|(_, v)| v));
+            if bin != NONE {
+                out.extend(self.pairs(bin).into_iter().map(|(_, v)| v));
+            }
+        }
+        let elems = b.comps.iter().filter_map(|c| match c {
+            Comp::Card(n) => Some(*n),
+            Comp::Raw(_) => None,
+        });
+        for n in elems.chain(b.insts.iter().map(|&(_, n)| n)) {
+            out.extend(self.fields(n));
+        }
     }
 }
 
@@ -199,7 +240,11 @@ impl<'a> Rd<'a> {
                     k = close + 1;
                 }
                 None => {
-                    out.push_str(self.t.text(k));
+                    let t = self
+                        .respelled
+                        .get(&k)
+                        .map_or(self.t.text(k), String::as_str);
+                    out.push_str(t);
                     k += 1;
                 }
             }
@@ -223,30 +268,6 @@ impl<'a> Rd<'a> {
                 _ => {}
             }
             k += 1;
-        }
-    }
-
-    /// The value nodes of block `b` the old IR held as expressions:
-    /// parameter values, model and instance parameters, element fields.
-    fn value_roots(&self, b: &Block, out: &mut Vec<u32>) {
-        out.extend(
-            b.params
-                .iter()
-                .chain(&b.locals)
-                .map(|&a| self.ast.rhs(Node(a))),
-        );
-        for &(m, bin) in &b.models {
-            out.extend(self.pairs(m).into_iter().map(|(_, v)| v));
-            if bin != NONE {
-                out.extend(self.pairs(bin).into_iter().map(|(_, v)| v));
-            }
-        }
-        let elems = b.comps.iter().filter_map(|c| match c {
-            Comp::Card(n) => Some(*n),
-            Comp::Raw(_) => None,
-        });
-        for n in elems.chain(b.insts.iter().map(|&(_, n)| n)) {
-            out.extend(self.fields(n));
         }
     }
 }
