@@ -114,12 +114,16 @@ pub enum Code {
     W0103,
     /// A `.model` whose kind (and level) has no master in the target.
     W0104,
-    /// A device the target has no master or terminal list for (a MOSFET without its bulk or with extra nodes, a current-controlled switch, an AM source).
+    /// A device the target has no master or terminal list for (a MOSFET without its bulk or with extra nodes, a current-controlled switch; in VACASK a POLY source, a charge capacitor, a switch, a line).
     W0105,
     /// A function the target cannot define (a body over `v()`/`i()`; VACASK has none).
     W0106,
-    /// A statistical call with no Spectre form (HSPICE's multiplier, a wrong argument count, a call inside a function).
+    /// A statistical call with no form in the target (HSPICE's multiplier, a wrong argument count, a call inside a function).
     W0107,
+    /// A source waveform the target cannot run as SPICE does (Spectre's AM; VACASK's PWL, a SIN phase, an EXP delay that is no number).
+    W0108,
+    /// A `.measure` the target has no statement for (VACASK).
+    W0109,
 }
 
 /// A code's fixed text.
@@ -313,8 +317,16 @@ pub const fn info(c: Code) -> Info {
             "Spectre Reference R5 pp.870-871 (`real f(real x)`); VACASK has no user functions",
         ),
         Code::W0107 => (
-            "a statistical call with no Spectre form",
-            "docs/research/monte-carlo-spectre.md §5.3, §10.2",
+            "a statistical call with no form in the target",
+            "docs/research/monte-carlo-spectre.md §5.3, §7, §10.2",
+        ),
+        Code::W0108 => (
+            "a source waveform the target cannot run",
+            "Spectre Reference 5.0 p.685 (no AM equation); VACASK vsource (`sine` ignores a phase; PWL)",
+        ),
+        Code::W0109 => (
+            "a measurement the target has no statement for",
+            "VACASK docs (no `measure`: post-process the raw file)",
         ),
     };
     Info { title, cite }
@@ -331,7 +343,8 @@ mod tests {
             P0001, P0002, P0003, P0004, P0005, P0006, P0007, P0008, P0009, R0001, R0002, R0003,
             R0004, R0005, R0006, R0007, R0008, R0009, R0010, W0001, W0002, W0003, W0004, W0005,
             W0006, W0007, W0008, W0009, W0010, W0011, W0012, W0013, W0014, W0015, W0016, W0017,
-            W0018, W0019, W0020, W0101, W0102, W0103, W0104, W0105, W0106, W0107,
+            W0018, W0019, W0020, W0101, W0102, W0103, W0104, W0105, W0106, W0107, W0108,
+            W0109,
         ] {
             let i = info(c);
             assert!(!i.title.is_empty());
