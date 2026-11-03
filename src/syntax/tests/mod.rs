@@ -542,3 +542,26 @@ fn unclosed_and_stray_blocks() {
     let (_, codes) = read("t\n.endl\n.subckt s a\n", &NGSPICE);
     assert_eq!(codes, [Code::P0004, Code::P0003]);
 }
+
+#[test]
+fn nested_subckts_ten_thousand_deep_reach_the_ir() {
+    // ngspice manual §2.5: definitions nest; the adapter hoists each as
+    // `<parent>__<name>` (today's lowering), walking the nesting on a heap
+    // stack (rule 7 of the compiler-construction skill), so this runs in
+    // Debug on a test thread's 2 MiB stack. Checks: 3.
+    let n = 10_000;
+    let mut src = String::from("t\n");
+    for k in 0..n {
+        src.push_str(&format!(".subckt s{k} a\nR{k} a 0 1\n"));
+    }
+    for _ in 0..n {
+        src.push_str(".ends\n");
+    }
+    let t = tokenize(&src, &NGSPICE);
+    let a = parse(&t, &NGSPICE);
+    let (ir, report) = crate::syntax::ast_to_ir(&a, &t, crate::codegen::Dialect::Ngspice, "deep");
+    assert_eq!(ir.subcircuit_defs.len(), n);
+    assert!(report.unparsed.is_empty() && report.raw == 0);
+    let inner = format!("s{}__s{}", n - 2, n - 1);
+    assert!(ir.subcircuit_defs.iter().any(|d| d.name == inner));
+}

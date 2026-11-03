@@ -98,6 +98,18 @@ enum Kept {
     Unparsed,
 }
 
+/// A definition [`Cx::subckt`] has open: its node, the body read so far,
+/// and what its nested definitions renamed.
+struct OpenSubckt {
+    node: u32,
+    /// The next body statement to read.
+    next: usize,
+    sc: Subcircuit,
+    /// `self.defs.len()` when it opened: its hoisted definitions follow.
+    first: usize,
+    renames: Vec<(String, String)>,
+}
+
 /// A `.subckt` head the grammar read: its name, ports and defaults.
 struct SubcktHead {
     name: String,
@@ -324,25 +336,64 @@ impl<'a> Cx<'a> {
     }
 
     /// `.subckt` … `.ends` (lower/mod.rs `subckt`): nested definitions
-    /// hoisted as `<parent>__<name>`, the parent's references renamed.
+    /// hoisted as `<parent>__<name>`, the parent's references renamed. The
+    /// nesting is walked on a heap stack of open definitions, so a deck
+    /// nested 10⁴ deep needs no deeper native stack than a flat one.
     pub(super) fn subckt(&mut self, n: u32, head: SubcktHead) -> Subcircuit {
+        let mut stack = vec![self.open_subckt(n, head)];
+        loop {
+            let top = stack.last_mut().expect("a definition is open");
+            if let Some(&k) = self.body(top.node).get(top.next) {
+                top.next += 1;
+                if self.tag(k) == Tag::Subckt
+                    && let Some(h) = self.subckt_head(k)
+                {
+                    let inner = self.open_subckt(k, h);
+                    stack.push(inner);
+                } else {
+                    self.card(k, &mut top.sc, Scope::Subckt);
+                }
+                continue;
+            }
+            let done = stack.pop().expect("the top definition");
+            let mut sc = self.close_subckt(done);
+            let Some(parent) = stack.last_mut() else {
+                return sc;
+            };
+            let scoped = format!("{}__{}", parent.sc.name, sc.name);
+            parent
+                .renames
+                .push((std::mem::replace(&mut sc.name, scoped.clone()), scoped));
+            self.defs.push(sc);
+        }
+    }
+}
+
+// ---- private ----
+
+impl<'a> Cx<'a> {
+    fn open_subckt(&self, node: u32, head: SubcktHead) -> OpenSubckt {
         let mut sc = sub(&head.name);
         sc.ports = head.ports;
         sc.parameters = head.params;
-        let first = self.defs.len();
-        let mut renames: Vec<(String, String)> = Vec::new();
-        for &k in self.body(n) {
-            if self.tag(k) == Tag::Subckt
-                && let Some(h) = self.subckt_head(k)
-            {
-                let mut inner = self.subckt(k, h);
-                let scoped = format!("{}__{}", sc.name, inner.name);
-                renames.push((std::mem::replace(&mut inner.name, scoped.clone()), scoped));
-                self.defs.push(inner);
-            } else {
-                self.card(k, &mut sc, Scope::Subckt);
-            }
+        OpenSubckt {
+            node,
+            next: 0,
+            sc,
+            first: self.defs.len(),
+            renames: Vec::new(),
         }
+    }
+
+    /// The finished definition, its and its hoisted definitions'
+    /// references to the nested ones renamed.
+    fn close_subckt(&mut self, f: OpenSubckt) -> Subcircuit {
+        let OpenSubckt {
+            mut sc,
+            first,
+            renames,
+            ..
+        } = f;
         for inst in sc.instances.iter_mut().chain(
             self.defs[first..]
                 .iter_mut()
@@ -357,11 +408,7 @@ impl<'a> Cx<'a> {
         }
         sc
     }
-}
 
-// ---- private ----
-
-impl<'a> Cx<'a> {
     /// A block whose head the grammar refused: the head `Unparsed`, the
     /// body read as cards where the block sits, the closer refused too.
     fn dissolve(&mut self, n: u32, here: &mut Subcircuit, scope: Scope) {
