@@ -66,9 +66,16 @@ struct Run {
 /// pinned. The deck itself goes to the temp dir: `dir` is read-only in the
 /// nix store.
 /// `-r` turns `.meas` off in batch mode ("No .measure possible in batch mode
-/// (-b) with -r rawfile set!"), so a deck with `.meas` runs twice.
+/// (-b) with -r rawfile set!"), and with it `.option autostop`, which then
+/// stops a transient at t = 0. So a deck with `.meas` runs once without
+/// `-r`, from a `.control` block that ends in `write`: the converted deck
+/// already runs its analysis from one (the codegen writes it, and the block
+/// gets the `write`, as `backend::ngspice` does); any other gets `run` +
+/// `write`. An original whose own `.control` block runs its analysis keeps
+/// the `-r` run (`converted` is false), so which originals ngspice can run
+/// as written does not change.
 /// `Err` carries why; `Ok(None)` is a timeout.
-fn ngspice(dir: &Path, deck: &str, secs: u64) -> Result<Option<Run>, String> {
+fn ngspice(dir: &Path, deck: &str, secs: u64, converted: bool) -> Result<Option<Run>, String> {
     let file = tempfile::Builder::new().suffix(".sp").tempfile().map_err(|e| e.to_string())?;
     // A pinned seed: models with `agauss` mismatch (gf180) draw a fresh
     // value every run otherwise, so the same deck disagrees with itself.
@@ -76,6 +83,19 @@ fn ngspice(dir: &Path, deck: &str, secs: u64) -> Result<Option<Run>, String> {
     std::fs::write(file.path(), format!("{title}\n.option seed=1\n{body}")).map_err(|e| e.to_string())?;
     let tmp = tempfile::TempDir::new().map_err(|e| e.to_string())?;
     let raw = tmp.path().join("out.raw");
+    let meas = analyses(deck).contains_key(".meas");
+    let block = match runs_in_control(deck) {
+        true if converted => Some(""),
+        false if meas => Some("run\n"),
+        _ => None,
+    };
+    let control = block.is_some();
+    if let Some(run) = block {
+        let end = body.lines().position(|l| l.trim().eq_ignore_ascii_case(".end")).unwrap_or(body.lines().count());
+        let mut lines: Vec<String> = body.lines().map(str::to_string).collect();
+        lines.insert(end, format!(".control\n{run}write {}\n.endc", raw.display()));
+        std::fs::write(file.path(), format!("{title}\n.option seed=1\n{}\n", lines.join("\n"))).map_err(|e| e.to_string())?;
+    }
     // The budget is CPU seconds, not wall: under a loaded machine a wall
     // clock times out decks that are not slow. One OpenMP thread, since a
     // CPU limit counts every thread and the workers already fill the cores.
@@ -95,7 +115,7 @@ fn ngspice(dir: &Path, deck: &str, secs: u64) -> Result<Option<Run>, String> {
         use std::os::unix::process::ExitStatusExt;
         matches!(o.status.code(), Some(124 | 137 | 152)) || matches!(o.status.signal(), Some(9 | 24))
     };
-    let out = run(true)?;
+    let out = run(!control)?;
     if timed_out(&out) {
         return Ok(None);
     }
@@ -105,19 +125,35 @@ fn ngspice(dir: &Path, deck: &str, secs: u64) -> Result<Option<Run>, String> {
     })?;
     let plots = spicerack::rawfile::parse_raw_all(&bytes).map_err(|e| e.to_string())?;
     let mut measures = Vec::new();
-    if analyses(deck).contains_key(".meas") {
-        let out = run(false)?;
+    if meas {
+        let out = if control { out } else { run(false)? };
         if timed_out(&out) {
             return Ok(None);
         }
         let text = String::from_utf8_lossy(&out.stdout);
-        measures = parse_measures(&text, "ngspice").into_iter().map(|m| (m.name.to_lowercase(), m.value)).collect();
+        measures = parse_measures(&text, Some(spicerack::ir::Dialect::Ngspice)).into_iter().map(|m| (m.name.to_lowercase(), m.value)).collect();
         measures.sort_by(|a, b| a.0.cmp(&b.0));
     }
     Ok(Some(Run { plots, measures }))
 }
 
-/// Analysis and `.meas` cards by kind, outside `.control` blocks.
+/// True if a `.control` block in `deck` issues a run command.
+fn runs_in_control(deck: &str) -> bool {
+    let mut inside = false;
+    for line in deck.lines() {
+        match line.split_whitespace().next().unwrap_or("").to_ascii_lowercase().as_str() {
+            ".control" => inside = true,
+            ".endc" => inside = false,
+            "run" | "op" | "ac" | "tran" | "dc" if inside => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Analysis and `.meas` cards by kind; inside a `.control` block, the
+/// command of the same name (`tran`, `fourier`, `meas`): the codegen runs a
+/// deck's `.meas`/`.four` analysis from one.
 fn analyses(deck: &str) -> BTreeMap<&'static str, usize> {
     const KINDS: [(&str, &str); 14] = [
         (".op", ".op"), (".dc", ".dc"), (".ac", ".ac"), (".tran", ".tran"), (".noise", ".noise"), (".tf", ".tf"),
@@ -131,7 +167,11 @@ fn analyses(deck: &str) -> BTreeMap<&'static str, usize> {
         match word.as_str() {
             ".control" => control = true,
             ".endc" => control = false,
-            _ if control => {}
+            w if control => {
+                if let Some((_, k)) = KINDS.iter().find(|(spelling, _)| spelling[1..] == *w) {
+                    *out.entry(*k).or_default() += 1;
+                }
+            }
             w => {
                 if let Some((_, k)) = KINDS.iter().find(|(spelling, _)| *spelling == w) {
                     *out.entry(*k).or_default() += 1;
@@ -145,7 +185,7 @@ fn analyses(deck: &str) -> BTreeMap<&'static str, usize> {
 fn column(r: &RawData, i: usize) -> Vec<Complex64> {
     match r.complex(i) {
         Some(c) => c.to_vec(),
-        None => r.re(i).into_iter().map(|x| Complex64::new(x, 0.0)).collect(),
+        None => r.re(i).iter().map(|&x| Complex64::new(x, 0.0)).collect(),
     }
 }
 
@@ -241,7 +281,7 @@ fn compare(a: &Run, b: &Run) -> Result<(), String> {
         // Span-relative: a sweep crossing zero lands within an ulp of it, and
         // `-50m` and `-0.05` are two such ulps in ngspice's number parser.
         let span = xa.iter().fold(0.0f64, |m, x| m.max(x.abs()));
-        if !transient && (xa.len() != xb.len() || xa.iter().zip(&xb).any(|(x, y)| (x - y).abs() > 1e-9 * span)) {
+        if !transient && (xa.len() != xb.len() || xa.iter().zip(xb.iter()).any(|(x, y)| (x - y).abs() > 1e-9 * span)) {
             return Err(format!("{}: sweep grid changed ({} -> {} points)", pa.plot_name, xa.len(), xb.len()));
         }
         if transient && !matches!((xa.last(), xb.last()), (Some(&x), Some(&y)) if close(x, y)) {
@@ -455,7 +495,7 @@ fn check(deck: &Path, secs: u64, simulate: bool, refused: &std::sync::Mutex<std:
         return Outcome::Slow;
     }
     let dir = deck.parent().unwrap();
-    let original = match ngspice(dir, &src, secs) {
+    let original = match ngspice(dir, &src, secs, false) {
         Ok(Some(r)) => r,
         Ok(None) => return Outcome::Skip("original timed out".into()),
         Err(e) => return Outcome::Skip(format!("original fails: {e}")),
@@ -465,16 +505,16 @@ fn check(deck: &Path, secs: u64, simulate: bool, refused: &std::sync::Mutex<std:
     }
     // Twice the budget: under a loaded machine a deck near the limit as
     // written crosses it converted with no change in the circuit.
-    match ngspice(dir, &converted, 2 * secs) {
+    match ngspice(dir, &converted, 2 * secs, true) {
         Ok(Some(r)) => match compare(&original, &r) {
             Ok(()) => Outcome::Pass,
             // Fails only if the original agrees with itself (TRNOISE draws
             // a fresh stream per run, seed or no seed) and the unconverted,
             // reordered deck stays within the tolerance the converted one
             // broke.
-            Err(why) => match ngspice(dir, &src, secs) {
+            Err(why) => match ngspice(dir, &src, secs, false) {
                 Ok(Some(again)) if compare(&original, &again).is_err() => Outcome::Skip(format!("original is not repeatable: two runs disagree ({why})")),
-                _ => match ngspice(dir, &reordered(&src), secs) {
+                _ => match ngspice(dir, &reordered(&src), secs, false) {
                     Ok(Some(c)) if compare(&original, &c).is_err() => Outcome::Skip(format!("order-sensitive: reordering the original alone breaks it ({why})")),
                     _ => Outcome::Fail(why),
                 },

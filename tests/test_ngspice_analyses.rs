@@ -69,12 +69,17 @@ fn pz_finds_the_rc_pole_at_minus_one_over_rc() {
 #[test]
 fn four_prints_the_harmonic_table_to_stdout() {
     // Under `-b -r` ngspice says ".fourier line ignored since rawfile was
-    // produced." The backend rewrites the deck so `fourier` runs in a
-    // `.control` block; the table then lands in stdout.
-    let raw = run(
+    // produced." The codegen runs the transient from a `.control` block with
+    // `fourier` after it; the table then lands in stdout.
+    let deck = common::emitted(
+        Dialect::Ngspice,
         "* four\nV1 in 0 SIN(0 1 1k)\nR1 in out 1k\nC1 out 0 1n\n\
          .tran 1u 10m\n.four 1k v(out)\n.end\n",
+        |_| {},
     );
+    assert!(deck.contains(".control\ntran 1u 10m\nfourier 1k v(out)\n.endc\n"), "{deck}");
+    assert!(!deck.contains(".four"), "a .four dot-card would run the transient twice:\n{deck}");
+    let raw = run(&deck);
     assert!(
         !raw.stdout.contains("fourier line ignored"),
         "four must not be dropped:\n{}",
@@ -101,20 +106,70 @@ fn four_prints_the_harmonic_table_to_stdout() {
 
 // ── .measure ──
 
-/// A `.control` block holding only `pre_osdi` (what the codegen emits for OSDI
-/// loads) must not block the measure rewrite.
+/// The `.control` block holding only `pre_osdi` (what the codegen emits for
+/// OSDI loads) runs nothing, so the measure still gets its own block.
 #[test]
 fn measure_survives_alongside_an_osdi_control_block() {
-    let raw = run(
-        "* osdi + meas\n.control\npre_osdi /nonexistent/model.osdi\n.endc\n\
-         V1 in 0 0\nR1 in out 10k\nR2 out 0 10k\n\
+    let deck = common::emitted(
+        Dialect::Ngspice,
+        "* osdi + meas\nV1 in 0 0\nR1 in out 10k\nR2 out 0 10k\n\
          .meas dc vhalf FIND V(out) AT=10\n.dc V1 0 10 1\n.end\n",
+        |ir| ir.top.osdi_loads.push("/nonexistent/model.osdi".into()),
     );
+    assert!(deck.contains("\n.control\npre_osdi /nonexistent/model.osdi\n.endc\n"), "{deck}");
+    assert!(deck.contains(".control\ndc V1 0 10 1\n.endc\n"), "{deck}");
+    let raw = run(&deck);
     assert!(
         measures(&raw).iter().any(|m| m.name == "vhalf"),
         "measure lost next to an osdi block:\n{}",
         raw.stdout
     );
+}
+
+/// A hand-written deck that runs its own analysis from `.control` (the shape
+/// the codegen writes for `.measure`) gets the backend's `write` block: the
+/// measure reaches stdout and the sweep reaches the raw file.
+#[test]
+fn hand_written_control_deck_reports_measures_and_data() {
+    let raw = run(
+        "* meas in control\nV1 in 0 0\nR1 in out 10k\nR2 out 0 10k\n\
+         .meas dc vhalf FIND V(out) AT=10\n.control\ndc V1 0 10 1\n.endc\n.end\n",
+    );
+    let m = measures(&raw);
+    assert!(m.iter().any(|m| m.name == "vhalf" && close(m.value, 5.0, 1e-9)), "{m:?}\n{}", raw.stdout);
+    assert_eq!(column(&raw, "out").len(), 11);
+    assert!(close(column(&raw, "out")[10], 5.0, 1e-9));
+}
+
+/// A hand-written deck with top-level `.meas` or `.four` and no `.control`
+/// block that runs it would go to ngspice with `-r`, which drops those
+/// results and exits 0. The backend refuses it, naming the card, before
+/// ngspice runs.
+#[test]
+fn top_level_meas_or_four_without_a_control_block_is_refused() {
+    let meas = "* t\nV1 in 0 1\nR1 in 0 1k\n.MEASURE dc i1 find i(V1) at=1\n.dc V1 0 1 1\n.end\n";
+    let four = "* t\nV1 in 0 SIN(0 1 1k)\nR1 in 0 1k\n.tran 1u 2m\n.four 1k v(in)\n.end\n";
+    for (deck, card) in [(meas, ".MEASURE dc i1"), (four, ".four 1k v(in)")] {
+        let err = Dialect::Ngspice.run(deck).expect_err("results would be lost").to_string();
+        assert!(err.contains(card) && err.contains(".control block"), "{err}");
+    }
+}
+
+/// A raw `.four` line (here a testbench line with a `+` continuation) runs
+/// as `fourier` in the codegen's `.control` block: the table reaches stdout.
+#[test]
+fn raw_four_line_reports_its_fourier_table() {
+    let deck = common::emitted(
+        Dialect::Ngspice,
+        "* four\nV1 in 0 SIN(0 1 1k)\nR1 in out 1k\nC1 out 0 1n\n.tran 1u 10m\n.end\n",
+        |ir| ir.testbench.as_mut().unwrap().extra_lines.extend([".four 1k".to_string(), "+ v(in)".to_string()]),
+    );
+    assert!(deck.contains(".control\ntran 1u 10m\nfourier 1k v(in)\n.endc\n"), "{deck}");
+    let raw = run(&deck);
+    // A clean 1 V sine: fundamental 1 V, THD ~0 (closed form).
+    assert!(raw.stdout.contains("Fourier analysis for v(in)"), "{}", raw.stdout);
+    let thd: f64 = raw.stdout.split("THD: ").nth(1).and_then(|s| s.split(' ').next()).and_then(|s| s.parse().ok()).expect("THD in table");
+    assert!(thd < 1e-6, "THD {thd} %");
 }
 
 // ── circuit features claimed in the capability table ──

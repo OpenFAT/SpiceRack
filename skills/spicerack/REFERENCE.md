@@ -89,7 +89,8 @@ Queue on a `Testbench` with `add_*`; run on a `Testbench` or `CircuitSimulator` 
 | `transfer_function(...)` | — | — | `TransferFunctionAnalysis` |
 | `distortion(...)` | — | — | `DistortionAnalysis` |
 
-`variation` is `"dec"`, `"oct"` or `"lin"`.
+`variation` is `"dec"`, `"oct"`, `"lin"` or `"log"` (Spectre only), any
+case; any other name raises `ValueError` at the call, before anything runs.
 
 `add_fourier` emits ngspice's `.four`, whose output table is not parsed — the
 harmonics are unreachable. For THD, compute a Goertzel over the transient

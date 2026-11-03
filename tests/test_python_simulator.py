@@ -359,6 +359,10 @@ class TestLiveSimulation:
         time = tran.time
         assert len(time) > 10
         assert time[-1] >= 1.9e-3
+        # A result column is a plain list of floats, by item and by attribute.
+        for col in (time, tran["out"], tran.out, tran["OUT"]):
+            assert type(col) is list and all(type(x) is float for x in col)
+        assert tran["out"] == tran.out == tran["OUT"] and len(tran["out"]) == len(time)
 
     def test_ac_analysis(self):
         c = ps().Circuit("ac_live")
@@ -412,6 +416,46 @@ def test_ac_magnitude_and_phase_match_rc_theory():
         # Real part is not the magnitude anywhere past DC.
         if f > fc:
             assert real < mag
+    # The real part of a complex column is still a plain list of floats.
+    assert type(ac["vout"]) is list and all(type(x) is float for x in ac["vout"])
+    assert type(ac.frequency) is list and ac.frequency[0] == 1.0
+
+
+def test_raw_meas_line_reports_its_measure_on_ngspice():
+    """A `.meas` written as raw lines (a `+` continuation included) gets the
+    `.control` block ngspice needs to report it; under `-r` it would be lost."""
+    import math
+    import spicerack as ps
+
+    c = ps.Circuit("rc_meas")
+    c.PulseVoltageSource(name="in", positive="in", negative=c.gnd, initial_value=0.0,
+                         pulsed_value=1.0, rise_time=1e-9, fall_time=1e-9, pulse_width=1.0, period=2.0)
+    c.R(name="1", positive="in", negative="out", value=1e3)
+    c.C(name="1", positive="out", negative=c.gnd, value=1e-6)
+    c.raw_spice(".MEASURE tran vend find v(out)")
+    c.raw_spice("+ at=1m")
+    tran = c.simulator(simulator="ngspice").transient(step_time=1e-6, end_time=1e-3, max_time=1e-6)
+    # RC step response at t = RC: 1 - 1/e (closed form).
+    assert tran.measures["vend"] == pytest.approx(1 - math.exp(-1), rel=2e-3)
+
+
+def test_raw_four_line_runs_as_fourier_on_ngspice():
+    """A raw `.four` testbench line becomes `fourier` in the `.control` block
+    (the table goes to stdout, which Python does not expose; the Rust suite
+    checks its numbers), and the transient still comes back."""
+    import spicerack as ps
+
+    dut = ps.Subcircuit("rc4", ["in", "out"])
+    dut.R(name="1", positive="in", negative="out", value=1e3)
+    dut.C(name="1", positive="out", negative="0", value=1e-9)
+    tb = ps.Testbench(dut)
+    tb.SinusoidalVoltageSource(name="in", positive="in", negative="0", amplitude=1.0, frequency=1e3)
+    tb.extra_line(".four 1k v(out)")
+    tb.add_transient(step_time=1e-6, end_time=2e-3)
+    deck = tb.netlist("ngspice")
+    assert ".control\ntran 1u 2m\nfourier 1k v(out)\n.endc" in deck and ".four" not in deck
+    tran = tb.transient(step_time=1e-6, end_time=2e-3)
+    assert tran.time[-1] == pytest.approx(2e-3)
 
 
 def test_noise_runs_when_saves_are_set():

@@ -112,10 +112,8 @@ fn noise_points_per_summary_is_ngspice_only() {
         output: "out".into(),
         reference: "0".into(),
         source: "V1".into(),
-        variation: "dec".into(),
-        points: 10,
-        start: 1.0,
-        stop: 1e6,
+        sweep: FreqSweep { variation: Sweep::Dec,
+        points: 10, start: 1.0, stop: 1e6 },
         points_per_summary: Some(5),
     };
     assert_eq!(lt().emit_analysis(&noise).unwrap(), ".noise V(out) V1 dec 10 1 1meg");
@@ -136,10 +134,8 @@ fn pz_disto_and_sens_are_rejected_for_ltspice() {
             pz_type: "pz".into(),
         },
         Analysis::Distortion {
-            variation: "dec".into(),
-            points: 10,
-            start: 1e3,
-            stop: 1e6,
+            sweep: FreqSweep { variation: Sweep::Dec,
+            points: 10, start: 1e3, stop: 1e6 },
             f2overf1: None,
         },
         Analysis::Sensitivity { output: "V(out)".into(), ac: None },
@@ -168,10 +164,8 @@ fn noise_tb(saves: Vec<String>) -> CircuitIR {
                 output: "out".into(),
                 reference: "0".into(),
                 source: "V1".into(),
-                variation: "dec".into(),
-                points: 10,
-                start: 1.0,
-                stop: 1e6,
+                sweep: FreqSweep { variation: Sweep::Dec,
+                points: 10, start: 1.0, stop: 1e6 },
                 points_per_summary: None,
             }],
             saves, ..Default::default() }), ..Default::default() }

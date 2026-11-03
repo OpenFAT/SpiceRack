@@ -15,17 +15,19 @@
 //! ```
 //! Or single-line: `rise_time: 2.345e-009 ...`
 
+use crate::ir::Dialect;
 use crate::result::MeasureResult;
 
-/// Parse measure results from simulator output, auto-detecting format
-/// based on `backend_name`.
-pub fn parse_measures(text: &str, backend_name: &str) -> Vec<MeasureResult> {
-    match backend_name {
+/// Parse measure results from `backend`'s output, in its format; with no
+/// backend (or one whose format is not known here), whichever format finds
+/// results, ngspice's first.
+pub fn parse_measures(text: &str, backend: Option<Dialect>) -> Vec<MeasureResult> {
+    match backend {
         // ESPice prints `.meas` results in ngspice's format (its output/measure.zig
         // ports com_measure2.c).
-        "ngspice" | "espice" => parse_ngspice(text),
-        "ltspice" => parse_ltspice(text),
-        _ => {
+        Some(Dialect::Ngspice | Dialect::Espice) => parse_ngspice(text),
+        Some(Dialect::Ltspice) => parse_ltspice(text),
+        None | Some(Dialect::Spectre | Dialect::Vacask | Dialect::Hspice | Dialect::Xyce | Dialect::Cdl | Dialect::Verilog) => {
             // Try all parsers, return whichever finds results
             let results = parse_ngspice(text);
             if !results.is_empty() {
@@ -277,7 +279,7 @@ Measurement: avg_vout
     fn test_parse_measures_auto_detect() {
         // NGSpice format with unknown backend falls back to trying all
         let stdout = "rise_time        =  2.345000e-09\n";
-        let results = parse_measures(stdout, "unknown");
+        let results = parse_measures(stdout, None);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "rise_time");
     }
@@ -287,8 +289,8 @@ Measurement: avg_vout
         let ngspice_out = "  Measurements for Transient Analysis\n\nrise_time        =  2.345000e-09\n";
         let ltspice_out = "rise_time: 2.345e-009\n";
 
-        let r1 = parse_measures(ngspice_out, "ngspice");
-        let r3 = parse_measures(ltspice_out, "ltspice");
+        let r1 = parse_measures(ngspice_out, Some(Dialect::Ngspice));
+        let r3 = parse_measures(ltspice_out, Some(Dialect::Ltspice));
 
         assert_eq!(r1.len(), 1);
         assert_eq!(r3.len(), 1);

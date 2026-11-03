@@ -95,10 +95,8 @@ fn hspice_card_forms() {
             output: "mid".into(),
             reference: "0".into(),
             source: "V1".into(),
-            variation: "dec".into(),
-            points: 2,
-            start: 1e3,
-            stop: 1e5,
+            sweep: FreqSweep { variation: Sweep::Dec,
+            points: 2, start: 1e3, stop: 1e5 },
             points_per_summary: Some(1),
         },
     ]);

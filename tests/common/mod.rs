@@ -18,11 +18,19 @@ pub fn run(d: Dialect, deck: &str) -> RawData {
     d.run(deck).unwrap_or_else(|e| panic!("deck failed: {e}\n{deck}"))
 }
 
+/// `deck` as `simulation::run` hands it to `d`: read by the ngspice importer,
+/// passed through `edit`, written back by the codegen for `d`.
+pub fn emitted(d: Dialect, deck: &str, edit: impl FnOnce(&mut spicerack::ir::CircuitIR)) -> String {
+    let (mut ir, _) = spicerack::import::parse(deck, "deck", Dialect::Ngspice).unwrap_or_else(|e| panic!("{e}\n{deck}"));
+    edit(&mut ir);
+    spicerack::codegen::netlist(&ir, d).unwrap_or_else(|e| panic!("{e}\n{deck}"))
+}
+
 /// `Dialect::run` only captures stdout; `simulation::run` is what normally
 /// turns it into measures. These tests go straight to the backend, so they
 /// parse it themselves.
 pub fn measures(d: Dialect, raw: &RawData) -> Vec<MeasureResult> {
-    parse_measures(&raw.stdout, d.name())
+    parse_measures(&raw.stdout, Some(d))
 }
 
 /// Index of a vector by bare node name — ngspice reports node voltages as
@@ -150,10 +158,11 @@ macro_rules! analysis_suite {
 
         // ── .measure ──
 
-        /// ngspice accepts `.measure` on DC, AC, TRAN and SP. All three of the ones
-        /// the codegen can emit have to survive the `.control` rewrite.
+        /// ngspice accepts `.measure` on DC, AC, TRAN and SP. Each of the three
+        /// the codegen runs from a `.control` block on ngspice reports it.
         #[test]
         fn measure_works_on_dc_ac_and_tran() {
+            let run = |deck: &str| run(&common::emitted($d, deck, |_| {}));
             let dc = run("* meas dc\nV1 in 0 0\nR1 in out 10k\nR2 out 0 10k\n.meas dc vhalf FIND V(out) AT=10\n.dc V1 0 10 1\n.end\n");
             let dc_m = measures(&dc);
             assert!(close(dc_m[0].value, 5.0, 1e-9), "{:?}", dc_m);

@@ -9,7 +9,7 @@
 //! Skipped automatically when ngspice is not on PATH.
 
 use spicerack::codegen::Dialect;
-use spicerack::ir::{Analysis, CircuitIR, Component, IrValue, Subcircuit, Testbench};
+use spicerack::ir::{Analysis, CircuitIR, Component, FreqSweep, IrValue, Subcircuit, Sweep, Testbench};
 use spicerack::result::RawData;
 
 /// Unsupported fails, never skips: no ngspice is a failure.
@@ -316,7 +316,7 @@ fn the_run_pipeline_emits_and_runs_the_translated_source() {
     c.r("l", "out", "0", 1e6);
     let mut ir = c.ir();
     ir.testbench = Some(Testbench {
-        analyses: vec![Analysis::Ac { variation: "lin".into(), points: 1, start: 1000.0, stop: 1000.0 }],
+        analyses: vec![Analysis::Ac { sweep: FreqSweep { variation: Sweep::Lin, points: 1, start: 1000.0, stop: 1000.0 } }],
         ..Default::default() });
     require_ngspice();
     let raw = spicerack::simulation::run(&ir, Some("ngspice")).expect("Laplace deck must run");

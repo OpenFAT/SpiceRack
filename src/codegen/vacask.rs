@@ -32,6 +32,7 @@
 //! Everything is lowercased: SPICE is case-insensitive, VACASK is not.
 
 use std::collections::BTreeSet;
+use std::fmt::Write as _;
 use crate::ir::*;
 use super::{bare_node, model_refuse, CodeGenError};
 
@@ -189,40 +190,53 @@ fn need(comp: &Component) -> Option<Need> {
     })
 }
 
-fn val(v: &IrValue) -> String {
+/// An expression from the IR, lowercased when `low` (a SPICE-origin IR:
+/// SPICE names are case-blind, `Rload` and `rload` are one parameter, and
+/// VACASK's are not) unless it is a number; a VACASK-origin IR keeps its
+/// case (`M_PI` is not `m_pi`). Then [`respell`]ed.
+fn expr(s: &str, low: bool) -> String {
+    if low && parse_spice_num(s.trim()).is_none() { respell(&s.to_ascii_lowercase()) } else { respell(s) }
+}
+
+fn val(v: &IrValue, low: bool) -> String {
     match v {
         IrValue::Numeric { value } => num(*value),
-        IrValue::Expression { expr } => respell(expr),
+        IrValue::Expression { expr: e } => expr(e, low),
         IrValue::Raw { text } => respell(text),
     }
 }
 
-/// Instance parameters. `m` is SPICE's device multiplier, which VACASK
-/// spells with the Verilog-A builtin.
-fn inst_params(params: &[(String, String)]) -> String {
-    let mut s = String::new();
+/// A waveform number: [`num`], or an [`expr`].
+fn wave_num(x: &IrNum, low: bool) -> String {
+    match x {
+        IrNum::Num(v) => num(*v),
+        IrNum::Expr(e) => expr(e, low),
+    }
+}
+
+/// Instance parameters, written onto `out`. `m` is SPICE's device
+/// multiplier, which VACASK spells with the Verilog-A builtin.
+fn inst_params(out: &mut String, params: &[(String, String)], low: bool) {
     for (k, v) in params {
         let k = k.to_ascii_lowercase();
-        let k = if k == "m" { "$mfactor".to_string() } else { k };
-        s.push_str(&format!(" {}={}", k, respell(v)));
+        let k = if k == "m" { "$mfactor" } else { &k };
+        w!(out, " {}={}", k, expr(v, low));
     }
-    s
 }
 
 /// `mag=`/`phase=` on an independent source.
-fn ac_spec(mag: &Option<f64>, phase: &Option<f64>) -> String {
-    let mut s = String::new();
+fn ac_spec(out: &mut String, mag: &Option<f64>, phase: &Option<f64>) {
     if let Some(m) = mag {
-        s.push_str(&format!(" mag={}", num(*m)));
+        w!(out, " mag={}", num(*m));
     }
     if let Some(p) = phase {
-        s.push_str(&format!(" phase={}", num(*p)));
+        w!(out, " phase={}", num(*p));
     }
-    s
 }
 
-fn wave(name: &str, wf: &IrWaveform) -> Result<String, CodeGenError> {
-    let n = |x: &IrNum| val(&x.into());
+/// A source's waveform parameters; `name` (the instance) only names it in an error.
+fn wave(name: &dyn std::fmt::Display, wf: &IrWaveform, low: bool) -> Result<String, CodeGenError> {
+    let n = |x: &IrNum| wave_num(x, low);
     Ok(match wf {
         IrWaveform::Sin { offset, amplitude, frequency, delay, damping, phase } => {
             // VACASK accepts `sinephase` and does not apply it: the waveform
@@ -375,14 +389,15 @@ fn step_sweep(sp: &StepParam) -> Result<String, CodeGenError> {
 /// Frequency-swept analyses. For `dec`/`oct` SPICE's N is points per
 /// decade/octave and so is VACASK's; for `lin` SPICE's N is the TOTAL point
 /// count while VACASK counts intervals, hence the `- 1`.
-fn freq_sweep(variation: &str, points: u32, start: f64, stop: f64)
+fn freq_sweep(variation: Sweep, points: u32, start: f64, stop: f64)
     -> Result<String, CodeGenError>
 {
-    let mode = variation.to_ascii_lowercase();
-    if !matches!(mode.as_str(), "dec" | "oct" | "lin") {
-        return Err(unsupported_analysis(format!("frequency sweep type '{}'", variation)));
-    }
-    let n = if mode == "lin" { points.saturating_sub(1) } else { points };
+    let mode = variation.name();
+    let n = match variation {
+        Sweep::Dec | Sweep::Oct => points,
+        Sweep::Lin => points.saturating_sub(1),
+        Sweep::Log => return Err(unsupported_analysis("frequency sweep type 'log'")),
+    };
     if n == 0 {
         return Err(unsupported_analysis(format!("frequency sweep with {} points", points)));
     }
@@ -418,10 +433,10 @@ fn analysis_block(idx: usize, a: &Analysis, native: bool) -> Result<Vec<String>,
             out.push(format!("  analysis {} op", name));
         }
 
-        Analysis::Ac { variation, points, start, stop } => {
+        Analysis::Ac { sweep: FreqSweep { variation, points, start, stop } } => {
             out.push(format!(
                 "analysis {} ac {}",
-                name, freq_sweep(variation, *points, *start, *stop)?
+                name, freq_sweep(*variation, *points, *start, *stop)?
             ));
         }
 
@@ -438,13 +453,13 @@ fn analysis_block(idx: usize, a: &Analysis, native: bool) -> Result<Vec<String>,
             let tmax = max_step.or((!native).then(|| step.min(stop / 50.0)));
             let mut s = format!("analysis {} tran step={} stop={}", name, num(*step), num(*stop));
             if let Some(t) = tmax {
-                s.push_str(&format!(" maxstep={}", num(t)));
+                w!(s, " maxstep={}", num(t));
             }
             s.push_str(if *uic { " icmode=\"uic\"" } else { " icmode=\"op\"" });
             out.push(s);
         }
 
-        Analysis::Noise { output, reference, source, variation, points, start, stop, .. } => {
+        Analysis::Noise { output, reference, source, sweep: FreqSweep { variation, points, start, stop }, .. } => {
             if !reference.is_empty() && reference != "0" {
                 return Err(unsupported_analysis(
                     "noise with a non-ground reference node (VACASK's `out=` names one node)",
@@ -455,7 +470,7 @@ fn analysis_block(idx: usize, a: &Analysis, native: bool) -> Result<Vec<String>,
                 name,
                 bare_node(output).to_ascii_lowercase(),
                 source.to_ascii_lowercase(),
-                freq_sweep(variation, *points, *start, *stop)?,
+                freq_sweep(*variation, *points, *start, *stop)?,
             ));
         }
 
@@ -472,9 +487,9 @@ fn analysis_block(idx: usize, a: &Analysis, native: bool) -> Result<Vec<String>,
     Ok(out)
 }
 
-fn emit_model(m: &ModelDef, loads: &mut BTreeSet<String>) -> Result<String, CodeGenError> {
+fn emit_model(m: &ModelDef, loads: &mut BTreeSet<String>, low: bool) -> Result<String, CodeGenError> {
     let kind = m.kind.to_ascii_lowercase();
-    let name = m.name.to_ascii_lowercase();
+    let name = q(&m.name);
 
     // LEVEL is the module SELECTOR, not a parameter, and defaults to 1.
     let mut level = 1u32;
@@ -513,28 +528,31 @@ fn emit_model(m: &ModelDef, loads: &mut BTreeSet<String>) -> Result<String, Code
         // A module the user loaded themselves (`osdi_loads`). Pass it
         // through: VACASK errors loudly with "Model not found" if it is not
         // there, which beats guessing at a substitute.
-        return Ok(format!("model {} {}{}", name, kind, model_params(&m.parameters, vec![])));
+        return Ok(format!("model {} {}{}", name, kind, model_params(&m.parameters, None, low)));
     };
 
     loads.insert(format!("spice/{}.osdi", module));
     // `type=` is the polarity selector, not a `.model` parameter, and it
     // also keeps an otherwise-empty list non-empty: `model x sp_diode ( )`
     // is a VACASK syntax error.
-    let lead = if sign == 0 { vec![] } else { vec![format!("type={}", sign)] };
-    Ok(format!("model {} sp_{}{}", name, module, model_params(&m.parameters, lead)))
+    let lead = (sign != 0).then_some(sign);
+    Ok(format!("model {} sp_{}{}", name, module, model_params(&m.parameters, lead, low)))
 }
 
-fn model_params(params: &[(String, String)], lead: Vec<String>) -> String {
-    let body: Vec<String> = lead
-        .into_iter()
-        .chain(
-            params
-                .iter()
-                .filter(|(k, _)| !k.eq_ignore_ascii_case("level"))
-                .map(|(k, v)| format!("{}={}", k.to_ascii_lowercase(), respell(v))),
-        )
-        .collect();
-    if body.is_empty() { String::new() } else { format!(" ({})", body.join(" ")) }
+/// ` (type=1 k=v ...)`, or nothing for no `type=` and no parameters.
+fn model_params(params: &[(String, String)], sign: Option<i8>, low: bool) -> String {
+    let mut s = String::new();
+    if let Some(t) = sign {
+        w!(s, " type={t}");
+    }
+    for (k, v) in params.iter().filter(|(k, _)| !k.eq_ignore_ascii_case("level")) {
+        w!(s, " {}={}", k.to_ascii_lowercase(), expr(v, low));
+    }
+    if !s.is_empty() {
+        s.replace_range(..1, " (");
+        s.push(')');
+    }
+    s
 }
 
 /// VACASK identifiers cannot carry punctuation.
@@ -546,45 +564,48 @@ fn sanitize(s: &str) -> String {
 
 /// A name as a VACASK identifier: `[a-zA-Z_$][0-9a-zA-Z_$]*`, a number, or
 /// else quoted, `''` for a quote (docs/input-identifiers.md). SPICE names
-/// carry `#` `/` `-` `+` freely (`mnd#/mp1`, `Net-_R1-Pad2_`).
-fn quote(name: &str) -> String {
-    let plain = name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
-        && (name.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_' || c == '$')
-            // A number node is `0` or has no leading zero (`06` is not one).
-            || (name.chars().all(|c| c.is_ascii_digit()) && (name == "0" || !name.starts_with('0'))));
-    if plain || name.is_empty() { name.to_string() } else { format!("'{}'", name.replace('\'', "''")) }
+/// carry `#` `/` `-` `+` freely (`mnd#/mp1`, `Net-_R1-Pad2_`). Lowercased
+/// when `.1`: SPICE is case-insensitive, VACASK is not. Written as each name
+/// is, so `netlist` renames nothing in a copy of the IR.
+#[derive(Clone, Copy)]
+struct Q<'a>(&'a str, bool);
+
+/// [`Q`], lowercased: how every name reaches the deck.
+fn q(name: &str) -> Q<'_> {
+    Q(name, true)
 }
 
-/// `ir` with every node, instance, model and subcircuit name a VACASK
-/// identifier. A SPICE-origin IR's expressions are lowercased too: SPICE
-/// names are case-blind (`Rload` and `rload` are one parameter) and VACASK's
-/// are not. A VACASK-origin IR keeps its case (`M_PI` is not `m_pi`).
-fn prepared(ir: &CircuitIR) -> CircuitIR {
-    let mut ir = ir.clone();
-    if ir.raw_dialect != Some(Dialect::Vacask) {
-        let low = |v: &mut String| {
-            if parse_spice_num(v.trim()).is_none() {
-                *v = v.to_ascii_lowercase();
-            }
-        };
-        for sc in std::iter::once(&mut ir.top).chain(&mut ir.subcircuit_defs) {
-            sc.parameters.iter_mut().filter_map(|p| p.default.as_mut()).for_each(low);
-            sc.models.iter_mut().flat_map(|m| m.parameters.iter_mut()).for_each(|(_, v)| low(v));
-            sc.instances.iter_mut().flat_map(|i| i.parameters.iter_mut()).for_each(|(_, v)| low(v));
-            sc.components.iter_mut().flat_map(Component::exprs_mut).for_each(low);
+impl std::fmt::Display for Q<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = self.0;
+        let plain = name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
+            && (name.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_' || c == '$')
+                // A number node is `0` or has no leading zero (`06` is not one).
+                || (name.chars().all(|c| c.is_ascii_digit()) && (name == "0" || !name.starts_with('0'))));
+        let quoted = !plain && !name.is_empty();
+        if quoted {
+            f.write_char('\'')?;
         }
-        ir.testbench.iter_mut().flat_map(|tb| &mut tb.stimulus).flat_map(Component::exprs_mut).for_each(low);
+        for c in name.chars() {
+            if quoted && c == '\'' {
+                f.write_char('\'')?;
+            }
+            f.write_char(if self.1 { c.to_ascii_lowercase() } else { c })?;
+        }
+        if quoted {
+            f.write_char('\'')?;
+        }
+        Ok(())
     }
-    ir.names_mut(|s| *s = quote(s));
-    ir
 }
 
 pub(super) fn netlist(ir: &CircuitIR) -> Result<String, CodeGenError> {
     super::refuse_raw_spice(ir, "vacask")?;
-    let ir = &prepared(ir);
     if let Some(f) = ir.functions.first() {
         return Err(unsupported_comp(format!(".func {}: VACASK has no user functions", f.name)));
     }
+    // A SPICE-origin IR's expressions are lowercased as they are written.
+    let low = ir.raw_dialect != Some(Dialect::Vacask);
     let mut loads: BTreeSet<String> = BTreeSet::new();
     let mut needs: BTreeSet<Need> = BTreeSet::new();
 
@@ -608,11 +629,11 @@ pub(super) fn netlist(ir: &CircuitIR) -> Result<String, CodeGenError> {
     // it, where VACASK scopes them (two subcircuits may both define `qmod`).
     let mut model_lines = Vec::new();
     for m in &ir.top.models {
-        model_lines.push(emit_model(m, &mut loads)?);
+        model_lines.push(emit_model(m, &mut loads, low)?);
     }
     let mut sub_models: Vec<Vec<String>> = Vec::new();
     for sc in &ir.subcircuit_defs {
-        sub_models.push(sc.models.iter().map(|m| emit_model(m, &mut loads)).collect::<Result<_, _>>()?);
+        sub_models.push(sc.models.iter().map(|m| emit_model(m, &mut loads, low)).collect::<Result<_, _>>()?);
     }
 
     for n in &needs {
@@ -632,39 +653,40 @@ pub(super) fn netlist(ir: &CircuitIR) -> Result<String, CodeGenError> {
     }
 
     let title = ir.top.name.replace(['\n', '\r'], " ");
-    let title = if title.trim().is_empty() { "circuit".to_string() } else { title };
-    let mut lines = vec![title, String::new(), "ground 0".into(), String::new()];
+    let title = if title.trim().is_empty() { "circuit" } else { &title };
+    let mut out = String::new();
+    w!(out, "{title}\n\nground 0\n\n");
     if !ir.globals.is_empty() {
-        lines.push(format!("global {}", ir.globals.iter().map(|g| g.to_ascii_lowercase()).collect::<Vec<_>>().join(" ")));
+        out.push_str("global");
+        for g in &ir.globals {
+            w!(out, " {}", q(g));
+        }
+        out.push('\n');
     }
 
     for path in &loads {
-        lines.push(format!("load \"{}\"", path));
+        w!(out, "load \"{}\"\n", path);
     }
 
     for inc in &ir.top.includes {
-        lines.push(format!("include \"{}\"", inc));
+        w!(out, "include \"{}\"\n", inc);
     }
     for (path, section) in &ir.top.libs {
-        lines.push(format!("include \"{}\" section={}", path, section));
+        w!(out, "include \"{}\" section={}\n", path, section);
     }
     for lib in &ir.model_libraries {
         for setup in &lib.setup_includes {
-            lines.push(format!("include \"{}\"", setup));
+            w!(out, "include \"{}\"\n", setup);
         }
         let path = lib.backend_paths.get("vacask").unwrap_or(&lib.path);
         match &lib.corner {
-            Some(corner) => lines.push(format!("include \"{}\" section={}", path, corner)),
-            None => lines.push(format!("include \"{}\"", path)),
+            Some(corner) => w!(out, "include \"{}\" section={}\n", path, corner),
+            None => w!(out, "include \"{}\"\n", path),
         }
     }
-    lines.push(String::new());
+    out.push('\n');
 
     for n in &needs {
-        let module = match n {
-            Need::Sp(m) => format!("sp_{}", m),
-            Need::Builtin(m) => m.to_string(),
-        };
         // A user model wearing a synthesised name would be a duplicate
         // definition; VACASK takes the first and the deck then runs the
         // wrong device, so refuse instead.
@@ -674,13 +696,18 @@ pub(super) fn netlist(ir: &CircuitIR) -> Result<String, CodeGenError> {
                 n.auto_model()
             )));
         }
-        lines.push(format!("model {} {}", n.auto_model(), module));
+        match n {
+            Need::Sp(m) => w!(out, "model {} sp_{}\n", n.auto_model(), m),
+            Need::Builtin(m) => w!(out, "model {} {}\n", n.auto_model(), m),
+        }
     }
     // VACASK scopes a model to the block it is written in. The IR keeps
     // models on their subcircuit; hoisting them all to the top means a
     // model shared between definitions still resolves.
-    lines.extend(model_lines);
-    lines.push(String::new());
+    for l in &model_lines {
+        w!(out, "{l}\n");
+    }
+    out.push('\n');
 
     // `.step param` names become control variables, so they must not also
     // be declared as netlist parameters.
@@ -698,49 +725,44 @@ pub(super) fn netlist(ir: &CircuitIR) -> Result<String, CodeGenError> {
         .filter(|p| !stepped.contains(&p.name.to_ascii_lowercase()))
         .collect();
     if !top_params.is_empty() {
-        let body: Vec<String> = top_params
-            .iter()
-            .map(|p| match &p.default {
-                Some(d) => format!("{}={}", p.name.to_ascii_lowercase(), respell(d)),
-                None => format!("{}=0", p.name.to_ascii_lowercase()),
-            })
-            .collect();
-        lines.push(format!("parameters {}", body.join(" ")));
-        lines.push(String::new());
+        out.push_str("parameters");
+        param_list(&mut out, top_params.into_iter(), low);
+        out.push_str("\n\n");
     }
 
     for (sc, models) in ir.subcircuit_defs.iter().zip(&sub_models) {
-        lines.push(emit_subcircuit(sc, models)?);
-        lines.push(String::new());
+        emit_subcircuit(&mut out, sc, models, low)?;
+        out.push_str("\n\n");
     }
 
     for e in ir.top.elements() {
-        lines.push(match e {
-            Element::Component(c) => emit_component(c)?,
-            Element::Instance(i) => emit_instance(i),
-        });
+        match e {
+            Element::Component(c) => emit_component(&mut out, c, low)?,
+            Element::Instance(i) => emit_instance(&mut out, i, low),
+        }
+        out.push('\n');
     }
     // VACASK text kept verbatim on import (`refuse_raw_spice` has checked
     // that it is VACASK's).
-    lines.extend(ir.top.raw_spice.iter().cloned());
+    for l in &ir.top.raw_spice {
+        w!(out, "{l}\n");
+    }
 
     if let Some(tb) = &ir.testbench {
         for comp in &tb.stimulus {
-            lines.push(emit_component(comp)?);
+            emit_component(&mut out, comp, low)?;
+            out.push('\n');
         }
-        lines.push(String::new());
-        lines.push("control".into());
+        out.push_str("\ncontrol\n");
 
-        let mut opt_line = String::from("  options rawfile=\"binary\"");
-        let extra = emit_options(&tb.options)?;
-        opt_line.push_str(&extra);
+        w!(out, "  options rawfile=\"binary\"{}", emit_options(&tb.options)?);
         if let Some(t) = tb.temperature {
-            opt_line.push_str(&format!(" temp={}", num(t)));
+            w!(out, " temp={}", num(t));
         }
         if let Some(t) = tb.nominal_temperature {
-            opt_line.push_str(&format!(" tnom={}", num(t)));
+            w!(out, " tnom={}", num(t));
         }
-        lines.push(opt_line);
+        out.push('\n');
 
         if !tb.measures.is_empty() {
             // "Command not found" — VACASK has no measure statement at all.
@@ -750,7 +772,7 @@ pub(super) fn netlist(ir: &CircuitIR) -> Result<String, CodeGenError> {
         }
 
         for sp in &tb.step_params {
-            lines.push(format!("  var {}={}", sp.param.to_ascii_lowercase(), num(sp.start)));
+            w!(out, "  var {}={}\n", sp.param.to_ascii_lowercase(), num(sp.start));
         }
 
         let step_sweeps: Vec<String> = tb
@@ -774,195 +796,177 @@ pub(super) fn netlist(ir: &CircuitIR) -> Result<String, CodeGenError> {
         // error on a SPICE-shaped output expression. Emit `save <expr>`
         // here if internal device outputs (`p(r1,i)`) are ever needed.
         for line in &tb.extra_lines {
-            lines.push(format!("  {}", line));
+            w!(out, "  {line}\n");
         }
 
         for (idx, a) in tb.analyses.iter().enumerate() {
             // A `sweep` in VACASK binds to the next `analysis`, so the
             // stepped sweeps are repeated ahead of each one.
             for s in &step_sweeps {
-                lines.push(format!("  {}", s));
+                w!(out, "  {s}\n");
             }
             for l in analysis_block(idx, a, ir.raw_dialect == Some(Dialect::Vacask))? {
-                let l = if l.trim_start().starts_with("analysis") {
-                    format!("{}{}", l, ic)
-                } else {
-                    l
-                };
-                lines.push(format!("  {}", l));
+                let ic = if l.trim_start().starts_with("analysis") { ic.as_str() } else { "" };
+                w!(out, "  {l}{ic}\n");
             }
         }
-        lines.push("endc".into());
+        out.push_str("endc\n");
     }
 
-    let mut out = lines.join("\n");
-    out.push('\n');
     Ok(out)
 }
 
-fn emit_subcircuit(sc: &Subcircuit, models: &[String]) -> Result<String, CodeGenError> {
-    let ports: Vec<String> = sc.ports.iter().map(|p| p.name.to_ascii_lowercase()).collect();
-    let mut lines = vec![format!("subckt {} ({})", sc.name.to_ascii_lowercase(), ports.join(" "))];
-    lines.extend(models.iter().map(|m| format!("  {m}")));
-    if !sc.parameters.is_empty() {
-        let body: Vec<String> = sc
-            .parameters
-            .iter()
-            .map(|p| match &p.default {
-                Some(d) => format!("{}={}", p.name.to_ascii_lowercase(), respell(d)),
-                None => format!("{}=0", p.name.to_ascii_lowercase()),
-            })
-            .collect();
-        lines.push(format!("parameters {}", body.join(" ")));
+/// ` a=1 b=0`: parameter declarations, a missing default as 0.
+fn param_list<'a>(out: &mut String, defs: impl Iterator<Item = &'a ParamDef>, low: bool) {
+    for p in defs {
+        match &p.default {
+            Some(d) => w!(out, " {}={}", p.name.to_ascii_lowercase(), expr(d, low)),
+            None => w!(out, " {}=0", p.name.to_ascii_lowercase()),
+        }
     }
-    for e in sc.elements() {
-        lines.push(format!("  {}", match e {
-            Element::Component(c) => emit_component(c)?,
-            Element::Instance(i) => emit_instance(i),
-        }));
-    }
-    lines.extend(sc.raw_spice.iter().map(|l| format!("  {l}")));
-    lines.push("ends".into());
-    Ok(lines.join("\n"))
 }
 
-fn emit_component(comp: &Component) -> Result<String, CodeGenError> {
+/// A `subckt` ... `ends` block, with no line end after `ends`.
+fn emit_subcircuit(out: &mut String, sc: &Subcircuit, models: &[String], low: bool) -> Result<(), CodeGenError> {
+    w!(out, "subckt {} (", q(&sc.name));
+    for (i, p) in sc.ports.iter().enumerate() {
+        w!(out, "{}{}", if i == 0 { "" } else { " " }, q(&p.name));
+    }
+    out.push_str(")\n");
+    for m in models {
+        w!(out, "  {m}\n");
+    }
+    if !sc.parameters.is_empty() {
+        out.push_str("parameters");
+        param_list(out, sc.parameters.iter(), low);
+        out.push('\n');
+    }
+    for e in sc.elements() {
+        out.push_str("  ");
+        match e {
+            Element::Component(c) => emit_component(out, c, low)?,
+            Element::Instance(i) => emit_instance(out, i, low),
+        }
+        out.push('\n');
+    }
+    for l in &sc.raw_spice {
+        w!(out, "  {l}\n");
+    }
+    out.push_str("ends");
+    Ok(())
+}
+
+/// `comp`'s instance line, written onto `out` with no line end. Nothing is
+/// written when it errs.
+fn emit_component(out: &mut String, comp: &Component, low: bool) -> Result<(), CodeGenError> {
     let auto = |n: Need| n.auto_model();
-    let s = match comp {
-        Component::Resistor { name, n1, n2, value, model, params } => {
-            model_refuse("vacask", name, model)?;
-            format!(
-                "r{} ({} {}) {} r={}{}",
-                name.to_ascii_lowercase(), n1.to_ascii_lowercase(), n2.to_ascii_lowercase(),
-                auto(Need::Sp("resistor")), val(value), inst_params(params),
-            )
-        }
-        Component::Capacitor { name, n1, n2, value, model, params } => {
-            model_refuse("vacask", name, model)?;
-            format!(
-                "c{} ({} {}) {} c={}{}",
-                name.to_ascii_lowercase(), n1.to_ascii_lowercase(), n2.to_ascii_lowercase(),
-                auto(Need::Sp("capacitor")), val(value), inst_params(params),
-            )
-        }
-        Component::Inductor { name, n1, n2, value, model, params } => {
-            model_refuse("vacask", name, model)?;
-            format!(
-                "l{} ({} {}) {} l={}{}",
-                name.to_ascii_lowercase(), n1.to_ascii_lowercase(), n2.to_ascii_lowercase(),
-                auto(Need::Sp("inductor")), val(value), inst_params(params),
-            )
+    match comp {
+        Component::Resistor { name, n1, n2, value, model, params }
+        | Component::Capacitor { name, n1, n2, value, model, params }
+        | Component::Inductor { name, n1, n2, value, model, params } => {
+            if model.is_some() {
+                model_refuse("vacask", &Q(name, false).to_string(), model)?;
+            }
+            let (l, m) = match comp {
+                Component::Resistor { .. } => ('r', "resistor"),
+                Component::Capacitor { .. } => ('c', "capacitor"),
+                _ => ('l', "inductor"),
+            };
+            w!(out, "{l}{} ({} {}) {} {l}={}", q(name), q(n1), q(n2), auto(Need::Sp(m)), val(value, low));
+            inst_params(out, params, low);
         }
         // VACASK's mutual inductance is a device with NO nodes that names
         // the two inductors it couples.
-        Component::MutualInductor { name, inductor1, inductor2, coupling } => format!(
+        Component::MutualInductor { name, inductor1, inductor2, coupling } => w!(
+            out,
             "k{} () {} k={} ind1=\"l{}\" ind2=\"l{}\"",
-            name.to_ascii_lowercase(), auto(Need::Builtin("mutual")), num(*coupling),
-            inductor1.to_ascii_lowercase(), inductor2.to_ascii_lowercase(),
+            q(name), auto(Need::Builtin("mutual")), num(*coupling), q(inductor1), q(inductor2),
         ),
-        Component::VoltageSource { name, np, nm, value, ac_magnitude, ac_phase, waveform } => {
-            let n = format!("v{}", name.to_ascii_lowercase());
-            let mut s = format!(
-                "{} ({} {}) {} dc={}",
-                n, np.to_ascii_lowercase(), nm.to_ascii_lowercase(),
-                auto(Need::Builtin("vsource")), val(value),
-            );
-            s.push_str(&ac_spec(ac_magnitude, ac_phase));
-            if let Some(wf) = waveform {
-                s.push_str(&format!(" {}", wave(&n, wf)?));
+        Component::VoltageSource { name, np, nm, value, ac_magnitude, ac_phase, waveform }
+        | Component::CurrentSource { name, np, nm, value, ac_magnitude, ac_phase, waveform } => {
+            let (l, m) = if matches!(comp, Component::VoltageSource { .. }) { ('v', "vsource") } else { ('i', "isource") };
+            let wave = match waveform {
+                Some(wf) => Some(wave(&format_args!("{l}{}", q(name)), wf, low)?),
+                None => None,
+            };
+            w!(out, "{l}{} ({} {}) {} dc={}", q(name), q(np), q(nm), auto(Need::Builtin(m)), val(value, low));
+            ac_spec(out, ac_magnitude, ac_phase);
+            if let Some(wave) = wave {
+                w!(out, " {wave}");
             }
-            s
         }
-        Component::CurrentSource { name, np, nm, value, ac_magnitude, ac_phase, waveform } => {
-            let n = format!("i{}", name.to_ascii_lowercase());
-            let mut s = format!(
-                "{} ({} {}) {} dc={}",
-                n, np.to_ascii_lowercase(), nm.to_ascii_lowercase(),
-                auto(Need::Builtin("isource")), val(value),
-            );
-            s.push_str(&ac_spec(ac_magnitude, ac_phase));
-            if let Some(wf) = waveform {
-                s.push_str(&format!(" {}", wave(&n, wf)?));
-            }
-            s
-        }
-        Component::Vcvs { name, np, nm, ncp, ncm, gain } => format!(
+        Component::Vcvs { name, np, nm, ncp, ncm, gain } => w!(
+            out,
             "e{} ({} {} {} {}) {} gain={}",
-            name.to_ascii_lowercase(), np.to_ascii_lowercase(), nm.to_ascii_lowercase(),
-            ncp.to_ascii_lowercase(), ncm.to_ascii_lowercase(),
-            auto(Need::Builtin("vcvs")), num(*gain),
+            q(name), q(np), q(nm), q(ncp), q(ncm), auto(Need::Builtin("vcvs")), num(*gain),
         ),
-        Component::Vccs { name, np, nm, ncp, ncm, transconductance } => format!(
+        Component::Vccs { name, np, nm, ncp, ncm, transconductance } => w!(
+            out,
             "g{} ({} {} {} {}) {} gain={}",
-            name.to_ascii_lowercase(), np.to_ascii_lowercase(), nm.to_ascii_lowercase(),
-            ncp.to_ascii_lowercase(), ncm.to_ascii_lowercase(),
-            auto(Need::Builtin("vccs")), num(*transconductance),
+            q(name), q(np), q(nm), q(ncp), q(ncm), auto(Need::Builtin("vccs")), num(*transconductance),
         ),
         // The current-controlled pair names its sensing device with
         // `ctlinst` instead of taking it as a node.
-        Component::Cccs { name, np, nm, vsense, gain } => format!(
+        Component::Cccs { name, np, nm, vsense, gain } => w!(
+            out,
             "f{} ({} {}) {} ctlinst=\"{}\" gain={}",
-            name.to_ascii_lowercase(), np.to_ascii_lowercase(), nm.to_ascii_lowercase(),
-            auto(Need::Builtin("cccs")), vsense.to_ascii_lowercase(), num(*gain),
+            q(name), q(np), q(nm), auto(Need::Builtin("cccs")), q(vsense), num(*gain),
         ),
-        Component::Ccvs { name, np, nm, vsense, transresistance } => format!(
+        Component::Ccvs { name, np, nm, vsense, transresistance } => w!(
+            out,
             "h{} ({} {}) {} ctlinst=\"{}\" gain={}",
-            name.to_ascii_lowercase(), np.to_ascii_lowercase(), nm.to_ascii_lowercase(),
-            auto(Need::Builtin("ccvs")), vsense.to_ascii_lowercase(), num(*transresistance),
+            q(name), q(np), q(nm), auto(Need::Builtin("ccvs")), q(vsense), num(*transresistance),
         ),
-        Component::Diode { name, np, nm, model, params } => format!(
-            "d{} ({} {}) {}{}",
-            name.to_ascii_lowercase(), np.to_ascii_lowercase(), nm.to_ascii_lowercase(),
-            model.to_ascii_lowercase(), inst_params(params),
-        ),
-        Component::Bjt { name, nc, nb, ne, extra_nodes, model, params } => format!(
-            "q{} ({} {} {}{}) {}{}",
-            name.to_ascii_lowercase(), nc.to_ascii_lowercase(), nb.to_ascii_lowercase(), ne.to_ascii_lowercase(),
-            extra_nodes.iter().map(|n| format!(" {}", n.to_ascii_lowercase())).collect::<String>(),
-            model.to_ascii_lowercase(), inst_params(params),
-        ),
+        Component::Diode { name, np, nm, model, params } => {
+            w!(out, "d{} ({} {}) {}", q(name), q(np), q(nm), q(model));
+            inst_params(out, params, low);
+        }
+        Component::Bjt { name, nc, nb, ne, extra_nodes, model, params } => {
+            w!(out, "q{} ({} {} {}", q(name), q(nc), q(nb), q(ne));
+            for x in extra_nodes {
+                w!(out, " {}", q(x));
+            }
+            w!(out, ") {}", q(model));
+            inst_params(out, params, low);
+        }
         Component::Mosfet { nb: None, .. } => return Err(unsupported_comp("MOSFET without a bulk node (VDMOS): terminal list unverified")),
         Component::Mosfet { extra_nodes, .. } if !extra_nodes.is_empty() => return Err(unsupported_comp("MOSFET with extra nodes (VDMOS thermal, SOI): terminal list unverified")),
-        Component::Mosfet { name, nd, ng, ns, nb: Some(nb), model, params, .. } => format!(
-            "m{} ({} {} {} {}) {}{}",
-            name.to_ascii_lowercase(), nd.to_ascii_lowercase(), ng.to_ascii_lowercase(),
-            ns.to_ascii_lowercase(), nb.to_ascii_lowercase(),
-            model.to_ascii_lowercase(), inst_params(params),
-        ),
-        Component::Jfet { name, nd, ng, ns, model, params } => format!(
-            "j{} ({} {} {}) {}{}",
-            name.to_ascii_lowercase(), nd.to_ascii_lowercase(), ng.to_ascii_lowercase(),
-            ns.to_ascii_lowercase(), model.to_ascii_lowercase(), inst_params(params),
-        ),
-        Component::Mesfet { name, nd, ng, ns, model, params } => format!(
-            "z{} ({} {} {}) {}{}",
-            name.to_ascii_lowercase(), nd.to_ascii_lowercase(), ng.to_ascii_lowercase(),
-            ns.to_ascii_lowercase(), model.to_ascii_lowercase(), inst_params(params),
-        ),
+        Component::Mosfet { name, nd, ng, ns, nb: Some(nb), model, params, .. } => {
+            w!(out, "m{} ({} {} {} {}) {}", q(name), q(nd), q(ng), q(ns), q(nb), q(model));
+            inst_params(out, params, low);
+        }
+        Component::Jfet { name, nd, ng, ns, model, params } => {
+            w!(out, "j{} ({} {} {}) {}", q(name), q(nd), q(ng), q(ns), q(model));
+            inst_params(out, params, low);
+        }
+        Component::Mesfet { name, nd, ng, ns, model, params } => {
+            w!(out, "z{} ({} {} {}) {}", q(name), q(nd), q(ng), q(ns), q(model));
+            inst_params(out, params, low);
+        }
         // SPICE text; native VACASK statements go in `Testbench::extra_lines`.
         Component::RawSpice { line } => return Err(unsupported_comp(format!("raw SPICE line '{}'", line.trim()))),
 
-        Component::Poly { name, .. } => return Err(unsupported_comp(format!("{name}: POLY source (VACASK has no polynomial builtin)"))),
+        Component::Poly { name, .. } => return Err(unsupported_comp(format!("{}: POLY source (VACASK has no polynomial builtin)", Q(name, false)))),
         Component::BehavioralVoltage { name, .. } | Component::BehavioralCurrent { name, .. } => {
             return Err(unsupported_comp(format!(
                 "b{}: behavioural sources are an expression language VACASK does not share",
-                name.to_ascii_lowercase()
+                q(name)
             )));
         }
         Component::VSwitch { name, .. } => {
-            return Err(unsupported_comp(format!("s{}: VACASK has no voltage-controlled switch", name)));
+            return Err(unsupported_comp(format!("s{}: VACASK has no voltage-controlled switch", Q(name, false))));
         }
         Component::ISwitch { name, .. } => {
-            return Err(unsupported_comp(format!("w{}: VACASK has no current-controlled switch", name)));
+            return Err(unsupported_comp(format!("w{}: VACASK has no current-controlled switch", Q(name, false))));
         }
         Component::TLine { name, .. } => {
-            return Err(unsupported_comp(format!("t{}: VACASK has no lossless transmission line", name)));
+            return Err(unsupported_comp(format!("t{}: VACASK has no lossless transmission line", Q(name, false))));
         }
         Component::Xspice { name, .. } => {
-            return Err(unsupported_comp(format!("a{}: XSPICE A-elements are ngspice-only", name)));
+            return Err(unsupported_comp(format!("a{}: XSPICE A-elements are ngspice-only", Q(name, false))));
         }
-    };
-    Ok(s)
+    }
+    Ok(())
 }
 
 fn emit_options(opts: &SimOptions) -> Result<String, CodeGenError> {
@@ -970,7 +974,7 @@ fn emit_options(opts: &SimOptions) -> Result<String, CodeGenError> {
     for (key, val) in &opts.portable {
         let k = key.to_ascii_lowercase();
         if NUMERIC_OPTIONS.contains(&k.as_str()) {
-            s.push_str(&format!(" {}={}", k, respell(val)));
+            w!(s, " {}={}", k, respell(val));
         } else if k == "method" {
             let m = match val.to_ascii_lowercase().as_str() {
                 "trap" | "trapezoidal" => "trap",
@@ -979,7 +983,7 @@ fn emit_options(opts: &SimOptions) -> Result<String, CodeGenError> {
                     return Err(unsupported_analysis(format!("options method={}", other)));
                 }
             };
-            s.push_str(&format!(" tran_method=\"{}\"", m));
+            w!(s, " tran_method=\"{}\"", m);
         } else if COSMETIC_OPTIONS.contains(&k.as_str()) {
             continue;
         } else {
@@ -992,26 +996,70 @@ fn emit_options(opts: &SimOptions) -> Result<String, CodeGenError> {
     }
     if let Some(specific) = opts.backend_specific.get("vacask") {
         for (key, val) in specific {
-            s.push_str(&format!(" {}={}", key, val));
+            w!(s, " {}={}", key, val);
         }
     }
     Ok(s)
 }
 
-fn emit_instance(inst: &Instance) -> String {
-    let nodes: Vec<String> = inst.port_mapping.iter().map(|n| n.to_ascii_lowercase()).collect();
-    format!(
-        "x{} ({}) {}{}",
-        inst.name.to_ascii_lowercase(),
-        nodes.join(" "),
-        inst.subcircuit.to_ascii_lowercase(),
-        inst_params(&inst.parameters),
-    )
+fn emit_instance(out: &mut String, inst: &Instance, low: bool) {
+    w!(out, "x{} (", q(&inst.name));
+    for (i, n) in inst.port_mapping.iter().enumerate() {
+        w!(out, "{}{}", if i == 0 { "" } else { " " }, q(n));
+    }
+    w!(out, ") {}", q(&inst.subcircuit));
+    inst_params(out, &inst.parameters, low);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every identifier field reaches the deck quoted and lowercased
+    /// (docs/input-identifiers.md): each `/` put into a name sits inside
+    /// `'...'`, wherever the name is written; expressions are lowercased,
+    /// numbers kept.
+    #[test]
+    fn every_identifier_field_is_quoted() {
+        let s = |x: &str| x.to_string();
+        let v = |x: f64| IrValue::Numeric { value: x };
+        let comps = vec![
+            Component::Resistor { name: s("1"), n1: s("A"), n2: s("b"), value: IrValue::Expression { expr: s("Rload") }, model: None, params: vec![(s("tc1"), s("1M"))] },
+            Component::Capacitor { name: s("1"), n1: s("a"), n2: s("b"), value: v(1e-9), model: None, params: vec![] },
+            Component::Inductor { name: s("1"), n1: s("a"), n2: s("b"), value: v(1e-6), model: None, params: vec![] },
+            Component::Inductor { name: s("2"), n1: s("a"), n2: s("b"), value: v(1e-6), model: None, params: vec![] },
+            Component::MutualInductor { name: s("1"), inductor1: s("1"), inductor2: s("2"), coupling: 0.9 },
+            Component::VoltageSource { name: s("1"), np: s("a"), nm: s("0"), value: v(1.0), ac_magnitude: None, ac_phase: None, waveform: None },
+            Component::CurrentSource { name: s("1"), np: s("a"), nm: s("0"), value: v(1.0), ac_magnitude: None, ac_phase: None, waveform: None },
+            Component::Vcvs { name: s("1"), np: s("a"), nm: s("b"), ncp: s("c"), ncm: s("d"), gain: 2.0 },
+            Component::Vccs { name: s("1"), np: s("a"), nm: s("b"), ncp: s("c"), ncm: s("d"), transconductance: 2.0 },
+            Component::Cccs { name: s("1"), np: s("a"), nm: s("b"), vsense: s("V1"), gain: 2.0 },
+            Component::Ccvs { name: s("1"), np: s("a"), nm: s("b"), vsense: s("V1"), transresistance: 2.0 },
+            Component::Diode { name: s("1"), np: s("a"), nm: s("b"), model: s("dm"), params: vec![] },
+            Component::Bjt { name: s("1"), nc: s("a"), nb: s("b"), ne: s("c"), extra_nodes: vec![s("d")], model: s("qm"), params: vec![] },
+            Component::Mosfet { name: s("1"), nd: s("a"), ng: s("b"), ns: s("c"), nb: Some(s("d")), extra_nodes: vec![], model: s("mm"), params: vec![] },
+            Component::Jfet { name: s("1"), nd: s("a"), ng: s("b"), ns: s("c"), model: s("jm"), params: vec![] },
+            Component::Mesfet { name: s("1"), nd: s("a"), ng: s("b"), ns: s("c"), model: s("zm"), params: vec![] },
+        ];
+        let dm = ModelDef { name: s("dm"), kind: s("d"), parameters: vec![] };
+        let cell = Subcircuit { name: s("cell"), ports: vec![Port { name: s("p"), direction: PortDirection::InOut }], components: comps[..1].to_vec(), models: vec![dm.clone()], ..Default::default() };
+        let x1 = Instance { name: s("1"), subcircuit: s("cell"), port_mapping: vec![s("a")], ..Default::default() };
+        let top = Subcircuit { name: s("t"), components: comps, instances: vec![x1], models: vec![dm], ..Default::default() };
+        let tb = Testbench { analyses: vec![Analysis::Op], ..Default::default() };
+        let mut ir = CircuitIR { top, subcircuit_defs: vec![cell], testbench: Some(tb), globals: vec![s("g")], ..Default::default() };
+        ir.names_mut(|n| if n != "0" { n.push_str("/x") });
+        let deck = netlist(&ir).unwrap();
+        for line in deck.lines().filter(|l| !l.starts_with("load ")) {
+            let mut quoted = false;
+            for c in line.chars() {
+                quoted ^= c == '\'';
+                assert!(c != '/' || quoted, "unquoted `/` in `{line}`");
+            }
+        }
+        for want in ["r'1/x' ('a/x' 'b/x') resistor r=rload tc1=1m", "ind1=\"l'1/x'\"", "ctlinst=\"'v1/x'\"", "x'1/x' ('a/x') 'cell/x'", "subckt 'cell/x' ('p/x')", "model 'dm/x' sp_diode", "global 'g/x'"] {
+            assert!(deck.contains(want), "no `{want}` in\n{deck}");
+        }
+    }
 
     fn emit_analysis(a: &Analysis) -> Result<String, CodeGenError> {
         Ok(analysis_block(0, a, false)?.join("\n"))
@@ -1083,9 +1131,9 @@ mod tests {
 
     #[test]
     fn ac_lin_counts_intervals_but_dec_does_not() {
-        let lin = emit_analysis(&Analysis::Ac { variation: "lin".into(), points: 101, start: 1.0, stop: 1e3 }).unwrap();
+        let lin = emit_analysis(&Analysis::Ac { sweep: FreqSweep { variation: Sweep::Lin, points: 101, start: 1.0, stop: 1e3 } }).unwrap();
         assert!(lin.contains("points=100"), "{}", lin);
-        let dec = emit_analysis(&Analysis::Ac { variation: "dec".into(), points: 10, start: 1.0, stop: 1e3 }).unwrap();
+        let dec = emit_analysis(&Analysis::Ac { sweep: FreqSweep { variation: Sweep::Dec, points: 10, start: 1.0, stop: 1e3 } }).unwrap();
         assert!(dec.contains("points=10"), "{}", dec);
     }
 
@@ -1096,7 +1144,7 @@ mod tests {
             value: IrValue::Numeric { value: 0.0 }, ac_magnitude: None, ac_phase: None,
             waveform: Some(IrWaveform::Pwl { values: vec![((0.0).into(), (0.0).into()), ((1e-3).into(), (1.0).into())] }),
         };
-        let err = emit_component(&c).unwrap_err();
+        let err = emit_component(&mut String::new(), &c, true).unwrap_err();
         assert!(err.to_string().to_lowercase().contains("pwl"), "{}", err);
     }
 

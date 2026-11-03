@@ -42,7 +42,7 @@ fn col(raw: &RawData, name: &str) -> Vec<f64> {
                 raw.variables.iter().map(|v| &v.name).collect::<Vec<_>>()
             )
         });
-    raw.re(i)
+    raw.re(i).into_owned()
 }
 
 fn cplx(raw: &RawData, name: &str) -> Vec<num_complex::Complex64> {
@@ -188,7 +188,7 @@ fn ac_finds_the_rc_corner() {
     // 1k || 1k = 500 ohm driving 1 uF: f_3dB = 1/(2*pi*500*1e-6) = 318.31 Hz.
     let mut top = empty_sub("rc_ac");
     top.components = vec![r("1", "vdd", "out", 1000.0), r("2", "out", "0", 1000.0), c("1", "out", "0", 1e-6)];
-    let mut tb = empty_tb(vec![Analysis::Ac { variation: "dec".into(), points: 200, start: 1.0, stop: 1e5 }]);
+    let mut tb = empty_tb(vec![Analysis::Ac { sweep: FreqSweep { variation: Sweep::Dec, points: 200, start: 1.0, stop: 1e5 } }]);
     tb.stimulus = vec![Component::VoltageSource {
         name: "dd".into(), np: "vdd".into(), nm: "0".into(),
         value: IrValue::Numeric { value: 0.0 },
@@ -218,7 +218,7 @@ fn ac_finds_the_rc_corner() {
 fn ac_phase_on_a_source_is_honoured() {
     let mut top = empty_sub("acphase");
     top.components = vec![r("1", "vin", "0", 1000.0)];
-    let mut tb = empty_tb(vec![Analysis::Ac { variation: "lin".into(), points: 2, start: 1e3, stop: 2e3 }]);
+    let mut tb = empty_tb(vec![Analysis::Ac { sweep: FreqSweep { variation: Sweep::Lin, points: 2, start: 1e3, stop: 2e3 } }]);
     tb.stimulus = vec![Component::VoltageSource {
         name: "1".into(), np: "vin".into(), nm: "0".into(),
         value: IrValue::Numeric { value: 0.0 },
@@ -286,7 +286,7 @@ fn noise_matches_a_resistors_thermal_floor() {
     top.components = vec![r("1", "vin", "out", 1000.0), r("2", "out", "0", 1000.0)];
     let mut tb = empty_tb(vec![Analysis::Noise {
         output: "out".into(), reference: "0".into(), source: "V1".into(),
-        variation: "dec".into(), points: 5, start: 1e3, stop: 1e5,
+        sweep: FreqSweep { variation: Sweep::Dec, points: 5, start: 1e3, stop: 1e5 },
         points_per_summary: None,
     }]);
     tb.stimulus = vec![Component::VoltageSource {
@@ -438,7 +438,7 @@ fn an_inductor_and_its_mutual_coupling_run() {
         r("1", "drive", "p", 1.0),
         r("2", "s", "0", 1e6),
     ];
-    let mut tb = empty_tb(vec![Analysis::Ac { variation: "dec".into(), points: 5, start: 1e3, stop: 1e5 }]);
+    let mut tb = empty_tb(vec![Analysis::Ac { sweep: FreqSweep { variation: Sweep::Dec, points: 5, start: 1e3, stop: 1e5 } }]);
     tb.stimulus = vec![Component::VoltageSource {
         name: "1".into(), np: "drive".into(), nm: "0".into(),
         value: IrValue::Numeric { value: 0.0 },
@@ -615,7 +615,7 @@ fn refusals_are_errors_not_broken_decks() {
     // Analyses VACASK does not implement.
     for a in [
         Analysis::PoleZero { node1: "a".into(), node2: "0".into(), node3: "b".into(), node4: "0".into(), tf_type: "vol".into(), pz_type: "pz".into() },
-        Analysis::Distortion { variation: "dec".into(), points: 10, start: 1.0, stop: 1e3, f2overf1: None },
+        Analysis::Distortion { sweep: FreqSweep { variation: Sweep::Dec, points: 10, start: 1.0, stop: 1e3 }, f2overf1: None },
         Analysis::Sensitivity { output: "v(out)".into(), ac: None },
     ] {
         assert!(refuses(&rc_ir(vec![a.clone()])), "{:?} must refuse", a);
