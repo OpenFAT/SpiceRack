@@ -102,7 +102,7 @@ others are recorded through `codegen::netlist`, so the whole tree diffs.
    text, as the old writer did (`calls`, `contains('^')`, a `ponytail:`);
    over `Call` nodes and the operator tokens they would be a walk of the
    value trees, with the same verdict on the corpus to be checked.
-7. **Three capability cells reproduce a silent drop** (`// quirk:` in
+7. **Two capability cells reproduce a silent drop** (`// quirk:` in
    `capability.rs`): LTspice drops a Verilog-A/OSDI load (`Spell(Omit)`).
    Phase 7 decides (Refuse).
 8. The reader duplicates `syntax::adapter`'s rules (copied, then typed to

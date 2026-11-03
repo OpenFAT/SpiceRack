@@ -7,7 +7,7 @@
 //!
 //! `Spell` and `Lift` keep the meaning: a named alternative form, or a
 //! rewrite into extra statements recorded as fixups. Anything that cannot
-//! keep its meaning is `Refuse` with a `W` code. Three cells answer as the
+//! keep its meaning is `Refuse` with a `W` code. Two cells answer as the
 //! old writers behaved, where that drops something: each is marked
 //! `// quirk:` (the golden gate holds them until phase 7 decides).
 //!
