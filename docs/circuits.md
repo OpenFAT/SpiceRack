@@ -150,8 +150,7 @@ Keyword arguments to `X` and `instance` become instance parameters
 
 ## Saving circuits
 
-Circuits round-trip through JSON, the same format any tool can write
-(schema: [`schema/circuit-ir.schema.json`](https://github.com/OpenFAT/SpiceRack/blob/main/schema/circuit-ir.schema.json)):
+Circuits round-trip through JSON, the same format any tool can write:
 
 ```python
 import tempfile, os

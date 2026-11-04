@@ -2,7 +2,7 @@
 //! locals, components, instances, models, raw lines) and library section,
 //! model libraries, and the identifier walk a rename runs over them.
 //!
-//! Cites: none (SpiceRack's own IR; JSON in `schema/circuit-ir.schema.json`).
+//! Cites: none (SpiceRack's own IR).
 //!
 //! Contents:
 //! - `pub struct CircuitIR`, `pub struct LibSection`, `pub struct FuncDef`, `pub struct Subcircuit`

@@ -41,9 +41,9 @@ A Spectre `statistics` block is read into the IR and written to SPICE as
 ## The JSON circuit format
 
 Every circuit has a JSON form (`to_json()`, `save_json()`, `load_json()`, see
-[Circuits](circuits.md#saving-circuits)). Its schema is
-[`schema/circuit-ir.schema.json`](https://github.com/OpenFAT/SpiceRack/blob/main/schema/circuit-ir.schema.json),
-so other tools can generate circuits for SpiceRack without Python.
+[Circuits](circuits.md#saving-circuits)): the Rust crate's `ir::CircuitIR`
+as serde writes it, so other tools can generate circuits for SpiceRack
+without Python.
 
 ## Using the Rust crate
 
