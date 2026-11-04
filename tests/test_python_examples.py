@@ -131,7 +131,7 @@ class TestExamples:
         assert "Backend: ngspice" in r.stdout
 
     # Goldens: V(vout) from ngspice-45 and ESPice 0.3.0 in `nix develop
-    # .#testing`, on the PDKs pinned in nix/pdks.nix (sky130 8afc834,
+    # .#testing`, on the PDKs pinned in flake.nix (`pdks`; sky130 8afc834,
     # gf180mcu 1e35547), recorded 2026-11-02. Tolerance 1e-3 relative:
     # ngspice's default RELTOL, the accuracy an .op converges to, so another
     # simulator build may land anywhere inside it. Each example loads sky130's

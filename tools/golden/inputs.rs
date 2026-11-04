@@ -117,7 +117,7 @@ const CORPORA: [Corpus; 5] = [
 ];
 
 /// The PDK kits. sky130 and gf180mcu are the `PDK_ROOT` `.#testing` pins
-/// (`nix/pdks.nix`); IHP is a checkout named by `$IHP_PDK`, entered at its
+/// (`pdks` in `flake.nix`); IHP is a checkout named by `$IHP_PDK`, entered at its
 /// corner libraries; VACASK's own library is its `demo/cmos180n.lib`.
 const KITS: [Kit; 4] = [
     Kit {
