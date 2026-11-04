@@ -44,6 +44,9 @@ pub(super) struct Tb {
     /// The first token of each options card holding Xyce's own options,
     /// which neither target writes.
     pub(super) xyce: Vec<u32>,
+    /// Each `ngbehavior=` option's first token (ngspice's mode, which
+    /// neither target has).
+    pub(super) ngbehavior: Vec<u32>,
     /// Each `.meas` line, with its statement's first token.
     pub(super) measures: Vec<(String, u32)>,
     /// Each `.step`'s sweep, name, numbers and first token.
@@ -155,7 +158,7 @@ impl W<'_, '_> {
 
 impl W<'_, '_> {
     /// Notes what the testbench holds that neither target writes: each
-    /// `.print`, Xyce's own options, the save list where the target saves
+    /// `.print`, Xyce's own options, ngspice's mode, the save list where the target saves
     /// every node.
     pub(super) fn unwritten_outputs(&mut self, tb: &Tb) {
         for &tok in &tb.prints {
@@ -163,6 +166,9 @@ impl W<'_, '_> {
         }
         for &tok in &tb.xyce {
             self.note(Code::W0024, tok);
+        }
+        for &tok in &tb.ngbehavior {
+            self.ask(Construct::NgBehavior, tok);
         }
         if let Some(tok) = tb.save_tok {
             self.ask(Construct::Save, tok);
@@ -192,6 +198,7 @@ impl W<'_, '_> {
                                 Opt::Temp(t) => tb.temp = Some(t),
                                 Opt::Tnom(t) => tb.tnom = Some(t),
                                 Opt::Vacask(k, v) => tb.vacask.push((k, v, tok)),
+                                Opt::NgBehavior(_) => tb.ngbehavior.push(tok),
                                 Opt::Xyce(..) => {
                                     if !tb.xyce.contains(&tok) {
                                         tb.xyce.push(tok);

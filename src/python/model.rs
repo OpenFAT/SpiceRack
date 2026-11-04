@@ -19,6 +19,7 @@
 //!   `pub(super) fn params(ps: &[(String, String)]) -> String`
 //! - `pub(super) mod need`: the feature bits a card adds (`crate::backend::feature`)
 
+use crate::syntax::Dialect;
 use crate::veriloga::VerilogBlock;
 
 /// One element card as written (`R1 a b 1k m=2`), the name the API finds it
@@ -78,12 +79,14 @@ pub(super) struct Bench {
     pub(super) ics: Vec<(String, f64)>,
     pub(super) nodesets: Vec<(String, f64)>,
     pub(super) steps: Vec<Step>,
-    /// Lines in the target's own dialect, given as text.
-    pub(super) extra_lines: Vec<String>,
+    /// Lines given as one dialect's text (`extra_line`), each with its
+    /// dialect's family: written as is for that family, refused elsewhere.
+    pub(super) extra_lines: Vec<(String, Dialect)>,
     /// `.print` cards: the analysis (maybe empty) and its outputs.
     pub(super) prints: Vec<(String, Vec<String>)>,
-    /// ngspice's compatibility mode, which the backend passes on its
-    /// command line (`backend::ngspice::NGBEHAVIOR`).
+    /// ngspice's compatibility mode: an `.options ngbehavior=` card, which
+    /// ngspice's writer spells as the `render::NGBEHAVIOR` line its backend
+    /// passes on the command line.
     pub(super) ngbehavior: Option<String>,
 }
 

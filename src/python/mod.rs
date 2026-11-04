@@ -23,6 +23,7 @@
 //! - `deck.rs`: the blocks → ngspice source → a backend's netlist or a run's `RawData`
 //! - `verilog.rs`: `verilog(...)` blocks and their lowering
 //! - `subcircuit.rs`, `circuit.rs`: `Subcircuit`, `Circuit`
+//! - `store.rs`: a subcircuit's source text and stored file (`to_source`, `save`)
 //! - `simulator.rs`, `spectre.rs`: `CircuitSimulator` and its Spectre-only analyses
 //! - `testbench.rs`: `Testbench`, `ModelLibrary`
 //! - `results.rs`: `RawData`, `OperatingPoint` and the analysis result classes
@@ -46,6 +47,7 @@ mod deck;
 mod model;
 mod results;
 mod simulator;
+mod store;
 mod subcircuit;
 mod testbench;
 mod unit;

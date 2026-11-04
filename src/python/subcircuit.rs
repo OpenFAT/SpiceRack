@@ -6,6 +6,9 @@
 //! Contents:
 //! - `pub(super) struct PySubcircuit` (Python `Subcircuit`)
 //! - `pub(super) fn top_net(n: &str) -> String`
+//! - `pub(super) fn removed(method: &str, instead: &str) -> PyErr`
+//! - `pub(super) fn write_file(path: &str, text: &str) -> PyResult<()>`,
+//!   `pub(super) fn read_file(path: &str) -> PyResult<String>`
 
 use std::collections::HashMap;
 
@@ -35,6 +38,26 @@ pub(super) fn top_net(n: &str) -> String {
     } else {
         n.into()
     }
+}
+
+/// The error a removed JSON method raises: `NotImplementedError` naming
+/// its replacement.
+pub(super) fn removed(method: &str, instead: &str) -> PyErr {
+    pyo3::exceptions::PyNotImplementedError::new_err(format!(
+        "{method}() was removed with the JSON form; use {instead} (the deck's source text)"
+    ))
+}
+
+/// `text` written to `path`; `OSError` naming the path.
+pub(super) fn write_file(path: &str, text: &str) -> PyResult<()> {
+    std::fs::write(path, text)
+        .map_err(|e| pyo3::exceptions::PyOSError::new_err(format!("{path}: {e}")))
+}
+
+/// The text at `path`; `OSError` naming the path.
+pub(super) fn read_file(path: &str) -> PyResult<String> {
+    std::fs::read_to_string(path)
+        .map_err(|e| pyo3::exceptions::PyOSError::new_err(format!("{path}: {e}")))
 }
 
 // ---- private ----
@@ -374,6 +397,57 @@ impl PySubcircuit {
         let vb = verilog_block(py, source, mode, instance_name, &connections, pdk, liberty, spice_models)?;
         self.inner.verilog.push(vb);
         Ok(())
+    }
+
+    // ── Store (the deck's source text) ──
+
+    /// The ngspice text of a deck defining this subcircuit, behind a
+    /// `* spicerack-source ngspice` line: its loads, then `.subckt` …
+    /// `.ends` holding the cards its calls wrote.
+    fn to_source(&self) -> PyResult<String> {
+        super::store::to_source(&self.inner).map_err(PyValueError::new_err)
+    }
+
+    /// The subcircuit `text` defines (its first `.subckt`), read in
+    /// `dialect` (`None`: the one its first line names, else ngspice;
+    /// another dialect's text is written as ngspice first).
+    #[staticmethod]
+    #[pyo3(signature = (text, dialect=None))]
+    fn from_source(text: &str, dialect: Option<&str>) -> PyResult<Self> {
+        let d = dialect.map(str::parse).transpose().map_err(PyValueError::new_err)?;
+        let inner = super::store::from_source(text, d).map_err(PyValueError::new_err)?;
+        Ok(Self { inner, ground_alias: false })
+    }
+
+    /// Writes [`Self::to_source`] to `path`.
+    fn save(&self, path: &str) -> PyResult<()> {
+        let text = self.to_source()?;
+        write_file(path, &text)
+    }
+
+    /// The subcircuit the file at `path` defines (as [`Self::from_source`]).
+    #[staticmethod]
+    fn load(path: &str) -> PyResult<Self> {
+        Self::from_source(&read_file(path)?, None)
+    }
+
+    // The JSON form went with the IR (D3: the store is source text).
+    fn to_json(&self) -> PyResult<String> {
+        Err(removed("to_json", "to_source()"))
+    }
+
+    #[staticmethod]
+    fn from_json(_json: &str) -> PyResult<Self> {
+        Err(removed("from_json", "Subcircuit.from_source(text, dialect)"))
+    }
+
+    fn save_json(&self, _path: &str) -> PyResult<()> {
+        Err(removed("save_json", "save(path)"))
+    }
+
+    #[staticmethod]
+    fn load_json(_path: &str) -> PyResult<Self> {
+        Err(removed("load_json", "Subcircuit.load(path)"))
     }
 
     fn __str__(&self) -> String {

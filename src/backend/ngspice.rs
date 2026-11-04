@@ -3,7 +3,6 @@
 //! Cites: ngspice manual §13.5.107 (`appendwrite`), §13.5.92 (`strcmp`).
 //!
 //! Contents:
-//! - `pub const NGBEHAVIOR: &str`
 //! - `pub(super) fn run(netlist: &str) -> Result<Vec<RawData>, BackendError>`
 
 use std::fmt::Write as _;
@@ -12,12 +11,7 @@ use std::process::Command;
 
 use super::{BackendError, exec, read_results, scratch};
 use crate::result::RawData;
-
-/// The comment that carries a deck's ngspice compatibility mode
-/// (`ngbehavior`): ngspice reads the mode only before parsing (no card sets
-/// it), so [`run`] lifts this line onto its command line and the deck text
-/// stays the whole input of a run.
-pub const NGBEHAVIOR: &str = "*spicerack ngbehavior=";
+use crate::syntax::render::NGBEHAVIOR;
 
 /// Control commands that start an analysis: a `.control` block issuing one
 /// owns the run. A block that runs nothing (a `pre_osdi` load block) does

@@ -459,7 +459,7 @@ class CornerCase:
             tb.use_pdk(library)
         card = "parameters" if backend == "spectre" else ".param"
         for key, value in self.parameters.items():
-            tb.extra_line(f"{card} {key}={value}")
+            tb.extra_line(f"{card} {key}={value}", dialect=backend)
         return bench_or_testbench
 
 

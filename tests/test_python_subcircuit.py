@@ -471,6 +471,215 @@ class TestSubcircuitInstances:
         assert abs(vout - 0.75) < 1e-9
 
 
+class TestSubcircuitStore:
+    """The store is the deck's source text (D3), never a JSON form."""
+
+    def _amp(self, ps):
+        sc = ps.Subcircuit("amp", ["in", "out"], w="1u")
+        sc.R(name="1", positive="in", negative="out", value=1000.0)
+        sc.C(name="1", positive="out", negative=sc.gnd, value=10e-12)
+        sc.model("d_model", "D", IS="1e-14")
+        sc.include("/m.lib")
+        return sc
+
+    def test_source_round_trip(self):
+        ps = import_spicerack()
+        text = self._amp(ps).to_source()
+        lines = text.splitlines()
+        assert lines[:2] == ["* spicerack-source ngspice", "amp"]
+        assert ".subckt amp in out PARAMS: w=1u" in lines
+        assert "R1 in out 1k" in lines
+        again = ps.Subcircuit.from_source(text)
+        assert again.to_source() == text
+        assert (again.name, again.ports) == ("amp", ["in", "out"])
+
+    def test_save_and_load(self, tmp_path):
+        ps = import_spicerack()
+        sc = self._amp(ps)
+        path = str(tmp_path / "amp.sp")
+        sc.save(path)
+        assert open(path).read() == sc.to_source()
+        assert ps.Subcircuit.load(path).to_source() == sc.to_source()
+
+    def test_from_source_reads_another_dialect(self):
+        # Spectre UG p.94: `subckt name (ports)` … `ends`; written as ngspice.
+        ps = import_spicerack()
+        spectre = "// t\nsubckt cell (a b)\nr1 (a b) resistor r=1k\nends cell\n"
+        for sc in (ps.Subcircuit.from_source(spectre, "spectre"),
+                   ps.Subcircuit.from_source("* spicerack-source spectre\n" + spectre)):
+            assert (sc.name, sc.ports) == ("cell", ["a", "b"])
+            assert "R1 a b 1k" in sc.to_source().splitlines()
+
+    def test_from_source_refuses_text_with_no_subcircuit(self):
+        ps = import_spicerack()
+        with pytest.raises(ValueError, match="no subcircuit"):
+            ps.Subcircuit.from_source("t\nR1 a 0 1k\n.end\n")
+        with pytest.raises(ValueError, match="unknown dialect"):
+            ps.Subcircuit.from_source("t\n", "pspice")
+
+
+class TestRemovedJson:
+    """`to_json`, `from_json`, `save_json`, `load_json` went with the IR;
+    each raises `NotImplementedError` naming the source-text method."""
+
+    def _both(self):
+        ps = import_spicerack()
+        sc = ps.Subcircuit("amp", ["in", "out"])
+        return ps, sc, ps.Testbench(sc)
+
+    def test_to_json(self):
+        _, sc, tb = self._both()
+        for obj in (sc, tb):
+            with pytest.raises(NotImplementedError, match="to_source"):
+                obj.to_json()
+
+    def test_from_json(self):
+        ps, _, _ = self._both()
+        for cls in (ps.Subcircuit, ps.Testbench):
+            with pytest.raises(NotImplementedError, match="from_source"):
+                cls.from_json("{}")
+
+    def test_save_json(self):
+        _, sc, tb = self._both()
+        for obj, instead in ((sc, r"save\(path\)"), (tb, r"save_source\(path\)")):
+            with pytest.raises(NotImplementedError, match=instead):
+                obj.save_json("x.json")
+
+    def test_load_json(self):
+        ps, _, _ = self._both()
+        for cls in (ps.Subcircuit, ps.Testbench):
+            with pytest.raises(NotImplementedError, match="load"):
+                cls.load_json("x.json")
+
+
+# Every target a netlist is written for (`Deck::netlist`).
+TARGETS = ("ngspice", "espice", "ltspice", "hspice", "spectre", "vacask")
+
+
+def _netlists(tb):
+    """Each target's netlist, or the refusal's text."""
+    out = {}
+    for t in TARGETS:
+        try:
+            out[t] = tb.netlist(t)
+        except RuntimeError as e:
+            out[t] = f"refused: {e}"
+    return out
+
+
+class TestTestbenchStore:
+    """A testbench's store is its deck's source text: read back, it writes
+    the same netlist on every target (D3: the source is the lossless form)."""
+
+    def _benches(self, ps):
+        amp = ps.Subcircuit("amp", ["in", "out"], g="2")
+        amp.R(name="1", positive="in", negative="out", value=1e3)
+        amp.C(name="1", positive="out", negative=amp.gnd, value=1e-12)
+        top = ps.Subcircuit("top", ["a", "b"])
+        top.X("u1", "amp", "a", "b", g="3")
+        plain = ps.Testbench(top)
+        plain.add_subcircuit(amp)
+        plain.V("in", "a", "0", 1.0, ac=1.0)
+        plain.options(reltol=1e-4)
+        plain.temperature = 50.0
+        plain.save("v(b)")
+        plain.measure("tran", "vmax", "max", "v(b)")
+        plain.add_operating_point()
+        plain.add_ac("dec", 10, 1.0, 1e9)
+        plain.add_transient(step_time=1e-9, end_time=1e-6)
+        yield plain
+        # Every dialect's region, ngspice's mode, a load and a step.
+        mixed = ps.Testbench(top)
+        mixed.add_subcircuit(amp)
+        mixed.V("in", "a", "0", 1.0)
+        mixed.ngbehavior = "hsa"
+        dev = ps.Subcircuit("dev", ["p"])
+        dev.osdi("/m.osdi")
+        mixed.add_subcircuit(dev)
+        mixed.step_sweep("g", 1.0, 3.0, 1.0, "lin")
+        mixed.add_spectre_monte_carlo(20, "tran1", "tran", seed=42)
+        mixed.extra_line(".four 1k v(b)")
+        mixed.extra_line("parameters k=1", dialect="spectre")
+        mixed.add_transient(step_time=1e-9, end_time=1e-6)
+        yield mixed
+
+    def test_a_read_back_deck_writes_the_same_netlist_on_every_target(self):
+        ps = import_spicerack()
+        for tb in self._benches(ps):
+            text = tb.to_source()
+            assert text.startswith("* spicerack-source ngspice\n")
+            again = ps.Testbench.from_source(text)
+            assert again.to_source() == text
+            assert _netlists(again) == _netlists(tb)
+
+    def test_save_and_load(self, tmp_path):
+        ps = import_spicerack()
+        for tb in self._benches(ps):
+            path = str(tmp_path / "tb.sp")
+            tb.save_source(path)
+            again = ps.Testbench.load(path)
+            assert _netlists(again) == _netlists(tb)
+
+    def test_calls_on_a_read_back_deck_add_after_its_statements(self):
+        ps = import_spicerack()
+        tb = next(self._benches(ps))
+        again = ps.Testbench.from_source(tb.to_source())
+        again.add_noise("b", "0", "Vin", "dec", 10, 1.0, 1e6)
+        lines = again.netlist("ngspice").splitlines()
+        assert any(line.lower().startswith((".noise", "noise ")) for line in lines), lines
+
+
+class TestDialectText:
+    """A Spectre-only statement and an `extra_line` are their dialect's
+    text in the deck's source: written for that dialect's family, refused
+    (`W0001`) for any other."""
+
+    def _tb(self, ps):
+        dut = ps.Subcircuit("rc", ["in", "out"])
+        dut.R(name="1", positive="in", negative="out", value=1e3)
+        dut.C(name="1", positive="out", negative=dut.gnd, value=1e-9)
+        tb = ps.Testbench(dut)
+        tb.V("in", "in", "0", 1.0)
+        tb.add_transient(step_time=1e-6, end_time=1e-3)
+        return tb
+
+    def test_a_spectre_analysis_is_spectre_text_in_a_region(self):
+        # Spectre Reference 19.1 p.174: `montecarlo numruns= seed= { … }`.
+        ps = import_spicerack()
+        tb = self._tb(ps)
+        tb.add_spectre_monte_carlo(20, "tran1", "tran", seed=42)
+        lines = tb.to_source().splitlines()
+        i = lines.index("simulator lang=spectre")
+        assert lines[i + 1] == "mc1 montecarlo numruns=20 seed=42 {"
+        assert "simulator lang=spice" in lines[i:]
+        assert "mc1 montecarlo numruns=20 seed=42 {" in tb.netlist("spectre").splitlines()
+        for other in ("ngspice", "hspice", "vacask"):
+            with pytest.raises(RuntimeError, match="W0001"):
+                tb.netlist(other)
+
+    def test_an_extra_line_is_copied_on_its_own_family_only(self):
+        ps = import_spicerack()
+        tb = self._tb(ps)
+        tb.extra_line(".options  NOACCT")
+        for own in ("ngspice", "espice"):
+            assert ".options  NOACCT" in tb.netlist(own).splitlines(), own
+        for other in ("hspice", "ltspice", "spectre", "vacask"):
+            with pytest.raises(RuntimeError, match="W0001"):
+                tb.netlist(other)
+
+    def test_an_extra_line_names_its_dialect(self):
+        ps = import_spicerack()
+        tb = self._tb(ps)
+        tb.extra_line("parameters k=2", dialect="spectre")
+        assert "parameters k=2" in tb.netlist("spectre").splitlines()
+        with pytest.raises(RuntimeError, match="W0001"):
+            tb.netlist("ngspice")
+        with pytest.raises(ValueError, match="unknown dialect"):
+            tb.extra_line("x", dialect="pspice")
+        with pytest.raises(ValueError, match="no cdl text"):
+            tb.extra_line("x", dialect="cdl")
+
+
 class TestSubcircuitWaveforms:
     def test_every_source_on_both_builders(self):
         """Subcircuit and Testbench get their sixteen sources from one table."""

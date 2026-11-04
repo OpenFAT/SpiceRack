@@ -30,6 +30,10 @@ pub(in crate::syntax::render) enum Opt {
     Tnom(f64),
     /// VACASK's own `options k=v`, its value as written.
     Vacask(String, String),
+    /// `ngbehavior=<mode>`: ngspice's compatibility mode, which ngspice
+    /// reads only before the deck (its `-D ngbehavior=`), so no card of
+    /// any dialect sets it (`Construct::NgBehavior`).
+    NgBehavior(String),
 }
 
 impl<'a> Rd<'a> {
@@ -76,7 +80,10 @@ impl<'a> Rd<'a> {
             _ => self
                 .params_of(items, false)
                 .into_iter()
-                .map(|(k, v)| Opt::Portable(k, v))
+                .map(|(k, v)| match k.eq_ignore_ascii_case("ngbehavior") {
+                    true => Opt::NgBehavior(v),
+                    false => Opt::Portable(k, v),
+                })
                 .collect(),
         }
     }

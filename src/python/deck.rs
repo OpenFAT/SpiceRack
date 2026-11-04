@@ -4,13 +4,17 @@
 //! Verilog blocks are lowered here first, so the text holds what simulates
 //! them.
 //!
-//! What no ngspice card holds goes beside the text: the top's Verilog-A
-//! and OSDI loads (`render::Source::loads`: ngspice loads them from a
-//! `.control` command, which the reader keeps no load of); and, added to
-//! the rendered text, never parsed, ngspice's `ngbehavior` line (the
-//! backend's command-line option), the analyses only Spectre runs and
-//! `.pss` on Spectre (`Analysis::native`, `Analysis::spectre`), and on
-//! Spectre and VACASK the lines given in their dialect (`extra_line`).
+//! Each statement is spelled in a dialect that has it: ngspice's card, or,
+//! for what only Spectre says (the analyses with no ngspice card,
+//! `Analysis::spectre`), its Spectre statement in a `simulator
+//! lang=spectre` region of the source (`lexicon::NGSPICE_GIVEN`). A line
+//! given as one dialect's text (`extra_line`) sits in that dialect's
+//! region. The renderer writes a region's text for its own dialect family
+//! and refuses it (`W0001`) for any other; nothing is added to the text it
+//! writes. ngspice's `ngbehavior` is an `.options ngbehavior=` card.
+//! Beside the text, in `render::Source`: the top's Verilog-A and OSDI
+//! loads (ngspice loads them from a `.control` command, which the reader
+//! keeps no load of).
 //!
 //! Cites: ngspice manual ch.2 (deck order: title first, `.end` last).
 //!
@@ -19,9 +23,10 @@
 //! - `Deck::netlist(&self, backend: &str) -> PyResult<String>`,
 //!   `Deck::run(&self, backend: Option<&str>) -> PyResult<RawData>`,
 //!   `Deck::run_each(&self, backend: Option<&str>) -> PyResult<Vec<Option<RawData>>>`,
-//!   `Deck::issues(&self, backend: &str) -> Vec<String>`,
+//!   `Deck::to_source(&self) -> PyResult<String>`, `Deck::issues(&self, backend: &str) -> Vec<String>`,
 //!   `Deck::card(body: &Body, name: &str) -> PyResult<String>`
 //! - `pub(super) fn check_backend_name(name: &str) -> PyResult<()>`
+//! - `pub(super) fn region_dialect(name: &str) -> Result<Dialect, String>`
 //! - `pub(super) fn runtime_err(e: impl std::fmt::Display) -> PyErr`
 
 use std::fmt::Write as _;
@@ -73,6 +78,16 @@ impl Deck {
         crate::simulation::run_each(sim, &text, &kinds).map_err(runtime_err)
     }
 
+    /// The deck's stored source (`store::with_loads`): its ngspice text,
+    /// a model library at its ngspice path.
+    pub(super) fn to_source(&self) -> PyResult<String> {
+        let deck = self.lowered()?;
+        let text = deck
+            .source(Dialect::Ngspice)
+            .map_err(PyRuntimeError::new_err)?;
+        Ok(super::store::with_loads(&text, &deck.top.osdi))
+    }
+
     /// `backend::check` as `"Severity: message"` lines.
     pub(super) fn issues(&self, backend: &str) -> Vec<String> {
         let elements = self.bodies().map(|b| b.elements.len() + b.instances.len());
@@ -120,6 +135,27 @@ pub(super) fn check_backend_name(name: &str) -> PyResult<()> {
         "unknown backend {name:?}; expected one of {}",
         names.collect::<Vec<_>>().join(", ")
     )))
+}
+
+/// The dialect family a line given as `name`'s text is kept in: one the
+/// deck's source has a `simulator lang=` region for.
+///
+/// # Errors
+/// A name no dialect has; a dialect with no region (CDL, Verilog).
+pub(super) fn region_dialect(name: &str) -> Result<Dialect, String> {
+    let d = name.parse::<Dialect>()?.family();
+    let regions = crate::syntax::lexicon::NGSPICE_GIVEN.regions;
+    match regions.iter().any(|(n, _)| *n == d.name()) {
+        true => Ok(d),
+        false => {
+            let names: Vec<&str> = regions.iter().map(|r| r.0).collect();
+            Err(format!(
+                "no {} text in a deck; one of {}",
+                d.name(),
+                names.join(", ")
+            ))
+        }
+    }
 }
 
 /// Any error as a Python `RuntimeError` carrying its `Display` text.
@@ -189,11 +225,10 @@ impl Deck {
         needs
     }
 
-    /// The deck written for `d`: its ngspice source rendered there, plus
-    /// what only `d`'s own text says.
+    /// The deck written for `d`: its ngspice source rendered there.
     fn write(&self, d: Dialect) -> Result<String, String> {
         let name = self.top.name.as_str();
-        let source = self.source(d);
+        let source = self.source(d)?;
         let lex = &crate::syntax::lexicon::NGSPICE_GIVEN;
         let tokens = crate::syntax::tokenize(&source, lex);
         let ast = crate::syntax::parse(&tokens, lex);
@@ -206,54 +241,16 @@ impl Deck {
             loads: &self.top.osdi,
             numbers: render::Numbers::Given,
         };
-        let mut text = match render::render(&src, d) {
-            Ok(w) => w.text,
-            Err(diags) => return Err(diags.messages.trim_end().to_string()),
-        };
-        let tb = self.bench.as_ref();
-        if let (Dialect::Ngspice, Some(mode)) = (d, tb.and_then(|t| t.ngbehavior.as_ref())) {
-            let at = text.find('\n').map_or(text.len(), |i| i + 1);
-            let line = crate::backend::ngspice::NGBEHAVIOR;
-            text.insert_str(at, &format!("{line}{mode}\n"));
+        match render::render(&src, d) {
+            Ok(w) => Ok(w.text),
+            Err(diags) => Err(diags.messages.trim_end().to_string()),
         }
-        let native: Vec<&Analysis> = self
-            .analyses()
-            .iter()
-            .filter(|a| a.card().is_none())
-            .collect();
-        let extra = tb.map_or(&[][..], |t| &t.extra_lines);
-        match d {
-            Dialect::Spectre => {
-                for l in extra {
-                    text.push('\n');
-                    text.push_str(l);
-                }
-                for a in &native {
-                    text.push('\n');
-                    text.push_str(&a.spectre().map_err(|why| unsupported(d, &why))?);
-                }
-            }
-            _ if !native.is_empty() => {
-                return Err(unsupported(d, &format!("{:?}", native[0])));
-            }
-            Dialect::Vacask if !extra.is_empty() => {
-                // Inside the `control` block, before its first analysis.
-                let at = text
-                    .find("\n  analysis ")
-                    .or_else(|| text.find("\nendc"))
-                    .map_or(text.len(), |i| i + 1);
-                let lines: String = extra.iter().map(|l| format!("  {l}\n")).collect();
-                text.insert_str(at, &lines);
-            }
-            _ => {}
-        }
-        Ok(text)
     }
 
     /// The deck as ngspice text, for target `d`: a model library's path
-    /// is the one for `d`'s family, and `extra_line`s are SPICE text only
-    /// on a SPICE target.
-    fn source(&self, d: Dialect) -> String {
+    /// is the one for `d`'s family, the only part that depends on `d`.
+    /// `Err` names an analysis no dialect here has a statement for.
+    fn source(&self, d: Dialect) -> Result<String, String> {
         let mut out = String::with_capacity(4096);
         let line = |out: &mut String, l: &str| {
             out.push_str(l);
@@ -309,10 +306,10 @@ impl Deck {
         }
         body(&mut out, &self.top);
         if let Some(tb) = &self.bench {
-            bench(&mut out, tb, d);
+            bench(&mut out, tb)?;
         }
         line(&mut out, ".end");
-        out
+        Ok(out)
     }
 }
 
@@ -337,8 +334,8 @@ fn body(out: &mut String, b: &Body) {
 }
 
 /// The testbench's cards: stimulus, options, initial conditions, outputs,
-/// measures, steps, the extra lines (on a SPICE target), the analyses.
-fn bench(out: &mut String, tb: &Bench, d: Dialect) {
+/// measures, steps, the analyses, and the regions of other dialects' text.
+fn bench(out: &mut String, tb: &Bench) -> Result<(), String> {
     for c in &tb.stimulus {
         let _ = writeln!(out, "{}", c.text);
     }
@@ -352,6 +349,9 @@ fn bench(out: &mut String, tb: &Bench, d: Dialect) {
             })
             .collect();
         let _ = writeln!(out, ".options {}", opts.join(" "));
+    }
+    if let Some(mode) = &tb.ngbehavior {
+        let _ = writeln!(out, ".options ngbehavior={mode}");
     }
     if let Some(t) = tb.temperature {
         let _ = writeln!(out, ".temp {}", dec(t));
@@ -384,22 +384,36 @@ fn bench(out: &mut String, tb: &Bench, d: Dialect) {
         let (a, b, c) = (dec(s.start), dec(s.stop), dec(s.step));
         let _ = writeln!(out, ".step {sweep}{} {a} {b} {c}", s.param);
     }
-    if !matches!(d, Dialect::Spectre | Dialect::Vacask) {
-        for l in &tb.extra_lines {
-            let _ = writeln!(out, "{l}");
+    let mut spectre = Vec::new();
+    for a in &tb.analyses {
+        match a.card() {
+            Some(card) => {
+                let _ = writeln!(out, "{card}");
+            }
+            None => spectre.push(a.spectre().map_err(|why| unsupported(&why))?),
         }
     }
-    for a in tb.analyses.iter().filter(|a| !a.native(d)) {
-        let card = a.card().expect("an analysis with an ngspice card");
-        let _ = writeln!(out, "{card}");
+    region(out, "spectre", &spectre);
+    for (l, d) in &tb.extra_lines {
+        region(out, d.name(), std::slice::from_ref(l));
     }
+    Ok(())
 }
 
-/// The refusal of an analysis `d` has no statement for.
-fn unsupported(d: Dialect, what: &str) -> String {
-    let what = what.split([' ', '{', '(']).next().unwrap_or_default();
-    format!(
-        "Unsupported analysis for backend {}: {what}",
-        d.family().name()
-    )
+/// `lines` inside a `simulator lang=<lang>` … `simulator lang=spice`
+/// region; nothing for none.
+fn region(out: &mut String, lang: &str, lines: &[String]) {
+    if lines.is_empty() {
+        return;
+    }
+    let _ = writeln!(out, "simulator lang={lang}");
+    for l in lines {
+        let _ = writeln!(out, "{l}");
+    }
+    let _ = writeln!(out, "simulator lang=spice");
+}
+
+/// The refusal of an analysis no dialect here has a statement for.
+fn unsupported(what: &str) -> String {
+    format!("Unsupported analysis: {what}")
 }

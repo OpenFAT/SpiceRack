@@ -87,8 +87,13 @@ impl PyTestbench {
         Ok(())
     }
 
-    fn extra_line(mut slf: PyRefMut<'_, Self>, line: &str) {
-        slf.as_super().tb().extra_lines.push(line.to_string());
+    /// A line given as `dialect`'s text, written byte for byte on a target
+    /// of that dialect's family and refused (`W0001`) on any other.
+    #[pyo3(signature = (line, dialect="ngspice"))]
+    fn extra_line(mut slf: PyRefMut<'_, Self>, line: &str, dialect: &str) -> PyResult<()> {
+        let d = super::deck::region_dialect(dialect).map_err(PyValueError::new_err)?;
+        slf.as_super().tb().extra_lines.push((line.to_string(), d));
+        Ok(())
     }
 
     /// A `.print` card: `add_print("tran", "v(out)", "i(vdd)")`; `analysis`
@@ -213,6 +218,60 @@ impl PyTestbench {
         let plots = deck.run_each(sim.backend.as_deref())?;
         assert_eq!(plots.len(), analyses.len(), "run_each returns one entry per analysis");
         analyses.iter().zip(plots).map(|(a, raw)| typed_result(py, a, raw)).collect()
+    }
+
+    /// The deck's own ngspice source text, the one every backend's netlist
+    /// is written from (its regions hold other dialects' text), behind a
+    /// `* spicerack-source ngspice` line; its loads a `pre_osdi` block.
+    fn to_source(slf: PyRef<'_, Self>) -> PyResult<String> {
+        slf.as_super().deck.to_source()
+    }
+
+    /// The testbench deck `text` holds (`dialect` as for
+    /// `Subcircuit.from_source`): its statements kept as written, so its
+    /// netlists are the ones the testbench that wrote it gave; calls on it
+    /// add after them. Its analyses are text: `run()` runs the ones queued
+    /// on it.
+    #[staticmethod]
+    #[pyo3(signature = (text, dialect=None))]
+    fn from_source(py: Python<'_>, text: &str, dialect: Option<&str>) -> PyResult<Py<Self>> {
+        let d = dialect.map(str::parse).transpose().map_err(PyValueError::new_err)?;
+        let top = super::store::read_deck(text, d).map_err(PyValueError::new_err)?;
+        let deck = Deck { top, bench: Some(Default::default()), ..Default::default() };
+        let sim = PySimulator { deck, backend: None, save_currents: false };
+        Py::new(py, PyClassInitializer::from(sim).add_subclass(Self {}))
+    }
+
+    /// Writes [`Self::to_source`] to `path`. Not `save(path)`: `save(*outputs)`
+    /// is the `.save` card every simulator call takes.
+    fn save_source(slf: PyRef<'_, Self>, path: &str) -> PyResult<()> {
+        let text = slf.as_super().deck.to_source()?;
+        super::subcircuit::write_file(path, &text)
+    }
+
+    /// The testbench the file at `path` holds (as [`Self::from_source`]).
+    #[staticmethod]
+    fn load(py: Python<'_>, path: &str) -> PyResult<Py<Self>> {
+        Self::from_source(py, &super::subcircuit::read_file(path)?, None)
+    }
+
+    // The JSON form went with the IR (D3: the store is source text).
+    fn to_json(_slf: PyRef<'_, Self>) -> PyResult<String> {
+        Err(super::subcircuit::removed("to_json", "to_source()"))
+    }
+
+    #[staticmethod]
+    fn from_json(_json: &str) -> PyResult<Py<Self>> {
+        Err(super::subcircuit::removed("from_json", "Testbench.from_source(text, dialect)"))
+    }
+
+    fn save_json(_slf: PyRef<'_, Self>, _path: &str) -> PyResult<()> {
+        Err(super::subcircuit::removed("save_json", "save_source(path)"))
+    }
+
+    #[staticmethod]
+    fn load_json(_path: &str) -> PyResult<Py<Self>> {
+        Err(super::subcircuit::removed("load_json", "Testbench.load(path)"))
     }
 
     #[pyo3(signature = (backend="ngspice"))]

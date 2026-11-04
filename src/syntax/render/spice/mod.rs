@@ -115,6 +115,12 @@ pub(super) fn write(rd: &mut Rd, deck: &Deck, target: Dialect) -> (String, Vec<D
     if frame.title {
         w.o.token(&format!("{} {}", sp.comment, deck.top.name), Space::Line);
     }
+    // ngspice reads its mode before the deck: the backend lifts this line.
+    if let Some((mode, tok)) = w.fold().ngbehavior
+        && w.ask(Construct::NgBehavior, tok) == Action::Spell(Alt::NgBehaviorLine)
+    {
+        w.o.token(&format!("{}{mode}", super::NGBEHAVIOR), Space::Line);
+    }
     w.loads(frame.control);
     w.globals();
     w.funcs(&deck.funcs);

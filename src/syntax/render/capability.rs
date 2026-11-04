@@ -42,6 +42,9 @@ pub enum Construct {
     OsdiLoad,
     /// `.lib file` with no section (LTspice's whole-file form).
     LibWholeFile,
+    /// `.options ngbehavior=<mode>`: ngspice's compatibility mode, read
+    /// before the deck (ngspice manual, the compatibility modes).
+    NgBehavior,
     /// `.lib name` … `.endl`.
     LibSection,
     /// An R, C or L card naming a model.
@@ -133,6 +136,9 @@ pub enum Alt {
     /// PWL `r=0` as `pwlperiod=` where it repeats exactly, `td=` as
     /// `delay=` (Spectre Reference 5.0 `vsource` #4, #17, #18, p.686).
     PwlPeriod,
+    /// The `render::NGBEHAVIOR` line, which the ngspice backend lifts onto
+    /// its command line (`-D ngbehavior=<mode>`).
+    NgBehaviorLine,
     /// SPICE text fenced by `simulator lang=spice` / `lang=spectre`
     /// (`[KUN]` B.2; Spectre Reference 19.1 p.17: Spectre reads `.measure`).
     SpiceRegion,
@@ -172,6 +178,11 @@ pub const fn action(target: Dialect, c: Construct) -> Action {
             D::Spectre | D::Vacask | D::Verilog => Refuse(Code::W0001),
         },
         Construct::CaretReread => Refuse(Code::W0002),
+        Construct::NgBehavior => match target {
+            D::Ngspice => Spell(Alt::NgBehaviorLine),
+            D::Espice | D::Hspice | D::Xyce | D::Ltspice => Spell(Alt::Omit(Code::W0030)),
+            D::Spectre | D::Vacask | D::Cdl | D::Verilog => Spell(Alt::Omit(Code::W0030)),
+        },
         Construct::StatisticalCall => match target {
             D::Ltspice => Refuse(Code::W0003),
             D::Ngspice | D::Espice | D::Hspice | D::Xyce => Native,
@@ -381,8 +392,9 @@ mod tests {
         assert_eq!(action(D::Ltspice, Construct::LibWholeFile), Action::Native);
     }
 
-    const CONSTRUCTS: [Construct; 29] = [
+    const CONSTRUCTS: [Construct; 30] = [
         Construct::ForeignText,
+        Construct::NgBehavior,
         Construct::CaretReread,
         Construct::StatisticalCall,
         Construct::VerilogALoad,

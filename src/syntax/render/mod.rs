@@ -20,7 +20,7 @@
 //!
 //! Contents:
 //! - `pub mod capability`, `pub mod spelling`
-//! - `pub struct Source<'a>`, `pub enum Numbers`, `pub struct Written`, `pub struct Diags`
+//! - `pub struct Source<'a>`, `pub enum Numbers`, `pub const NGBEHAVIOR: &str`, `pub struct Written`, `pub struct Diags`
 //! - `pub fn render(src: &Source, target: Dialect) -> Result<Written, Diags>`
 //! - `pub fn render_kit(kit: &Kit, file: FileId, name: &str, target: Dialect) -> Result<Written, Diags>`
 //! - `pub fn render_text(text: &str, d: Dialect, name: &str, target: Dialect) -> Result<Written, Diags>`
@@ -63,6 +63,11 @@ pub struct Source<'a> {
     /// How an ngspice target spells a number.
     pub numbers: Numbers,
 }
+
+/// The comment line that carries a deck's ngspice compatibility mode to
+/// the ngspice backend (`backend::ngspice`), the mode after it: ngspice
+/// reads the mode only before parsing (no card sets it).
+pub const NGBEHAVIOR: &str = "*spicerack ngbehavior=";
 
 /// How an ngspice (or ESPice) deck spells the file's numbers.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

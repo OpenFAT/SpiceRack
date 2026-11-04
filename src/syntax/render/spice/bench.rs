@@ -48,6 +48,8 @@ pub(super) struct Tb {
     steps: Vec<(Option<&'static str>, String, [f64; 3], u32)>,
     /// VACASK control lines kept as text.
     pub(super) extra: Vec<String>,
+    /// `ngbehavior=`'s mode, with its statement's first token.
+    pub(super) ngbehavior: Option<(String, u32)>,
 }
 
 /// Control commands that start an analysis: a `.control` block issuing one
@@ -241,41 +243,40 @@ impl W<'_, '_> {
 impl W<'_, '_> {
     /// One testbench card into `tb`.
     fn fold_one(&self, tb: &mut Tb, card: BenchCard, tok: u32) {
-        {
-            match card {
-                BenchCard::Ana(a) => tb.analyses.push((a, tok)),
-                BenchCard::Options(opts) => {
-                    for o in opts {
-                        match o {
-                            Opt::Portable(k, v) => tb.portable.push((k, v, tok)),
-                            Opt::Xyce(k, v) => {
-                                if self.d != Dialect::Xyce && !tb.dropped.contains(&tok) {
-                                    tb.dropped.push(tok);
-                                }
-                                tb.xyce.push((k, v));
+        match card {
+            BenchCard::Ana(a) => tb.analyses.push((a, tok)),
+            BenchCard::Options(opts) => {
+                for o in opts {
+                    match o {
+                        Opt::Portable(k, v) => tb.portable.push((k, v, tok)),
+                        Opt::Xyce(k, v) => {
+                            if self.d != Dialect::Xyce && !tb.dropped.contains(&tok) {
+                                tb.dropped.push(tok);
                             }
-                            Opt::Temp(t) => tb.temp = Some(t),
-                            Opt::Tnom(t) => tb.tnom = Some(t),
-                            Opt::Vacask(..) => {
-                                if !tb.dropped.contains(&tok) {
-                                    tb.dropped.push(tok);
-                                }
+                            tb.xyce.push((k, v));
+                        }
+                        Opt::Temp(t) => tb.temp = Some(t),
+                        Opt::Tnom(t) => tb.tnom = Some(t),
+                        Opt::Vacask(..) => {
+                            if !tb.dropped.contains(&tok) {
+                                tb.dropped.push(tok);
                             }
                         }
+                        Opt::NgBehavior(mode) => tb.ngbehavior = Some((mode, tok)),
                     }
                 }
-                BenchCard::Saves(s) => {
-                    tb.save_tok.get_or_insert(tok);
-                    tb.saves.extend(s);
-                }
-                BenchCard::Step { sweep, param, nums } => tb.steps.push((sweep, param, nums, tok)),
-                BenchCard::Temp(t) => tb.temp = Some(t),
-                BenchCard::NodeVals(true, v) => tb.ics.extend(v),
-                BenchCard::NodeVals(false, v) => tb.nodesets.extend(v),
-                BenchCard::Print(k, outs) => tb.prints.push((k, outs, tok)),
-                BenchCard::Meas(m) => tb.measures.push(m),
-                BenchCard::Extra(l) => tb.extra.push(l),
             }
+            BenchCard::Saves(s) => {
+                tb.save_tok.get_or_insert(tok);
+                tb.saves.extend(s);
+            }
+            BenchCard::Step { sweep, param, nums } => tb.steps.push((sweep, param, nums, tok)),
+            BenchCard::Temp(t) => tb.temp = Some(t),
+            BenchCard::NodeVals(true, v) => tb.ics.extend(v),
+            BenchCard::NodeVals(false, v) => tb.nodesets.extend(v),
+            BenchCard::Print(k, outs) => tb.prints.push((k, outs, tok)),
+            BenchCard::Meas(m) => tb.measures.push(m),
+            BenchCard::Extra(l) => tb.extra.push(l),
         }
     }
 

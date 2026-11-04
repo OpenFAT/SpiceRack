@@ -368,9 +368,9 @@ impl PySimulator {
     ) -> PyResult<PySParamAnalysis> {
         let mut deck = self.deck(card::ac(variation, points, start_freq, stop_freq)?);
         if let Some(tb) = &mut deck.bench {
-            tb.extra_lines.push(format!(
-                ".net {output_current} {input_source} Rout={z_out} Rin={z_in}"
-            ));
+            // LTspice's card: no other dialect has `.net`.
+            let net = format!(".net {output_current} {input_source} Rout={z_out} Rin={z_in}");
+            tb.extra_lines.push((net, crate::syntax::Dialect::Ltspice));
         }
         Ok(PySParamAnalysis {
             inner: Results::from_raw(deck.run(self.backend.as_deref())?),

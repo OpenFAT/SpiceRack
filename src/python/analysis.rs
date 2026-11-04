@@ -1,19 +1,20 @@
 //! The analyses Python queues: each as its ngspice card (the deck's own
 //! text, which the parser reads), or, for the Spectre-only ones and the
-//! RF analyses ngspice has no card for, as the Spectre statement added to
-//! a Spectre deck (`.pss` too: the ngspice reader keeps that card as
-//! ngspice text, which no Spectre deck can hold); and each's [`Kind`],
-//! which picks the backend, matches its plot and types its result.
+//! RF analyses ngspice has no card for, as its Spectre statement, in the
+//! deck's `simulator lang=spectre` region (a `.pss` is ngspice's card, which
+//! the reader keeps as ngspice text, so a Spectre target refuses it); and
+//! each's [`Kind`], which picks the backend, matches its plot and types its
+//! result.
 //!
 //! Cites: ngspice manual ch.11 (analysis cards; §11.3.6 `.pz`, §11.3.12
-//! `.pss`); Spectre Reference 19.1 `[REF]` p.90-91 (`hb`), p.272-274
-//! (`pss`), p.174
+//! `.pss`); Spectre Reference 19.1 `[REF]` p.90-91 (`hb`), p.272 (`pss`,
+//! the PSS base of the periodic analyses), p.174
 //! (`montecarlo`), p.245-246 (`pac`), p.253-256 (`pnoise`), p.298-299
 //! (`pstb`), p.303-304 (`pxf`), p.393-394 (`stb`), p.406-410 (`sweep`).
 //!
 //! Contents:
 //! - `pub(super) enum Analysis`, `Analysis::kind(&self) -> Kind`,
-//!   `Analysis::card(&self) -> Option<String>`, `Analysis::native(&self, d: Dialect) -> bool`,
+//!   `Analysis::card(&self) -> Option<String>`,
 //!   `Analysis::spectre(&self) -> Result<String, String>`
 //! - `pub(super) struct DcSweep`, `pub(super) struct FreqSweep`, `pub(super) struct PssBase`
 //! - keyword enums `Sweep`, `PzTransfer`, `PzKind`, `SpectreAnalysis`, `RandomKind`, each with
@@ -23,7 +24,6 @@ use std::fmt::Write as _;
 
 use super::model::{dec, num};
 use crate::backend::Kind;
-use crate::syntax::Dialect;
 
 /// One analysis, as the Python call gave it.
 #[derive(Debug, Clone, PartialEq)]
@@ -402,19 +402,12 @@ impl Analysis {
         })
     }
 
-    /// Whether the deck for `d` writes the analysis in `d`'s own words
-    /// ([`Self::spectre`]) beside the rendered text, not as an ngspice card
-    /// in the deck's source: one with no ngspice card, and `.pss` on
-    /// Spectre.
-    pub(super) fn native(&self, d: Dialect) -> bool {
-        self.card().is_none() || (d == Dialect::Spectre && matches!(self, Analysis::Pss { .. }))
-    }
-
-    /// The Spectre statement of an analysis [`Self::native`] names; `Err`
+    /// The Spectre statement of an analysis with no ngspice [`Self::card`]
+    /// (the deck holds it in a `simulator lang=spectre` region); `Err`
     /// naming what Spectre cannot run.
     ///
     /// # Panics
-    /// When `self` is an analysis the renderer writes for Spectre.
+    /// When `self` has an ngspice card.
     pub(super) fn spectre(&self) -> Result<String, String> {
         let pss = |p: &PssBase| {
             let (f, t) = (snum(p.fundamental), snum(p.stabilization));
@@ -431,32 +424,6 @@ impl Analysis {
             }
         };
         Ok(match self {
-            // `[REF]` p.272-274: `fund` (#2), `harms` (#4), `tstab` (#6), and
-            // for an autonomous circuit the observed node as the terminals;
-            // there is no `ppv` and no `probe`. ngspice's shooting controls
-            // have no Spectre parameter.
-            Analysis::Pss {
-                sc_iter,
-                steady_coeff,
-                uic,
-                ..
-            } if sc_iter.is_some() || steady_coeff.is_some() || *uic => {
-                return Err("pss sciter/steadycoeff/uic (ngspice shooting controls)".into());
-            }
-            Analysis::Pss {
-                fundamental,
-                stabilization,
-                observe_node,
-                harmonics,
-                ..
-            } => {
-                let terms = match observe_node.as_str() {
-                    "" => String::new(),
-                    n => format!("({} 0) ", bare(n)),
-                };
-                let (f, t) = (snum(*fundamental), snum(*stabilization));
-                format!("pss1 {terms}pss fund={f} tstab={t} harms={harmonics}")
-            }
             // `[REF]` p.90-91: `fundfreqs=[...]`, `maxharms=[...]`.
             Analysis::HarmonicBalance {
                 frequencies,
@@ -558,7 +525,7 @@ impl Analysis {
                 range(sweep)?,
                 probe.to_lowercase()
             ),
-            a => unreachable!("{a:?} is written by the renderer"),
+            a => unreachable!("{a:?} has an ngspice card"),
         })
     }
 }
@@ -622,28 +589,11 @@ mod tests {
         }
     }
 
-    /// `[REF]` p.272-274 pss, p.90-91 hb (`fundfreqs`, `maxharms`, not
+    /// `[REF]` p.90-91 hb (`fundfreqs`, `maxharms`, not
     /// `toneN`), p.393 stb (`probe`, the instance lowercased as every
     /// instance is written).
     #[test]
     fn spectre_rf_large_signal_analyses_match_documented_parameters() {
-        let pss = |sc_iter| Analysis::Pss {
-            fundamental: 1e9,
-            stabilization: 1e-7,
-            observe_node: "out".into(),
-            points_per_period: 128,
-            harmonics: 10,
-            sc_iter,
-            steady_coeff: None,
-            uic: false,
-        };
-        assert_eq!(
-            pss(None).spectre().unwrap(),
-            "pss1 (out 0) pss fund=1G tstab=100n harms=10"
-        );
-        assert!(pss(Some(50)).spectre().is_err(), "a shooting control");
-        assert!(pss(None).native(Dialect::Spectre));
-        assert!(!pss(None).native(Dialect::Ngspice));
         let hb = Analysis::HarmonicBalance {
             frequencies: vec![1e9, 1.01e9],
             harmonics: vec![5, 3],

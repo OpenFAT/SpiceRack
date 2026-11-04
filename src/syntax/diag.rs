@@ -400,6 +400,12 @@ catalogue! {
         cite: "IEEE 1364-2005 §12.1 (modules), §12.2.2 (port connections); the xschem layout (`render::spice::verilog`)",
         explain: "Structural Verilog holds modules and their instances: a primitive element (R, C, a source) is a comment naming this code, and parameters, models and analyses are not written. Netlist the deck for a simulator to keep them.",
     }
+    /// ngspice's compatibility mode on a target that has none.
+    W0030 Note {
+        title: "ngspice's compatibility mode not written",
+        cite: "ngspice manual, the compatibility modes (`set ngbehavior` in `.spiceinit`, or `-D ngbehavior=`, read before the deck)",
+        explain: "`.options ngbehavior=` selects how ngspice reads the deck (`hsa`, `ps`, `lt`, …); ngspice takes it on its command line, and no other target has such a mode, so it is left out. The target reads the deck in its own dialect.",
+    }
     // W0101–W0200: the named writer's (Spectre, VACASK).
     /// A flag (a parameter with no value) a target taking only `name=value` cannot spell.
     W0101 Refusal {
