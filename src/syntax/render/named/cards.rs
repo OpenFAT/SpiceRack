@@ -91,7 +91,9 @@ impl W<'_, '_> {
                     self.params(&params)
                 )
             }
-            Card::Coupling { name, l1, l2, k, .. } => format!(
+            Card::Coupling {
+                name, l1, l2, k, ..
+            } => format!(
                 "k{} mutual_inductor coupling={} ind1=l{} ind2=l{}",
                 self.dev(&name),
                 self.num(k),

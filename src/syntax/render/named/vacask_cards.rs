@@ -48,7 +48,9 @@ impl W<'_, '_> {
                     self.inst_params(&params)
                 )
             }
-            Card::Coupling { name, l1, l2, k, .. } => format!(
+            Card::Coupling {
+                name, l1, l2, k, ..
+            } => format!(
                 "k{} () mutual k={} ind1=\"l{}\" ind2=\"l{}\"",
                 q(&name),
                 num(k),
