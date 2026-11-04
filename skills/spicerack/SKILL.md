@@ -33,7 +33,7 @@ Each of these returns a plausible wrong number rather than an error.
 
 **`ac[node]` is the real part, not the magnitude.** For a Bode plot use `ac.magnitude(node)`, `ac.magnitude_db(node)` and `ac.phase(node)` (degrees). At 100 Hz on a 159 Hz RC, `ac["vout"]` reads 0.7170 while `|H|` is 0.8467. `.magnitude()` exists only on `AcAnalysis`.
 
-**ngspice has no `.step`.** `tb.step()` then `netlist("ngspice")` raises a codegen error, and a run without a forced backend auto-routes away from ngspice (to VACASK when installed). Sweep by rebuilding the testbench in a Python loop, one run per point — `run_corners` does exactly that for corners and seeds. LTspice, VACASK and Spectre support parameter sweeps natively.
+**ngspice has no `.step`.** `tb.step()` then `netlist("ngspice")` raises an error (`W0016`), and a run without a forced backend auto-routes away from ngspice (to VACASK when installed). Sweep by rebuilding the testbench in a Python loop, one run per point — `run_corners` does exactly that for corners and seeds. LTspice, VACASK and Spectre support parameter sweeps natively.
 
 **Use ASCII micro units: `u_uF`, `u_uH`, `u_uA`, `u_uV`, `u_uW`, `u_us`.** Python normalises identifiers, so a `u_µF` spelled with U+00B5 cannot be imported. The `u_Ω` family does work.
 

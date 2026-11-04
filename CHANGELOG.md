@@ -2,6 +2,13 @@
 
 One line per change, written by hand, citing its pull request. Every number is measured.
 
+## Unreleased
+
+- python: a deck is built as ngspice text and written for each backend by the transpiler (`syntax::render`); the IR (`CircuitIR`), its JSON form and the old writers are gone. `Subcircuit`/`Testbench` `to_json`, `from_json`, `save_json`, `load_json` are removed: save the deck (`netlist(...)`) instead.
+- python: `raw_spice` lines are read as the deck's own statements: each target writes them in its own form (Spectre and VACASK now write them where they refused "raw SPICE line"), and another dialect's text there is refused (`W0001`), not copied.
+- python: a refusal is its diagnostic codes and messages (`<deck>:<line>:<col>: W0004 …`), not free text; `nominal_temperature` reaches Spectre in the `options` statement; a `.tran` step cap with no start writes Spectre `start=0` and HSPICE `START=0`; `add_fourier`'s `num_harmonics` is not written (ngspice's `.four` has none).
+- verilog: structural Verilog (one module per subcircuit, instances by port name) replaces the old layout's IR `Debug` lines; every other element is a `// W0029` comment.
+
 ## 0.2.0 (2026-11-03)
 
 - ci: a `lint` job gates every PR on `cargo fmt --check`, `clippy -D warnings` and `tools/check_style.py` over src, tests and tools, all clean as of this change (#22).

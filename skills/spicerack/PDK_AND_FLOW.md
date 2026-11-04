@@ -1,6 +1,6 @@
 # PDK, corners, Verilog-A, external netlists
 
-Verified by running against the built module (`src/python.rs`, `src/codegen/*`,
+Verified by running against the built module (`src/python/`, `src/syntax/render/`,
 `python/spicerack/testbenches/`).
 
 ## PDK model libraries

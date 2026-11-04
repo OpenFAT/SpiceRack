@@ -16,8 +16,8 @@ https://github.com/OmarSiwy/NixOSConfig/tree/main/skills
 
 | Skill | Use it for here |
 |---|---|
-| `data-oriented-design` | `CircuitIR` (`src/ir`), the import AST and result tables: the six questions, SoA, narrowest widths, handles |
-| `codebase-clean-code` | Owners: `import` reads, `ir` holds, `codegen` writes one dialect each, `backend` runs one simulator each; one spine per direction |
+| `data-oriented-design` | The AST (`src/syntax/ast.rs`), the kit's tables and the result tables: the six questions, SoA, narrowest widths, handles |
+| `codebase-clean-code` | Owners: `import` reads files, `syntax` reads text into an AST and writes it in any dialect, `backend` runs one simulator each; one spine per direction |
 | `api-design` | Every `pub` item and the Python API (PySpice-close, backend neutral): usage code first, caller owns memory and flow |
 | `code-style` | File order, ≤500 code lines per file, `check_style.py` |
 | `simd-loops` | Hot loops over raw-file columns (`src/rawfile.rs`): the plain-loop forms, or explicit SIMD with a scalar oracle |
@@ -36,7 +36,7 @@ Project-specific:
 
 | Skill | Use it for here |
 |---|---|
-| `compiler-construction` | `src/syntax` (tokenizer, lexicons, parser, AST, device table) and `src/codegen`: one AST every dialect reads into, coded diagnostics, goldens |
+| `compiler-construction` | `src/syntax` (tokenizer, lexicons, parser, AST, device table, resolve, renderers): one AST every dialect reads into, coded diagnostics, goldens |
 | `spice-engine` | Reading a simulator's result: which oracle (ngspice, VACASK, analytic) and at what tolerance |
 
 ## The method
@@ -156,7 +156,7 @@ Binding on every change, in every project.
 
 - Every test names its oracle: the independent thing that says the output is
   wrong. A netlist is checked by running it on the real simulator or against
-  a golden with provenance, never by re-deriving it the way codegen does.
+  a golden with provenance, never by re-deriving it the way the writer does.
 - Unsupported fails and never skips: a missing simulator in `.#testing` is a
   failure.
 - A golden that disagrees with an independent oracle is a bug in the code
