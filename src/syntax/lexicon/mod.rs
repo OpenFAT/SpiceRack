@@ -3,13 +3,11 @@
 //! it (keywords, the device table, operator meaning). One file per dialect
 //! holds its table and the tests that pin each rule to its source.
 //!
-//! The table is data. The two rules data cannot say are the hooks of
-//! `transpiler-architecture.md` §2.1: HSPICE's `$` ([`Dollar::Hspice`]) and
+//! The table is data. The two rules data cannot say are the tokenizer's
+//! hooks: HSPICE's `$` ([`Dollar::Hspice`]) and
 //! Spectre's `simulator lang=` switch ([`Lexicon::lang_spice`]).
 //!
-//! Cites: `docs/research/transpiler-architecture.md` §2.1;
-//! `compiler-architecture-reference.md` §7 and §12.1 (ESPice's per-dialect
-//! constants, `ESPice/src/frontend/lines.zig:45-51`); the line stage and the
+//! Cites: ESPice's per-dialect constants (`ESPice/src/frontend/lines.zig:45-51`); the line stage and the
 //! `Num` rule of each old PEG grammar, which this replaced and whose manual
 //! citations each dialect file repeats.
 //!

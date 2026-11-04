@@ -5,8 +5,8 @@
 //! a kit file is the same tree [`crate::syntax::parse`] makes, and every
 //! answer here names its nodes by id.
 //!
-//! Two passes, as Zig's AstGen does names (`compiler-architecture-reference.md`
-//! §5.2, §5.3): `declare` pre-scans every file's declarations (subcircuits,
+//! Two passes, as Zig 0.17's AstGen does names (`scanContainer`,
+//! `localVarRef`): `declare` pre-scans every file's declarations (subcircuits,
 //! models and their bins, parameters, functions, sections) and its
 //! references, then `lookup` re-reads each file and binds each instance's
 //! master, records each statement's scope, corrects the parser's node and
@@ -21,9 +21,8 @@
 //! loader's rule, and a refused or absent file is an `R` row, never an
 //! error.
 //!
-//! Cites: `docs/research/transpiler-architecture.md` §2.4, §2.5 (what the
-//! renderer asks), §5 phase 3; `compiler-architecture-reference.md` §5,
-//! §10.3, §10.5; ngspice manual §2.4.3 (`X`), §2.5 (`.subckt`), §2.6
+//! Cites: Zig 0.17 `lib/std/zig/AstGen.zig` (resolves, never rewrites);
+//! ngspice manual §2.4.3 (`X`), §2.5 (`.subckt`), §2.6
 //! (`.include`), §2.7 (`.lib`), §2.15 (`.if`); Spectre UG p.66 (instances),
 //! p.94 (`subckt`), p.98 (`include`), p.108 (model groups), Spectre
 //! Reference 19.1 p.498 (`library`, `section`).

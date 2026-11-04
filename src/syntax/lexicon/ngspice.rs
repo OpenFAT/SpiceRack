@@ -1,7 +1,7 @@
 //! ngspice's lexicon (ESPice reads the same text).
 //!
-//! Cites (the § are `dev/research/ngspice-syntax.md`'s, as
-//! the old ngspice grammar cites them): §1.2 title; §1.3 `@` ends the file,
+//! Cites (the § are the labels the old ngspice grammar gives its rules,
+//! `git show daa0ad0:grammar/ngspice.peg`): §1.2 title; §1.3 `@` ends the file,
 //! blank lines; §1.5 comment lines and `$` `;` `//` tails; §1.6 `+` and `\\`
 //! continuation; §1.7 `.end`; §1.9 quotes; §1.10 numbers (`INPevaluate`,
 //! inpeval.c); §2.2 operators; ngspice manual §2.1.3 (scale factors). ESPice

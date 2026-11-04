@@ -106,7 +106,7 @@ fn lang_switch() {
 fn kits_resolve() {
     // Every kit file's every instance binds: to a primitive, a declaration
     // of the kit, or `Unknown` with an R0001 at its master (resolve's
-    // contract, docs/research/transpiler-architecture.md §2.4); and the
+    // contract); and the
     // kit reads its files in the order the golden walk records.
     let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut manifest = Vec::new();

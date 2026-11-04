@@ -76,7 +76,8 @@ pub(super) fn emit_component(
             q(inductor1),
             q(inductor2),
         ),
-        // VACASK's `acsp` ports are not ngspice's `portnum` (ir-gaps §2):
+        // VACASK's `acsp` ports are not ngspice's `portnum`
+        // (VACASK `docs/cmd-analysis-acsp.md`):
         // refused, not dropped.
         Component::VoltageSource {
             name,
@@ -501,7 +502,7 @@ fn wave(name: &dyn std::fmt::Display, wf: &IrWaveform, low: bool) -> Result<Stri
             )));
         }
         // VACASK's trannoise injects device noise; it has no noise or
-        // random source (dev/research/ir-gaps.md §2).
+        // random source (VACASK `docs/cmd-analysis-trannoise.md`).
         IrWaveform::TrNoise { .. } => {
             return Err(unsupported_comp(format!(
                 "{name}: TRNOISE source (ngspice only)"

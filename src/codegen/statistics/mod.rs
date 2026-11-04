@@ -1,11 +1,11 @@
-//! SPICE statistical calls and Spectre `statistics` tables across dialects
-//! (`docs/research/monte-carlo-spectre.md` §10): the call scanner every pass
+//! SPICE statistical calls and Spectre `statistics` tables across dialects:
+//! the call scanner every pass
 //! shares and the walk over every expression with its owner and scope;
 //! `lift` turns calls into Spectre's normalized variables and back
 //! (`unlift`), `lower` turns `statistics` tables into SPICE and VACASK
 //! calls, `vacask` spells calls VACASK lacks.
 //!
-//! Cites: monte-carlo-spectre.md §5-§7, §10; ngspice manual §2.11.5;
+//! Cites: ngspice manual §2.11.5; VACASK `docs/cmd-analysis-mc.md`;
 //! Spectre Reference 19.1 pp.175-179, p.481.
 //!
 //! Contents:

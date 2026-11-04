@@ -17,9 +17,8 @@
 //! construct reaches it (it stays on the old layout writer:
 //! `tests/fixtures/transpiler/PHASE4-STATUS.md`).
 //!
-//! Cites: `docs/research/transpiler-architecture.md` §2.5 (`Capability`);
-//! `compiler-architecture-reference.md` §9.1 (LLVM `LegalizeAction`),
-//! §12.4; each row's manual clause in its `W` code (`syntax::diag`).
+//! Cites: LLVM `TargetLowering.h` (`LegalizeAction`, one table read by one
+//! generic pass); each row's manual clause in its `W` code (`syntax::diag`).
 //!
 //! Contents:
 //! - `pub enum Construct`, `pub enum Action`, `pub enum Alt`, `pub enum Rule`
@@ -152,11 +151,11 @@ pub enum Rule {
     StatisticsDraws,
     /// A statistical call → its `rack_*` function of a normalized variable
     /// declared `parameters v=0` and varied in a `statistics` block
-    /// (Spectre; monte-carlo-spectre.md §5.1-§5.2).
+    /// (Spectre; Spectre Reference 19.1 pp.175-179, p.481).
     RackVars,
     /// The statistical calls VACASK lacks spelled out: `limit` → an
     /// `aunif` ternary, Xyce's clamp → `min(max())`, a two-argument
-    /// `agauss` its sigma 1 (monte-carlo-spectre.md §7).
+    /// `agauss` its sigma 1 (VACASK `docs/cmd-analysis-mc.md`).
     VacaskCalls,
 }
 

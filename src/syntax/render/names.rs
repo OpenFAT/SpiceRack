@@ -1,6 +1,5 @@
 //! The deck's elements → the name map, both writers' (`spice`, `named`)
-//! (`docs/research/transpiler-architecture.md` §2.5, "names are renamed as
-//! a whole"): each element's written name (its type letter, then its name
+//! (names are renamed as a whole): each element's written name (its type letter, then its name
 //! as the reader keeps it: `r1` is `R1`; a Spectre `in1 (a 0) vsource` is
 //! `Vin1`), built once per deck, and each declaration found from a
 //! reference to it in its scope, so a reference is spelled as its

@@ -1,5 +1,4 @@
-# The transpiler rewrite's strict xfail list (TESTING.md, "Golden gate";
-# docs/research/transpiler-architecture.md §5).
+# The transpiler rewrite's strict xfail list (TESTING.md, "Golden gate").
 #
 #   <input-set>/<relpath> <target> <reason>
 #

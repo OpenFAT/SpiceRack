@@ -1,5 +1,5 @@
-//! A file's role → what a target writes around it: the file role rule
-//! (`docs/research/transpiler-architecture.md` §2.5): a deck gets its
+//! A file's role → what a target writes around it: the file role rule:
+//! a deck gets its
 //! title, its `.end`, its control blocks and its ground; a library none
 //! of them, in any target. The writers ask [`frame`] once per file; where the old writers'
 //! rules give other bytes, a writer keeps them as a `// quirk:` beside its
@@ -8,7 +8,7 @@
 //! The role is `syntax::resolve`'s ([`Role`]): the kit's answer for a kit
 //! file, the same rule's for a file read alone (`resolve::role`).
 //!
-//! Cites: `transpiler-architecture.md` §2.5 ("A file role"); ngspice manual
+//! Cites: ngspice manual
 //! ch.2 (the title line, `.end`), §16 (`.control`); HSPICE `.END` (ends the
 //! run, in an included file too).
 //!

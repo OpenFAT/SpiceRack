@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""T-S1 to T-S3 of docs/research/monte-carlo-spectre.md §10.6 on a real Spectre.
+"""T-S1 to T-S3 (the tests in tests/spectre/expected.json) on a real Spectre.
 
 Each deck here is what SpiceRack writes for a SPICE source (regenerated and
 checked by tests/test_monte_carlo.rs). This script runs one deck, reads its

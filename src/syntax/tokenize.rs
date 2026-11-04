@@ -9,7 +9,7 @@
 //! here (`number::value`). The tokenizer never fails: a byte no rule reads
 //! is an [`Tag::Invalid`] token.
 //!
-//! The two hooks of `transpiler-architecture.md` §2.1 are here and nowhere
+//! The tokenizer's two hooks (`syntax::lexicon`) are here and nowhere
 //! else: HSPICE's `$` ([`Dollar::Hspice`], in `comment_at`), and Spectre's
 //! `simulator lang=spice` switch (`switch_at`), which swaps the lexicon for
 //! the statements up to `simulator lang=spectre`.

@@ -2,8 +2,8 @@
 //! trees: each SPICE statistical call `f(args)` becomes a deterministic
 //! `rack_f(args, v)` of a normalized variable `v`, declared `parameters
 //! v=0` and varied in a `statistics` block, `process` at a deck's or
-//! section's top and `mismatch` inside a subcircuit (monte-carlo-spectre.md
-//! §5.1-§5.2). The rule records fixups, never touching the tree: each
+//! section's top and `mismatch` inside a subcircuit (Spectre samples process
+//! once per run, mismatch per subcircuit instance). The rule records fixups, never touching the tree: each
 //! lifted `Call` node's replacement, by its name token, in the reader
 //! (`Rd::lift_call`; its views spell values with them), and the variables
 //! and `rack_*` functions the writer declares ([`Lifted`]).
@@ -21,7 +21,7 @@
 //! `docs/cmd-analysis-mc.md` lines 31-61), so its rule
 //! (`Lift(VacaskCalls)`, [`vacask_calls`]) spells out only what it lacks.
 //!
-//! Cites: monte-carlo-spectre.md §5, §10.2, §11; ngspice `xpressn.c:45-85`
+//! Cites: Spectre Reference 19.1 pp.175-179; ngspice `xpressn.c:45-85`
 //! (the guards); Spectre Reference 19.1 p.481 (user functions), p.474 (no
 //! short-circuiting); XY-RG Table 2-33 (Xyce's `limit`, a clamp).
 //!
@@ -65,7 +65,7 @@ pub(super) struct Var {
 /// The five statistical functions (ngspice §2.11.5).
 const STATISTICAL: [&str; 5] = ["agauss", "gauss", "aunif", "unif", "limit"];
 
-/// The `rack_*` functions (§5.2, §11): `nom` for a zero variable, the
+/// The `rack_*` functions: `nom` for a zero variable, the
 /// guards of ngspice's `xpressn.c:48-49`, `:59-62`, no branch dividing by
 /// zero; an empty name is no argument.
 const RACK: [(&str, [&str; 4], &str); 5] = [
@@ -95,7 +95,7 @@ const RACK: [(&str, [&str; 4], &str); 5] = [
 ];
 
 /// A `.func` whose body calls a statistical function, inlined at each
-/// call (§10.2 step 2): its name lowercased (the old pass matched a call
+/// call: its name lowercased (the old pass matched a call
 /// ignoring case), its parameters, the items its body's nodes are under,
 /// and the tokens its body is spelled from.
 struct Drawn {
@@ -124,7 +124,7 @@ enum Walk {
 /// call's fixup in `rd` and returns the variables and functions to
 /// declare; nothing when the deck calls none. A top-level `.func` whose
 /// body calls one is inlined at each of its calls, each inlined call drawn
-/// on its own (§10.2 step 2), and is not written. A call with no Spectre
+/// on its own, and is not written. A call with no Spectre
 /// form is refused into `refused`.
 pub(super) fn lift(rd: &mut Rd, deck: &Deck, refused: &mut Vec<Diag>) -> Lifted {
     let scoped = sites(rd, deck);
@@ -211,7 +211,7 @@ pub(super) fn lift(rd: &mut Rd, deck: &Deck, refused: &mut Vec<Diag>) -> Lifted 
                         // Xyce's two-argument agauss/gauss take sigma 1.
                         (true, 2) => true,
                         (true, 3) | (false, 2) => false,
-                        // HSPICE's multiplier, or a wrong count (§5.3).
+                        // HSPICE's multiplier, or a wrong count.
                         _ => {
                             refused.push(Diag {
                                 code: Code::W0107,
@@ -247,7 +247,7 @@ pub(super) fn lift(rd: &mut Rd, deck: &Deck, refused: &mut Vec<Diag>) -> Lifted 
     out
 }
 
-/// Spells out the statistical calls VACASK lacks (§7, §10.3), as fixups
+/// Spells out the statistical calls VACASK lacks, as fixups
 /// in `rd`: `limit(nom, avar)` as an `aunif` ternary, Xyce's clamp
 /// `limit(x, lo, hi)` as `min(max())`, a two-argument `agauss`/`gauss` with
 /// its sigma 1; nothing when the deck calls none. HSPICE's four-argument
@@ -338,7 +338,7 @@ impl Lifted {
 // ---- private ----
 
 /// `rack_<subckt>_<owner>_<field>_<k>`, identifier bytes only, a counter
-/// suffix on a collision (§5.2, §11: the subcircuit names a mismatch
+/// suffix on a collision (the subcircuit names a mismatch
 /// variable, as one local name recurs across a PDK's subcircuits).
 fn var_name(subckt: Option<&str>, site: &Site, k: usize, used: &mut HashSet<String>) -> String {
     let clean = |s: &str| -> String {
@@ -526,7 +526,7 @@ mod tests {
 
     #[test]
     fn a_call_becomes_a_varied_variable_in_its_scope() {
-        // The oracle is monte-carlo-spectre.md §10.6's hand-worked text
+        // The oracle is the hand-worked text of `tests/test_monte_carlo.rs`
         // (T-G1, T-G2, T-G4): a top call varies in `process`, a
         // subcircuit's in `mismatch`, each named after its owner and field,
         // its arguments kept as written.
@@ -571,7 +571,7 @@ mod tests {
     #[test]
     fn the_decks_spectre_ran_are_written_byte_for_byte() {
         // The oracle is `tests/spectre/`: the T-S1 to T-S3 decks real
-        // Spectre 21.1 ran (monte-carlo-spectre.md §11), written from these
+        // Spectre 21.1 ran (`tests/spectre/expected.json`), written from these
         // SPICE sources. A `montecarlo` statement has no SPICE source: the
         // committed deck is the written one and its `mc1` statement.
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/spectre");
@@ -608,7 +608,7 @@ mod tests {
 
     #[test]
     fn vacask_gets_its_four_calls_as_written_and_limit_spelled_out() {
-        // The oracle is monte-carlo-spectre.md §7: VACASK has agauss,
+        // The oracle is VACASK `docs/cmd-analysis-mc.md`: VACASK has agauss,
         // gauss, aunif and unif with ngspice's arguments, no `limit` (an
         // `aunif` ternary), and Xyce's sigma-less `agauss` takes sigma 1.
         let deck = "t\nR1 a 0 {agauss(1k,100,3) + limit(0, 50)}\nR2 a 0 {agauss(1, 2)}\n.end\n";

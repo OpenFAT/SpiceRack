@@ -1,6 +1,6 @@
 //! [`Ast`] → the [`CircuitIR`] and [`Report`] the old reader built: the
-//! temporary bridge of the rewrite (`docs/research/transpiler-architecture.md`
-//! §5), so the new front end feeds the old writers while they still run.
+//! temporary bridge of the rewrite (TESTING.md, "Golden gate"), so the new
+//! front end feeds the old writers while they still run.
 //!
 //! **The old reader** is the PEG grammars and the lowering this front end
 //! replaced, as they stood at `daa0ad0`, the golden gate's oracle

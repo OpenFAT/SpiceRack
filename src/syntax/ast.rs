@@ -23,9 +23,8 @@
 //! its tokens run from there to the next [`token::Tag::EndOfStatement`]
 //! (a block's last token is its closer's).
 //!
-//! Cites: `docs/research/transpiler-architecture.md` §2.3 (the node set);
-//! `compiler-architecture-reference.md` §2.3-§3.2 (Zig `Ast.zig`: rows,
-//! `extra_data`, `errors`, tag docs).
+//! Cites: Zig 0.17 `lib/std/zig/Ast.zig` (rows, `extra_data`, `errors`, tag
+//! docs).
 //!
 //! Contents:
 //! - `pub enum Tag`, `Tag::has_header(self) -> bool`, `pub struct Node(pub u32)`,

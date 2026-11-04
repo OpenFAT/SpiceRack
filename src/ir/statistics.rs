@@ -1,8 +1,8 @@
 //! Spectre `statistics { }` blocks as data: the varied parameters of each
 //! scope, their correlations and truncation (Spectre Circuit Simulator
 //! Reference 19.1 pp.175-179). Filled by the Spectre importer; SPICE-origin
-//! statistical calls stay text in their expressions
-//! (`docs/research/monte-carlo-spectre.md` §10.1).
+//! statistical calls stay text in their expressions, so SPICE -> IR -> SPICE
+//! is the identity.
 //!
 //! Cites: R19 pp.175-179.
 //!

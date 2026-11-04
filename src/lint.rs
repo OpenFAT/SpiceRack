@@ -300,7 +300,8 @@ pub fn lint_netlist(netlist: &str, backend: Option<&str>) -> LintResult {
 
     // A one-layer random `.param` read more than once: ngspice, HSPICE and
     // Xyce draw each read anew, Spectre and VACASK once per scope
-    // (monte-carlo-spectre.md §1.2, §5.1, §10.5).
+    // (ngspice `inpcom.c` `inp_fix_agauss_in_param`; Spectre Reference 19.1
+    // pp.175-179).
     let random: Vec<(String, usize)> = rows
         .iter()
         .filter(|r| r.card(".PARAM"))

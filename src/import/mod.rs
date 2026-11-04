@@ -1,5 +1,5 @@
 //! Deck text in any dialect -> [`CircuitIR`], through the transpiler's front
-//! end (`docs/research/transpiler-architecture.md` §2): the dialect's
+//! end (`syntax`): the dialect's
 //! lexicon tokenizes it (`syntax::tokenize`), one parser builds the AST
 //! (`syntax::parse`), and the temporary bridge `syntax::ast_to_ir` builds
 //! today's `CircuitIR` from it, exactly as the reader before it did (the

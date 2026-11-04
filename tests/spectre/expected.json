@@ -1,5 +1,5 @@
 {
-  "_provenance": "Decks: written by SpiceRack (tests/test_monte_carlo.rs spectre_run_decks_are_current) from the SPICE sources in that test. Closed forms: docs/research/monte-carlo-spectre.md §10.6 (v(out) of a 1k/1k divider, linearized: dv/dR1 = -2.5e-4 per ohm). ngspice: ngspice 45, N=2000 operating points re-drawn by mc_source, on the original SPICE deck. Tolerances: mean within 4*sigma/sqrt(N), std within 4*sigma/sqrt(2N) (N=2000); Spectre's default 4-sigma truncation changes a std by -0.054%, far inside them.",
+  "_provenance": "Decks: written by SpiceRack (tests/test_monte_carlo.rs spectre_run_decks_are_current) from the SPICE sources in that test. Closed forms: by hand (v(out) of a 1k/1k divider, linearized: dv/dR1 = -2.5e-4 per ohm). ngspice: ngspice 45, N=2000 operating points re-drawn by mc_source, on the original SPICE deck. Tolerances: mean within 4*sigma/sqrt(N), std within 4*sigma/sqrt(2N) (N=2000); Spectre's default 4-sigma truncation changes a std by -0.054%, far inside them.",
   "t_s1_nominal.scs": {
     "test": "T-S1",
     "nominal": { "out": 0.5 },

@@ -1,14 +1,13 @@
-//! T-N0 and T-N1 (`docs/research/monte-carlo-spectre.md` §10.6) on real
-//! ngspice: the Spectre lifting is pure algebra, so lifting a deck and
+//! T-N0 and T-N1 on real ngspice: the Spectre lifting is pure algebra, so lifting a deck and
 //! lowering its normalized variables back to ngspice draws (`lift`, then
 //! `lower`) must give the original deck's statistics. Oracles: the closed
-//! forms the note computes (a divider's linearized mean and std; `limit`'s
+//! forms (a divider's linearized mean and std; `limit`'s
 //! two values), at its tolerances (mean within 4 sigma/sqrt(N), std within
 //! 4 sigma/sqrt(2N)), and ngspice's own run of the original deck at the same
 //! tolerances; for the scopes, the inter-instance correlation (|rho| <
 //! 4/sqrt(N) apart, 1 for a shared process draw).
 //!
-//! Cites: monte-carlo-spectre.md §10.6; ngspice manual §13.5.48.
+//! Cites: ngspice manual §13.5.48, §18.5.2 (the Monte Carlo loop).
 //!
 //! Contents: none (tests only).
 

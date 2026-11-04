@@ -1,5 +1,4 @@
-//! The Monte Carlo lift read back (`docs/research/monte-carlo-spectre.md`
-//! §6a), a rule over the expression trees: in a Spectre deck, a call
+//! The Monte Carlo lift read back, a rule over the expression trees: in a Spectre deck, a call
 //! `rack_f(args, v)` whose `v` is declared `parameters v=0` and varied with
 //! exactly `dist=gauss std=1` (agauss, gauss) or `dist=unif N=1` (aunif,
 //! unif, limit) is the call `f(args)`. The rule records fixups, never
@@ -12,8 +11,7 @@
 //! a `.func` call inlined, [`Rd::inline_call`]), one table keyed by token,
 //! recorded before the writer writes.
 //!
-//! Cites: monte-carlo-spectre.md §5.2 (the `rack_*` functions), §6a; the
-//! old writer's `statistics::unlift`, which did this over the IR's text.
+//! Cites: the `rack_*` functions of `render::named::lift`; the old writer's `statistics::unlift`, which did this over the IR's text.
 //!
 //! Contents:
 //! - `pub(super) struct Unlift`, `pub(in crate::syntax::render) enum Fix`, `enum Lift`, `enum Step`
@@ -71,8 +69,8 @@ pub(in crate::syntax::render) enum Step {
     Call(Option<Lift>),
 }
 
-/// A statistical call a writer rewrites (monte-carlo-spectre.md §5.2,
-/// §7), by the `Call` node's name token.
+/// A statistical call a writer rewrites (Spectre's `rack_*` lift, VACASK's
+/// spelled-out calls), by the `Call` node's name token.
 #[derive(Clone, Debug)]
 pub(in crate::syntax::render) enum Lift {
     /// `f(args)` → `rack_f(args, var)` (Spectre); `sigma` appends Xyce's
@@ -95,7 +93,7 @@ pub(in crate::syntax::render) enum Lift {
 /// The five statistical functions (ngspice §2.11.5).
 const STATISTICAL: [&str; 5] = ["agauss", "gauss", "aunif", "unif", "limit"];
 
-/// The `rack_*` functions SpiceRack's lift defines (§5.2).
+/// The `rack_*` functions SpiceRack's lift defines.
 const RACK: [&str; 5] = [
     "rack_agauss",
     "rack_gauss",

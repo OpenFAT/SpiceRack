@@ -5,8 +5,7 @@
 //! block the deck writes (definitions, sections, branches) and every
 //! expression the old reader kept as text.
 //!
-//! Cites: `docs/research/transpiler-architecture.md` §2.3 (`Verbatim`),
-//! §3 (`^`); ngspice manual §2.8.5, §2.11.5; LTspice help (`^` XOR,
+//! Cites: ngspice manual §2.8.5, §2.11.5; LTspice help (`^` XOR,
 //! `gauss(x)`); Xyce RG §2.1.18.
 //!
 //! Contents:

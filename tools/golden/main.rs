@@ -1,7 +1,7 @@
 //! Every input file -> the reader and every writer -> a tree of golden
 //! files: what each phase of the transpiler rewrite must reproduce byte for
-//! byte against the recorded `daa0ad0` baseline
-//! (`docs/research/transpiler-architecture.md` §5).
+//! byte against the recorded `daa0ad0` baseline (TESTING.md, "Golden
+//! gate").
 //!
 //!   golden record [--writer syntax] <out_dir>
 //!   golden diff <a> <b> [--xfail migration.xfail] [--refusal-status-only <report>]

@@ -1,6 +1,5 @@
 //! A number token's spelling → its `f64`, by the lexicon's [`Numbers`]
-//! table: the one place a number is decoded (`transpiler-architecture.md`
-//! §2.1). The tokenizer calls it once per [`Tag::Number`] token.
+//! table: the one place a number is decoded. The tokenizer calls it once per [`Tag::Number`] token.
 //!
 //! The grammar each [`Tail`] reads is the old reader's `Num` rule for that
 //! dialect; the arithmetic is the old lowering's (`num_value`): ngspice's

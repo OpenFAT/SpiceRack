@@ -90,7 +90,7 @@ fn nested_ifs_ten_thousand_deep_reach_the_ir() {
 
 #[test]
 fn kit_answers_reach_the_ir() {
-    // transpiler-architecture.md §2.4, §5 phase 3: the adapter reads the
+    // Phase 3 (TESTING.md, "Golden gate"): the adapter reads the
     // kit where the file alone leaves a master open. top.scs's `x1`, `x2`
     // name `leaf` and `m1` names `nch_mod` (Spectre UG p.66), both in
     // lib.scs; ngspice ch.3 `R1 a b 1k rmod`, ch.8 `Q1 c b e mod 1.5`

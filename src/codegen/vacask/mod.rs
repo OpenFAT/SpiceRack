@@ -380,8 +380,8 @@ fn param_list<'a>(out: &mut String, defs: impl Iterator<Item = &'a ParamDef>, lo
 /// A Spectre `montecarlo` as VACASK's `mc` loop (`docs/cmd-analysis-mc.md`
 /// lines 7-23) around the deck's analysis of the inner kind, `lh=0`
 /// (Spectre's `sampling=standard`). VACASK has no `variations` switch, so a
-/// `process` or `mismatch` that would drop the deck's variation is refused
-/// (monte-carlo-spectre.md §7).
+/// `process` or `mismatch` that would drop the deck's variation is refused,
+/// never a silently different run.
 fn monte_carlo(
     ir: &CircuitIR,
     tb: &Testbench,

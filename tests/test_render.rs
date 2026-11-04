@@ -1,8 +1,8 @@
 //! The renderer (`syntax::render`) against the old pipeline on decks the
 //! golden corpus holds none of: Spectre `statistics` blocks lowered for the
-//! SPICE family (`docs/research/monte-carlo-spectre.md` §6b, §10.5) and
-//! Laplace sources; the same tables for Spectre and VACASK; functions whose
-//! bodies draw, inlined for Spectre (monte-carlo-spectre.md §10.2 step 2).
+//! SPICE family (two-layer `.param` draws; Spectre Reference 19.1
+//! pp.175-179) and Laplace sources; the same tables for Spectre and VACASK;
+//! functions whose bodies draw, inlined for Spectre at each call.
 //! The made-up fixtures (`tests/fixtures/transpiler/stats_*.scs`,
 //! `laplace.{sp,cir,net}`, `func_stats.{sp,cir}`, golden inputs too) are written by both and pinned under
 //! `tests/fixtures/transpiler/pinned/<file>_<ext>/`.
@@ -11,7 +11,7 @@
 //! pipeline the golden gate's baseline recorded (TESTING.md, "Golden
 //! gate"): each deck written byte for byte the same, or refused by both.
 //! That pipeline's statistics text is the one `test_monte_carlo.rs` T-R3
-//! and T-R4 check against monte-carlo-spectre.md §10.6 (its §6b table),
+//! and T-R4 check by hand,
 //! and its Laplace cards the ones `test_laplace_ngspice.rs` runs on real
 //! ngspice. `SPICERACK_BLESS=1` rewrites the pinned files.
 //!

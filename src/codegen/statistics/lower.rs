@@ -1,13 +1,14 @@
-//! Spectre `statistics` tables -> SPICE and VACASK statistical calls
-//! (§6b, §7): a `process` vary is the parameter drawn once per run, a
+//! Spectre `statistics` tables -> SPICE and VACASK statistical calls: a
+//! `process` vary is the parameter drawn once per run, a
 //! `mismatch` vary a draw per instance of every subcircuit that reads it,
 //! correlated process parameters a Cholesky combination of normalized
 //! draws. SPICE (ngspice, HSPICE, Xyce) draws a one-layer `.param` at every
 //! reference, so each draw is a two-layer `.param` (`p__mc = agauss(..)`,
 //! `p = p__mc`); a VACASK `parameters` call is already one value, one layer.
 //!
-//! Cites: monte-carlo-spectre.md §1.2 (the two-layer idiom, measured),
-//! §6b, §7, §10.5; Spectre Reference 19.1 pp.175-179.
+//! Cites: ngspice `inpcom.c` `inp_fix_agauss_in_param` (a one-layer random
+//! `.param` becomes a function, redrawn per reference; two layers draw once,
+//! measured on ngspice-44.2); Spectre Reference 19.1 pp.175-179.
 //!
 //! Contents:
 //! - `pub(crate) fn lower(ir: &CircuitIR, vacask: bool) -> Result<Option<CircuitIR>, CodeGenError>`
@@ -20,7 +21,7 @@ use crate::ir::*;
 /// none.
 ///
 /// # Errors
-/// What SPICE cannot hold (§10.5): `correlate dev=`, a correlation of a
+/// What SPICE cannot hold: `correlate dev=`, a correlation of a
 /// non-gauss or non-process parameter, an n>2 correlation with an
 /// expression `cc` or a matrix that is not positive definite, `truncate`
 /// below 4 sigma or not a number, `lnorm` with `percent`, a `vary` of an
@@ -96,7 +97,8 @@ pub(crate) fn lower(ir: &CircuitIR, vacask: bool) -> Result<Option<CircuitIR>, C
 
 // ---- private ----
 
-/// SPICE does not truncate (§3): 4 sigma or more costs under 0.06% of a
+/// SPICE does not truncate (Spectre does at 4 sigma by default, Spectre
+/// Reference 19.1 p.179): 4 sigma or more costs under 0.06% of a
 /// std and is dropped; less changes the distribution and is refused.
 fn truncation(st: &Statistics) -> Result<(), CodeGenError> {
     for t in st.truncate.iter().flatten() {
@@ -124,7 +126,7 @@ fn declared(body: &Subcircuit, p: &str) -> Result<usize, CodeGenError> {
         })
 }
 
-/// One draw of `v` around the mean `nom` (§6b).
+/// One draw of `v` around the mean `nom`.
 fn draw(v: &Vary, nom: &str) -> Result<String, CodeGenError> {
     let s = if v.percent {
         format!("({nom})*({})/100", v.spread)

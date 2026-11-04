@@ -202,7 +202,7 @@ pub(super) fn emit_waveform_params(wf: &IrWaveform) -> Result<String, CodeGenErr
         // publishes no waveform equation, and SPICE's own AM() definition
         // varies between simulators. Refusing beats guessing the mapping.
         // Spectre's `noisefile`/`noisevec` are small-signal spot noise, not a
-        // transient source (dev/research/ir-gaps.md §2).
+        // transient source (Spectre Reference 5.0 pp.685-686).
         IrWaveform::TrNoise { .. } => {
             return Err(unsupported_component("TRNOISE source (ngspice only)"));
         }

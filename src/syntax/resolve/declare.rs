@@ -1,6 +1,6 @@
 //! One file's tree → its declarations, the files it names, its role and its
-//! duplicate names: the pre-scan of resolve (Zig's `scanContainer`,
-//! `compiler-architecture-reference.md` §5.2), which runs over every file
+//! duplicate names: the pre-scan of resolve (Zig 0.17 AstGen's
+//! `scanContainer`), which runs over every file
 //! before any name is looked up, so a master may come before its
 //! declaration or sit in another file.
 //!

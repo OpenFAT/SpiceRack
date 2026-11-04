@@ -7,8 +7,7 @@
 //! arithmetic. What a target cannot write at all is
 //! [`super::capability`]'s, never this table's.
 //!
-//! Cites: `docs/research/transpiler-architecture.md` §2.5 (`Spelling`);
-//! ngspice manual §2.1.3 (scale factors), §2.8.5 (`{…}`), §2.4.3
+//! Cites: ngspice manual §2.1.3 (scale factors), §2.8.5 (`{…}`), §2.4.3
 //! (`PARAMS:`); HSPICE UG08 pp.279-283 (`'…'`, `.param f(x)=`); the
 //! lexicons' own citations for each suffix table.
 //!

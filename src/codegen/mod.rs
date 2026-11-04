@@ -47,8 +47,8 @@ struct Params<'a>(&'a [(String, String)], fn(&str) -> Cow<'_, str>);
 /// The whole deck for `d`. An analysis or component the simulator cannot run
 /// is an error, never a silently different deck.
 pub fn netlist(ir: &CircuitIR, d: Dialect) -> Result<String, CodeGenError> {
-    // Statistical calls and `statistics` tables in the target's own form
-    // (`docs/research/monte-carlo-spectre.md` §10): Spectre lifts the calls
+    // Statistical calls and `statistics` tables in the target's own form:
+    // Spectre lifts the calls
     // into normalized variables, SPICE and VACASK lower the tables to calls.
     let spice = !matches!(
         d,

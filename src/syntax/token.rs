@@ -8,9 +8,8 @@
 //! renderer finds them (Zig `Render.zig:3074-3099`). Statement structure is
 //! tokens ([`Tag::EndOfStatement`], [`Tag::LangSpice`]).
 //!
-//! Cites: `docs/research/transpiler-architecture.md` §2.1;
-//! `compiler-architecture-reference.md` §1.1-§1.5 (Zig `tokenizer.zig`,
-//! `Ast.zig:28-31`, `279-295`).
+//! Cites: Zig 0.17 `lib/std/zig/tokenizer.zig`, `Ast.zig:28-31`,
+//! `279-295`.
 //!
 //! Contents:
 //! - `pub enum Tag`, `Tag::lexeme(self) -> Option<&'static str>`

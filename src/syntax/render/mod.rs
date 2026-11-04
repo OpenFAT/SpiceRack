@@ -1,5 +1,5 @@
 //! [`Ast`] (and its [`Kit`]) → deck text in any dialect: the transpiler's
-//! last stage (`docs/research/transpiler-architecture.md` §2.5). Two
+//! last stage. Two
 //! structural writers, because there are two statement shapes: the SPICE
 //! family (`spice`: ngspice, ESPice, HSPICE, Xyce, LTspice, CDL) and the named
 //! family (`named`: Spectre, VACASK). Each reads the reader's plan
@@ -15,9 +15,8 @@
 //! writer's (`W`), sorted by source position, with their messages; a
 //! refusal is a writer's `W` code of `diag::Kind::Refusal`.
 //!
-//! Cites: `transpiler-architecture.md` §2.5, §2.6, §5 phase 4;
-//! `compiler-architecture-reference.md` §4 (Zig `Ast/Render.zig`), §12.4,
-//! §12.5.
+//! Cites: Zig 0.17 `lib/std/zig/Ast/Render.zig` (`zig fmt`: one renderer,
+//! tokens its only output).
 //!
 //! Contents:
 //! - `pub mod capability`, `pub mod spelling`

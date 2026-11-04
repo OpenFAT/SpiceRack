@@ -20,8 +20,8 @@
 //! row are one entry, so no code lacks a row; `tests` checks each row and
 //! the ranges.
 //!
-//! Cites: `transpiler-architecture.md` §2.6; `compiler-architecture-reference.md`
-//! §3.5 (Zig `Ast.Error`), §8.1 (VerA `lib/diag/code.zig`).
+//! Cites: Zig 0.17 `lib/std/zig/Ast.zig` (`Ast.Error`); VerA
+//! `lib/diag/code.zig`.
 //!
 //! Contents:
 //! - `pub enum Code`, `Code::ALL: &[Code]`, `pub enum Kind`, `pub struct Info`,
@@ -130,7 +130,7 @@ catalogue! {
     /// (`1k5` in Spectre, `0x1F` in VACASK): its token's value is NaN.
     P0005 Note {
         title: "a number the dialect does not read",
-        cite: "ngspice manual §2.1.3; Spectre UG §2.4 (dev/research/spectre-syntax.md)",
+        cite: "ngspice manual §2.1.3; the old Spectre grammar's §2.4 number rule (`daa0ad0:grammar/spectre.peg`)",
         explain: "The token starts like a number but the dialect's suffix table does not read it. Spell it with the dialect's suffixes (Spectre has no `1k5`; SPICE's `M` is milli, `meg` mega).",
     }
     /// Nesting deeper than the parser's cap: the rest is kept as tokens.
@@ -327,8 +327,8 @@ catalogue! {
     /// A Spectre `statistics` block a SPICE or VACASK deck cannot hold.
     W0018 Refusal {
         title: "a statistics block the target cannot hold",
-        cite: "docs/research/monte-carlo-spectre.md §10.5; Spectre Reference 19.1 pp.175-179",
-        explain: "The `statistics` block uses a form the target's statistical functions cannot draw (a correlated device list, a truncation under 4 sigma, a percent lognormal, a block inside a subcircuit or branch). Rewrite the block in the forms §10.5 lists.",
+        cite: "Spectre Reference 19.1 pp.175-179",
+        explain: "The `statistics` block uses a form the target's statistical functions cannot draw (a correlated device list, a truncation under 4 sigma, a percent lognormal, a block inside a subcircuit or branch). Rewrite the block without them.",
     }
     /// A Spectre `vary` of a parameter no `parameters` of its scope declares.
     W0019 Refusal {
@@ -339,7 +339,7 @@ catalogue! {
     /// A Spectre `correlate` whose correlation matrix is not positive definite.
     W0020 Refusal {
         title: "a correlation matrix that is not positive definite",
-        cite: "Spectre Reference 19.1 p.177 (correlate); docs/research/monte-carlo-spectre.md §6b",
+        cite: "Spectre Reference 19.1 p.177 (correlate); the Cholesky factor of the correlation matrix",
         explain: "The correlations given have no Cholesky factor (a coefficient outside [-1, 1], or an inconsistent set), so no draw has them. Check the `cc=` values.",
     }
     /// An element CDL's layout writes as an `* error:` comment: its ngspice
@@ -353,7 +353,7 @@ catalogue! {
     /// or inside a subcircuit (the writers load the top's alone).
     W0022 Note {
         title: "a Verilog-A load not written",
-        cite: "LTspice help (no OSDI or Verilog-A loader); docs/research/transpiler-architecture.md §5 phase 7",
+        cite: "LTspice help (no OSDI or Verilog-A loader)",
         explain: "The writer leaves the load out, as the old writer did: LTspice has no way to load a compiled model (phase 7 refuses it), and a load inside a subcircuit is not written on any target but ESPice. An instance of the model then names nothing the simulator knows; load it at the top.",
     }
     /// An output request (`.print`, `.save`, `.probe`) not written.
@@ -434,7 +434,7 @@ catalogue! {
     /// A statistical call with no form in the target (HSPICE's multiplier, a wrong argument count).
     W0107 Refusal {
         title: "a statistical call with no form in the target",
-        cite: "docs/research/monte-carlo-spectre.md §5.3, §7, §10.2",
+        cite: "HSPICE UG B-2008.09 App. A (`multiplier`); ngspice manual §2.11.5; Xyce RG Table 2-33",
         explain: "The call's arguments have no meaning in the target's statistical form (HSPICE's four-argument multiplier, a count no dialect reads). Write the call with ngspice's arguments.",
     }
     /// A source waveform the target cannot run as SPICE does (Spectre's AM; VACASK's PWL, a SIN phase, an EXP delay that is no number).
@@ -452,7 +452,7 @@ catalogue! {
     /// A `.lib file` with no section written as `include "file" section=`.
     W0110 Note {
         title: "a sectionless library call written with an empty section",
-        cite: "Spectre Reference 19.1 p.493 (include ... section=); docs/research/transpiler-architecture.md §5 phase 7",
+        cite: "Spectre Reference 19.1 p.493 (include ... section=)",
         explain: "The SPICE `.lib file` names no section; the writer writes `include \"file\" section=` with an empty section, as the old writer did (phase 7 refuses it). Name the section, or use `.include`.",
     }
     /// A `.model` level that is no number, mapped as level 1.

@@ -1,10 +1,11 @@
 //! SPICE statistical calls -> Spectre: each call a deterministic `rack_*`
 //! function of a normalized variable declared `parameters v=0` and varied
 //! in a `statistics` block, `process` at a deck's or section's top and
-//! `mismatch` inside a subcircuit (§5.1-§5.2); and the inverse, which reads
-//! that pattern back as the SPICE call (§6a).
+//! `mismatch` inside a subcircuit; and the inverse, which reads that pattern
+//! back as the SPICE call.
 //!
-//! Cites: monte-carlo-spectre.md §5, §6a, §10.2; ngspice xpressn.c:45-85
+//! Cites: Spectre Reference 19.1 pp.175-179 (process sampled once per run,
+//! mismatch per subcircuit instance); ngspice xpressn.c:45-85
 //! (the guards); Spectre Reference 19.1 p.481 (user functions), p.474 (no
 //! short-circuiting, so no branch divides by zero).
 //!
@@ -27,8 +28,8 @@ struct Var {
     section: Option<usize>,
 }
 
-/// The `rack_*` functions (§5.2): `nom` for a zero variable (the note's
-/// `rack_limit` gave `nom - avar` there; this one gives `nom`), the guards
+/// The `rack_*` functions: `nom` for a zero variable (so `rack_limit` gives
+/// `nom` there, not `nom - avar`), the guards
 /// of ngspice's `xpressn.c:48-49`, `:59-62`, no branch dividing by zero.
 const RACK: [(&str, [&str; 4], &str); 5] = [
     (
@@ -47,7 +48,7 @@ const RACK: [(&str, [&str; 4], &str); 5] = [
         ["nom", "rvar", "u", ""],
         "nom + nom * rvar * u",
     ),
-    // `nom` at u = 0, so the nominal run is exactly `nom` (§5.2); a draw is
+    // `nom` at u = 0, so the nominal run is exactly `nom`; a draw is
     // never exactly 0, so the two values of ngspice's `limit`.
     (
         "rack_limit",
@@ -57,12 +58,13 @@ const RACK: [(&str, [&str; 4], &str); 5] = [
 ];
 
 /// `ir` with every statistical call lifted, its variables declared and
-/// varied where §5.1 places them, the `rack_*` functions it uses defined and
+/// varied in its scope (`process` at the top, `mismatch` in a subcircuit),
+/// the `rack_*` functions it uses defined and
 /// a `.func` that calls one inlined; `None` when `ir` has no call.
 ///
 /// # Errors
 /// An HSPICE four-argument (`multiplier`) call, or a call of the wrong
-/// arity: no Spectre form (§5.3).
+/// arity: no Spectre form (HSPICE UG B-2008.09 App. A, `multiplier`).
 pub(crate) fn lift(ir: &CircuitIR) -> Result<Option<CircuitIR>, CodeGenError> {
     let mut any = ir.functions.iter().any(|f| has_statistical(&f.body));
     let mut probe = ir.clone();
@@ -149,7 +151,7 @@ pub(crate) fn lift(ir: &CircuitIR) -> Result<Option<CircuitIR>, CodeGenError> {
     Ok(Some(ir))
 }
 
-/// Reads SpiceRack's own lifted pattern back (§6a): `rack_f(args, v)` where
+/// Reads SpiceRack's own lifted pattern back: `rack_f(args, v)` where
 /// `v` is declared `parameters v=0` and varied with exactly `dist=gauss
 /// std=1` (agauss, gauss) or `dist=unif N=1` (aunif, unif, limit) is the
 /// call `f(args)`; `v`, its `vary` and the `rack_*` functions go. Anything
@@ -220,7 +222,7 @@ pub(crate) fn unlift(ir: &mut CircuitIR) {
 // ---- private ----
 
 /// `rack_<subckt>_<owner>_<field>_<k>`, identifier bytes only, a counter
-/// suffix on a collision (§5.2 Names; the subcircuit names a mismatch
+/// suffix on a collision (the subcircuit names a mismatch
 /// variable, since one local name recurs across a PDK's subcircuits).
 fn var_name(site: &Site, k: usize, used: &mut HashSet<String>) -> String {
     let clean = |s: &str| {
@@ -288,7 +290,7 @@ fn declare(ir: &mut CircuitIR, vars: &[Var]) {
 }
 
 /// Every `.func` whose body calls a statistical function, inlined at its
-/// call sites (§5.1: drawn per call of the function) and dropped.
+/// call sites (drawn per call of the function) and dropped.
 fn inline_functions(ir: &mut CircuitIR) {
     let stat: Vec<FuncDef> = ir
         .functions

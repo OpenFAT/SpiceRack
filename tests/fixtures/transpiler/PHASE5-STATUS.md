@@ -1,6 +1,6 @@
 # Phase 5 (diagnostics catalogue): status
 
-Phase 5 of `docs/research/transpiler-architecture.md` §5 (and §2.6):
+Phase 5 of the rewrite (TESTING.md, "Golden gate"):
 every refusal and drop in `src/syntax/` is a coded `Diag`, every code a
 catalogue row, refusals reach the user as codes plus rendered messages, and
 tests and the golden pin codes, never text. Gate: the refusal set is

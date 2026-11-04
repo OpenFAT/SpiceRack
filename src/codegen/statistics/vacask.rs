@@ -2,9 +2,9 @@
 //! `unif` take ngspice's arguments and draw once per call site per scope,
 //! Spectre's process/mismatch split (VACASK `docs/cmd-analysis-mc.md`
 //! lines 31-61), so they are written as they are; only what VACASK lacks is
-//! spelled out (§7, §10.3).
+//! spelled out.
 //!
-//! Cites: monte-carlo-spectre.md §4, §7; VACASK `include/rpnbuiltin.h:590-594`.
+//! Cites: VACASK `include/rpnbuiltin.h:590-594` (the four, no `limit`).
 //!
 //! Contents:
 //! - `pub(crate) fn vacask_calls(ir: &CircuitIR) -> Result<Option<CircuitIR>, CodeGenError>`

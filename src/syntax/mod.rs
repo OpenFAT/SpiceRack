@@ -1,10 +1,10 @@
-//! The transpiler's front end (`docs/research/transpiler-architecture.md`):
+//! The transpiler's front end:
 //! text → [`token::Tokens`] by a dialect's [`lexicon::Lexicon`] → [`ast::Ast`]
 //! by one parser → a [`resolve::Kit`] (a kit's files and its symbol table)
 //! → deck text in any dialect ([`render`]), and the temporary bridge
 //! [`ast_to_ir`] from the AST to
 //! today's `CircuitIR`. `import::parse` reads every deck through it (phase
-//! 2b of §5); `golden diff` against the recorded `daa0ad0` baseline, the
+//! 2b, TESTING.md "Golden gate"); `golden diff` against the recorded `daa0ad0` baseline, the
 //! PEG reader it replaced, gates every change (TESTING.md, "Golden gate").
 //!
 //! "The old reader" in this module's comments is that PEG reader and its

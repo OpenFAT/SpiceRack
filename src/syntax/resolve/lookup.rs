@@ -1,8 +1,7 @@
 //! One file's tree and the kit's declarations → the file's answers: each
 //! statement's scope, each instance master's binding, the corrected splits
 //! of range-count and R/C/L cards, and the `R` rows for what does not
-//! resolve. Zig's `localVarRef` (`compiler-architecture-reference.md`
-//! §5.3): the nearest declaration wins, a tie between kinds is ambiguous,
+//! resolve. Zig 0.17 AstGen's `localVarRef`: the nearest declaration wins, a tie between kinds is ambiguous,
 //! nothing found is undeclared.
 //!
 //! The nearest declaration: one in an enclosing subcircuit of the same file

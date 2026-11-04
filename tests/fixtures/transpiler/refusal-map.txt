@@ -1,6 +1,6 @@
 # Refusals: the old pipeline's messages and the renderer's codes
 #
-# Phase 5's one-off review (transpiler-architecture.md §5): every key
+# Phase 5's one-off review (TESTING.md, "Golden gate"): every key
 # (input, target) both pipelines refuse, from `golden diff
 # baseline-daa0ad0-fx9 <record --writer syntax at 799cf96>
 # --refusal-status-only`, before `.refused` files hold codes. Each old

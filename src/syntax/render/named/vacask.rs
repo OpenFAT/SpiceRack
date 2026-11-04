@@ -15,7 +15,7 @@
 //!
 //! Cites: VACASK `docs/input-identifiers.md` (quoting),
 //! `lib/dfllexer.l` L536-L557 (`section`), P462-P509 (`@if`), P848-855
-//! (`parameters`), `docs/cmd-analysis-mc.md`; monte-carlo-spectre.md §7.
+//! (`parameters`), `docs/cmd-analysis-mc.md`.
 //!
 //! Contents:
 //! - `W::vacask(&mut self)`, `W::expr(&self, s: &str) -> String`, `W::vval(&self, v: &Val) -> String`,

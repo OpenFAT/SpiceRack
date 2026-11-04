@@ -20,7 +20,7 @@
 //! `shapes`, `elements`, `devices` and `sources` read element cards,
 //! `cards`, `testbench`, `outputs` and `options` dot cards.
 //!
-//! Cites: `docs/research/transpiler-architecture.md` §2.5; the old lowering
+//! Cites: the old lowering
 //! and its SPICE grammar's `card`, `Raw`, `Unparsed` (as `syntax::adapter`
 //! cites them).
 //!

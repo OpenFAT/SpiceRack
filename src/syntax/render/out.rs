@@ -4,8 +4,8 @@
 //! counts columns (Zig `Ast/Render.zig`'s `renderToken` and
 //! `AutoIndentingStream`).
 //!
-//! Cites: `compiler-architecture-reference.md` §4.2 (`renderToken`,
-//! `Space`), §4.9 (`AutoIndentingStream`).
+//! Cites: Zig 0.17 `lib/std/zig/Ast/Render.zig` (`renderToken`, `Space`,
+//! `AutoIndentingStream`).
 //!
 //! Contents:
 //! - `pub(super) struct Out`, `pub(super) enum Space`

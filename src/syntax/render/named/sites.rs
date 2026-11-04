@@ -6,8 +6,6 @@
 //! variables are named after, and the value items its text is spelled
 //! from.
 //!
-//! Cites: monte-carlo-spectre.md §5.2, §10.2 step 1 (the walk).
-//!
 //! Contents:
 //! - `pub(super) struct Site`, `pub(super) struct Scoped`
 //! - `pub(super) fn sites(rd: &Rd, deck: &Deck) -> Vec<Scoped>`

@@ -4,9 +4,9 @@ SpiceRack: build SPICE circuits in Python, netlist them for any simulator
 (ngspice, HSPICE, LTspice, VACASK, Spectre, ESPice), run them and read the
 results back. The core is a Rust crate (edition 2024) with PyO3 bindings
 shipped as the `spicerack` Python package. `README.md` is the overview;
-`docs/research/transpiler-architecture.md` is the reader and writer design
-(tokenize → parse → AST → resolve → render), and `TESTING.md` "Golden gate" is its
-byte-identical migration gate.
+the reader and writer are `src/syntax/` (tokenize → parse → AST → resolve →
+render), and `TESTING.md` "Golden gate" is its byte-identical migration gate
+and phase list.
 
 ## Skills to load first
 

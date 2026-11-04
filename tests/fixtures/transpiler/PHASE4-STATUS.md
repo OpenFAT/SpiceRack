@@ -1,6 +1,6 @@
 # Phase 4 (renderers): status
 
-Phase 4 of `docs/research/transpiler-architecture.md` §5: `src/syntax/render/`
+Phase 4 of the rewrite (TESTING.md, "Golden gate"): `src/syntax/render/`
 writes the AST (and its `resolve::Kit`) in any dialect, gated byte for byte
 against the `daa0ad0` baseline (TESTING.md, "Golden gate").
 
@@ -154,8 +154,8 @@ others are recorded through `codegen::netlist`, so the whole tree diffs.
 1. **Spectre and VACASK writers: done** (`render/named/`). What they
    leave, each a `ponytail:` in the code, none reached by the gate:
    - a `.func` whose body calls a statistical function: **done**, inlined
-     on Spectre at each call as the old lift did (T-G8,
-     monte-carlo-spectre.md §10.2 step 2), a script fixup per inlined call
+     on Spectre at each call as the old lift did (T-G8), a script fixup
+     per inlined call
      (`Fix::Inline`, `Step`: a body's tokens are spelled once per call, an
      argument's once per use, so one fixup per token cannot say it);
      VACASK refuses any function (`W0106`), as the old writer did;

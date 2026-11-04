@@ -1,6 +1,5 @@
 //! Spectre `statistics` blocks → SPICE and VACASK statistical draws: the
-//! `Lift(StatisticsDraws)` rule (`docs/research/monte-carlo-spectre.md`
-//! §6b, §7, §10.5), shared by both writers. A `process` vary is the
+//! `Lift(StatisticsDraws)` rule, shared by both writers. A `process` vary is the
 //! parameter drawn once per run, as the two-layer idiom (`.param
 //! p__mc={agauss(v, s, 1)}`, `.param p=p__mc`); a `mismatch` vary is a
 //! two-layer draw in every subcircuit that reads the parameter, its
@@ -12,7 +11,7 @@
 //! locals written first in a subcircuit, and each renamed reference's token
 //! ([`Rd::respell_token`]).
 //!
-//! Refused (`W0018`), as §10.5 lists: `correlate dev=`, an n>2 `correlate`
+//! Refused (`W0018`): `correlate dev=`, an n>2 `correlate`
 //! with an expression `cc`, a `correlate` over a parameter that is no gauss
 //! `process` vary, `truncate` below 4 sigma (or not a number), `lnorm` with
 //! `percent`; and a `statistics` block inside a subcircuit or a branch,
@@ -20,8 +19,8 @@
 //! `vary` of a parameter no `parameters` declares is `W0019`; a correlation
 //! matrix that is not positive definite `W0020`.
 //!
-//! Cites: monte-carlo-spectre.md §1.2 (the two-layer idiom, measured), §6b,
-//! §10.5, §11 (the tables written braced); Spectre Reference 19.1
+//! Cites: ngspice `inpcom.c` `inp_fix_agauss_in_param` (the two-layer idiom:
+//! one layer redraws per reference, measured on ngspice-44.2); Spectre Reference 19.1
 //! pp.175-179; the old writer's `codegen::statistics::lower`, whose output
 //! this is byte for byte.
 //!
@@ -208,7 +207,8 @@ fn new(name: String, value: String) -> P {
     }
 }
 
-/// SPICE does not truncate (§3): 4 sigma or more costs under 0.06% of a
+/// SPICE does not truncate (Spectre does at 4 sigma by default, Spectre
+/// Reference 19.1 p.179): 4 sigma or more costs under 0.06% of a
 /// std and is dropped; less changes the distribution and is refused.
 fn truncation(st: &Stats) -> Result<(), Code> {
     for t in st.truncate.iter().flatten() {
@@ -225,7 +225,7 @@ fn declared(ps: &[P], p: &str) -> Result<usize, Code> {
     ps.iter().position(|d| d.name == p).ok_or(Code::W0019)
 }
 
-/// One draw of `v` around the mean `nom` (§6b).
+/// One draw of `v` around the mean `nom`.
 fn draw(v: &Vary, nom: &str) -> Result<String, Code> {
     let s = spread(v, nom);
     Ok(match v.dist {

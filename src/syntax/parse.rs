@@ -13,7 +13,7 @@
 //! parses without recursion.
 //!
 //! The tokenizer's open points are settled here
-//! (`docs/research/transpiler-architecture.md` §5, phase 2): gapless tokens
+//! (phase 2, TESTING.md "Golden gate"): gapless tokens
 //! in a name or value position are one `Word` (an HSPICE `\\` glue counts
 //! as no gap); an HSPICE `"expr"` is a delimited expression like `'expr'`
 //! (its tokens are the file's); keywords are looked up only at heads; an end of statement
@@ -21,9 +21,8 @@
 //! such lines, and Spectre `if (a &&⏎ b) {` is joined here); `.end` is a
 //! node; a NaN number is a `P0005`.
 //!
-//! Cites: `transpiler-architecture.md` §2.2, §2.3; Zig `Parse.zig`
-//! (`compiler-architecture-reference.md` §2.1-§2.6: never fails, scratch
-//! lists, recovery at the next member); the card structure of
+//! Cites: Zig 0.17 `lib/std/zig/Parse.zig` (never fails, scratch lists,
+//! recovery at the next member); the card structure of
 //! the old SPICE grammar, the old Spectre grammar, the old VACASK grammar (ngspice manual §2.5
 //! `.subckt`, §2.7 `.lib`, §2.15 `.if`; Spectre Reference 19.1 p.491 `if`,
 //! p.498 `library`; VACASK `lib/dflparser.y` P324-P509).

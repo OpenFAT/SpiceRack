@@ -397,7 +397,7 @@ fn a_spice_region_model_serves_a_spectre_instance() {
 #[test]
 fn roles_and_verilog_a() {
     // A deck holds an analysis or a stimulus; a library only definitions
-    // (transpiler-architecture.md §2.5). Spectre UG p.118: `ahdl_include`
+    // (`resolve::role`). Spectre UG p.118: `ahdl_include`
     // names a Verilog-A source, loaded and not read. Checks: 3.
     let deck = "t\nahdl_include \"dev.va\"\ninclude \"lib.scs\"\nv1 (a 0) vsource dc=1\ntran1 tran stop=1n\n";
     let k = kit(

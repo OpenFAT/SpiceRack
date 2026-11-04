@@ -1,9 +1,12 @@
-//! SPICE statistical calls and Spectre `statistics` blocks across dialects
-//! (`docs/research/monte-carlo-spectre.md` §10.6): the golden text of the
-//! Spectre lifting (T-G1 to T-G10) and the round trips (T-R1 to T-R5).
+//! SPICE statistical calls and Spectre `statistics` blocks across dialects:
+//! the golden text of the Spectre lifting (T-G1 to T-G10) and the round
+//! trips (T-R1 to T-R5).
 //!
-//! Oracles: the research note's §10.6 expectations, worked by hand from
-//! its §5 mapping (names, scopes, distributions); for the round trips, the
+//! Oracles: the expected Spectre text, worked by hand from the mapping
+//! (each call `rack_f(args, v)` of a variable `v` named after its owner and
+//! field, varied `dist=gauss std=1` or `dist=unif N=1`, `process` at the top
+//! and `mismatch` in a subcircuit; Spectre Reference 19.1 pp.175-179,
+//! p.481, ngspice `xpressn.c:45-85`); for the round trips, the
 //! source text itself (SPICE -> Spectre -> SPICE gives each expression
 //! back) and the Spectre table read back equal; for the PDK slices, an
 //! independent count of call sites in the source expressions. The ngspice
@@ -385,7 +388,7 @@ fn slices() -> Vec<(String, CircuitIR)> {
     out
 }
 
-/// Lint (§10.5): a one-layer random `.param` read twice is flagged; read
+/// Lint: a one-layer random `.param` read twice is flagged; read
 /// once, or through the two-layer idiom, it is not.
 #[test]
 fn lint_flags_a_one_layer_random_param_read_twice() {
