@@ -49,7 +49,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::path::{Component, Path, PathBuf};
 
-use crate::codegen::Dialect;
+use crate::syntax::Dialect;
 use crate::syntax::ast::{Ast, NONE, Node, Tag};
 use crate::syntax::device::Primitive;
 use crate::syntax::diag::{Code, Diag};

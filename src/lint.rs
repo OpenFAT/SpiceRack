@@ -94,6 +94,9 @@ const BACKEND_CARDS: &[BackendCard] = &[
 ];
 
 /// Lint a SPICE netlist; `backend` adds that simulator's card checks.
+/// The SPICE statistical functions (ngspice manual §2.11.5).
+const STATISTICAL: [&str; 5] = ["agauss", "gauss", "aunif", "unif", "limit"];
+
 pub fn lint_netlist(netlist: &str, backend: Option<&str>) -> LintResult {
     let rows: Vec<Row> = netlist
         .lines()
@@ -310,7 +313,7 @@ pub fn lint_netlist(netlist: &str, backend: Option<&str>) -> LintResult {
                 .into_iter()
                 .map(move |(n, v)| (n, v, r.no))
         })
-        .filter(|(_, v, _)| crate::codegen::statistics::has_statistical(v))
+        .filter(|(_, v, _)| has_statistical(v))
         .map(|(n, _, no)| (n, no))
         .collect();
     for (name, line) in random {
@@ -342,7 +345,7 @@ pub fn lint_netlist(netlist: &str, backend: Option<&str>) -> LintResult {
 
     // An alias (`ngspice-shared`) checks as the dialect it names.
     let family = backend.map_or("", |b| {
-        crate::ir::Dialect::from_backend_name(b).map_or(b, |d| d.name())
+        crate::syntax::Dialect::from_backend_name(b).map_or(b, |d| d.name())
     });
     for r in &rows {
         for (fam, _, msg, sugg) in BACKEND_CARDS
@@ -365,6 +368,44 @@ pub fn lint_netlist(netlist: &str, backend: Option<&str>) -> LintResult {
 }
 
 // ---- private ----
+
+/// Whether `e` calls one of [`STATISTICAL`] (a three-argument `limit`,
+/// Xyce's clamp, is not one).
+fn has_statistical(e: &str) -> bool {
+    let low = e.to_ascii_lowercase();
+    let b = low.as_bytes();
+    let word = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
+    (0..b.len()).any(|i| {
+        if i > 0 && (word(b[i - 1]) || b[i - 1] == b'.') {
+            return false;
+        }
+        STATISTICAL.iter().any(|f| {
+            let end = i + f.len();
+            if !low[i..].starts_with(f) || b.get(end).is_some_and(|&c| word(c)) {
+                return false;
+            }
+            let Some(args) = low[end..].trim_start().strip_prefix('(') else {
+                return false;
+            };
+            *f != "limit" || top_commas(args) != 2
+        })
+    })
+}
+
+/// The commas at depth 0 before the `)` that closes the text after a `(`.
+fn top_commas(args: &str) -> usize {
+    let (mut depth, mut commas) = (0usize, 0);
+    for c in args.chars() {
+        match c {
+            '(' => depth += 1,
+            ')' if depth == 0 => break,
+            ')' => depth -= 1,
+            ',' if depth == 0 => commas += 1,
+            _ => {}
+        }
+    }
+    commas
+}
 
 /// `.param` assignments, lowercased names and their value text: `a=1
 /// b = 'x*2'` is `[("a", "1"), ("b", "'x*2'")]`.
@@ -418,5 +459,19 @@ impl Row<'_> {
         self.text
             .get(..card.len())
             .is_some_and(|p| p.eq_ignore_ascii_case(card))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_statistical_call_is_found_but_not_xyces_clamp() {
+        assert!(has_statistical("1k*AGAUSS(1, 0.1, 3)"));
+        assert!(has_statistical("limit(1, 0.2)"));
+        assert!(!has_statistical("limit(x, 0, f(1, 2))"), "Xyce's clamp");
+        assert!(!has_statistical("myagauss(1) + gauss_x + v.gauss(1)"));
+        assert!(!has_statistical("unif"), "a name, no call");
     }
 }

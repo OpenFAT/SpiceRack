@@ -90,7 +90,9 @@ class TestPassives:
             value=0.0,
             raw_spice="1Meg",
         )
-        assert "Rload out 0 1Meg" in str(c)
+        # Read as a number (ngspice manual §2.1.3: scale factors are case
+        # blind), written in SPICE's own spelling.
+        assert "Rload out 0 1meg" in str(c)
 
     def test_capacitor_picofarad(self):
         c = ps().Circuit("t")

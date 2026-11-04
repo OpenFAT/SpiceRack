@@ -1,7 +1,7 @@
 //! Simulator backends: the [`RUNNABLE`] dialects, one `match` per question.
 //!
 //! A backend executes netlist text verbatim, in its own [`Dialect`]. Turning
-//! IR into that text is the codegen's job. Netlist text in, [`RawData`] plots
+//! a deck into that text is `syntax::render`'s job. Netlist text in, [`RawData`] plots
 //! out, through one subprocess per run.
 //!
 //! Cites: Spectre Reference 19.1 p.17 (`.measure`); each simulator's file
@@ -10,13 +10,18 @@
 //! Contents:
 //! - `pub enum BackendError`
 //! - `pub const RUNNABLE: [Dialect; 5]`
-//! - `pub use crate::codegen::{Dialect, netlist}`
+//! - `pub use crate::syntax::Dialect`
+//! - `pub mod feature`: `XSPICE`, `OSDI`, `MEASURES`, `STEP_PARAMS`, `CONTROL_BLOCKS`,
+//!   `LAPLACE`, `VERILOG_COSIM`, `ALL` (`u8` bits)
 //! - `pub(crate) fn runs(d: Dialect, needs: u8) -> bool`
 //! - `pub fn parse(name: &str) -> Option<Dialect>`
 //! - `Dialect::capabilities(self) -> u8`, `Dialect::run(self, netlist: &str) -> Result<RawData, BackendError>`,
 //!   `Dialect::run_all(self, netlist: &str) -> Result<Vec<RawData>, BackendError>`
 //! - `pub fn available() -> &'static [Dialect]`
-//! - `pub fn select(analysis: &Analysis, override_backend: Option<&str>, features: &FeatureFlags) -> Result<Dialect, BackendError>`
+//! - `pub enum Kind`, `Kind::name(self) -> &'static str`
+//! - `pub fn select(kind: Kind, override_backend: Option<&str>, needs: u8) -> Result<Dialect, BackendError>`
+//! - `pub struct Issue`, `pub enum IssueSeverity`,
+//!   `pub fn check(needs: u8, elements: usize, backend: &str) -> Vec<Issue>`
 //! - `pub mod espice`, `ltspice`, `ngspice`, `spectre`, `vacask`
 
 pub mod espice;
@@ -29,11 +34,26 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 
-pub use crate::codegen::{Dialect, netlist};
-use crate::ir::feature::*;
-use crate::ir::{Analysis, FeatureFlags};
+use feature::*;
+
 use crate::rawfile;
 use crate::result::RawData;
+pub use crate::syntax::Dialect;
+
+/// What a deck needs from its simulator, one bit per feature
+/// ([`Dialect::capabilities`] is the same mask: what a simulator does).
+pub mod feature {
+    pub const XSPICE: u8 = 1 << 0;
+    pub const OSDI: u8 = 1 << 1;
+    pub const MEASURES: u8 = 1 << 2;
+    pub const STEP_PARAMS: u8 = 1 << 3;
+    pub const CONTROL_BLOCKS: u8 = 1 << 4;
+    pub const LAPLACE: u8 = 1 << 5;
+    pub const VERILOG_COSIM: u8 = 1 << 6;
+    /// Every bit above.
+    pub const ALL: u8 =
+        XSPICE | OSDI | MEASURES | STEP_PARAMS | CONTROL_BLOCKS | LAPLACE | VERILOG_COSIM;
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum BackendError {
@@ -73,7 +93,52 @@ pub const RUNNABLE: [Dialect; 5] = [
     Dialect::Espice,
 ];
 
-// What each simulator can do, as `ir::feature` bits.
+/// An analysis's kind: what picks the simulator that runs it
+/// ([`select`]), and the plot a run writes for it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    Op,
+    Dc,
+    Ac,
+    Tran,
+    Noise,
+    Tf,
+    /// `.sens` at DC.
+    Sens,
+    /// `.sens … AC …`.
+    SensAc,
+    Pz,
+    Disto,
+    Pss,
+    Hb,
+    Sp,
+    Stb,
+    TranNoise,
+    /// `.four`: a table on stdout, no plot.
+    Fourier,
+    SpectreSweep,
+    SpectreMonteCarlo,
+    Pac,
+    Pnoise,
+    Pxf,
+    Pstb,
+}
+
+/// One problem [`check`] finds with running a deck on a backend.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Issue {
+    pub severity: IssueSeverity,
+    pub message: String,
+}
+
+/// Whether an [`Issue`] stops the run.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum IssueSeverity {
+    Error,
+    Warning,
+}
+
+// What each simulator can do, as `feature` bits.
 const NGSPICE_CAPS: u8 = XSPICE | OSDI | MEASURES | CONTROL_BLOCKS | LAPLACE | VERILOG_COSIM;
 const LTSPICE_CAPS: u8 = MEASURES | STEP_PARAMS | LAPLACE;
 // VACASK: `load "x.osdi"`; no measurement statement ("Command not found");
@@ -83,11 +148,70 @@ const VACASK_CAPS: u8 = OSDI | STEP_PARAMS;
 const SPECTRE_CAPS: u8 = OSDI | MEASURES | STEP_PARAMS | VERILOG_COSIM;
 // ESPice: Verilog-A via VerA `.hdl` (counts as osdi); `.step` lands every
 // point as a separate plot in one raw file, which parse_raw does not split.
-// Laplace: its own `E/G … LAPLACE` card (codegen `spice3::laplace_source`).
+// Laplace: its own `E/G … LAPLACE` card (`render::spice::laplace`).
 const ESPICE_CAPS: u8 = OSDI | MEASURES | LAPLACE;
 
-/// True when `d`'s simulator has every feature in `needs` (`ir::feature`
-/// bits); `CircuitIR::check_backend` reports each bit this finds missing.
+// Seven features, one distinct bit each, inside the `u8`.
+const _: () = assert!(feature::ALL.count_ones() == 7);
+
+/// Each feature a backend may lack, how bad that is, and what to say
+/// (`{}` is the backend).
+const MISSING: &[(u8, IssueSeverity, &str)] = &[
+    (
+        XSPICE,
+        IssueSeverity::Error,
+        "Backend '{}' does not support XSPICE A-elements (only ngspice does)",
+    ),
+    (
+        OSDI,
+        IssueSeverity::Error,
+        "Backend '{}' does not support OSDI/Verilog-A model loading",
+    ),
+    (
+        MEASURES,
+        IssueSeverity::Error,
+        "Backend '{}' does not support .meas directives",
+    ),
+    (
+        STEP_PARAMS,
+        IssueSeverity::Error,
+        "Backend '{}' does not support .step param sweeps",
+    ),
+    (
+        CONTROL_BLOCKS,
+        IssueSeverity::Error,
+        "Backend '{}' does not support .control blocks (ngspice only)",
+    ),
+    (
+        LAPLACE,
+        IssueSeverity::Warning,
+        "Backend '{}' does not support Laplace-domain B-sources",
+    ),
+    (
+        VERILOG_COSIM,
+        IssueSeverity::Error,
+        "Backend '{}' does not support Verilog co-simulation",
+    ),
+];
+
+// Exactly one `MISSING` row per feature bit, so a backend `select` refuses
+// for a feature always has the issue `check` names for it.
+const _: () = {
+    let (mut seen, mut i) = (0u8, 0);
+    while i < MISSING.len() {
+        assert!(seen & MISSING[i].0 == 0, "a feature has two MISSING rows");
+        assert!(
+            MISSING[i].0.count_ones() == 1,
+            "a MISSING row names one feature"
+        );
+        seen |= MISSING[i].0;
+        i += 1;
+    }
+    assert!(seen == ALL, "a feature has no MISSING row");
+};
+
+/// True when `d`'s simulator has every feature in `needs` (`feature`
+/// bits); [`check`] reports each bit this finds missing.
 pub(crate) fn runs(d: Dialect, needs: u8) -> bool {
     needs & !d.capabilities() == 0
 }
@@ -99,7 +223,7 @@ pub fn parse(name: &str) -> Option<Dialect> {
 }
 
 impl Dialect {
-    /// What this dialect's simulator can do, as `ir::feature` bits; nothing
+    /// What this dialect's simulator can do, as `feature` bits; nothing
     /// for a dialect no simulator here runs.
     pub fn capabilities(self) -> u8 {
         match self {
@@ -166,16 +290,17 @@ pub fn available() -> &'static [Dialect] {
     })
 }
 
-/// Pick the backend for `analysis`. An explicit name (argument, else
-/// `$SPICERACK_BACKEND`) wins if it can run the analysis; otherwise the first
-/// installed backend, in `route` order, that supports the circuit's features.
+/// Pick the backend for an analysis of `kind`. An explicit name (argument,
+/// else `$SPICERACK_BACKEND`) wins if it can run the analysis; otherwise
+/// the first installed backend, in `route` order, that has every `needs`
+/// bit (`feature`).
 pub fn select(
-    analysis: &Analysis,
+    kind: Kind,
     override_backend: Option<&str>,
-    features: &FeatureFlags,
+    needs: u8,
 ) -> Result<Dialect, BackendError> {
-    let (dialects, alternative) = route(analysis);
-    let analysis = analysis.kind_str();
+    let (dialects, alternative) = route(kind);
+    let analysis = kind.name();
     let env = std::env::var("SPICERACK_BACKEND")
         .ok()
         .filter(|s| !s.is_empty());
@@ -193,10 +318,7 @@ pub fn select(
         return Err(BackendError::NoBackend);
     }
     for d in dialects {
-        if let Some(&k) = available
-            .iter()
-            .find(|&&k| k == *d && runs(k, features.needs))
-        {
+        if let Some(&k) = available.iter().find(|&&k| k == *d && runs(k, needs)) {
             return Ok(k);
         }
     }
@@ -214,39 +336,90 @@ pub fn select(
     Ok(available[0])
 }
 
+impl Kind {
+    /// The analysis's short name, as errors and `check` name it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Kind::Op => "op",
+            Kind::Dc => "dc",
+            Kind::Ac => "ac",
+            // `fourier`, `sweep` and `montecarlo` wrap a transient here.
+            Kind::Tran | Kind::Fourier | Kind::SpectreSweep | Kind::SpectreMonteCarlo => "tran",
+            Kind::Noise => "noise",
+            Kind::Tf => "tf",
+            Kind::Sens => "sens",
+            Kind::SensAc => "sens_ac",
+            Kind::Pz => "pz",
+            Kind::Disto => "disto",
+            Kind::Pss => "pss",
+            Kind::Hb => "hb",
+            Kind::Sp => "sp",
+            Kind::Stb => "stb",
+            Kind::TranNoise => "trannoise",
+            Kind::Pac => "pac",
+            Kind::Pnoise => "pnoise",
+            Kind::Pxf => "pxf",
+            Kind::Pstb => "pstb",
+        }
+    }
+}
+
+/// The issues `backend` raises against a deck that needs the `needs` bits
+/// (`feature`) and holds `elements` element and instance cards: each
+/// feature it lacks, and a large deck on ngspice. Pure: nothing runs.
+pub fn check(needs: u8, elements: usize, backend: &str) -> Vec<Issue> {
+    let Some(kind) = parse(backend) else {
+        return vec![Issue {
+            severity: IssueSeverity::Error,
+            message: format!("Unknown backend '{backend}'"),
+        }];
+    };
+    let missing = needs & !kind.capabilities();
+    let mut issues: Vec<Issue> = MISSING
+        .iter()
+        .filter(|(f, _, _)| missing & f != 0)
+        .map(|&(_, severity, message)| Issue {
+            severity,
+            message: message.replace("{}", backend),
+        })
+        .collect();
+    if elements > 10_000 && kind == Dialect::Ngspice {
+        issues.push(Issue {
+            severity: IssueSeverity::Warning,
+            message: format!("Large circuit ({elements} elements) may be slow on '{backend}'"),
+        });
+    }
+    issues
+}
+
 // ---- private ----
 
 /// The dialects that run `a`, in preference order, and the workaround to
 /// suggest without one. A universal analysis runs on every [`RUNNABLE`].
-fn route(a: &Analysis) -> (&'static [Dialect], &'static str) {
+fn route(kind: Kind) -> (&'static [Dialect], &'static str) {
     use Dialect::*;
-    match a {
+    match kind {
         // `tf` runs everywhere, so its old ".dc() with small-signal sweep"
         // workaround could never be shown.
-        Analysis::Op
-        | Analysis::Dc { .. }
-        | Analysis::Ac { .. }
-        | Analysis::Transient { .. }
-        | Analysis::Noise { .. }
-        | Analysis::Tf { .. }
-        | Analysis::Fourier { .. }
-        | Analysis::SpectreSweep { .. }
-        | Analysis::SpectreMonteCarlo { .. } => (&RUNNABLE, "N/A"),
-        Analysis::PoleZero { .. } => (&[Ngspice], ".ac() + post-process for poles/zeros"),
-        Analysis::Distortion { .. } => (&[Ngspice], ".transient() + FFT post-processing"),
-        Analysis::Sensitivity { ac: None, .. } => (&[Ngspice, Spectre, Espice], "N/A"),
-        Analysis::Sensitivity { ac: Some(_), .. } => (&[Ngspice, Spectre], "N/A"),
-        Analysis::HarmonicBalance { .. } => {
-            (&[Vacask, Spectre], "long .tran() + discard startup + FFT")
-        }
-        Analysis::SPar { .. } => (&[Vacask, Spectre, Ngspice], "N/A"),
-        Analysis::Stability { .. } => (&[Vacask, Spectre], ".ac() + Middlebrook method"),
-        Analysis::Pss { .. } => (&[Spectre, Ngspice], "long .tran() + discard startup"),
-        Analysis::TransientNoise { .. } => (&[Vacask], ".tran() with trnoise sources"),
-        Analysis::SpectrePac { .. }
-        | Analysis::SpectrePnoise { .. }
-        | Analysis::SpectrePxf { .. }
-        | Analysis::SpectrePstb { .. } => (&[Spectre], "N/A"),
+        Kind::Op
+        | Kind::Dc
+        | Kind::Ac
+        | Kind::Tran
+        | Kind::Noise
+        | Kind::Tf
+        | Kind::Fourier
+        | Kind::SpectreSweep
+        | Kind::SpectreMonteCarlo => (&RUNNABLE, "N/A"),
+        Kind::Pz => (&[Ngspice], ".ac() + post-process for poles/zeros"),
+        Kind::Disto => (&[Ngspice], ".transient() + FFT post-processing"),
+        Kind::Sens => (&[Ngspice, Spectre, Espice], "N/A"),
+        Kind::SensAc => (&[Ngspice, Spectre], "N/A"),
+        Kind::Hb => (&[Vacask, Spectre], "long .tran() + discard startup + FFT"),
+        Kind::Sp => (&[Vacask, Spectre, Ngspice], "N/A"),
+        Kind::Stb => (&[Vacask, Spectre], ".ac() + Middlebrook method"),
+        Kind::Pss => (&[Spectre, Ngspice], "long .tran() + discard startup"),
+        Kind::TranNoise => (&[Vacask], ".tran() with trnoise sources"),
+        Kind::Pac | Kind::Pnoise | Kind::Pxf | Kind::Pstb => (&[Spectre], "N/A"),
     }
 }
 
@@ -383,59 +556,17 @@ mod tests {
         assert!(runs(Dialect::Ngspice, 0));
     }
 
-    fn pz() -> Analysis {
-        Analysis::PoleZero {
-            node1: "a".into(),
-            node2: "0".into(),
-            node3: "b".into(),
-            node4: "0".into(),
-            tf_type: crate::ir::PzTransfer::Vol,
-            pz_type: crate::ir::PzKind::Pz,
-        }
-    }
-
     #[test]
     fn routes_match_the_analysis() {
         use Dialect::*;
-        let tran = Analysis::Transient {
-            step: 1e-9,
-            stop: 1e-6,
-            start: None,
-            max_step: None,
-            uic: false,
-        };
-        let sens = |ac| Analysis::Sensitivity {
-            output: "v(b)".into(),
-            ac,
-        };
-        let ac = crate::ir::FreqSweep {
-            variation: crate::ir::Sweep::Dec,
-            points: 10,
-            start: 1.0,
-            stop: 1e6,
-        };
-        assert_eq!(route(&pz()).0, &[Ngspice]);
+        assert_eq!(route(Kind::Pz).0, &[Ngspice]);
+        assert_eq!(route(Kind::Hb).0, &[Vacask, Spectre]);
+        assert_eq!(route(Kind::TranNoise).0, &[Vacask]);
+        assert_eq!(route(Kind::Sens).0, &[Ngspice, Spectre, Espice]);
+        assert_eq!(route(Kind::SensAc).0, &[Ngspice, Spectre]);
+        assert_eq!(route(Kind::Tran).0, RUNNABLE);
         assert_eq!(
-            route(&Analysis::HarmonicBalance {
-                frequencies: vec![1e6],
-                harmonics: vec![5]
-            })
-            .0,
-            &[Vacask, Spectre]
-        );
-        assert_eq!(
-            route(&Analysis::TransientNoise {
-                step: 1e-9,
-                stop: 1e-6
-            })
-            .0,
-            &[Vacask]
-        );
-        assert_eq!(route(&sens(None)).0, &[Ngspice, Spectre, Espice]);
-        assert_eq!(route(&sens(Some(ac))).0, &[Ngspice, Spectre]);
-        assert_eq!(route(&tran).0, RUNNABLE);
-        assert_eq!(
-            route(&tran).0.last(),
+            route(Kind::Tran).0.last(),
             Some(&Espice),
             "espice is never preferred first"
         );
@@ -443,32 +574,38 @@ mod tests {
 
     #[test]
     fn explicit_backend_must_run_the_analysis() {
-        let none = FeatureFlags::default();
-        let hb = Analysis::HarmonicBalance {
-            frequencies: vec![1e6],
-            harmonics: vec![5],
-        };
         assert_eq!(
-            select(&pz(), Some("ngspice"), &none).unwrap(),
+            select(Kind::Pz, Some("ngspice"), 0).unwrap(),
             Dialect::Ngspice
         );
         assert_eq!(
-            select(
-                &Analysis::Dc { sweeps: vec![] },
-                Some("vacask-shared"),
-                &none
-            )
-            .unwrap(),
+            select(Kind::Dc, Some("vacask-shared"), 0).unwrap(),
             Dialect::Vacask
         );
         assert!(
-            matches!(select(&pz(), Some("ltspice"), &none), Err(BackendError::UnsupportedAnalysis { analysis, .. }) if analysis == "pz")
+            matches!(select(Kind::Pz, Some("ltspice"), 0), Err(BackendError::UnsupportedAnalysis { analysis, .. }) if analysis == "pz")
         );
         assert!(matches!(
-            select(&hb, Some("ngspice"), &none),
+            select(Kind::Hb, Some("ngspice"), 0),
             Err(BackendError::UnsupportedAnalysis { .. })
         ));
-        assert!(select(&Analysis::Op, Some("xyce"), &none).is_err());
+        assert!(select(Kind::Op, Some("xyce"), 0).is_err());
+    }
+
+    #[test]
+    fn check_names_each_missing_feature() {
+        let issues = check(XSPICE | LAPLACE, 1, "vacask");
+        assert_eq!(issues.len(), 2);
+        assert_eq!(issues[0].severity, IssueSeverity::Error);
+        assert!(issues[0].message.contains("XSPICE"), "{issues:?}");
+        assert_eq!(issues[1].severity, IssueSeverity::Warning);
+        assert!(check(XSPICE, 1, "ngspice").is_empty());
+        assert!(
+            check(0, 20_000, "ngspice")[0]
+                .message
+                .contains("Large circuit")
+        );
+        assert_eq!(check(0, 1, "nope")[0].message, "Unknown backend 'nope'");
     }
 
     #[test]

@@ -1,26 +1,39 @@
-//! The transpiler's front end:
-//! text → [`token::Tokens`] by a dialect's [`lexicon::Lexicon`] → [`ast::Ast`]
-//! by one parser → a [`resolve::Kit`] (a kit's files and its symbol table)
-//! → deck text in any dialect ([`render`]), and the temporary bridge
-//! [`ast_to_ir`] from the AST to
-//! today's `CircuitIR`. `import::parse` reads every deck through it (phase
-//! 2b, TESTING.md "Golden gate"); `golden diff` against the recorded `9d1d6bb` baseline, the
-//! PEG reader it replaced, gates every change (TESTING.md, "Golden gate").
+//! The transpiler: text → [`token::Tokens`] by a dialect's
+//! [`lexicon::Lexicon`] → [`ast::Ast`] by one parser → a [`resolve::Kit`]
+//! (a kit's files and its symbol table) → deck text in any dialect
+//! ([`render`]), with every stage's diagnostics coded in [`diag`].
 //!
-//! "The old reader" in this module's comments is that PEG reader and its
-//! lowering, at `9d1d6bb` (`git show 9d1d6bb:grammar/spice.peg`); its files
-//! are gone, so a citation names the rule it means.
+//! Using it (a file read from disk: `crate::import`):
+//! - a kit: `import::kit(&[entry], Form::Library, Dialect::Spectre, root)`
+//!   (or [`resolve::Kit::load`] with a loader of your own) reads the entry
+//!   and every file it includes, in read order (`kit.files()`), each with
+//!   its role and diagnostics (`kit.file(id).diags`), its definitions in
+//!   `kit.definitions()`;
+//! - a file in another dialect: `render::render_kit(&kit, id, name,
+//!   Dialect::Ngspice)` for a kit file, `render::render_text(text, from,
+//!   name, to)` for text read alone; either is `Ok(Written { text, notes })`
+//!   or `Err(Diags)`, a refusal;
+//! - the diagnostics: `Diags { diags, messages }`, every `P`, `R` and `W`
+//!   row on the file sorted by position, and one line per row
+//!   (`<deck>:<line>:<column>: <code> <title>`); `diag::info(code)` is a
+//!   code's title, clause and explanation, `diag::Kind` whether it refuses.
+//!
+//! "The old reader" in this module's comments is the PEG reader and its
+//! lowering, at `9d1d6bb` (`git show 9d1d6bb:grammar/spice.peg`); "the old
+//! writer" the `codegen` writers phase 6 deleted, at `949be79`. Their files
+//! are gone, so a citation names the rule it means; `golden diff` against
+//! the recorded `9d1d6bb` baseline gates every change (TESTING.md, "Golden
+//! gate").
 //!
 //! Contents:
 //! - `pub mod ast`, `pub mod device`, `pub mod diag`, `pub mod lexicon`, `pub mod render`,
 //!   `pub mod resolve`, `pub mod statement`, `pub mod token`
-//! - `pub use tokenize::tokenize`, `pub use parse::{parse, DEPTH_MAX}`,
-//!   `pub use adapter::ast_to_ir`
+//! - `pub use dialect::Dialect`, `pub use tokenize::tokenize`, `pub use parse::{parse, DEPTH_MAX}`
 
-mod adapter;
 pub mod ast;
 pub mod device;
 pub mod diag;
+mod dialect;
 mod expr;
 mod fields;
 pub mod lexicon;
@@ -35,7 +48,7 @@ pub mod statement;
 pub mod token;
 mod tokenize;
 
-pub use adapter::ast_to_ir;
+pub use dialect::Dialect;
 pub use parse::{DEPTH_MAX, parse};
 pub use tokenize::tokenize;
 

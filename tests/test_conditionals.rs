@@ -1,36 +1,38 @@
-//! Conditional blocks and functions through the IR: ngspice `.if` ...
-//! `.endif`, Spectre's structural `if`/`else` and `real` functions,
+//! Conditional blocks and functions through the transpiler: ngspice `.if`
+//! ... `.endif`, Spectre's structural `if`/`else` and `real` functions,
 //! VACASK `@if` ... `@end`.
 //!
 //! Oracles: the hand-written fixtures under `tests/fixtures/conditionals/`
-//! counted by hand; read -> write -> read as a fixpoint per dialect; real
-//! ngspice running the deck written back to the original's operating point
-//! bit for bit, and running the Spectre kit written as ngspice to each
-//! branch's closed-form resistance (worked by hand beside the test).
-//! Unsupported fails, never skips: run in `nix develop .#testing`.
+//! read by hand, against the deck written in their own dialect; read ->
+//! write -> read -> write as a text fixpoint per dialect; real ngspice
+//! running the deck written back to the original's operating point bit for
+//! bit, and running the Spectre kit written as ngspice to each branch's
+//! closed-form resistance (worked by hand beside the test). Unsupported
+//! fails, never skips: run in `nix develop .#testing`.
 //!
 //! Contents: none (tests only).
 
-use spicerack::codegen::{Dialect, netlist};
-use spicerack::import::parse;
-use spicerack::ir::*;
+use spicerack::syntax::Dialect;
+use spicerack::syntax::diag::Code;
+use spicerack::syntax::render::render_text;
 
 const KIT: &str = include_str!("fixtures/conditionals/kit.scs");
 const IF: &str = include_str!("fixtures/conditionals/if.sp");
 
 // ---- private ----
 
-/// Read -> write -> read gives the same IR and the same text.
-fn fixpoint(ir: &CircuitIR, d: Dialect) -> String {
-    let text = netlist(ir, d).unwrap_or_else(|e| panic!("{d:?}: {e}"));
-    let (again, report) = parse(&text, &ir.top.name, d).unwrap();
-    assert!(
-        report.unparsed.is_empty(),
-        "{d:?}: {:?}\n{text}",
-        report.unparsed
-    );
-    assert_eq!(&again, ir, "{d:?}:\n{text}");
-    assert_eq!(netlist(&again, d).unwrap(), text, "{d:?}");
+/// `src` (read in `d`) written for `to`, with no note on it.
+fn written(src: &str, d: Dialect, to: Dialect) -> String {
+    let w = render_text(src, d, "t", to).unwrap_or_else(|e| panic!("{to:?}: {}", e.messages));
+    let codes: Vec<Code> = w.notes.diags.iter().map(|d| d.code).collect();
+    assert_eq!(codes, [] as [Code; 0], "{to:?}: {}", w.notes.messages);
+    w.text
+}
+
+/// Read -> write -> read -> write gives the same text.
+fn fixpoint(src: &str, d: Dialect) -> String {
+    let text = written(src, d, d);
+    assert_eq!(written(&text, d, d), text, "{d:?}");
     text
 }
 
@@ -48,53 +50,28 @@ fn op(deck: &str) -> Vec<(String, u64)> {
 
 /// The Spectre kit: three functions in the section, one subcircuit whose
 /// body is one conditional of four branches (the third nesting two), all
-/// read with nothing raw; a fixpoint in Spectre.
+/// read with nothing kept as text; a fixpoint in Spectre.
 #[test]
 fn spectre_kit_reads_into_functions_and_conditionals() {
-    let (ir, report) = parse(KIT, "kit", Dialect::Spectre).unwrap();
-    assert_eq!(report, Default::default());
-    let tt = &ir.sections[0];
-    let names: Vec<(&str, usize)> = tt
-        .functions
-        .iter()
-        .map(|f| (f.name.as_str(), f.args.len()))
-        .collect();
-    assert_eq!(names, [("rscale", 2), ("rsheet", 1), ("lim", 3)]);
-    assert_eq!(tt.functions[1].body, "100*(1 + 1e-3*(t - 27))");
-    let res = &tt.subcircuit_defs[0];
-    assert!(
-        res.components.is_empty() && res.raw_spice.is_empty(),
-        "{res:?}"
-    );
-    let [c] = &res.conditionals[..] else {
-        panic!("{res:?}")
-    };
-    let conds: Vec<Option<&str>> = c.branches.iter().map(|b| b.condition.as_deref()).collect();
-    assert_eq!(
-        conds,
-        [
-            Some("mode == 0"),
-            Some("mode == 1 && hot == 0"),
-            Some("mode == 2"),
-            None
-        ]
-    );
-    let nested = &c.branches[2].body.conditionals[0];
-    assert_eq!(
-        nested
-            .branches
-            .iter()
-            .map(|b| b.condition.as_deref())
-            .collect::<Vec<_>>(),
-        [Some("hot == 1"), None]
-    );
-    assert!(
-        c.branches
-            .iter()
-            .enumerate()
-            .all(|(i, b)| (i == 2) == b.body.components.is_empty())
-    );
-    fixpoint(&ir, Dialect::Spectre);
+    let text = fixpoint(KIT, Dialect::Spectre);
+    // By hand from kit.scs: the three functions, each its arguments and
+    // body, in the section; then the subcircuit's one `if` chain, its
+    // conditions in order (the two-line one joined), the third branch
+    // nesting a two-branch `if`, every other branch one resistor.
+    let want = "library kit\nsection tt\n\
+                real rscale(real w, real l) {\n    return 1 + 0.1*(l/w);\n}\n\
+                real rsheet(real t) {\n    return 100*(1 + 1e-3*(t - 27));\n}\n\
+                real lim(real x, real lo, real hi) {\n    return x < lo ? lo : (x > hi ? hi : x);\n}\n\
+                parameters rsh=rsheet(27)\nmodel nch bsim4 type=n vth0=400m\n\
+                subckt res (a b)\nparameters w=1u l=10u mode=0 hot=0\n\
+                if (mode == 0) {\nr0 (a b) resistor r=rsh*l/w\n\
+                } else if (mode == 1 && hot == 0) {\nr0 (a b) resistor r=2*rsh*l/w*rscale(w, l)\n\
+                } else if (mode == 2) {\n\
+                if (hot == 1) {\nr0 (a b) resistor r=lim(3*rsh*l/w, 1, 1e4)\n\
+                } else {\nr0 (a b) resistor r=3*rsh*l/w\n}\n\
+                } else {\nr0 (a b) resistor r=1k\n}\n\
+                ends res\nendsection tt\nendlibrary kit\n";
+    assert!(text.contains(want), "{text}");
 }
 
 /// The kit written as ngspice: ngspice runs each branch to its closed-form
@@ -103,8 +80,7 @@ fn spectre_kit_reads_into_functions_and_conditionals() {
 /// hot 1: lim(3k, 1, 1e4) = 3k; mode 2, hot 0: 3k; mode 3: 1k.
 #[test]
 fn spectre_kit_runs_on_ngspice() {
-    let (ir, _) = parse(KIT, "kit", Dialect::Spectre).unwrap();
-    let sp = netlist(&ir, Dialect::Ngspice).unwrap();
+    let sp = written(KIT, Dialect::Spectre, Dialect::Ngspice);
     assert!(
         sp.contains(".if (mode == 0)\n") && sp.contains(".func rscale(w, l) {1 + 0.1*(l/w)}\n"),
         "{sp}"
@@ -147,46 +123,51 @@ fn spectre_kit_runs_on_ngspice() {
 /// a top-level one choosing an element, one choosing a `.model`. A fixpoint
 /// in ngspice, HSPICE, Spectre and VACASK; ngspice runs the deck written
 /// back, and the HSPICE text in its HSPICE mode, to the original's
-/// operating point bit for bit.
+/// operating point bit for bit; LTspice and Xyce, with no `.if`, refuse it.
 #[test]
 fn ngspice_conditionals_round_trip_and_run() {
-    let (ir, report) = parse(IF, "if", Dialect::Ngspice).unwrap();
-    assert_eq!(report, Default::default());
-    assert_eq!(
-        (
-            ir.top.conditionals.len(),
-            ir.subcircuit_defs[0].conditionals.len()
-        ),
-        (2, 1)
+    let text = fixpoint(IF, Dialect::Ngspice);
+    // By hand from if.sp: the subcircuit's chain of three branches, the
+    // second nesting two; at the top, the element chain and the `.model`
+    // chain, `D1` in each of its three branches.
+    assert!(
+        text.contains(".subckt sel a b PARAMS: k=0\n.if (k == 0)\nR1 a b 1k\n.elseif (k == 1)\n.if (ok2)\nR1 a b 2k\n.else\nR1 a b 3k\n.endif\n.else\nR1 a b 4k\n.endif\n.ends sel\n"),
+        "{text}"
     );
-    assert_eq!(ir.top.conditionals[1].branches[1].body.models[0].name, "D1");
+    assert!(
+        text.contains(".if (ok && ok2)\nR11 1 0 2\n.else\nR11 1 0 500m\n.endif\n"),
+        "{text}"
+    );
+    assert_eq!(text.matches(".model D1 D (").count(), 3, "{text}");
     let want = op(IF);
-    assert_eq!(op(&fixpoint(&ir, Dialect::Ngspice)), want);
-    let hs = netlist(&ir, Dialect::Hspice).unwrap();
+    assert_eq!(op(&text), want);
+    let hs = written(IF, Dialect::Ngspice, Dialect::Hspice);
     assert!(hs.contains(".if (ok && ok2)\nR11 1 0 2\n.else\n"), "{hs}");
     assert_eq!(
         op(&format!("{hs}\n").replacen('\n', "\n*spicerack ngbehavior=hsa\n", 1)),
         want
     );
-    let scs = netlist(&ir, Dialect::Spectre).unwrap();
+    let scs = written(IF, Dialect::Ngspice, Dialect::Spectre);
     assert!(
         scs.contains("if (k == 0) {\nr1 (a b) resistor r=1k\n} else if (k == 1) {\nif (ok2) {"),
         "{scs}"
     );
-    let (back, report) = parse(&scs, "if", Dialect::Spectre).unwrap();
-    assert_eq!(report, Default::default(), "{scs}");
-    assert_eq!(back.subcircuit_defs[0].conditionals[0].branches.len(), 3);
-    fixpoint(&back, Dialect::Spectre);
-    let sim = netlist(&ir, Dialect::Vacask).unwrap();
+    let back = fixpoint(&scs, Dialect::Spectre);
+    let sel = &back[back.find("subckt sel").unwrap()..back.find("ends sel").unwrap()];
+    assert_eq!(
+        sel.matches("} else ").count(),
+        3,
+        "three branches, one nested: {back}"
+    );
+    let sim = written(IF, Dialect::Ngspice, Dialect::Vacask);
     assert!(
         sim.contains("@if k == 0\n") && sim.contains("@end\n"),
         "{sim}"
     );
-    let (vback, report) = parse(&sim, "if", Dialect::Vacask).unwrap();
-    assert!(report.unparsed.is_empty(), "{:?}\n{sim}", report.unparsed);
-    fixpoint(&vback, Dialect::Vacask);
+    fixpoint(&sim, Dialect::Vacask);
     for d in [Dialect::Ltspice, Dialect::Xyce] {
-        let err = netlist(&ir, d).unwrap_err().to_string();
-        assert!(err.contains("has no .if"), "{d:?}: {err}");
+        let refused = render_text(IF, Dialect::Ngspice, "t", d).unwrap_err();
+        let codes: Vec<Code> = refused.diags.iter().map(|d| d.code).collect();
+        assert_eq!(codes, [Code::W0013; 3], "{d:?}: {}", refused.messages);
     }
 }

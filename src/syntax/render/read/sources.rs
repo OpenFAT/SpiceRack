@@ -3,7 +3,7 @@
 //! the old SPICE grammar's `spec` rules: `dc`, `ac`, a waveform with or
 //! without parentheses, ngspice's named fields.
 //!
-//! Cites: the old lowering (as `syntax::adapter::sources` ports it); the old SPICE grammar's `V`, `I`, `spec`,
+//! Cites: the old lowering; the old SPICE grammar's `V`, `I`, `spec`,
 //! `Sdc`, `Sac`, `wave`, `wargs`; the old ngspice grammar's `Pair_src`, `Trnoise`,
 //! `Trrandom`; ngspice manual §4.1.4-§4.1.11.
 //!
@@ -13,7 +13,7 @@
 //! - `Rd::source(&self, n: u32, e: Element, name: String) -> Option<Card>`
 
 use super::{Card, Rd, Val};
-use crate::codegen::Dialect;
+use crate::syntax::Dialect;
 use crate::syntax::ast::{NONE, Node, Tag};
 use crate::syntax::device::Primitive as Element;
 

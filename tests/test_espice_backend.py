@@ -88,7 +88,8 @@ class TestNetlist:
         tb.add_operating_point()
         with pytest.raises(Exception) as err:
             tb.netlist("espice")
-        assert "does not load OSDI" in str(err.value)
+        # ESPice compiles Verilog-A source itself and loads no OSDI binary.
+        assert "W0004" in str(err.value)
 
     def test_capabilities_are_declared_not_assumed(self):
         tb = bench(divider())
@@ -163,7 +164,7 @@ class TestRun:
         c.R(name="1", positive="a", negative=c.gnd, value=1e3)
         with pytest.raises(Exception) as err:
             c.simulator(simulator="espice").operating_point()
-        assert "OSDI" in str(err.value)
+        assert "W0004" in str(err.value)
 
 
 # ── Recipes, as tests/test_run_corners.py and tests/test_characterize.py run them ──

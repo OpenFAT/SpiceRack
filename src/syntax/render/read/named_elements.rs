@@ -3,10 +3,9 @@
 //! waveforms, as the old lowering typed them; a master another file of the
 //! kit declares is read as `syntax::resolve` binds it.
 //!
-//! Cites: the old lowering's named elements (as
-//! `syntax::adapter::named_elements` ports them);
+//! Cites: the old lowering's named elements;
 //! Spectre Circuit Simulator Reference 5.0 `[CMP]` (`vsource` #4, #17, #18,
-//! p.686); `codegen::spectre`, `codegen::vacask` (the key names, inverted).
+//! p.686); the old Spectre and VACASK writers (the key names, inverted).
 //!
 //! Contents:
 //! - `fn unquoted(v: &str) -> Option<String>`
@@ -14,7 +13,7 @@
 
 use super::named::{spectre_kind, vacask_builtin, vacask_kind};
 use super::{Card, Num, Rd, Val, Wave, WaveKind};
-use crate::codegen::Dialect;
+use crate::syntax::Dialect;
 use crate::syntax::ast::{NONE, Node, Tag};
 use crate::syntax::resolve::{Binding, Def, DefKind, Polarity};
 
@@ -318,7 +317,7 @@ impl<'a> Rd<'a> {
         }
     }
 
-    /// `name`'s SPICE spelling: the letter `codegen` adds back is dropped
+    /// `name`'s SPICE spelling: the letter a writer adds back is dropped
     /// (the old lowering's `strip`).
     fn strip(&self, name: &str, letter: char) -> String {
         let name = if self.d == Dialect::Vacask {

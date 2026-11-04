@@ -5,7 +5,7 @@
 //! against its rule in the old SPICE grammar (a card no rule reads is `Raw`
 //! or `Unparsed` by its word, `Rd::refused`).
 //!
-//! Cites: the old lowering (as `syntax::adapter::cards` ports it);
+//! Cites: the old lowering;
 //! the old SPICE grammar's `dotcard` and its overlays (`Include`, `Lib`, `Model`,
 //! `Params`, `Func`, `Options`, `Temp`, `Ic`, `Save`, `Out`, `Print`, `Op`
 //! … `Four`, ngspice `Sp`, HSPICE `Tran`/`Probe`, LTspice `Tran`/`Lib`/
@@ -20,7 +20,7 @@
 //!   `Rd::func_span(&self, f: Func) -> Option<(u32, u32)>`, `Rd::param_view(&self, a: u32) -> (String, String)`
 
 use super::{Acc, Block, Func, Kept, Rd, Scope};
-use crate::codegen::Dialect;
+use crate::syntax::Dialect;
 use crate::syntax::ast::{NONE, Node, Tag};
 use crate::syntax::token::Tag as T;
 

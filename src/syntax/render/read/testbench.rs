@@ -3,7 +3,7 @@
 //! old lowering applied them, each card first checked against its rule in
 //! the old SPICE grammar (`Rd::testbench_peg`).
 //!
-//! Cites: the old lowering (as `syntax::adapter::testbench` ports it); the old SPICE grammar's `Options`, `Temp`,
+//! Cites: the old lowering; the old SPICE grammar's `Options`, `Temp`,
 //! `Ic`, `Nodeset`, `Save`, `Out`, `Print`, `Meas`, `Op` … `Four`; the old ngspice grammar
 //! `Sp`; the old HSPICE grammar's `Tran`, `Probe`, `Out`; the old LTspice grammar's `Tran`, `Step`;
 //! the old Xyce grammar's `Options`, `Step`; Xyce Reference Guide p.96.
@@ -19,7 +19,7 @@
 use super::Rd;
 use super::options::Opt;
 use super::outputs::print_kind;
-use crate::codegen::Dialect;
+use crate::syntax::Dialect;
 use crate::syntax::ast::{NONE, Node, Tag};
 use crate::syntax::token::Tag as T;
 

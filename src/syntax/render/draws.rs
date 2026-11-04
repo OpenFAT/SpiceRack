@@ -21,8 +21,8 @@
 //!
 //! Cites: ngspice `inpcom.c` `inp_fix_agauss_in_param` (the two-layer idiom:
 //! one layer redraws per reference, measured on ngspice-44.2); Spectre Reference 19.1
-//! pp.175-179; the old writer's `codegen::statistics::lower`, whose output
-//! this is byte for byte.
+//! pp.175-179; the old writer's statistics lowering, whose
+//! output this is byte for byte.
 //!
 //! Contents:
 //! - `pub(super) struct Draws`, `pub(super) enum Layers`

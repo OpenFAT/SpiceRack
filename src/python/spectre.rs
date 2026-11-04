@@ -93,9 +93,9 @@ macro_rules! pymethods_with_spectre {
             ) -> PyResult<PyAcAnalysis> {
                 let a = Analysis::SpectrePac {
                     pss: PssBase {
-                        pss_fundamental,
-                        pss_stabilization,
-                        pss_harmonics,
+                        fundamental: pss_fundamental,
+                        stabilization: pss_stabilization,
+                        harmonics: pss_harmonics,
                     },
                     sweep: card::sweep(variation, points, start_freq, stop_freq)?,
                     sweep_type: sweep_type.into(),
@@ -121,9 +121,9 @@ macro_rules! pymethods_with_spectre {
             ) -> PyResult<PyNoiseAnalysis> {
                 let a = Analysis::SpectrePnoise {
                     pss: PssBase {
-                        pss_fundamental,
-                        pss_stabilization,
-                        pss_harmonics,
+                        fundamental: pss_fundamental,
+                        stabilization: pss_stabilization,
+                        harmonics: pss_harmonics,
                     },
                     output: output_node.into(),
                     reference: ref_node.into(),
@@ -148,14 +148,16 @@ macro_rules! pymethods_with_spectre {
                 start_freq: f64,
                 stop_freq: f64,
             ) -> PyResult<PyAcAnalysis> {
+                // `[REF]` p.303-304: like `xf`, `pxf` takes every source's
+                // transfer function, so it names no input source.
+                let _ = source;
                 let a = Analysis::SpectrePxf {
                     pss: PssBase {
-                        pss_fundamental,
-                        pss_stabilization,
-                        pss_harmonics,
+                        fundamental: pss_fundamental,
+                        stabilization: pss_stabilization,
+                        harmonics: pss_harmonics,
                     },
                     output: output_node.into(),
-                    source: source.into(),
                     sweep: card::sweep(variation, points, start_freq, stop_freq)?,
                 };
                 Ok(PyAcAnalysis {
@@ -178,9 +180,9 @@ macro_rules! pymethods_with_spectre {
             ) -> PyResult<PyStabilityAnalysis> {
                 let a = Analysis::SpectrePstb {
                     pss: PssBase {
-                        pss_fundamental,
-                        pss_stabilization,
-                        pss_harmonics,
+                        fundamental: pss_fundamental,
+                        stabilization: pss_stabilization,
+                        harmonics: pss_harmonics,
                     },
                     probe: probe.into(),
                     sweep: card::sweep(variation, points, start_freq, stop_freq)?,

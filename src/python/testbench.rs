@@ -10,23 +10,24 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-// `either`, `IrNum`, `IrWaveform`: names `pymethods_with_waves!` resolves here.
-use super::args::PyValueArg;
+// `either`, `Num`, `Wave`, `Value`: names `pymethods_with_waves!` resolves here.
+use super::analysis::Analysis;
+use super::args::{Num, PyValueArg};
 use super::card::{self, dc_sweeps};
 use super::circuit::hoisted;
-use super::deck::{check_backend_name, emit_ir_netlist, lowered, runtime_err};
+use super::deck::{Deck, check_backend_name};
+use super::model::{Card, Func, ModelLibrary, Value};
 use super::results::typed_result;
 use super::simulator::PySimulator;
-use super::source::{either, source, wave_source};
+use super::source::{Wave, either, source, wave_source};
 use super::subcircuit::{PySubcircuit, top_net};
-use crate::ir::{self, Analysis, CircuitIR, Component, IrNum, IrWaveform};
 
 #[pyclass(name = "Testbench", extends = PySimulator)]
 pub(super) struct PyTestbench {}
 
 #[pyclass(name = "ModelLibrary")]
 pub(super) struct PyModelLibrary {
-    inner: ir::ModelLibrary,
+    inner: ModelLibrary,
 }
 
 // ---- private ----
@@ -36,46 +37,46 @@ pymethods_with_waves! {
 impl PyTestbench {
     #[new]
     fn new(dut: &PySubcircuit) -> (Self, PySimulator) {
-        let ir = CircuitIR { top: dut.inner.clone(), testbench: Some(Default::default()), ..Default::default() };
-        (Self {}, PySimulator { ir, backend: None, save_currents: false })
+        let deck = Deck { top: dut.inner.clone(), bench: Some(Default::default()), ..Default::default() };
+        (Self {}, PySimulator { deck, backend: None, save_currents: false })
     }
 
     /// Register a child definition (its include/lib/osdi are hoisted to the top level).
     fn add_subcircuit(mut slf: PyRefMut<'_, Self>, subckt: &PySubcircuit) {
-        let ir = &mut slf.as_super().ir;
-        let def = hoisted(&mut ir.top, &subckt.inner);
-        ir.subcircuit_defs.push(def);
+        let deck = &mut slf.as_super().deck;
+        let def = hoisted(&mut deck.top, &subckt.inner);
+        deck.defs.push(def);
     }
 
     /// Attach a PDK model library. Codegen resolves the per-backend path and corner.
     fn use_pdk(mut slf: PyRefMut<'_, Self>, pdk: &PyModelLibrary) {
-        slf.as_super().ir.model_libraries.push(pdk.inner.clone());
+        slf.as_super().deck.libraries.push(pdk.inner.clone());
     }
 
     // ── Stimulus ──
 
     #[pyo3(signature = (name, positive, negative, value, *, ac=None, ac_phase=None, portnum=None, z0=50.0))]
     fn V(mut slf: PyRefMut<'_, Self>, name: &str, positive: &str, negative: &str, value: PyValueArg, ac: Option<f64>, ac_phase: Option<f64>, portnum: Option<u32>, z0: f64) {
-        let mut v = source(false, name, top_net(positive), top_net(negative), value.ir(), ac, ac_phase, None);
-        if let Component::VoltageSource { port, .. } = &mut v {
-            *port = portnum.map(|num| ir::RfPort { num, z0 });
-        }
+        let port = portnum.map(|n| (n, z0));
+        let v = source(false, name, top_net(positive), top_net(negative), value.value(), ac, ac_phase, port, None);
         slf.as_super().stim(v);
     }
 
     #[pyo3(signature = (name, positive, negative, value, *, ac=None, ac_phase=None))]
     fn I(mut slf: PyRefMut<'_, Self>, name: &str, positive: &str, negative: &str, value: PyValueArg, ac: Option<f64>, ac_phase: Option<f64>) {
-        slf.as_super().stim(source(true, name, top_net(positive), top_net(negative), value.ir(), ac, ac_phase, None));
+        slf.as_super().stim(source(true, name, top_net(positive), top_net(negative), value.value(), ac, ac_phase, None, None));
     }
 
     #[pyo3(signature = (name, positive, negative, value))]
     fn R(mut slf: PyRefMut<'_, Self>, name: &str, positive: &str, negative: &str, value: PyValueArg) {
-        slf.as_super().stim(Component::Resistor { name: name.into(), n1: top_net(positive), n2: top_net(negative), value: value.ir(), model: None, params: vec![] });
+        let text = format!("R{name} {} {} {}", top_net(positive), top_net(negative), value.value().text());
+        slf.as_super().stim(Card::element(name, text));
     }
 
     #[pyo3(signature = (name, positive, negative, value))]
     fn C(mut slf: PyRefMut<'_, Self>, name: &str, positive: &str, negative: &str, value: PyValueArg) {
-        slf.as_super().stim(Component::Capacitor { name: name.into(), n1: top_net(positive), n2: top_net(negative), value: value.ir(), model: None, params: vec![] });
+        let text = format!("C{name} {} {} {}", top_net(positive), top_net(negative), value.value().text());
+        slf.as_super().stim(Card::element(name, text));
     }
 
     // ── Config ──
@@ -94,19 +95,19 @@ impl PyTestbench {
     /// may be `""`. Simulators that print nothing in a rawfile run omit it.
     #[pyo3(signature = (analysis, *outputs))]
     fn add_print(mut slf: PyRefMut<'_, Self>, analysis: &str, outputs: Vec<String>) {
-        slf.as_super().tb().prints.push(ir::PrintCard { analysis: analysis.to_ascii_lowercase(), outputs });
+        slf.as_super().tb().prints.push((analysis.to_ascii_lowercase(), outputs));
     }
 
     /// A `.func`: `add_function("f", ["x"], "x*2")`.
     #[pyo3(signature = (name, args, body))]
     fn add_function(mut slf: PyRefMut<'_, Self>, name: &str, args: Vec<String>, body: &str) {
-        slf.as_super().ir.functions.push(ir::FuncDef { name: name.into(), args, body: body.into() });
+        slf.as_super().deck.functions.push(Func { name: name.into(), args, body: body.into() });
     }
 
     /// `.global` nodes: one net under these names in every subcircuit.
     #[pyo3(signature = (*nodes))]
     fn global_nodes(mut slf: PyRefMut<'_, Self>, nodes: Vec<String>) {
-        let g = &mut slf.as_super().ir.globals;
+        let g = &mut slf.as_super().deck.globals;
         g.extend(nodes.into_iter().filter(|n| !g.contains(n)).collect::<Vec<_>>());
     }
 
@@ -180,7 +181,10 @@ impl PyTestbench {
 
     #[pyo3(signature = (fundamental_frequency, outputs, num_harmonics=None))]
     fn add_fourier(mut slf: PyRefMut<'_, Self>, fundamental_frequency: f64, outputs: Vec<String>, num_harmonics: Option<u32>) {
-        slf.as_super().tb().analyses.push(Analysis::Fourier { fundamental: fundamental_frequency, outputs, num_harmonics });
+        // ngspice's `.four` has no harmonic count (LTspice's does), and the
+        // deck is ngspice text.
+        let _ = num_harmonics;
+        slf.as_super().tb().analyses.push(Analysis::Fourier { fundamental: fundamental_frequency, outputs });
     }
 
     #[pyo3(signature = (param, start, stop, step, inner_analysis, inner_type))]
@@ -201,31 +205,25 @@ impl PyTestbench {
     /// table goes to stdout. `ValueError` with nothing queued.
     fn run(slf: PyRef<'_, Self>, py: Python<'_>) -> PyResult<Vec<Py<PyAny>>> {
         let sim = slf.as_super();
-        let ir = sim.deck_as_queued();
-        let analyses = ir.testbench.as_ref().map(|tb| tb.analyses.clone()).unwrap_or_default();
+        let deck = sim.deck_as_queued();
+        let analyses = deck.bench.as_ref().map(|tb| tb.analyses.clone()).unwrap_or_default();
         if analyses.is_empty() {
             return Err(PyValueError::new_err("no analyses queued: add one with add_operating_point, add_transient, ..."));
         }
-        let plots = crate::simulation::run_each(&lowered(ir)?, sim.backend.as_deref()).map_err(runtime_err)?;
+        let plots = deck.run_each(sim.backend.as_deref())?;
         assert_eq!(plots.len(), analyses.len(), "run_each returns one entry per analysis");
         analyses.iter().zip(plots).map(|(a, raw)| typed_result(py, a, raw)).collect()
     }
 
-    // ── Serialization ──
-
-    fn to_json(slf: PyRef<'_, Self>) -> PyResult<String> {
-        serde_json::to_string_pretty(&slf.as_super().ir).map_err(runtime_err)
-    }
-
     #[pyo3(signature = (backend="ngspice"))]
     fn netlist(slf: PyRef<'_, Self>, backend: &str) -> PyResult<String> {
-        emit_ir_netlist(slf.as_super().ir.clone(), backend)
+        slf.as_super().deck.netlist(backend)
     }
 
     fn __str__(slf: PyRef<'_, Self>) -> String {
-        let ir = &slf.as_super().ir;
-        let n = ir.testbench.as_ref().map_or(0, |tb| tb.analyses.len());
-        format!("Testbench(dut='{}', analyses={})", ir.top.name, n)
+        let deck = &slf.as_super().deck;
+        let n = deck.bench.as_ref().map_or(0, |tb| tb.analyses.len());
+        format!("Testbench(dut='{}', analyses={})", deck.top.name, n)
     }
 
     fn __repr__(slf: PyRef<'_, Self>) -> String {
@@ -243,7 +241,7 @@ impl PyTestbench {
         name: &str,
         p: &str,
         n: &str,
-        wf: IrWaveform,
+        wf: Wave,
         dc: Option<f64>,
         ac: Option<f64>,
         ac_phase: Option<f64>,
@@ -278,7 +276,7 @@ impl PyModelLibrary {
             }
         }
         Ok(Self {
-            inner: ir::ModelLibrary {
+            inner: ModelLibrary {
                 name: std::path::Path::new(path)
                     .file_stem()
                     .and_then(|s| s.to_str())

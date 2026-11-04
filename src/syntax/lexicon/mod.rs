@@ -19,10 +19,10 @@
 //! - `pub enum Join`, `pub enum Dollar`, `pub enum Backslash`, `pub struct End`, `pub enum Quote`,
 //!   `pub struct Quoting`, `pub enum Caret`, `pub struct Ops`, `Ops::TERNARY: u8`
 //! - `pub struct Numbers`, `pub enum Scale`, `pub enum Tail`, `pub enum Arithmetic`
-//! - `pub const NGSPICE`, `HSPICE`, `LTSPICE`, `XYCE`, `SPECTRE`, `VACASK: Lexicon`
+//! - `pub const NGSPICE`, `NGSPICE_GIVEN`, `HSPICE`, `LTSPICE`, `XYCE`, `SPECTRE`, `VACASK: Lexicon`
 //! - `pub fn of(d: Dialect) -> Option<&'static Lexicon>`
 
-use crate::codegen::Dialect;
+use crate::syntax::Dialect;
 use crate::syntax::device::{self, Device};
 use crate::syntax::statement::{Analysis, Statement};
 use crate::syntax::token::Tag;
@@ -36,7 +36,7 @@ mod xyce;
 
 pub use hspice::HSPICE;
 pub use ltspice::LTSPICE;
-pub use ngspice::NGSPICE;
+pub use ngspice::{NGSPICE, NGSPICE_GIVEN};
 pub use spectre::SPECTRE;
 pub use vacask::VACASK;
 pub use xyce::XYCE;

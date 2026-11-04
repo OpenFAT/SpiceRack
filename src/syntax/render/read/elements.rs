@@ -7,8 +7,7 @@
 //! values. Two-terminal and linear controlled elements here; POLY, `B`,
 //! semiconductors and `X` in `devices`, V and I in `sources`.
 //!
-//! Cites: the old lowering's element rules (as `syntax::adapter::elements`
-//! ports them); the old SPICE grammar's §3.1 element rules (`R` … `X`,
+//! Cites: the old lowering's element rules; the old SPICE grammar's §3.1 element rules (`R` … `X`,
 //! `inst`, `nodes`, `spec`, `wargs`, `Poly`, `behave`, `B`).
 //!
 //! Contents:

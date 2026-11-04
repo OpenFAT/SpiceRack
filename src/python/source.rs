@@ -1,18 +1,28 @@
-//! Sources: a name, two nets and a value or waveform → a `V`/`I`
-//! component; and the table of waveform-source methods Subcircuit and
-//! Testbench both expose. Cites ngspice's SIN, PULSE, PWL, EXP, SFFM, AM,
-//! TRNOISE and TRRANDOM argument orders, by meaning.
+//! Sources: a name, two nets and a value or waveform → a `V`/`I` card;
+//! and the table of waveform-source methods Subcircuit and Testbench both
+//! expose. Cites ngspice manual §4.1 (SIN, PULSE, PWL with `r=`/`td=`
+//! §4.1.4, EXP, SFFM, AM, TRNOISE §4.1.7, TRRANDOM §4.1.8), by meaning.
 //!
 //! Contents:
 //! - `macro_rules! pymethods_with_waves` (scoped to `python` by `#[macro_use]`)
-//! - `pub(super) fn source(current, name, np, nm, value, ac_magnitude, ac_phase, waveform) -> Component`
-//! - `pub(super) fn wave_source(current, name, np, nm, wf, dc, ac, ac_phase) -> Component`
+//! - `pub(super) struct Wave`, `Wave::new(form: &str, fields: &[&Num], zero: Value) -> Wave`,
+//!   `Wave::pwl(values: &[(Num, Num)], repeat: Option<&Num>, delay: Option<&Num>) -> Wave`
+//! - `pub(super) fn source(current, name, np, nm, value, ac, ac_phase, port, wave) -> Card`
+//! - `pub(super) fn wave_source(current, name, np, nm, wave, dc, ac, ac_phase) -> Card`
 //! - `pub(super) fn either(a: Option<f64>, b: Option<f64>, an: &str, bn: &str) -> PyResult<Option<f64>>`
 
 use pyo3::prelude::*;
 
-use super::args::num;
-use crate::ir::{Component, IrValue, IrWaveform};
+use super::args::Num;
+use super::model::{Card, Value, dec};
+
+/// A waveform's text (`SIN(0 1 1000 0 0 0)`) and the DC value SPICE takes
+/// for a card that gives none: the value at t=0 (AM starts at 0), and 0 for
+/// TRNOISE and TRRANDOM, which add to it.
+pub(super) struct Wave {
+    text: String,
+    zero: Value,
+}
 
 /// `#[pymethods] impl $ty { ... }` with the sixteen waveform sources (eight
 /// waveforms, each as a V and an I) appended: one table for Subcircuit and
@@ -34,22 +44,23 @@ macro_rules! pymethods_with_waves {
         impl $ty {
             $($body)*
             $(
-            #[pyo3(signature = (name, positive, negative, *, offset=IrNum::Num(0.0), amplitude=IrNum::Num(1.0), frequency=IrNum::Num(1000.0), delay=IrNum::Num(0.0), damping_factor=IrNum::Num(0.0), phase=IrNum::Num(0.0), dc_offset=None, ac_magnitude=None, dc=None, ac=None, ac_phase=None))]
+            #[pyo3(signature = (name, positive, negative, *, offset=Num::of(0.0), amplitude=Num::of(1.0), frequency=Num::of(1000.0), delay=Num::of(0.0), damping_factor=Num::of(0.0), phase=Num::of(0.0), dc_offset=None, ac_magnitude=None, dc=None, ac=None, ac_phase=None))]
             fn $sin(
                 slf: PyRefMut<'_, Self>, name: &str, positive: &str, negative: &str,
-                offset: IrNum, amplitude: IrNum, frequency: IrNum, delay: IrNum, damping_factor: IrNum, phase: IrNum, dc_offset: Option<f64>, ac_magnitude: Option<f64>, dc: Option<f64>, ac: Option<f64>, ac_phase: Option<f64>,
+                offset: Num, amplitude: Num, frequency: Num, delay: Num, damping_factor: Num, phase: Num, dc_offset: Option<f64>, ac_magnitude: Option<f64>, dc: Option<f64>, ac: Option<f64>, ac_phase: Option<f64>,
             ) -> PyResult<()> {
-                let wf = IrWaveform::Sin { offset, amplitude, frequency, delay, damping: damping_factor, phase };
+                let wf = Wave::new("SIN", &[&offset, &amplitude, &frequency, &delay, &damping_factor, &phase], offset.value());
                 Self::place_wave(slf, $current, name, positive, negative, wf, either(dc, dc_offset, "dc", "dc_offset")?, either(ac, ac_magnitude, "ac", "ac_magnitude")?, ac_phase);
                 Ok(())
             }
 
-            #[pyo3(signature = (name, positive, negative, *, initial_value=IrNum::Num(0.0), pulsed_value=IrNum::Num(1.0), delay=IrNum::Num(0.0), pulse_width=IrNum::Num(50e-9), period=IrNum::Num(100e-9), rise_time=IrNum::Num(1e-9), fall_time=IrNum::Num(1e-9), delay_time=None, dc_offset=None, dc=None, ac=None, ac_phase=None))]
+            #[pyo3(signature = (name, positive, negative, *, initial_value=Num::of(0.0), pulsed_value=Num::of(1.0), delay=Num::of(0.0), pulse_width=Num::of(50e-9), period=Num::of(100e-9), rise_time=Num::of(1e-9), fall_time=Num::of(1e-9), delay_time=None, dc_offset=None, dc=None, ac=None, ac_phase=None))]
             fn $pulse(
                 slf: PyRefMut<'_, Self>, name: &str, positive: &str, negative: &str,
-                initial_value: IrNum, pulsed_value: IrNum, delay: IrNum, pulse_width: IrNum, period: IrNum, rise_time: IrNum, fall_time: IrNum, delay_time: Option<IrNum>, dc_offset: Option<f64>, dc: Option<f64>, ac: Option<f64>, ac_phase: Option<f64>,
+                initial_value: Num, pulsed_value: Num, delay: Num, pulse_width: Num, period: Num, rise_time: Num, fall_time: Num, delay_time: Option<Num>, dc_offset: Option<f64>, dc: Option<f64>, ac: Option<f64>, ac_phase: Option<f64>,
             ) -> PyResult<()> {
-                let wf = IrWaveform::Pulse { initial: initial_value, pulsed: pulsed_value, delay: delay_time.unwrap_or(delay), rise_time, fall_time, pulse_width, period };
+                let delay = delay_time.unwrap_or(delay);
+                let wf = Wave::new("PULSE", &[&initial_value, &pulsed_value, &delay, &rise_time, &fall_time, &pulse_width, &period], initial_value.value());
                 Self::place_wave(slf, $current, name, positive, negative, wf, either(dc, dc_offset, "dc", "dc_offset")?, ac, ac_phase);
                 Ok(())
             }
@@ -58,19 +69,19 @@ macro_rules! pymethods_with_waves {
             #[pyo3(signature = (name, positive, negative, *, values, repeat_time=None, delay_time=None, dc=None, ac=None, ac_phase=None))]
             fn $pwl(
                 slf: PyRefMut<'_, Self>, name: &str, positive: &str, negative: &str,
-                values: Vec<(IrNum, IrNum)>, repeat_time: Option<IrNum>, delay_time: Option<IrNum>, dc: Option<f64>, ac: Option<f64>, ac_phase: Option<f64>,
+                values: Vec<(Num, Num)>, repeat_time: Option<Num>, delay_time: Option<Num>, dc: Option<f64>, ac: Option<f64>, ac_phase: Option<f64>,
             ) -> PyResult<()> {
-                let wf = IrWaveform::Pwl { values, repeat: repeat_time, delay: delay_time };
+                let wf = Wave::pwl(&values, repeat_time.as_ref(), delay_time.as_ref());
                 Self::place_wave(slf, $current, name, positive, negative, wf, dc, ac, ac_phase);
                 Ok(())
             }
 
-            #[pyo3(signature = (name, positive, negative, *, initial_value, pulsed_value, rise_time_constant, fall_delay_time, fall_time_constant, rise_delay_time=IrNum::Num(0.0), dc=None, ac=None, ac_phase=None))]
+            #[pyo3(signature = (name, positive, negative, *, initial_value, pulsed_value, rise_time_constant, fall_delay_time, fall_time_constant, rise_delay_time=Num::of(0.0), dc=None, ac=None, ac_phase=None))]
             fn $exp(
                 slf: PyRefMut<'_, Self>, name: &str, positive: &str, negative: &str,
-                initial_value: IrNum, pulsed_value: IrNum, rise_time_constant: IrNum, fall_delay_time: IrNum, fall_time_constant: IrNum, rise_delay_time: IrNum, dc: Option<f64>, ac: Option<f64>, ac_phase: Option<f64>,
+                initial_value: Num, pulsed_value: Num, rise_time_constant: Num, fall_delay_time: Num, fall_time_constant: Num, rise_delay_time: Num, dc: Option<f64>, ac: Option<f64>, ac_phase: Option<f64>,
             ) -> PyResult<()> {
-                let wf = IrWaveform::Exp { initial: initial_value, pulsed: pulsed_value, rise_delay: rise_delay_time, rise_tau: rise_time_constant, fall_delay: fall_delay_time, fall_tau: fall_time_constant };
+                let wf = Wave::new("EXP", &[&initial_value, &pulsed_value, &rise_delay_time, &rise_time_constant, &fall_delay_time, &fall_time_constant], initial_value.value());
                 Self::place_wave(slf, $current, name, positive, negative, wf, dc, ac, ac_phase);
                 Ok(())
             }
@@ -78,43 +89,48 @@ macro_rules! pymethods_with_waves {
             #[pyo3(signature = (name, positive, negative, *, offset, amplitude, carrier_frequency, modulation_index, signal_frequency, dc=None, ac=None, ac_phase=None))]
             fn $sffm(
                 slf: PyRefMut<'_, Self>, name: &str, positive: &str, negative: &str,
-                offset: IrNum, amplitude: IrNum, carrier_frequency: IrNum, modulation_index: IrNum, signal_frequency: IrNum, dc: Option<f64>, ac: Option<f64>, ac_phase: Option<f64>,
+                offset: Num, amplitude: Num, carrier_frequency: Num, modulation_index: Num, signal_frequency: Num, dc: Option<f64>, ac: Option<f64>, ac_phase: Option<f64>,
             ) -> PyResult<()> {
-                let wf = IrWaveform::Sffm { offset, amplitude, carrier_freq: carrier_frequency, modulation_index, signal_freq: signal_frequency };
+                let wf = Wave::new("SFFM", &[&offset, &amplitude, &carrier_frequency, &modulation_index, &signal_frequency], offset.value());
                 Self::place_wave(slf, $current, name, positive, negative, wf, dc, ac, ac_phase);
                 Ok(())
             }
 
-            #[pyo3(signature = (name, positive, negative, *, offset, amplitude, modulating_frequency, carrier_frequency, signal_delay=IrNum::Num(0.0), dc=None, ac=None, ac_phase=None))]
+            #[pyo3(signature = (name, positive, negative, *, offset, amplitude, modulating_frequency, carrier_frequency, signal_delay=Num::of(0.0), dc=None, ac=None, ac_phase=None))]
             fn $am(
                 slf: PyRefMut<'_, Self>, name: &str, positive: &str, negative: &str,
-                offset: IrNum, amplitude: IrNum, modulating_frequency: IrNum, carrier_frequency: IrNum, signal_delay: IrNum, dc: Option<f64>, ac: Option<f64>, ac_phase: Option<f64>,
+                offset: Num, amplitude: Num, modulating_frequency: Num, carrier_frequency: Num, signal_delay: Num, dc: Option<f64>, ac: Option<f64>, ac_phase: Option<f64>,
             ) -> PyResult<()> {
-                let wf = IrWaveform::Am { amplitude, offset, modulating_freq: modulating_frequency, carrier_freq: carrier_frequency, delay: signal_delay };
+                let wf = Wave::new("AM", &[&amplitude, &offset, &modulating_frequency, &carrier_frequency, &signal_delay], Value::Num(0.0));
                 Self::place_wave(slf, $current, name, positive, negative, wf, dc, ac, ac_phase);
                 Ok(())
             }
 
             // ngspice TRNOISE(NA NT NALPHA NAMP RTSAM RTSCAPT RTSEMT), by meaning.
-            #[pyo3(signature = (name, positive, negative, *, noise_rms, time_step, flicker_exponent=IrNum::Num(0.0), flicker_rms=IrNum::Num(0.0), rts_amplitude=IrNum::Num(0.0), rts_capture_time=IrNum::Num(0.0), rts_emission_time=IrNum::Num(0.0), dc=None, ac=None, ac_phase=None))]
+            #[pyo3(signature = (name, positive, negative, *, noise_rms, time_step, flicker_exponent=Num::of(0.0), flicker_rms=Num::of(0.0), rts_amplitude=Num::of(0.0), rts_capture_time=Num::of(0.0), rts_emission_time=Num::of(0.0), dc=None, ac=None, ac_phase=None))]
             fn $noise(
                 slf: PyRefMut<'_, Self>, name: &str, positive: &str, negative: &str,
-                noise_rms: IrNum, time_step: IrNum, flicker_exponent: IrNum, flicker_rms: IrNum, rts_amplitude: IrNum, rts_capture_time: IrNum, rts_emission_time: IrNum, dc: Option<f64>, ac: Option<f64>, ac_phase: Option<f64>,
+                noise_rms: Num, time_step: Num, flicker_exponent: Num, flicker_rms: Num, rts_amplitude: Num, rts_capture_time: Num, rts_emission_time: Num, dc: Option<f64>, ac: Option<f64>, ac_phase: Option<f64>,
             ) -> PyResult<()> {
-                let wf = IrWaveform::TrNoise { na: noise_rms, nt: time_step, nalpha: flicker_exponent, namp: flicker_rms, rtsam: rts_amplitude, rtscapt: rts_capture_time, rtsemt: rts_emission_time };
+                // The RTS fields are left off when all zero, as the manual's white
+                // and 1/f examples write the card.
+                let rts = [&rts_amplitude, &rts_capture_time, &rts_emission_time];
+                let n = if rts.iter().all(|f| f.zero()) { 4 } else { 7 };
+                let wf = Wave::new("TRNOISE", &[&noise_rms, &time_step, &flicker_exponent, &flicker_rms, rts[0], rts[1], rts[2]][..n], Value::Num(0.0));
                 Self::place_wave(slf, $current, name, positive, negative, wf, dc, ac, ac_phase);
                 Ok(())
             }
 
             // ngspice TRRANDOM(TYPE TS TD PARAM1 PARAM2), PySpice's names;
             // `random_type` is uniform, gaussian, exponential or poisson.
-            #[pyo3(signature = (name, positive, negative, *, random_type, duration, time_delay=IrNum::Num(0.0), parameter1=IrNum::Num(1.0), parameter2=IrNum::Num(0.0), dc=None, ac=None, ac_phase=None))]
+            #[pyo3(signature = (name, positive, negative, *, random_type, duration, time_delay=Num::of(0.0), parameter1=Num::of(1.0), parameter2=Num::of(0.0), dc=None, ac=None, ac_phase=None))]
             fn $random(
                 slf: PyRefMut<'_, Self>, name: &str, positive: &str, negative: &str,
-                random_type: &str, duration: IrNum, time_delay: IrNum, parameter1: IrNum, parameter2: IrNum, dc: Option<f64>, ac: Option<f64>, ac_phase: Option<f64>,
+                random_type: &str, duration: Num, time_delay: Num, parameter1: Num, parameter2: Num, dc: Option<f64>, ac: Option<f64>, ac_phase: Option<f64>,
             ) -> PyResult<()> {
-                let kind = random_type.parse().map_err(PyValueError::new_err)?;
-                let wf = IrWaveform::TrRandom { kind, ts: duration, td: time_delay, p1: parameter1, p2: parameter2 };
+                let kind: super::analysis::RandomKind = random_type.parse().map_err(PyValueError::new_err)?;
+                let ty = Num::of((kind as u8 + 1).into());
+                let wf = Wave::new("TRRANDOM", &[&ty, &duration, &time_delay, &parameter1, &parameter2], Value::Num(0.0));
                 Self::place_wave(slf, $current, name, positive, negative, wf, dc, ac, ac_phase);
                 Ok(())
             }
@@ -123,40 +139,63 @@ macro_rules! pymethods_with_waves {
     };
 }
 
-/// A `V` (or, with `current`, an `I`) source.
+impl Wave {
+    /// `FORM(f0 f1 ...)`.
+    pub(super) fn new(form: &str, fields: &[&Num], zero: Value) -> Wave {
+        let f: Vec<String> = fields.iter().map(|n| n.text()).collect();
+        Wave {
+            text: format!("{form}({})", f.join(" ")),
+            zero,
+        }
+    }
+
+    /// `PWL(t0 v0 t1 v1 ...) [r=…] [td=…]`.
+    pub(super) fn pwl(values: &[(Num, Num)], repeat: Option<&Num>, delay: Option<&Num>) -> Wave {
+        let f: Vec<String> = values
+            .iter()
+            .map(|(t, v)| format!("{} {}", t.text(), v.text()))
+            .collect();
+        let mut text = format!("PWL({})", f.join(" "));
+        if let Some(r) = repeat {
+            text.push_str(&format!(" r={}", r.text()));
+        }
+        if let Some(td) = delay {
+            text.push_str(&format!(" td={}", td.text()));
+        }
+        let zero = values.first().map_or(Value::Num(0.0), |p| p.1.value());
+        Wave { text, zero }
+    }
+}
+
+/// A `V` (or, with `current`, an `I`) card: `V<name> np nm value [AC mag
+/// [phase]] [portnum n z0 z] [wave]`.
 pub(super) fn source(
     current: bool,
     name: &str,
     np: String,
     nm: String,
-    value: IrValue,
-    ac_magnitude: Option<f64>,
+    value: Value,
+    ac: Option<f64>,
     ac_phase: Option<f64>,
-    waveform: Option<IrWaveform>,
-) -> Component {
-    let name = name.to_string();
-    if current {
-        Component::CurrentSource {
-            name,
-            np,
-            nm,
-            value,
-            ac_magnitude,
-            ac_phase,
-            waveform,
-        }
-    } else {
-        Component::VoltageSource {
-            name,
-            np,
-            nm,
-            value,
-            ac_magnitude,
-            ac_phase,
-            waveform,
-            port: None,
+    port: Option<(u32, f64)>,
+    wave: Option<&Wave>,
+) -> Card {
+    let letter = if current { 'I' } else { 'V' };
+    let mut tail = String::new();
+    if let Some(mag) = ac {
+        tail.push_str(&format!(" AC {}", dec(mag)));
+        if let Some(phase) = ac_phase {
+            tail.push_str(&format!(" {}", dec(phase)));
         }
     }
+    if let Some((n, z0)) = port {
+        tail.push_str(&format!(" portnum {n} z0 {}", dec(z0)));
+    }
+    if let Some(w) = wave {
+        tail.push(' ');
+        tail.push_str(&w.text);
+    }
+    Card::source(name, format!("{letter}{name} {np} {nm}"), &value, tail)
 }
 
 /// A waveform source: its DC value is `dc`, else the waveform's t=0 value.
@@ -165,14 +204,25 @@ pub(super) fn wave_source(
     name: &str,
     np: String,
     nm: String,
-    wf: IrWaveform,
+    wave: Wave,
     dc: Option<f64>,
     ac: Option<f64>,
     ac_phase: Option<f64>,
-) -> Component {
-    let value = dc.map_or_else(|| wf.at_zero(), num);
-    source(current, name, np, nm, value, ac, ac_phase, Some(wf))
+) -> Card {
+    let value = dc.map_or_else(|| wave.zero.clone(), Value::Num);
+    source(
+        current,
+        name,
+        np,
+        nm,
+        value,
+        ac,
+        ac_phase,
+        None,
+        Some(&wave),
+    )
 }
+
 /// One of two spellings of the same argument (`dc`/`dc_offset`), never both.
 pub(super) fn either(a: Option<f64>, b: Option<f64>, an: &str, bn: &str) -> PyResult<Option<f64>> {
     match (a, b) {

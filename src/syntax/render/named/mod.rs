@@ -19,7 +19,7 @@
 //! (`statistics`); R5 pp.870-871 (`real` functions, `global 0`); Kundert,
 //! *The Designer's Guide to SPICE and Spectre*, App. B (`[KUN]`: `//`,
 //! `simulator lang=`, case); Spectre UG p.62 (escapes), p.108 (model
-//! groups). The old writer (`codegen::spectre`) cites each statement too.
+//! groups).
 //!
 //! Contents:
 //! - `pub(super) fn write(rd: &mut Rd, deck: &Deck, target: Dialect) -> Result<String, Vec<Diag>>`
@@ -40,7 +40,7 @@ use super::out::{Out, Space};
 use super::read::{Block, Comp, Deck, Elem, Func, Raw, Rd, Section};
 use super::role::{self, Frame};
 use super::spelling::{Spelling, spelling};
-use crate::codegen::Dialect;
+use crate::syntax::Dialect;
 use crate::syntax::ast::NONE;
 use crate::syntax::diag::{Code, Diag};
 use crate::syntax::resolve::Role;
@@ -192,6 +192,9 @@ impl W<'_, '_> {
         }
         for &n in &top.loads {
             let p = self.rd.unquote(self.rd.fields(n)[0]);
+            self.line(&format!("ahdl_include \"{p}\""));
+        }
+        for p in &deck.given_loads {
             self.line(&format!("ahdl_include \"{p}\""));
         }
         self.unwritten_loads();

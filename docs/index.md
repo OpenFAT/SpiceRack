@@ -61,12 +61,12 @@ gain_db = ac.magnitude_db("vout")       # list[float], one per ac.frequency poin
 
 | Page | Covers |
 | --- | --- |
-| [Circuits](circuits.md) | `Circuit`, `Subcircuit`, `Testbench`, every element and source, units, models, saving to JSON |
+| [Circuits](circuits.md) | `Circuit`, `Subcircuit`, `Testbench`, every element and source, units, models, saving a deck |
 | [Simulating](simulate.md) | Analyses, reading results, simulator options, choosing a backend, linting |
 | [Models and PDKs](models.md) | Model libraries and corners, Verilog-A, digital Verilog |
 | [Testbenches](testbenches.md) | About 60 ready-made benches (amplifiers, regulators, converters, PLLs...), corners and Monte Carlo |
 | [Re-measuring](remeasure.md) | Recomputing SNDR, settling, margins, noise and yield from a `.raw` file |
-| [Tools](tools.md) | The `spice2rack` converter, the Rust crate, the JSON circuit format |
+| [Tools](tools.md) | The `spice2rack` converter, the Rust crate |
 | [API reference](reference.md) | Every class, method and signature on one page |
 
 The [examples/](https://github.com/OpenFAT/SpiceRack/tree/main/examples) folder

@@ -10,10 +10,10 @@
 //! power, an improper or constant-denominator ratio with a pole term,
 //! arithmetic around the call, a current input) is `W0010`'s.
 //!
-//! Cites: `codegen::laplace` (the old writer's reading of the same
-//! expression as text, kept for the Python API's CircuitIR path; its
-//! module notes record what ngspice 44.2 accepts: descending
-//! coefficients, `deg num <= deg den`, no degree-0 denominator).
+//! Cites: what ngspice 44.2 accepts, as the old writer's Laplace reader
+//! recorded it: descending coefficients, `deg num <= deg den`, no
+//! degree-0 denominator (a constant `H(s)` written as `den_coeff=[1]`
+//! segfaults it).
 //!
 //! Contents:
 //! - `pub(super) enum Laplace`

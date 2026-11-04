@@ -1,26 +1,30 @@
-//! A deck in one dialect -> emitted, read back and emitted again: the IR and
-//! the text must not change. No simulator.
+//! A deck in one dialect -> written in it, read back and written again: the
+//! text must not change. No simulator.
 //!
 //! Cites: none (a round trip through SpiceRack's own reader and writer).
 //!
 //! Contents:
-//! - `pub(super) fn fixpoint(ir: &CircuitIR, d: Dialect) -> Result<String, String>`
+//! - `pub(super) fn fixpoint(src: &str, name: &str, d: Dialect) -> Result<String, String>`
 //! - `pub(super) fn corpus_fixpoint(var: &str, d: Dialect, ext: &str, keep: fn(&str) -> bool)`
 
 use super::*;
 
-/// Emitting `ir` in `d` and reading it back gives `ir` again, and emitting
-/// that gives the same text: what SpiceRack writes, it reads as written.
-/// The emitted text is returned.
-pub(super) fn fixpoint(ir: &CircuitIR, d: Dialect) -> Result<String, String> {
-    let text = netlist(ir, d).map_err(|e| format!("{d:?} emit: {e}"))?;
-    let (again, _) = parse(&text, &ir.top.name, d)?;
-    if &again != ir || netlist(&again, d).ok().as_ref() != Some(&text) {
+/// `src` written in `d`, read back and written again gives the same text:
+/// what SpiceRack writes, it reads as written. The written text is
+/// returned; `Err` names the refusal or the first change.
+pub(super) fn fixpoint(src: &str, name: &str, d: Dialect) -> Result<String, String> {
+    let once = render_text(src, d, name, d)
+        .map_err(|e| format!("{d:?} write: {}", e.messages))?
+        .text;
+    let twice = render_text(&once, d, name, d)
+        .map_err(|e| format!("{d:?} rewrite: {}", e.messages))?
+        .text;
+    if twice != once {
         return Err(format!(
-            "{d:?} is no fixpoint: re-reading the emitted deck changes the IR"
+            "{d:?} is no fixpoint: re-reading the written deck changes it"
         ));
     }
-    Ok(text)
+    Ok(once)
 }
 
 /// Every deck under `$<var>` whose path passes `keep` is a fixpoint in `d`.
@@ -37,28 +41,7 @@ pub(super) fn corpus_fixpoint(var: &str, d: Dialect, ext: &str, keep: fn(&str) -
         .iter()
         .filter_map(|p| {
             let src = spicerack::import::decode(&std::fs::read(p).ok()?);
-            let parsed = parse(&src, "t", d);
-            // `$GOLDEN_DIR`: each deck's IR and report as JSON, for diffing two
-            // importers byte for byte (`diff -r before after`).
-            if let Ok(dir) = std::env::var("GOLDEN_DIR") {
-                let rel = p.strip_prefix(&root).unwrap_or(p);
-                let out = Path::new(&dir)
-                    .join(format!("{d:?}"))
-                    .join(rel)
-                    .with_extension("json");
-                std::fs::create_dir_all(out.parent().unwrap()).unwrap();
-                let body = match &parsed {
-                    Ok((ir, r)) => {
-                        format!("{}\n{:?}\n", serde_json::to_string_pretty(ir).unwrap(), r)
-                    }
-                    Err(e) => format!("error: {e}\n"),
-                };
-                std::fs::write(out, body).unwrap();
-            }
-            let why = match parsed {
-                Ok((ir, _)) => fixpoint(&ir, d).err()?,
-                Err(e) => e,
-            };
+            let why = fixpoint(&src, "t", d).err()?;
             Some(format!("{}: {why}", p.display()))
         })
         .collect();

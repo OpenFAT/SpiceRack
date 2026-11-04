@@ -3,7 +3,7 @@
 //! a Spectre `statistics` block's view.
 //!
 //! Cites: the old lowering's `named_model`, `one_model` and its statistics
-//! reading (as `syntax::adapter::named_blocks` ports them); Spectre
+//! reading; Spectre
 //! Reference 19.1 pp.175-179, p.481; Spectre UG p.92, p.108.
 //!
 //! Contents:
@@ -16,7 +16,7 @@
 use super::cards::Model;
 use super::named::{spectre_kind, vacask_builtin, vacask_kind};
 use super::{Block, Rd};
-use crate::codegen::Dialect;
+use crate::syntax::Dialect;
 use crate::syntax::ast::{NONE, Tag};
 use crate::syntax::token::Tag as T;
 

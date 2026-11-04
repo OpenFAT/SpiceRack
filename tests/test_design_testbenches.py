@@ -1,4 +1,3 @@
-import json
 from pathlib import Path
 
 import pytest
@@ -70,33 +69,31 @@ def test_design_benches_emit_ngspice_netlists():
         assert bench.validation
 
 
-def test_design_benches_serialize_multi_analysis_ir():
+def test_design_benches_queue_their_analyses_measures_and_saves():
     mod = ps()
-    bench = amplifier_voltage_gain(mod, dut("amp_json", ["vin", "vout"]))
-    data = json.loads(bench.testbench.to_json())
-
-    analyses = data["testbench"]["analyses"]
-    assert [analysis["type"] for analysis in analyses] == ["Op", "Ac"]
-    assert data["testbench"]["measures"]
-    assert data["testbench"]["saves"]
+    bench = amplifier_voltage_gain(mod, dut("amp_q", ["vin", "vout"]))
+    # LTspice keeps each analysis a card (ngspice runs them from `.control`).
+    deck = bench.testbench.netlist("ltspice").splitlines()
+    analyses = [line.split()[0] for line in deck if line.startswith((".op", ".ac"))]
+    assert analyses == [".op", ".ac"]
+    assert any(line.startswith(".meas") for line in deck)
+    assert any(line.startswith(".save") for line in deck)
 
 
 def test_current_waveform_and_spectre_step_support_for_charge_and_bandgap():
     mod = ps()
-    charge = charge_amplifier(mod, dut("charge_json", ["qin", "vout"]))
-    charge_data = json.loads(charge.testbench.to_json())
-    stimulus = charge_data["testbench"]["stimulus"][0]
-    assert stimulus["type"] == "CurrentSource"
-    assert stimulus["waveform"]["type"] == "Pulse"
+    charge = charge_amplifier(mod, dut("charge_q", ["qin", "vout"]))
+    deck = charge.testbench.netlist("ngspice").splitlines()
+    assert any(line.startswith("I") and " PULSE(" in line for line in deck)
 
     bg = bandgap_reference(mod, dut("bg_spectre", ["vdd", "vref"]))
     spectre = bg.netlist("spectre")
-    assert "mytnom options tnom=27" in spectre
+    # tnom is an `options` parameter (Spectre Reference 19.1 p.187, #7).
+    assert "options" in spectre and "tnom=27" in spectre
     assert "dc1 dc" in spectre
 
-    # Temperature drift rides on `.dc temp`, not `.step param temp`: the ngspice
-    # codegen comments the step card out, so a step-based sweep would silently
-    # run at one temperature.
+    # Temperature drift rides on `.dc temp`, not `.step param temp`: ngspice
+    # has no `.step` (the deck is refused), so a step-based sweep would not run.
     tc = bandgap_tempco(mod, dut("bg_tc", ["vdd", "vref"]))
     assert "dc temp -40 125 5" in tc.netlist("ngspice")
     assert "dc1 dc param=temp" in tc.netlist("spectre")

@@ -18,7 +18,7 @@ use pyo3::exceptions::{PyAttributeError, PyKeyError};
 use pyo3::prelude::*;
 use pyo3::types::PyList;
 
-use crate::ir::Analysis;
+use super::analysis::Analysis;
 use crate::result::{RawData, Results};
 
 /// Raw simulation data wrapper -- returned by spectre_sweep and spectre_montecarlo.
@@ -138,7 +138,7 @@ pub(super) fn typed_result(
         Analysis::Stability { .. } | Analysis::SpectrePstb { .. } => {
             Py::new(py, PyStabilityAnalysis { inner: r() })?.into_any()
         }
-        Analysis::TransientNoise { .. } => {
+        Analysis::TransientNoise => {
             Py::new(py, PyTransientNoiseAnalysis { inner: r() })?.into_any()
         }
         Analysis::SpectreSweep { .. } | Analysis::SpectreMonteCarlo { .. } => {

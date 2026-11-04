@@ -8,8 +8,8 @@
 //! `control` block (`vacask_cards` writes the instances, `vacask_bench`
 //! the block).
 //!
-//! Every shape was probed against the binary by the old writer
-//! (`codegen::vacask`, which cites `share/doc/vacask/{demo,test}/*.sim`);
+//! Every shape was probed against the binary by the old VACASK writer
+//! (against `share/doc/vacask/{demo,test}/*.sim`);
 //! VACASK hard-errors on an unknown parameter, so a name passed through is
 //! a loud failure, never a substitution.
 //!
@@ -25,7 +25,7 @@
 use std::collections::BTreeSet;
 
 use super::W;
-use crate::codegen::Dialect;
+use crate::syntax::Dialect;
 use crate::syntax::ast::NONE;
 use crate::syntax::diag::Code;
 use crate::syntax::render::capability::Construct;
@@ -98,18 +98,18 @@ impl W<'_, '_> {
         }
         // A VACASK deck's own `load`s are VACASK's (it compiles a `.va`
         // itself); a SPICE-origin Verilog-A load goes through OpenVAF.
-        let paths: Vec<String> = deck
-            .top
-            .loads
-            .iter()
-            .map(|&n| self.rd.unquote(self.rd.fields(n)[0]))
-            .collect();
+        let read = deck.top.loads.iter();
+        let read = read.map(|&n| self.rd.unquote(self.rd.fields(n)[0]));
+        let paths: Vec<String> = read.chain(deck.given_loads.iter().cloned()).collect();
         self.unwritten_loads();
         match self.rd.d == Dialect::Vacask {
             true => loads.extend(paths),
             false => match crate::veriloga::osdi_loads(&paths) {
                 Ok(l) => loads.extend(l),
-                Err(_) => self.refuse(Code::W0004, self.rd.main(deck.top.loads[0])),
+                Err(_) => {
+                    let tok = deck.top.loads.first().map_or(0, |&n| self.rd.main(n));
+                    self.refuse(Code::W0004, tok);
+                }
             },
         }
 

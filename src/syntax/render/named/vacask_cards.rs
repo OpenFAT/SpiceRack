@@ -3,8 +3,8 @@
 //! source waveform; the refusals for what VACASK has no element or
 //! waveform for.
 //!
-//! Cites: VACASK `share/doc/vacask/{demo,test}/*.sim` (as the old writer,
-//! `codegen::vacask::components`, probed them), `docs/input-identifiers.md`.
+//! Cites: VACASK `share/doc/vacask/{demo,test}/*.sim` (as the old VACASK writer
+//! probed them), `docs/input-identifiers.md`.
 //!
 //! Contents:
 //! - `W::vacask_card(&mut self, n: u32) -> Option<String>`

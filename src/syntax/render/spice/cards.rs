@@ -15,7 +15,7 @@
 
 use super::W;
 use super::laplace::{self, Laplace};
-use crate::codegen::Dialect;
+use crate::syntax::Dialect;
 use crate::syntax::render::capability::{Action, Alt, Construct, Rule};
 use crate::syntax::render::out::Space;
 use crate::syntax::render::read::WaveKind;

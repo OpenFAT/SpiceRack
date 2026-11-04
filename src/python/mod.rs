@@ -5,7 +5,9 @@
 //! from spicerack.unit import *
 //! ```
 //!
-//! Every class here builds `ir` data directly; netlists come only from codegen.
+//! Every class spells its calls as ngspice cards (`model`); a deck is that
+//! text, read by the parser and written for a target by `syntax::render`
+//! (`deck`).
 //! Python classes and method names → the `spicerack._native` module. Each
 //! file's `#[pymethods]` sit below its separator: no Rust caller uses
 //! them, and Python reaches them through `add_class` here. A `#[pyclass]`
@@ -13,10 +15,12 @@
 //!
 //! Files, by owner:
 //! - `unit.rs`: `Unit`, `UnitValue`, the `spicerack.unit` submodule
-//! - `args.rs`: Python arguments → IR values
-//! - `source.rs`: `V`/`I` components and the waveform-source method table
+//! - `args.rs`: Python arguments → card fields
+//! - `model.rs`: the cards and the blocks that hold them
+//! - `source.rs`: `V`/`I` cards and the waveform-source method table
+//! - `analysis.rs`: the analyses, their ngspice cards and Spectre statements
 //! - `card.rs`: analysis arguments → `Analysis`
-//! - `deck.rs`: `CircuitIR` → netlist text or a run's `RawData`
+//! - `deck.rs`: the blocks → ngspice source → a backend's netlist or a run's `RawData`
 //! - `verilog.rs`: `verilog(...)` blocks and their lowering
 //! - `subcircuit.rs`, `circuit.rs`: `Subcircuit`, `Circuit`
 //! - `simulator.rs`, `spectre.rs`: `CircuitSimulator` and its Spectre-only analyses
@@ -34,10 +38,12 @@ mod source;
 #[macro_use]
 mod spectre;
 
+mod analysis;
 mod args;
 mod card;
 mod circuit;
 mod deck;
+mod model;
 mod results;
 mod simulator;
 mod subcircuit;

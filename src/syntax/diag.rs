@@ -346,7 +346,7 @@ catalogue! {
     /// card has no form (the writer's refusal codes), or a Verilog-A load.
     W0021 Note {
         title: "an element written as an error comment",
-        cite: "no clause: the xschem layout's own form (codegen::xschem)",
+        cite: "no clause: the xschem layout's own form (`render::spice::cdl`)",
         explain: "The CDL netlist is still written, with this element as an `* error:` comment naming why (the ngspice card's refusal codes, or a Verilog-A load CDL cannot hold). An LVS run sees no device there; fix the element for ngspice first.",
     }
     /// A Verilog-A or OSDI load not written: on LTspice (no OSDI loader),
@@ -391,8 +391,14 @@ catalogue! {
     /// A statement the CDL layout (an LVS netlist) does not write.
     W0028 Note {
         title: "a statement the CDL layout does not write",
-        cite: "Cadence CDL (no analyses); the xschem layout (codegen::xschem)",
+        cite: "Cadence CDL (no analyses); the xschem layout (`render::spice::cdl`)",
         explain: "CDL is a netlist for LVS: analyses, library sections, conditionals, includes, functions and a subcircuit's models are not written. Netlist the deck for a simulator to keep them.",
+    }
+    /// What structural Verilog has no form for, left out: a primitive element or kept text (a comment in its place), an instance's parameters, anything but subcircuits and their instances.
+    W0029 Note {
+        title: "a statement structural Verilog does not write",
+        cite: "IEEE 1364-2005 §12.1 (modules), §12.2.2 (port connections); the xschem layout (`render::spice::verilog`)",
+        explain: "Structural Verilog holds modules and their instances: a primitive element (R, C, a source) is a comment naming this code, and parameters, models and analyses are not written. Netlist the deck for a simulator to keep them.",
     }
     // W0101–W0200: the named writer's (Spectre, VACASK).
     /// A flag (a parameter with no value) a target taking only `name=value` cannot spell.

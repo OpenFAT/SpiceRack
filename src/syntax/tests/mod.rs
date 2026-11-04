@@ -17,8 +17,8 @@ use crate::syntax::statement::{Analysis, Command};
 use crate::syntax::token::Tokens;
 use crate::syntax::{parse, tokenize};
 
-mod adapter;
 mod heads;
+mod render;
 
 // ---- private ----
 

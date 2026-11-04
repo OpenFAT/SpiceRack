@@ -12,14 +12,16 @@
 //! Contents: none (tests only).
 #![cfg(feature = "backend")]
 
-use spicerack::codegen::Dialect;
-use spicerack::ir::{
-    Analysis, CircuitIR, Component, FreqSweep, IrValue, Subcircuit, Sweep, Testbench,
-};
 use spicerack::result::RawData;
+use spicerack::syntax::Dialect;
+use spicerack::syntax::diag::Code;
+use spicerack::syntax::render::render_text;
 
-/// The top level of a deck under test.
-struct Deck(Subcircuit);
+/// An ngspice deck under test, its lines in order after the title.
+struct Deck {
+    title: String,
+    lines: Vec<String>,
+}
 
 // ---- private ----
 
@@ -45,50 +47,39 @@ fn ltspice() -> Dialect {
 
 impl Deck {
     fn new(title: &str) -> Self {
-        Deck(Subcircuit {
-            name: title.into(),
-            ..Default::default()
-        })
+        Deck {
+            title: title.into(),
+            lines: Vec::new(),
+        }
     }
     fn raw_spice(&mut self, line: &str) {
-        self.0.raw_spice.push(line.into());
+        self.lines.push(line.into());
     }
     fn r(&mut self, name: &str, n1: &str, n2: &str, value: f64) {
-        self.0.components.push(Component::Resistor {
-            name: name.into(),
-            n1: n1.into(),
-            n2: n2.into(),
-            value: IrValue::Numeric { value },
-            model: None,
-            params: vec![],
-        });
+        self.lines.push(format!("R{name} {n1} {n2} {value}"));
     }
     fn bv(&mut self, name: &str, np: &str, nm: &str, expression: impl Into<String>) {
-        self.0.components.push(Component::BehavioralVoltage {
-            name: name.into(),
-            np: np.into(),
-            nm: nm.into(),
-            expression: expression.into(),
-        });
+        self.lines
+            .push(format!("B{name} {np} {nm} V={}", expression.into()));
     }
     fn bi(&mut self, name: &str, np: &str, nm: &str, expression: impl Into<String>) {
-        self.0.components.push(Component::BehavioralCurrent {
-            name: name.into(),
-            np: np.into(),
-            nm: nm.into(),
-            expression: expression.into(),
-        });
+        self.lines
+            .push(format!("B{name} {np} {nm} I={}", expression.into()));
     }
-    fn ir(&self) -> CircuitIR {
-        CircuitIR {
-            top: self.0.clone(),
-            ..Default::default()
-        }
+    fn text(&self) -> String {
+        format!("{}\n{}\n.end\n", self.title, self.lines.join("\n"))
     }
 }
 
+/// The deck written for `cg`, or the codes of its refusal.
+fn written(cg: &Dialect, c: &Deck) -> Result<String, Vec<Code>> {
+    render_text(&c.text(), Dialect::Ngspice, &c.title, *cg)
+        .map(|w| w.text)
+        .map_err(|e| e.diags.iter().map(|d| d.code).collect())
+}
+
 fn netlist(cg: &Dialect, c: &Deck) -> Result<String, String> {
-    spicerack::codegen::netlist(&c.ir(), *cg).map_err(|e| e.to_string())
+    written(cg, c).map_err(|codes| format!("{codes:?}"))
 }
 
 fn run(deck: &str) -> RawData {
@@ -341,13 +332,13 @@ fn dc_through_a_laplace_block_reads_zero_not_the_dc_gain() {
 
 // ── refusals ──
 
+// A Laplace expression with no transfer-function reading is `W0010`.
+
 #[test]
 fn symbolic_coefficients_are_refused_not_emitted() {
     let mut c = Deck::new("symbolic");
     c.bv("1", "out", "0", "Laplace(V(in), 1/(1+s*tau))");
-    let err = netlist(&ngspice(), &c).unwrap_err();
-    assert!(err.contains("tau"), "{err}");
-    assert!(err.contains("B1"), "{err}");
+    assert_eq!(written(&ngspice(), &c).unwrap_err(), [Code::W0010]);
 }
 
 #[test]
@@ -357,8 +348,7 @@ fn improper_transfer_functions_are_refused_not_emitted() {
     for h in ["s", "s^2", "s*1e-3"] {
         let mut c = Deck::new("improper");
         c.bv("1", "out", "0", format!("Laplace(V(in), {h})"));
-        let err = netlist(&ngspice(), &c).unwrap_err();
-        assert!(err.contains("improper"), "{h}: {err}");
+        assert_eq!(written(&ngspice(), &c).unwrap_err(), [Code::W0010], "{h}");
     }
 }
 
@@ -366,17 +356,16 @@ fn improper_transfer_functions_are_refused_not_emitted() {
 fn current_inputs_are_refused_not_emitted() {
     let mut c = Deck::new("iin");
     c.bv("1", "out", "0", "Laplace(I(V1), 1/(1+s*1e-6))");
-    let err = netlist(&ngspice(), &c).unwrap_err();
-    assert!(err.contains("V(node)"), "{err}");
+    assert_eq!(written(&ngspice(), &c).unwrap_err(), [Code::W0010]);
 }
 
 #[test]
 fn spectre_and_vacask_refuse_every_behavioural_source() {
     let mut c = Deck::new("no bsource");
     c.bv("1", "out", "0", "Laplace(V(in), 1/(1+s*1e-6))");
-    let ir = c.ir();
-    assert!(spicerack::codegen::netlist(&ir, Dialect::Spectre).is_err());
-    assert!(spicerack::codegen::netlist(&ir, Dialect::Vacask).is_err());
+    for d in [Dialect::Spectre, Dialect::Vacask] {
+        assert!(written(&d, &c).is_err(), "{d:?}");
+    }
 }
 
 // ── the run pipeline ──
@@ -387,20 +376,10 @@ fn the_run_pipeline_emits_and_runs_the_translated_source() {
     c.raw_spice("V1 in 0 AC 1");
     c.bv("1", "out", "0", "Laplace(V(in), 1/(1+s*1.591549431e-4))");
     c.r("l", "out", "0", 1e6);
-    let mut ir = c.ir();
-    ir.testbench = Some(Testbench {
-        analyses: vec![Analysis::Ac {
-            sweep: FreqSweep {
-                variation: Sweep::Lin,
-                points: 1,
-                start: 1000.0,
-                stop: 1000.0,
-            },
-        }],
-        ..Default::default()
-    });
+    c.raw_spice(".ac lin 1 1000 1000");
     require_ngspice();
-    let raw = spicerack::simulation::run(&ir, Some("ngspice")).expect("Laplace deck must run");
+    let deck = netlist(&ngspice(), &c).unwrap();
+    let raw = spicerack::simulation::run(Dialect::Ngspice, &deck).expect("Laplace deck must run");
     let (mag, phase) = ac(&raw, "out", 0);
     assert!(
         (mag - std::f64::consts::FRAC_1_SQRT_2).abs() < 1e-4,
@@ -408,17 +387,9 @@ fn the_run_pipeline_emits_and_runs_the_translated_source() {
     );
     assert!((phase + 45.0).abs() < 1e-3, "arg H = {phase} deg");
 
-    // What codegen refuses never reaches the simulator.
-    ir.top.components[0] = Component::BehavioralVoltage {
-        name: "1".into(),
-        np: "out".into(),
-        nm: "0".into(),
-        expression: "Laplace(V(in), 1/(1+s*tau))".into(),
-    };
-    let err = spicerack::simulation::run(&ir, Some("ngspice"))
-        .unwrap_err()
-        .to_string();
-    assert!(err.contains("tau"), "{err}");
+    // What the renderer refuses has no text to reach the simulator.
+    c.lines[1] = "B1 out 0 V=Laplace(V(in), 1/(1+s*tau))".into();
+    assert_eq!(written(&ngspice(), &c).unwrap_err(), [Code::W0010]);
 }
 
 // ── LTspice: syntax only, UNVERIFIED ──
@@ -475,7 +446,8 @@ fn espice_single_pole_is_minus_3db_and_minus_45_degrees_at_the_corner() {
     c.r("l", "out", "0", 1e6);
     c.raw_spice(".ac lin 1 1000 1000");
     // `select` routes a Laplace deck to ESPice now that it runs one.
-    assert_eq!(c.ir().check_backend("espice"), vec![]);
+    let laplace = spicerack::backend::feature::LAPLACE;
+    assert_eq!(spicerack::backend::check(laplace, 3, "espice"), vec![]);
     let (mag, phase) = ac(&espice_run(&c), "out", 0);
     assert!(
         (mag - std::f64::consts::FRAC_1_SQRT_2).abs() < 1e-4,

@@ -10,7 +10,7 @@
 //!
 //! Contents:
 //! - `pub fn run(d: Dialect, deck: &str) -> RawData`
-//! - `pub fn emitted(d: Dialect, deck: &str, edit: impl FnOnce(&mut CircuitIR)) -> String`
+//! - `pub fn written(d: Dialect, deck: &str) -> String`
 //! - `pub fn measures(d: Dialect, raw: &RawData) -> Vec<MeasureResult>`
 //! - `pub fn index_of(raw: &RawData, name: &str) -> usize`
 //! - `pub fn scalar(raw: &RawData, name: &str) -> f64`
@@ -39,13 +39,12 @@ pub fn run(d: Dialect, deck: &str) -> RawData {
         .unwrap_or_else(|e| panic!("deck failed: {e}\n{deck}"))
 }
 
-/// `deck` as `simulation::run` hands it to `d`: read by the ngspice importer,
-/// passed through `edit`, written back by the codegen for `d`.
-pub fn emitted(d: Dialect, deck: &str, edit: impl FnOnce(&mut spicerack::ir::CircuitIR)) -> String {
-    let (mut ir, _) = spicerack::import::parse(deck, "deck", Dialect::Ngspice)
-        .unwrap_or_else(|e| panic!("{e}\n{deck}"));
-    edit(&mut ir);
-    spicerack::codegen::netlist(&ir, d).unwrap_or_else(|e| panic!("{e}\n{deck}"))
+/// ngspice `deck` as the renderer writes it for `d` (`syntax::render`);
+/// panics with the refusal's messages when it refuses.
+pub fn written(d: Dialect, deck: &str) -> String {
+    spicerack::syntax::render::render_text(deck, Dialect::Ngspice, "deck", d)
+        .unwrap_or_else(|e| panic!("{}\n{deck}", e.messages))
+        .text
 }
 
 /// `Dialect::run` only captures stdout; `simulation::run` is what normally

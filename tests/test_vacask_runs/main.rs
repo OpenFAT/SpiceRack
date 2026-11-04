@@ -1,5 +1,5 @@
-//! VACASK end-to-end: every deck here is emitted by `VacaskCodeGen` and then
-//! handed to the real binary. A deck that parses and produces a raw file is the
+//! VACASK end-to-end: every deck here is ngspice text written for VACASK by
+//! `syntax::render` and then handed to the real binary. A deck that parses and produces a raw file is the
 //! only evidence that counts, so nothing is asserted against the generated text
 //! that is not also asserted against the numbers VACASK returns.
 //!
@@ -11,9 +11,11 @@
 //! Contents: none (tests only).
 #![cfg(feature = "backend")]
 
-use spicerack::backend::{Dialect, netlist as emit};
-use spicerack::ir::*;
+use spicerack::backend::Dialect;
 use spicerack::result::RawData;
+use spicerack::syntax::diag::Code;
+use spicerack::syntax::render::{Numbers, Source, render};
+use spicerack::syntax::{lexicon, parse, tokenize};
 
 mod analyses;
 mod devices;
@@ -31,9 +33,31 @@ fn have_vacask() -> bool {
         .unwrap_or(false)
 }
 
+/// The ngspice deck `deck` (line 1 its title) written for VACASK, or the
+/// codes of its refusal. Its numbers are read as the doubles they spell
+/// (`lexicon::NGSPICE_GIVEN`, as the Python API's decks are), which also
+/// reads a `.step`.
+fn emit(deck: &str) -> Result<String, Vec<Code>> {
+    let lex = &lexicon::NGSPICE_GIVEN;
+    let t = tokenize(deck, lex);
+    let ast = parse(&t, lex);
+    let src = Source {
+        ast: &ast,
+        tokens: &t,
+        dialect: Dialect::Ngspice,
+        name: deck.lines().next().unwrap_or_default(),
+        kit: None,
+        loads: &[],
+        numbers: Numbers::Given,
+    };
+    render(&src, Dialect::Vacask)
+        .map(|w| w.text)
+        .map_err(|d| d.diags.iter().map(|d| d.code).collect())
+}
+
 /// Emit the deck and run it.
-fn run(ir: &CircuitIR) -> RawData {
-    let netlist = emit(ir, Dialect::Vacask).expect("emit vacask deck");
+fn run(deck: &str) -> RawData {
+    let netlist = emit(deck).expect("emit vacask deck");
     assert!(
         have_vacask(),
         "vacask not on PATH: run the tests in `nix develop .#testing`"
@@ -88,67 +112,10 @@ fn close(got: f64, want: f64, tol: f64) {
     );
 }
 
-// ── IR builders ──
+// ── Decks ──
 
-fn empty_sub(name: &str) -> Subcircuit {
-    Subcircuit {
-        name: name.into(),
-        ..Default::default()
-    }
-}
-
-fn empty_tb(analyses: Vec<Analysis>) -> Testbench {
-    Testbench {
-        analyses,
-        ..Default::default()
-    }
-}
-
-fn r(name: &str, n1: &str, n2: &str, v: f64) -> Component {
-    Component::Resistor {
-        name: name.into(),
-        n1: n1.into(),
-        n2: n2.into(),
-        value: IrValue::Numeric { value: v },
-        model: None,
-        params: vec![],
-    }
-}
-
-fn c(name: &str, n1: &str, n2: &str, v: f64) -> Component {
-    Component::Capacitor {
-        name: name.into(),
-        n1: n1.into(),
-        n2: n2.into(),
-        value: IrValue::Numeric { value: v },
-        model: None,
-        params: vec![],
-    }
-}
-
-fn vsrc(name: &str, np: &str, nm: &str, dc: f64) -> Component {
-    Component::VoltageSource {
-        name: name.into(),
-        np: np.into(),
-        nm: nm.into(),
-        value: IrValue::Numeric { value: dc },
-        ac_magnitude: None,
-        ac_phase: None,
-        waveform: None,
-        port: None,
-    }
-}
-
-/// 1k/1k divider off a 3 V rail plus a 1 uF cap on the output: a circuit with
-/// a closed form for every analysis below.
-fn rc_ir(analyses: Vec<Analysis>) -> CircuitIR {
-    let mut top = empty_sub("rc_divider");
-    top.components = vec![r("1", "vdd", "out", 1000.0), r("2", "out", "0", 1000.0)];
-    let mut tb = empty_tb(analyses);
-    tb.stimulus = vec![vsrc("dd", "vdd", "0", 3.0)];
-    CircuitIR {
-        top,
-        testbench: Some(tb),
-        ..Default::default()
-    }
+/// 1k/1k divider off a 3 V rail: a circuit with a closed form for every
+/// analysis below, the analyses' cards after it.
+fn rc(analyses: &str) -> String {
+    format!("rc_divider\nR1 vdd out 1k\nR2 out 0 1k\nVdd vdd 0 3\n{analyses}\n.end\n")
 }

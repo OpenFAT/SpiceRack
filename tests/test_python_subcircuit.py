@@ -1,17 +1,23 @@
 """
-Python tests for IR type bindings: Subcircuit, Testbench, ModelLibrary.
+Python tests for the circuit builders: Subcircuit, Testbench, ModelLibrary.
+Each call is checked by the ngspice card it writes (ngspice manual ch.3-4,
+the element cards; ch.11, the analyses), never by internal state.
 
 Run with: maturin develop && pytest tests/test_python_subcircuit.py
 """
 import pytest
-import json
-import tempfile
-import os
 
 
 def import_spicerack():
     import spicerack  # unsupported fails, never skips: an unbuilt extension is an error
     return spicerack
+
+
+def cards(sc):
+    """The lines of an ngspice deck that defines `sc` (its `.subckt` block)."""
+    c = import_spicerack().Circuit("t")
+    c.subcircuit(sc)
+    return str(c).splitlines()
 
 
 # ── Subcircuit Tests ──
@@ -31,11 +37,7 @@ class TestSubcircuitCreation:
     def test_create_subcircuit_with_params(self):
         ps = import_spicerack()
         sc = ps.Subcircuit("amp", ["in", "out"], W="1u", L="180n")
-        json_str = sc.to_json()
-        data = json.loads(json_str)
-        param_names = [p["name"] for p in data["parameters"]]
-        assert "W" in param_names
-        assert "L" in param_names
+        assert ".subckt amp in out PARAMS: W=1u L=180n" in cards(sc)
 
     def test_repr(self):
         ps = import_spicerack()
@@ -60,10 +62,7 @@ class TestSubcircuitComponents:
             negative="out",
             value=1000.0,
         )
-        data = json.loads(sc.to_json())
-        assert len(data["components"]) == 1
-        assert data["components"][0]["type"] == "Resistor"
-        assert data["components"][0]["name"] == "1"
+        assert "R1 in out 1k" in cards(sc)
 
     def test_capacitor(self):
         ps = import_spicerack()
@@ -74,8 +73,7 @@ class TestSubcircuitComponents:
             negative=sc.gnd,
             value=10e-12,
         )
-        data = json.loads(sc.to_json())
-        assert data["components"][0]["type"] == "Capacitor"
+        assert "C1 out 0 10p" in cards(sc)
 
     def test_inductor(self):
         ps = import_spicerack()
@@ -86,8 +84,7 @@ class TestSubcircuitComponents:
             negative="out",
             value=1e-6,
         )
-        data = json.loads(sc.to_json())
-        assert data["components"][0]["type"] == "Inductor"
+        assert "L1 in out 1u" in cards(sc)
 
     def test_mutual_inductor(self):
         ps = import_spicerack()
@@ -110,9 +107,7 @@ class TestSubcircuitComponents:
             inductor2="2",
             coupling=0.99,
         )
-        data = json.loads(sc.to_json())
-        assert len(data["components"]) == 3
-        assert data["components"][2]["type"] == "MutualInductor"
+        assert "K1 L1 L2 0.99" in cards(sc)
 
     def test_voltage_source(self):
         ps = import_spicerack()
@@ -123,9 +118,7 @@ class TestSubcircuitComponents:
             negative=sc.gnd,
             value=3.3,
         )
-        data = json.loads(sc.to_json())
-        assert data["components"][0]["type"] == "VoltageSource"
-        assert data["components"][0]["value"]["value"] == 3.3
+        assert "Vdd vdd 0 3.3" in cards(sc)
 
     def test_current_source(self):
         ps = import_spicerack()
@@ -136,8 +129,7 @@ class TestSubcircuitComponents:
             negative="out",
             value=100e-6,
         )
-        data = json.loads(sc.to_json())
-        assert data["components"][0]["type"] == "CurrentSource"
+        assert "Ibias vdd out 100u" in cards(sc)
 
     def test_behavioral_voltage(self):
         ps = import_spicerack()
@@ -148,9 +140,7 @@ class TestSubcircuitComponents:
             negative=sc.gnd,
             expression="V(in)*2",
         )
-        data = json.loads(sc.to_json())
-        assert data["components"][0]["type"] == "BehavioralVoltage"
-        assert data["components"][0]["expression"] == "V(in)*2"
+        assert "B1 out 0 V=V(in)*2" in cards(sc)
 
     def test_behavioral_current(self):
         ps = import_spicerack()
@@ -161,8 +151,7 @@ class TestSubcircuitComponents:
             negative=sc.gnd,
             expression="V(in)/1k",
         )
-        data = json.loads(sc.to_json())
-        assert data["components"][0]["type"] == "BehavioralCurrent"
+        assert "B1 out 0 I=V(in)/1k" in cards(sc)
 
     def test_vcvs(self):
         ps = import_spicerack()
@@ -175,9 +164,7 @@ class TestSubcircuitComponents:
             control_negative="inm",
             voltage_gain=10.0,
         )
-        data = json.loads(sc.to_json())
-        assert data["components"][0]["type"] == "Vcvs"
-        assert data["components"][0]["gain"] == 10.0
+        assert "E1 out 0 inp inm 10" in cards(sc)
 
     def test_vccs(self):
         ps = import_spicerack()
@@ -190,8 +177,7 @@ class TestSubcircuitComponents:
             control_negative="inm",
             transconductance=1e-3,
         )
-        data = json.loads(sc.to_json())
-        assert data["components"][0]["type"] == "Vccs"
+        assert "G1 out 0 inp inm 0.001" in cards(sc)
 
     def test_cccs(self):
         ps = import_spicerack()
@@ -203,8 +189,7 @@ class TestSubcircuitComponents:
             vsense="Vsense",
             current_gain=100.0,
         )
-        data = json.loads(sc.to_json())
-        assert data["components"][0]["type"] == "Cccs"
+        assert "F1 out 0 Vsense 100" in cards(sc)
 
     def test_ccvs(self):
         ps = import_spicerack()
@@ -216,8 +201,7 @@ class TestSubcircuitComponents:
             vsense="Vsense",
             transresistance=1e3,
         )
-        data = json.loads(sc.to_json())
-        assert data["components"][0]["type"] == "Ccvs"
+        assert "H1 out 0 Vsense 1000" in cards(sc)
 
     def test_diode(self):
         ps = import_spicerack()
@@ -228,9 +212,7 @@ class TestSubcircuitComponents:
             cathode="cathode",
             model="D1N4148",
         )
-        data = json.loads(sc.to_json())
-        assert data["components"][0]["type"] == "Diode"
-        assert data["components"][0]["model"] == "D1N4148"
+        assert "D1 anode cathode D1N4148" in cards(sc)
 
     def test_bjt(self):
         ps = import_spicerack()
@@ -242,8 +224,7 @@ class TestSubcircuitComponents:
             emitter="emitter",
             model="2N2222",
         )
-        data = json.loads(sc.to_json())
-        assert data["components"][0]["type"] == "Bjt"
+        assert "Q1 collector base emitter 2N2222" in cards(sc)
 
     def test_bjt_alias(self):
         ps = import_spicerack()
@@ -255,8 +236,7 @@ class TestSubcircuitComponents:
             emitter="e",
             model="npn_model",
         )
-        data = json.loads(sc.to_json())
-        assert data["components"][0]["type"] == "Bjt"
+        assert "Q1 c b e npn_model" in cards(sc)
 
     def test_mosfet(self):
         ps = import_spicerack()
@@ -269,9 +249,7 @@ class TestSubcircuitComponents:
             bulk="vdd",
             model="pmos",
         )
-        data = json.loads(sc.to_json())
-        assert data["components"][0]["type"] == "Mosfet"
-        assert data["components"][0]["model"] == "pmos"
+        assert "Mp1 vout vin vdd vdd pmos" in cards(sc)
 
     def test_mosfet_alias(self):
         ps = import_spicerack()
@@ -284,8 +262,7 @@ class TestSubcircuitComponents:
             bulk="b",
             model="nmos",
         )
-        data = json.loads(sc.to_json())
-        assert data["components"][0]["type"] == "Mosfet"
+        assert "M1 d g s b nmos" in cards(sc)
 
     def test_jfet(self):
         ps = import_spicerack()
@@ -297,8 +274,7 @@ class TestSubcircuitComponents:
             source="source",
             model="jfet_model",
         )
-        data = json.loads(sc.to_json())
-        assert data["components"][0]["type"] == "Jfet"
+        assert "J1 drain gate source jfet_model" in cards(sc)
 
     def test_mesfet(self):
         ps = import_spicerack()
@@ -310,8 +286,7 @@ class TestSubcircuitComponents:
             source="source",
             model="mesfet_model",
         )
-        data = json.loads(sc.to_json())
-        assert data["components"][0]["type"] == "Mesfet"
+        assert "Z1 drain gate source mesfet_model" in cards(sc)
 
     def test_vswitch(self):
         ps = import_spicerack()
@@ -324,8 +299,7 @@ class TestSubcircuitComponents:
             control_negative="ctrl_m",
             model="sw_model",
         )
-        data = json.loads(sc.to_json())
-        assert data["components"][0]["type"] == "VSwitch"
+        assert "S1 out 0 ctrl_p ctrl_m sw_model" in cards(sc)
 
     def test_iswitch(self):
         ps = import_spicerack()
@@ -337,8 +311,7 @@ class TestSubcircuitComponents:
             vcontrol="Vctrl",
             model="isw_model",
         )
-        data = json.loads(sc.to_json())
-        assert data["components"][0]["type"] == "ISwitch"
+        assert "W1 out 0 Vctrl isw_model" in cards(sc)
 
     def test_tline(self):
         ps = import_spicerack()
@@ -352,9 +325,7 @@ class TestSubcircuitComponents:
             Z0=50.0,
             TD=1e-9,
         )
-        data = json.loads(sc.to_json())
-        assert data["components"][0]["type"] == "TLine"
-        assert data["components"][0]["z0"] == 50.0
+        assert "T1 inp inm outp outm Z0=50 TD=0.000000001" in cards(sc)
 
     def test_xspice(self):
         ps = import_spicerack()
@@ -364,8 +335,7 @@ class TestSubcircuitComponents:
             connections=["[vin]", "[dout]"],
             model="adc_buf",
         )
-        data = json.loads(sc.to_json())
-        assert data["components"][0]["type"] == "Xspice"
+        assert "Aadc1 [vin] [dout] adc_buf" in cards(sc)
 
     def test_raw_resistor(self):
         ps = import_spicerack()
@@ -377,57 +347,46 @@ class TestSubcircuitComponents:
             value=0.0,
             raw_spice="1k tc=0.01",
         )
-        data = json.loads(sc.to_json())
-        comp = data["components"][0]
-        assert comp["type"] == "Resistor"
-        assert comp["value"]["type"] == "Raw"
-
+        # The text after the nodes is the card's own: value and parameters.
+        assert "R1 in out 1k tc=0.01" in cards(sc)
 
 class TestSubcircuitDirectives:
     def test_model(self):
         ps = import_spicerack()
         sc = ps.Subcircuit("model_test")
         sc.model("nmos_3p3", "NMOS", VTO="0.7", KP="110e-6")
-        data = json.loads(sc.to_json())
-        assert len(data["models"]) == 1
-        assert data["models"][0]["name"] == "nmos_3p3"
+        assert ".model nmos_3p3 NMOS (VTO=0.7 KP=110e-6)" in cards(sc)
 
     def test_raw_spice(self):
         ps = import_spicerack()
         sc = ps.Subcircuit("raw_test")
         sc.raw_spice(".options reltol=1e-6")
-        data = json.loads(sc.to_json())
-        assert ".options reltol=1e-6" in data["raw_spice"]
+        assert ".options reltol=1e-6" in "\n".join(cards(sc))
 
     def test_include(self):
         ps = import_spicerack()
         sc = ps.Subcircuit("inc_test")
         sc.include("/path/to/model.lib")
-        data = json.loads(sc.to_json())
-        assert "/path/to/model.lib" in data["includes"]
+        assert ".include /path/to/model.lib" in cards(sc)
 
     def test_lib(self):
         ps = import_spicerack()
         sc = ps.Subcircuit("lib_test")
         sc.lib("/path/to/pdk.lib", "tt")
-        data = json.loads(sc.to_json())
-        assert ["/path/to/pdk.lib", "tt"] in data["libs"]
+        assert ".lib /path/to/pdk.lib tt" in cards(sc)
 
     def test_osdi(self):
         ps = import_spicerack()
         sc = ps.Subcircuit("osdi_test")
         sc.osdi("/path/to/model.osdi")
-        data = json.loads(sc.to_json())
-        assert "/path/to/model.osdi" in data["osdi_loads"]
+        # ngspice loads OSDI from its `.control` block (manual §16.4, pre_osdi).
+        assert "pre_osdi /path/to/model.osdi" in cards(sc)
 
     def test_parameter(self):
         ps = import_spicerack()
         sc = ps.Subcircuit("param_test")
         sc.parameter("vdd", "3.3")
-        data = json.loads(sc.to_json())
-        param_names = [p["name"] for p in data["parameters"]]
-        assert "vdd" in param_names
-
+        assert ".subckt param_test PARAMS: vdd=3.3" in cards(sc)
 
 class TestSubcircuitInstances:
     def test_instance(self):
@@ -452,17 +411,13 @@ class TestSubcircuitInstances:
 
         top = ps.Subcircuit("top")
         top.instance(inv, "inv1", "vdd", "vss", "a", "b")
-        data = json.loads(top.to_json())
-        assert len(data["instances"]) == 1
-        assert data["instances"][0]["subcircuit"] == "inverter"
+        assert "Xinv1 vdd vss a b inverter" in cards(top)
 
     def test_x_instance(self):
         ps = import_spicerack()
         sc = ps.Subcircuit("top")
         sc.X("1", "MyBuf", "in", "out", "vdd", "gnd")
-        data = json.loads(sc.to_json())
-        assert len(data["instances"]) == 1
-        assert data["instances"][0]["subcircuit"] == "MyBuf"
+        assert "X1 in out vdd gnd MyBuf" in cards(sc)
 
     def test_x_params_reach_the_card_on_every_backend(self):
         ps = import_spicerack()
@@ -473,7 +428,10 @@ class TestSubcircuitInstances:
         cards = {
             "ngspice": "X1 a 0 rload r=3e3 nf=2 w={wn*2}",
             "ltspice": "X1 a 0 rload r=3e3 nf=2 w={wn*2}",
-            "spectre": "x1 (a 0) rload r=3k nf=2 w={wn*2}",  # numbers in Spectre's suffixes
+            # Numbers in Spectre's suffixes, and the expression bare: Spectre
+            # has no `{}` delimiter (Spectre Reference 19.1 p.506, `parameters
+            # p1=1 p2=p1*2`: an expression is written as it is).
+            "spectre": "x1 (a 0) rload r=3k nf=2 w=wn*2",
         }
         for backend, card in cards.items():
             assert card in tb.netlist(backend).splitlines(), backend
@@ -513,52 +471,6 @@ class TestSubcircuitInstances:
         assert abs(vout - 0.75) < 1e-9
 
 
-class TestSubcircuitSerialization:
-    def test_json_roundtrip(self):
-        ps = import_spicerack()
-        sc = ps.Subcircuit("amp", ["in", "out"])
-        sc.R(
-            name="1",
-            positive="in",
-            negative="out",
-            value=1000.0,
-        )
-        sc.C(
-            name="1",
-            positive="out",
-            negative=sc.gnd,
-            value=10e-12,
-        )
-        json_str = sc.to_json()
-        sc2 = ps.Subcircuit.from_json(json_str)
-        assert sc2.to_json() == json_str
-
-    def test_save_and_load(self):
-        ps = import_spicerack()
-        sc = ps.Subcircuit("roundtrip", ["a", "b"])
-        sc.R(
-            name="1",
-            positive="a",
-            negative="b",
-            value=470.0,
-        )
-        sc.model("d_model", "D", IS="1e-14")
-
-        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
-            path = f.name
-        try:
-            sc.save_json(path)
-            sc2 = ps.Subcircuit.load_json(path)
-            assert sc2.to_json() == sc.to_json()
-        finally:
-            os.unlink(path)
-
-    def test_from_json_invalid(self):
-        ps = import_spicerack()
-        with pytest.raises(ValueError):
-            ps.Subcircuit.from_json("not valid json")
-
-
 class TestSubcircuitWaveforms:
     def test_every_source_on_both_builders(self):
         """Subcircuit and Testbench get their sixteen sources from one table."""
@@ -578,9 +490,7 @@ class TestSubcircuitWaveforms:
             amplitude=1.0,
             frequency=1e6,
         )
-        data = json.loads(sc.to_json())
-        comp = data["components"][0]
-        assert comp["waveform"]["type"] == "Sin"
+        assert "Vin inp 0 0 SIN(0 1 1000000 0 0 0)" in cards(sc)
 
     def test_pulse_voltage(self):
         ps = import_spicerack()
@@ -592,8 +502,7 @@ class TestSubcircuitWaveforms:
             pulsed_value=3.3,
             period=10e-9,
         )
-        data = json.loads(sc.to_json())
-        assert data["components"][0]["waveform"]["type"] == "Pulse"
+        assert any(l.startswith("Vclk clk 0 0 PULSE(0 3.3 ") for l in cards(sc))
 
     def test_pwl_voltage(self):
         ps = import_spicerack()
@@ -604,8 +513,7 @@ class TestSubcircuitWaveforms:
             negative=sc.gnd,
             values=[(0, 0), (1e-3, 1.0)],
         )
-        data = json.loads(sc.to_json())
-        assert data["components"][0]["waveform"]["type"] == "Pwl"
+        assert "Vramp ramp 0 0 PWL(0 0 0.001 1)" in cards(sc)
 
     def test_sinusoidal_current(self):
         ps = import_spicerack()
@@ -617,8 +525,7 @@ class TestSubcircuitWaveforms:
             amplitude=1e-3,
             frequency=1e3,
         )
-        data = json.loads(sc.to_json())
-        assert data["components"][0]["waveform"]["type"] == "Sin"
+        assert "Iin inp 0 0 SIN(0 0.001 1000 0 0 0)" in cards(sc)
 
     def test_pulse_current(self):
         ps = import_spicerack()
@@ -629,12 +536,7 @@ class TestSubcircuitWaveforms:
             negative=sc.gnd,
             pulsed_value=1e-3,
         )
-        data = json.loads(sc.to_json())
-        assert data["components"][0]["waveform"]["type"] == "Pulse"
-
-
-# ── Testbench Tests ──
-
+        assert any(l.startswith("Ipulse out 0 0 PULSE(0 0.001 ") for l in cards(sc))
 
 class TestTestbenchCreation:
     def test_create_testbench(self):
@@ -672,9 +574,8 @@ class TestTestbenchCreation:
             negative=dut.gnd,
             value=1.0,
         )
-        json_str = tb.to_json()
-        data = json.loads(json_str)
-        assert len(data["testbench"]["stimulus"]) == 1
+        deck = tb.netlist("ngspice").splitlines()
+        assert "Vin in 0 1" in deck
 
     def test_add_subcircuit(self):
         ps = import_spicerack()
@@ -693,9 +594,8 @@ class TestTestbenchCreation:
 
         tb = ps.Testbench(dut)
         tb.add_subcircuit(inv)
-        json_str = tb.to_json()
-        data = json.loads(json_str)
-        assert len(data["subcircuit_defs"]) == 1
+        deck = tb.netlist("ngspice").splitlines()
+        assert ".subckt inverter vdd vss vin vout" in deck
 
     def test_options(self):
         ps = import_spicerack()
@@ -708,11 +608,7 @@ class TestTestbenchCreation:
         )
         tb = ps.Testbench(dut)
         tb.options(reltol="1e-6", abstol="1e-12")
-        json_str = tb.to_json()
-        data = json.loads(json_str)
-        opts = data["testbench"]["options"]["portable"]
-        opt_keys = [o[0] for o in opts]
-        assert "reltol" in opt_keys
+        assert ".options reltol=1e-6 abstol=1e-12" in tb.netlist("ngspice").splitlines()
 
     def test_temperature(self):
         ps = import_spicerack()
@@ -725,9 +621,7 @@ class TestTestbenchCreation:
         )
         tb = ps.Testbench(dut)
         tb.temperature = 85.0
-        json_str = tb.to_json()
-        data = json.loads(json_str)
-        assert data["testbench"]["temperature"] == 85.0
+        assert ".temp 85" in tb.netlist("ngspice").splitlines()
 
     def test_save(self):
         ps = import_spicerack()
@@ -740,9 +634,7 @@ class TestTestbenchCreation:
         )
         tb = ps.Testbench(dut)
         tb.save("v(out)", "i(Vin)")
-        json_str = tb.to_json()
-        data = json.loads(json_str)
-        assert "v(out)" in data["testbench"]["saves"]
+        assert ".save v(out) i(Vin)" in tb.netlist("ngspice").splitlines()
 
     def test_measure(self):
         ps = import_spicerack()
@@ -755,9 +647,7 @@ class TestTestbenchCreation:
         )
         tb = ps.Testbench(dut)
         tb.measure("TRAN", "vmax", "MAX", "V(out)")
-        json_str = tb.to_json()
-        data = json.loads(json_str)
-        assert len(data["testbench"]["measures"]) == 1
+        assert ".meas TRAN vmax MAX V(out)" in tb.netlist("ngspice").splitlines()
 
     def test_step(self):
         ps = import_spicerack()
@@ -770,9 +660,8 @@ class TestTestbenchCreation:
         )
         tb = ps.Testbench(dut)
         tb.step("R1", 100.0, 10000.0, 100.0)
-        json_str = tb.to_json()
-        data = json.loads(json_str)
-        assert len(data["testbench"]["step_params"]) == 1
+        # ngspice has no `.step` (it would run once); LTspice does (`.step param`).
+        assert ".step param R1 100 10000 100" in tb.netlist("ltspice").splitlines()
 
     def test_waveform_sources(self):
         ps = import_spicerack()
@@ -791,11 +680,7 @@ class TestTestbenchCreation:
             amplitude=1.0,
             frequency=1e6,
         )
-        json_str = tb.to_json()
-        data = json.loads(json_str)
-        stim = data["testbench"]["stimulus"]
-        assert len(stim) == 1
-        assert stim[0]["waveform"]["type"] == "Sin"
+        assert "Vin a 0 0 SIN(0 1 1000000 0 0 0)" in tb.netlist("ngspice").splitlines()
 
     def test_current_waveform_sources(self):
         ps = import_spicerack()
@@ -808,10 +693,7 @@ class TestTestbenchCreation:
             pulsed_value=1e-6,
             pulse_width=1e-9,
         )
-        data = json.loads(tb.to_json())
-        stim = data["testbench"]["stimulus"]
-        assert stim[0]["type"] == "CurrentSource"
-        assert stim[0]["waveform"]["type"] == "Pulse"
+        assert any(l.startswith("Iq in 0 0 PULSE(0 0.000001 ") for l in tb.netlist("ngspice").splitlines())
 
     def test_child_subcircuit_directives_reach_the_deck(self):
         # A child's include/lib/osdi used to be dropped from Testbench decks.
@@ -852,8 +734,6 @@ class TestTestbenchCreation:
         tb.add_ac(variation="dec", number_of_points=10, start_frequency=1.0, stop_frequency=1e6)
         tb.measure("tran", "vmax", "MAX", "V(out)")
 
-        data = json.loads(tb.to_json())
-        assert [a["type"] for a in data["testbench"]["analyses"]] == ["Op", "Ac"]
         netlist = tb.netlist("ngspice")
         # With a `.meas`, ngspice runs every analysis from one `.control`
         # block (it refuses `.measure` under `-b -r`, and an analysis left as
@@ -875,7 +755,9 @@ class TestTestbenchCreation:
             tb.add_noise("a", "0", "V1", variation="per-decade")
         with pytest.raises(ValueError, match="unknown sweep"):
             tb.ac(variation="decade", number_of_points=10, start_frequency=1.0, stop_frequency=1e6)
-        assert [a["type"] for a in json.loads(tb.to_json())["testbench"]["analyses"]] == ["Ac"]
+        # The refused calls queued nothing: one `.ac`, no `.noise`.
+        deck = tb.netlist("ngspice")
+        assert deck.count(".ac ") == 1 and ".noise" not in deck
 
     def test_testbench_statistical_analysis_builders(self):
         ps = import_spicerack()

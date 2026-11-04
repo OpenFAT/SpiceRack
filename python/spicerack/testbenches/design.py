@@ -752,8 +752,8 @@ def bandgap_tempco(
 ) -> DesignBench:
     """Temperature drift via `.dc temp`, which every backend supports.
 
-    `.step param temp` is emitted commented out by the ngspice codegen, so a
-    step-based sweep silently runs at one temperature.
+    ngspice has no `.step param temp` (the deck is refused), so a
+    step-based sweep would not run there.
     """
     tb = ps.Testbench(dut)
     tb.V(name="dd", positive=supply_node, negative=ground, value=supply)

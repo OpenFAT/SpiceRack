@@ -3,7 +3,7 @@
 //! old SPICE grammar rule: `Poly`, `B` and its `Body` (the text after
 //! `key =` to the card's end), `nodes`/`inst`, `X`.
 //!
-//! Cites: the old lowering (as `syntax::adapter::devices` ports it); the old SPICE grammar's `Poly`, `B`,
+//! Cites: the old lowering; the old SPICE grammar's `Poly`, `B`,
 //! `Body`, `D` … `Z`, `nodes`, `inst`, `X`.
 //!
 //! Contents:

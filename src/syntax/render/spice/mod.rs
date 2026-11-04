@@ -26,7 +26,9 @@ mod cards;
 mod cdl;
 mod checks;
 mod laplace;
+mod verilog;
 
+use super::Numbers;
 use super::capability::{Action, Alt, Construct, Rule, action};
 use super::draws::{self, Layers};
 use super::names;
@@ -34,7 +36,7 @@ use super::out::{Out, Space};
 use super::read::{Block, Comp, Deck, Elem, Func, Raw, Rd, Section};
 use super::role::{self, Frame};
 use super::spelling::{FuncForm, Spelling, spelling};
-use crate::codegen::Dialect;
+use crate::syntax::Dialect;
 use crate::syntax::diag::{Code, Diag};
 use crate::syntax::resolve::Role;
 
@@ -86,9 +88,9 @@ pub(super) fn write(rd: &mut Rd, deck: &Deck, target: Dialect) -> (String, Vec<D
         deck,
         sp,
         d: target,
-        // CDL's cards are the old layout's `codegen::card(c, Ngspice)`,
+        // CDL's cards are the old layout's ngspice cards,
         // which spells numbers without ngspice's arithmetic.
-        x: rd.d == Dialect::Ngspice && target != Dialect::Cdl,
+        x: rd.d == Dialect::Ngspice && target != Dialect::Cdl && deck.numbers == Numbers::Read,
         o: Out::new(4096),
         diags,
         draws,
@@ -97,6 +99,11 @@ pub(super) fn write(rd: &mut Rd, deck: &Deck, target: Dialect) -> (String, Vec<D
         drop_four: false,
         in_section: false,
     };
+    // Verilog evaluates nothing, so no deck-wide check refuses it.
+    if target == Dialect::Verilog {
+        w.verilog();
+        return (w.o.finish(), w.diags);
+    }
     w.checks();
     if target == Dialect::Cdl {
         w.cdl();
@@ -190,12 +197,17 @@ impl W<'_, '_> {
     fn loads(&mut self, control: bool) {
         let deck = self.deck;
         let path = |n: u32| self.rd.unquote(self.rd.fields(n)[0]);
-        let top: Vec<String> = deck.top.loads.iter().map(|&n| path(n)).collect();
-        let tok = deck.top.loads.first().map_or(0, |&n| self.rd.main(n));
+        // Each top load's path and the token a diagnostic on it is anchored
+        // at: the read ones', then those given beside the text (token 0).
+        let read = deck.top.loads.iter().map(|&n| (path(n), self.rd.main(n)));
+        let given = deck.given_loads.iter().map(|p| (p.clone(), 0));
+        let top: Vec<(String, u32)> = read.chain(given).collect();
+        let paths: Vec<String> = top.iter().map(|(p, _)| p.clone()).collect();
+        let tok = top.first().map_or(0, |l| l.1);
         let source = crate::veriloga::is_source;
         match self.d {
             Dialect::Ngspice if control && !top.is_empty() => {
-                match crate::veriloga::osdi_loads(&top) {
+                match crate::veriloga::osdi_loads(&paths) {
                     Ok(loads) => {
                         self.o.token(".control", Space::Line);
                         for p in &loads {
@@ -207,16 +219,12 @@ impl W<'_, '_> {
                 }
             }
             Dialect::Espice => {
-                let all = deck
-                    .top
-                    .loads
-                    .iter()
-                    .chain(deck.defs.iter().flat_map(|s| &s.loads));
+                let defs = deck.defs.iter().flat_map(|s| &s.loads);
+                let defs = defs.map(|&n| (path(n), self.rd.main(n)));
                 let mut seen: Vec<String> = Vec::new();
-                for &n in all {
-                    let l = path(n);
+                for (l, tok) in top.iter().cloned().chain(defs) {
                     if !source(&l) {
-                        self.ask(Construct::OsdiLoad, self.rd.main(n));
+                        self.ask(Construct::OsdiLoad, tok);
                     } else if !seen.contains(&l) {
                         self.o.token(&format!(".hdl \"{l}\""), Space::Line);
                         seen.push(l);
@@ -227,7 +235,7 @@ impl W<'_, '_> {
                 self.ask(Construct::VerilogALoad, tok);
             }
             Dialect::Hspice => {
-                for l in &top {
+                for (l, _) in &top {
                     if !source(l) {
                         self.ask(Construct::OsdiLoad, tok);
                     } else {
@@ -236,12 +244,12 @@ impl W<'_, '_> {
                 }
             }
             Dialect::Ltspice => {
-                for &n in &deck.top.loads {
-                    let c = match source(&path(n)) {
+                for (l, tok) in &top {
+                    let c = match source(l) {
                         true => Construct::VerilogALoad,
                         false => Construct::OsdiLoad,
                     };
-                    self.ask(c, self.rd.main(n));
+                    self.ask(c, *tok);
                 }
             }
             _ => {}

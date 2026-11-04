@@ -271,7 +271,7 @@ impl<'s> Parser<'_, 's> {
     pub(super) fn verbatim(&mut self, first: u32) -> Node {
         self.ast.diag(Code::P0001, first);
         let d = self.t.lexicon_at(first).dialect;
-        let k = crate::codegen::Dialect::ALL
+        let k = crate::syntax::Dialect::ALL
             .iter()
             .position(|&x| x == d)
             .expect("every lexicon's dialect is in Dialect::ALL");

@@ -18,15 +18,8 @@ const N: usize = 4000;
 // ---- private ----
 
 /// `.options seed=1`, and the source `src` alone into 1 Ω.
-fn seeded(src: Component, step: f64, stop: f64) -> CircuitIR {
-    let mut ir = bench(src, step, stop);
-    ir.testbench
-        .as_mut()
-        .unwrap()
-        .options
-        .portable
-        .push(("seed".into(), "1".into()));
-    ir
+fn seeded(src: &str, step: f64, stop: f64) -> String {
+    bench(src, step, stop, ".options seed=1\n")
 }
 
 #[test]
@@ -35,16 +28,11 @@ fn trnoise_white_noise_has_rms_na() {
     // sample times (breakpoints), the N values are i.i.d. N(0, NA^2): the
     // sample std s has standard error NA/sqrt(2(N-1)), the mean NA/sqrt(N).
     let (na, nt) = (0.1, 1e-6);
-    let noise = IrWaveform::TrNoise {
-        na: na.into(),
-        nt: nt.into(),
-        nalpha: 0.0.into(),
-        namp: 0.0.into(),
-        rtsam: 0.0.into(),
-        rtscapt: 0.0.into(),
-        rtsemt: 0.0.into(),
-    };
-    let ir = seeded(source(false, noise), nt, nt * (N + 1) as f64);
+    let ir = seeded(
+        &source(false, "TRNOISE(0.1 1u 0 0)"),
+        nt,
+        nt * (N + 1) as f64,
+    );
     let deck = netlist(&ir, Dialect::Ngspice).unwrap();
     assert!(deck.contains("TRNOISE(0.1 0.000001 0 0)"), "{deck}");
     let raw = ngspice(&deck);
@@ -67,14 +55,13 @@ fn trrandom_uniform_stays_in_range_with_the_offset_as_mean() {
     // of the 4 V range has probability below 1e-200, so the spread pins the
     // range too (a half-range reading would cap it at 2 V).
     let (ts, td) = (1e-6, 1e-5);
-    let rnd = IrWaveform::TrRandom {
-        kind: RandomKind::Uniform,
-        ts: ts.into(),
-        td: td.into(),
-        p1: 2.0.into(),
-        p2: 3.0.into(),
-    };
-    let ir = seeded(source(false, rnd), ts, td + ts * (N + 1) as f64);
+    // `TD` spelled `0.00001`: ngspice reads `10u` as 10 * 10^-6, an ulp
+    // below 1e-5, and the deck is written to land on what ngspice reads.
+    let ir = seeded(
+        &source(false, "TRRANDOM(1 1u 0.00001 2 3)"),
+        ts,
+        td + ts * (N + 1) as f64,
+    );
     let deck = netlist(&ir, Dialect::Ngspice).unwrap();
     assert!(deck.contains("TRRANDOM(1 0.000001 0.00001 2 3)"), "{deck}");
     let raw = ngspice(&deck);
@@ -111,27 +98,10 @@ fn trnoise_and_trrandom_are_ngspice_only() {
     // device noise, its `docs/cmd-analysis-trannoise.md`), and
     // ESPice 0.3.0 refuses both cards ("the trnoise source waveform is not
     // supported").
-    let z = || IrNum::Num(0.0);
-    let noise = IrWaveform::TrNoise {
-        na: 1.0.into(),
-        nt: 1e-6.into(),
-        nalpha: z(),
-        namp: z(),
-        rtsam: z(),
-        rtscapt: z(),
-        rtsemt: z(),
-    };
-    let rnd = IrWaveform::TrRandom {
-        kind: RandomKind::Gaussian,
-        ts: 1e-6.into(),
-        td: z(),
-        p1: 1.0.into(),
-        p2: z(),
-    };
-    for wf in [noise, rnd] {
+    for wf in ["TRNOISE(1 1u 0 0)", "TRRANDOM(2 1u 0 1 0)"] {
         for current in [false, true] {
-            let ir = bench(source(current, wf.clone()), 1e-6, 1e-5);
-            netlist(&ir, Dialect::Ngspice).unwrap();
+            let ir = bench(&source(current, wf), 1e-6, 1e-5, "");
+            netlist(&ir, Dialect::Ngspice).unwrap_or_else(|e| panic!("{}", e.messages));
             for d in [
                 Dialect::Espice,
                 Dialect::Ltspice,
@@ -140,84 +110,36 @@ fn trnoise_and_trrandom_are_ngspice_only() {
                 Dialect::Spectre,
                 Dialect::Vacask,
             ] {
-                let e = netlist(&ir, d).unwrap_err().to_string();
-                assert!(
-                    e.contains("TRNOISE") || e.contains("TRRANDOM"),
-                    "{d:?}: {e}"
-                );
+                assert!(refuses(netlist(&ir, d), Code::W0009), "{d:?} {wf}");
             }
         }
     }
 }
 
-/// The importer lowers an ngspice deck's TRNOISE/TRRANDOM cards (with
-/// TRRANDOM's defaults filled in, manual §4.1.8) and keeps a TRRANDOM type
-/// outside 1..=4 raw.
+/// An ngspice deck's TRNOISE/TRRANDOM cards are read and written back, with
+/// TRRANDOM's defaults filled in (manual §4.1.8: `TD` 0, `PARAM1` 1,
+/// `PARAM2` 0) and a card with no DC value at DC 0 (these two add to the DC
+/// value, so it is not the waveform's start); a TRRANDOM type outside 1..=4
+/// is no waveform and is kept as written.
 #[test]
-fn ngspice_trnoise_and_trrandom_cards_lower_into_the_ir() {
+fn ngspice_trnoise_and_trrandom_cards_read_and_write_back() {
     let deck = "t\nV1 a 0 dc 0 trnoise(20n 0.5n 0 0)\nI1 b 0 dc 0 TRNOISE(1m 1u 1.0 0.1m 15m 22u 50u)\n\
                 V2 c 0 dc 0 trrandom (2 10m 0 1)\nV3 d 0 trrandom(4 1u)\nV4 e 0 trrandom(7 1u)\n.end\n";
-    let (ir, report) = spicerack::import::parse(deck, "t", Dialect::Ngspice).unwrap();
-    let wf = |i: usize| match &ir.top.components[i] {
-        Component::VoltageSource { waveform, .. } | Component::CurrentSource { waveform, .. } => {
-            waveform.clone()
-        }
-        other => panic!("{other:?}"),
-    };
-    // Each number as ngspice reads its spelling (`20n` is 20 * 10^-9 there).
-    let n = |s: &str| IrNum::Num(spicerack::unit::ngspice_value(s).unwrap());
-    assert_eq!(
-        wf(0),
-        Some(IrWaveform::TrNoise {
-            na: n("20n"),
-            nt: n("0.5n"),
-            nalpha: n("0"),
-            namp: n("0"),
-            rtsam: n("0"),
-            rtscapt: n("0"),
-            rtsemt: n("0")
-        })
-    );
-    assert_eq!(
-        wf(1),
-        Some(IrWaveform::TrNoise {
-            na: n("1m"),
-            nt: n("1u"),
-            nalpha: n("1.0"),
-            namp: n("0.1m"),
-            rtsam: n("15m"),
-            rtscapt: n("22u"),
-            rtsemt: n("50u")
-        })
-    );
-    assert_eq!(
-        wf(2),
-        Some(IrWaveform::TrRandom {
-            kind: RandomKind::Gaussian,
-            ts: n("10m"),
-            td: n("0"),
-            p1: n("1"),
-            p2: n("0")
-        })
-    );
-    assert_eq!(
-        wf(3),
-        Some(IrWaveform::TrRandom {
-            kind: RandomKind::Poisson,
-            ts: n("1u"),
-            td: n("0"),
-            p1: n("1"),
-            p2: n("0")
-        })
+    let out = netlist(deck, Dialect::Ngspice).unwrap_or_else(|e| panic!("{}", e.messages));
+    let lines: Vec<&str> = out.lines().collect();
+    for card in [
+        "V2 c 0 0 TRRANDOM(2 0.01 0 1 0)",
+        "V3 d 0 0 TRRANDOM(4 0.000001 0 1 0)",
+        "V4 e 0 trrandom(7 1u)",
+    ] {
+        assert!(lines.contains(&card), "{card}\n{out}");
+    }
+    assert!(
+        lines.iter().any(|l| l.starts_with("V1 a 0 0 TRNOISE(")),
+        "{out}"
     );
     assert!(
-        matches!(&ir.top.components[4], Component::RawSpice { .. }),
-        "{:?}",
-        ir.top.components[4]
+        lines.iter().any(|l| l.starts_with("I1 b 0 0 TRNOISE(")),
+        "{out}"
     );
-    assert_eq!(report.raw, 1);
-    // Written back, a card with no DC value gets 0, not the waveform's start:
-    // these two add to the DC value.
-    let out = netlist(&ir, Dialect::Ngspice).unwrap();
-    assert!(out.contains("V3 d 0 0 TRRANDOM(4 0.000001 0 1 0)"), "{out}");
 }

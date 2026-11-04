@@ -2,7 +2,7 @@
 //! portable `k=v` list, Xyce's per-package form (`.options <pkg> k=v`, `k v`,
 //! comma lists), and `DEVICE TEMP`/`TNOM`.
 //!
-//! Cites: the old lowering (as `syntax::adapter::options` ports it); the old SPICE grammar's `Options`,
+//! Cites: the old lowering; the old SPICE grammar's `Options`,
 //! `oitem`; the old Xyce grammar's `Options`, `Pkg`, `xopt`, `Pair_x`, `MVal_x`,
 //! `Flag_x`; Xyce Reference Guide p.96.
 //!
@@ -12,7 +12,7 @@
 //! - `Rd::options_view(&self, n: u32) -> Vec<Opt>`
 
 use super::Rd;
-use crate::codegen::Dialect;
+use crate::syntax::Dialect;
 use crate::syntax::ast::{NONE, Node, Tag};
 use crate::syntax::token::Tag as T;
 

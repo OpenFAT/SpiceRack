@@ -7,8 +7,8 @@
 //! compiler-construction skill). Each block's statements land where the old
 //! lowering put them, in its order.
 //!
-//! Cites: the old lowering's `cards`, `subckt`, `conditional`, `dissolve`
-//! (as `syntax::adapter::blocks` ports them); ngspice manual §2.5
+//! Cites: the old lowering's `cards`, `subckt`, `conditional`, `dissolve`;
+//! ngspice manual §2.5
 //! (`.subckt` nests), §2.15 (`.if`).
 //!
 //! Contents:

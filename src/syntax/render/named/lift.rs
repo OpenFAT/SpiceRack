@@ -8,7 +8,7 @@
 //! (`Rd::lift_call`; its views spell values with them), and the variables
 //! and `rack_*` functions the writer declares ([`Lifted`]).
 //!
-//! The walk is the old pass's (`codegen::statistics::exprs_mut`): every
+//! The walk is the old statistics pass's: every
 //! expression the old IR held as text (`sites`), each call in post-order
 //! (inner calls first), so variables are named and declared in its order. A top-level `.func` whose body calls a statistical function
 //! is inlined at each call, as the old pass's text was (`(body)`, each
@@ -521,7 +521,7 @@ impl Rd<'_> {
 
 #[cfg(test)]
 mod tests {
-    use crate::codegen::Dialect;
+    use crate::syntax::Dialect;
     use crate::syntax::render::render_text;
 
     #[test]

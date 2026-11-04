@@ -75,11 +75,11 @@ def main():
         print(f"{bench.category:12s} {bench.name:24s} analyses={len(bench.result_fields)}")
 
     spectre_bandgap = benches[-1].netlist("spectre")
-    assert "mytnom options tnom=27" in spectre_bandgap
+    assert "tnom=27" in spectre_bandgap  # an `options` parameter in Spectre
 
     # Temperature drift goes through `.dc temp`, which every backend emits.
-    # `.step param temp` is commented out by the ngspice codegen, so a
-    # step-based sweep silently runs at a single temperature.
+    # ngspice has no `.step param temp` (the deck is refused), so a
+    # step-based sweep would not run there.
     tempco = bandgap_tempco(ps, make_dut("bandgap_tc", ["vdd", "vref"]))
     assert "dc temp -40 125 5" in tempco.netlist("ngspice")
     assert "dc1 dc param=temp" in tempco.netlist("spectre")

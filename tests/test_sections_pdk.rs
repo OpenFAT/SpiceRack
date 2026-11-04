@@ -2,7 +2,7 @@
 //! in its own dialect and run.
 //!
 //! Oracles: a line scan of each file for its section names; read -> write ->
-//! read as a fixpoint; and the real simulator running a corner from the file
+//! read -> write as a text fixpoint; and the real simulator running a corner from the file
 //! SpiceRack wrote against the same corner from the original, bit for bit:
 //! ngspice on the pinned gf180mcu PDK (`$PDK_ROOT`), VACASK on its own corner
 //! library (`$VACASK_CORPUS`). sky130's is read only (see its test).
@@ -10,9 +10,10 @@
 
 use std::path::Path;
 
-use spicerack::codegen::{Dialect, netlist};
-use spicerack::import::parse;
-use spicerack::ir::*;
+use spicerack::syntax::Dialect;
+use spicerack::syntax::diag::Code;
+use spicerack::syntax::render::{Written, render_text};
+use spicerack::syntax::resolve::{Form, Role};
 
 #[path = "common/sections.rs"]
 mod sections;
@@ -22,45 +23,45 @@ use sections::meaning;
 
 /// gf180mcu's model file read and written back by SpiceRack: every `.lib`
 /// definition is a section (a line scan finds the same names), nothing is
-/// unparsed or raw (each `.param` in a `.subckt` is a local), nothing lands
-/// in the top, and ngspice runs an inverter on the
-/// `typical` corner from the written file to the same output voltage as
-/// from the PDK's own.
+/// kept as text (each `.param` in a `.subckt` is a local), nothing lands in
+/// the top, and ngspice runs an inverter on the `typical` corner from the
+/// written file to the same output voltage as from the PDK's own.
 #[test]
 fn gf180mcu_model_file_round_trips_through_sections() {
     let root = std::env::var("PDK_ROOT")
         .expect("PDK_ROOT not set: run the tests in `nix develop .#testing`");
     let pdk = Path::new(&root).join("gf180mcuD/libs.tech/ngspice");
     let src = std::fs::read_to_string(pdk.join("sm141064.ngspice")).unwrap();
-    let (ir, report) = parse(&src, "sm141064", Dialect::Ngspice).unwrap();
-    // The `.param`s inside its `.subckt`s are the definitions' locals.
-    assert_eq!(report, Default::default());
-    let locals: usize = ir.subcircuits().map(|s| s.locals.len()).sum();
-    assert_eq!(
-        locals,
-        src.lines().filter(|l| l.starts_with(".param")).count()
-            - ir.sections
-                .iter()
-                .map(|s| s.body.parameters.len())
-                .sum::<usize>()
-    );
+    let w = written(&src, Dialect::Ngspice, "sm141064", Dialect::Ngspice);
+    assert_eq!(codes(&w), [] as [Code; 0], "{}", w.notes.messages);
+    // The `.param`s inside its `.subckt`s are the definitions' locals: as
+    // many in the written file as in the source (one a card there).
+    let locals = |text: &str| {
+        let mut inside = false;
+        let mut n = 0;
+        for l in text.lines() {
+            let l = l.trim_start().to_ascii_lowercase();
+            inside = (inside || l.starts_with(".subckt")) && !l.starts_with(".ends");
+            if inside && l.starts_with(".param") {
+                n += split_params(&l[6..]);
+            }
+        }
+        n
+    };
+    assert_eq!(locals(&w.text), locals(&src));
     let scanned: Vec<&str> = src
         .lines()
         .filter_map(|l| l.strip_prefix(".lib "))
         .map(str::trim)
         .filter(|w| !w.contains(char::is_whitespace))
         .collect();
-    let read: Vec<&str> = ir.sections.iter().map(|s| s.body.name.as_str()).collect();
+    let read: Vec<String> = meaning(&w.text).into_iter().map(|m| m.name).collect();
     assert_eq!(read, scanned);
-    let top = &ir.top;
     assert!(
-        top.parameters.is_empty()
-            && top.models.is_empty()
-            && top.libs.is_empty()
-            && top.raw_spice.is_empty()
-            && ir.subcircuit_defs.is_empty()
+        w.text.starts_with("* sm141064\n\n.lib "),
+        "nothing at the top"
     );
-    let text = fixpoint(&ir, Dialect::Ngspice);
+    let text = fixpoint(&src, Dialect::Ngspice);
 
     // The sections call `.lib 'sm141064.spice' <section>`: that name is the
     // written file; every other file is the PDK's own.
@@ -95,54 +96,86 @@ fn gf180mcu_model_file_round_trips_through_sections() {
     assert_eq!(got.to_bits(), want.to_bits(), "{got} != {want}");
 }
 
-/// gf180mcu's model files, SPICE -> Spectre -> IR, a section at a time:
-/// each section either crosses with the same meaning ([`meaning`]: a
+/// gf180mcu's model files, SPICE -> Spectre -> SPICE, a section at a
+/// time: each section either crosses with the same meaning ([`meaning`]: a
 /// definition's locals are Spectre `parameters`, which an instance could
-/// set; numbers respelled, SPICE quotes dropped) or is refused for one of
-/// the named reasons: a `.model` kind with no Spectre master mapped (`r`,
-/// `c`, a level-3 `d`). The mismatch and statistical corners cross, their
-/// `agauss` calls lifted and read back (tests/test_monte_carlo.rs).
+/// set; numbers respelled, SPICE quotes dropped) or is refused for its one
+/// named reason, a `.model` kind with no Spectre master mapped (`W0104`: an
+/// `r`, a `c`, a level-3 `d`, which a line scan finds in exactly those
+/// sections; `W0006` on each R or C card naming one). The mismatch and statistical corners cross, their `agauss`
+/// calls lifted and read back (tests/test_monte_carlo.rs).
 #[test]
 fn gf180mcu_sections_cross_to_spectre() {
     let root = std::env::var("PDK_ROOT")
         .expect("PDK_ROOT not set: run the tests in `nix develop .#testing`");
     let pdk = Path::new(&root).join("gf180mcuD/libs.tech/ngspice");
-    let (mut crossed, mut refused) = (Vec::new(), std::collections::BTreeSet::new());
+    let (mut crossed, mut refused) = (Vec::new(), Vec::new());
     for f in [
         "sm141064.ngspice",
         "sm141064_mim.ngspice",
         "smbb000149.ngspice",
     ] {
         let src = std::fs::read_to_string(pdk.join(f)).unwrap();
-        let (ir, _) = parse(&src, "gf180", Dialect::Ngspice).unwrap();
-        for s in &ir.sections {
-            let one = CircuitIR {
-                sections: vec![s.clone()],
-                ..Default::default()
-            };
-            let scs = match netlist(&one, Dialect::Spectre) {
-                Ok(t) => t,
+        for (name, block) in sections(&src) {
+            let one = format!("*\n{block}");
+            let scs = match render_text(&one, Dialect::Ngspice, "gf180", Dialect::Spectre) {
+                Ok(w) => w.text,
                 Err(e) => {
-                    let e = e.to_string();
-                    let why = [
-                        "(r level 1): no Spectre master",
-                        "(c level 1): no Spectre master",
-                        "(d level 3): no Spectre master",
-                    ]
-                    .into_iter()
-                    .find(|w| e.contains(w))
-                    .unwrap_or_else(|| panic!("{f} {}: {e}", s.body.name));
-                    refused.insert(why);
+                    let got: Vec<Code> = e.diags.iter().map(|d| d.code).collect();
+                    // The model, and each R or C card naming it (`W0006`).
+                    assert!(
+                        got.contains(&Code::W0104)
+                            && got.iter().all(|&c| c == Code::W0104 || c == Code::W0006),
+                        "{f} {name}: {}",
+                        e.messages
+                    );
+                    refused.push(format!("{f}:{name}"));
                     continue;
                 }
             };
-            let (back, report) = parse(&scs, "gf180", Dialect::Spectre).unwrap();
-            assert_eq!(report, Default::default(), "{f} {}:\n{scs}", s.body.name);
-            assert_eq!(meaning(&back), meaning(&one), "{f} {}:\n{scs}", s.body.name);
-            crossed.push(format!("{f}:{}", s.body.name));
+            let back = written(&scs, Dialect::Spectre, "gf180", Dialect::Ngspice);
+            assert_eq!(codes(&back), [] as [Code; 0], "{f} {name}:\n{scs}");
+            let spice = written(&one, Dialect::Ngspice, "gf180", Dialect::Ngspice);
+            assert_eq!(
+                meaning(&back.text),
+                meaning(&spice.text),
+                "{f} {name}:\n{scs}"
+            );
+            crossed.push(format!("{f}:{name}"));
         }
     }
-    assert_eq!(refused.len(), 3, "{refused:?}");
+    // The refused sections are those holding a `.model` of kind r, c, or d
+    // at level 3 (a line scan of each section).
+    let mut unmapped = Vec::new();
+    for f in [
+        "sm141064.ngspice",
+        "sm141064_mim.ngspice",
+        "smbb000149.ngspice",
+    ] {
+        let src = std::fs::read_to_string(pdk.join(f)).unwrap();
+        for (name, block) in sections(&src) {
+            // Each `.model` card joined with its `+` lines.
+            let mut cards: Vec<String> = Vec::new();
+            for l in block.lines().map(str::to_ascii_lowercase) {
+                match (l.trim_start().strip_prefix('+'), cards.last_mut()) {
+                    (Some(more), Some(c)) => c.push_str(more),
+                    _ => cards.push(l),
+                }
+            }
+            let none = cards.iter().any(|c| {
+                let w: Vec<&str> = c.split_whitespace().collect();
+                w.first() == Some(&".model")
+                    && w.get(2).is_some_and(|&k| {
+                        k == "r" || k == "c" || k == "d" && c.replace(' ', "").contains("level=3")
+                    })
+            });
+            if none {
+                unmapped.push(format!("{f}:{name}"));
+            }
+        }
+    }
+    assert!(!refused.is_empty());
+    assert_eq!(refused, unmapped);
     for name in [
         "sm141064.ngspice:statistical",
         "sm141064.ngspice:fets_mm",
@@ -179,30 +212,29 @@ fn sky130_corner_file_reads_into_sections() {
         Path::new(&root).join("sky130A/libs.tech/ngspice/sky130.lib.spice"),
     )
     .unwrap();
-    let (ir, report) = parse(&src, "sky130", Dialect::Ngspice).unwrap();
-    assert_eq!(report, Default::default());
+    let w = written(&src, Dialect::Ngspice, "sky130", Dialect::Ngspice);
+    assert_eq!(codes(&w), [] as [Code; 0], "{}", w.notes.messages);
     let scanned: Vec<&str> = src
         .lines()
         .filter_map(|l| l.strip_prefix(".lib "))
         .map(str::trim)
         .collect();
+    let m = meaning(&w.text);
     assert_eq!(
-        ir.sections
-            .iter()
-            .map(|s| s.body.name.as_str())
-            .collect::<Vec<_>>(),
+        m.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(),
         scanned
     );
-    assert_eq!(
-        ir.top,
-        Subcircuit {
-            name: "sky130".into(),
-            ..Default::default()
-        }
+    assert!(
+        w.text.starts_with("* sky130\n\n.lib "),
+        "nothing at the top"
     );
-    let tt = &ir.sections[0].body;
-    assert_eq!((tt.parameters.len(), tt.includes.len()), (2, 4), "{tt:?}");
-    fixpoint(&ir, Dialect::Ngspice);
+    assert_eq!(
+        (m[0].params.len(), m[0].includes.len()),
+        (2, 4),
+        "{:?}",
+        m[0]
+    );
+    fixpoint(&src, Dialect::Ngspice);
 }
 
 /// sky130's combined library (`libs.tech/combined/sky130.lib.spice`) and
@@ -226,50 +258,31 @@ fn sky130_combined_library_converts_losslessly() {
     let mirror = tempfile::tempdir().unwrap();
     let hspice = tempfile::tempdir().unwrap();
     let entry = Path::new("libs.tech/combined/sky130.lib.spice");
-    let (mut todo, mut seen) = (vec![entry.to_path_buf()], Vec::new());
-    let mut raw = Vec::new();
-    // ponytail: a linear `seen` scan; the tree is ~200 files.
-    while let Some(rel) = todo.pop() {
-        let rel = normalized(&rel);
-        if seen.contains(&rel) {
-            continue;
-        }
-        let src = std::fs::read_to_string(pdk.join(&rel))
-            .unwrap_or_else(|e| panic!("{}: {e}", rel.display()));
-        // An included file has no title line: a dummy one keeps its first card.
-        let (ir, report) = parse(&format!("*\n{src}"), "f", Dialect::Ngspice).unwrap();
+    // Every file the library reaches through `.include` and `.lib`, as a
+    // kit reads them; each written alone (behind a dummy title line, as an
+    // included file has none).
+    let kit = spicerack::import::kit(&[pdk.join(entry)], Form::Library, Dialect::Ngspice, &pdk);
+    let (mut seen, mut raw) = (Vec::new(), Vec::new());
+    for f in kit.files() {
         assert!(
-            report.unparsed.is_empty(),
+            matches!(f.role, Role::Library | Role::Deck),
             "{}: {:?}",
-            rel.display(),
-            report.unparsed
+            f.path.display(),
+            f.role
         );
-        for sc in ir.subcircuits() {
-            raw.extend(
-                sc.raw_spice
-                    .iter()
-                    .map(|l| format!("{}: {l}", rel.display())),
-            );
-            for c in &sc.components {
-                if let Component::RawSpice { line } = c {
-                    raw.push(format!(
-                        "{}: {}",
-                        rel.display(),
-                        &line[..line.find(' ').unwrap_or(line.len())]
-                    ));
-                }
-            }
-            let dir = rel.parent().unwrap();
-            todo.extend(
-                sc.includes
-                    .iter()
-                    .chain(sc.libs.iter().map(|(p, _)| p))
-                    .map(|p| dir.join(p)),
-            );
-        }
-        let text = fixpoint(&ir, Dialect::Ngspice);
-        let hs = netlist(&ir, Dialect::Hspice)
-            .unwrap_or_else(|e| panic!("{}: HSPICE: {e}", rel.display()));
+        let rel = f.path.strip_prefix(&pdk).unwrap().to_path_buf();
+        let w = written(&f.text, Dialect::Ngspice, "f", Dialect::Ngspice);
+        raw.extend(
+            w.notes
+                .diags
+                .iter()
+                .filter(|d| d.code == Code::W0027 || format!("{:?}", d.code).starts_with('P'))
+                .map(|d| format!("{}: {:?}", rel.display(), d.code)),
+        );
+        let text = fixpoint(&f.text, Dialect::Ngspice);
+        let hs = render_text(&f.text, Dialect::Ngspice, "f", Dialect::Hspice)
+            .unwrap_or_else(|e| panic!("{}: HSPICE: {}", rel.display(), e.messages))
+            .text;
         for (root, text) in [(mirror.path(), text), (hspice.path(), hs)] {
             let out = root.join(&rel);
             std::fs::create_dir_all(out.parent().unwrap()).unwrap();
@@ -338,33 +351,34 @@ fn vacask_library_round_trips_through_sections() {
         .expect("VACASK_CORPUS not set: run the tests in `nix develop .#testing`");
     let lib = Path::new(&root).join("demo/cmos180n.lib");
     let src = std::fs::read_to_string(&lib).unwrap();
-    let (ir, report) = parse(&src, "cmos180n", Dialect::Vacask).unwrap();
+    let w = written(&src, Dialect::Vacask, "cmos180n", Dialect::Vacask);
     // `*` lines between the sections: VACASK skips everything outside a
     // section while it looks for one (lib/dfllexer.l, `SECLOOK`), so these
-    // are text no VACASK statement reads, kept verbatim.
-    assert_eq!(
-        report.unparsed,
-        [
-            "* Worst power",
-            "* Worst speed",
-            "* Worst one",
-            "* Worst zero",
-            "* Model definition"
-        ]
-    );
+    // are text no VACASK statement reads, kept as written.
+    let unread = codes(&w).iter().filter(|&&c| c == Code::P0001).count();
+    assert_eq!(unread, 5, "{}", w.notes.messages);
+    for l in [
+        "* Worst power",
+        "* Worst speed",
+        "* Worst one",
+        "* Worst zero",
+        "* Model definition",
+    ] {
+        assert!(w.text.lines().any(|t| t.trim() == l), "{l}\n{}", w.text);
+    }
     let scanned: Vec<&str> = src
         .lines()
         .filter_map(|l| l.trim().strip_prefix("section "))
         .map(str::trim)
         .collect();
-    assert_eq!(
-        ir.sections
-            .iter()
-            .map(|s| s.body.name.as_str())
-            .collect::<Vec<_>>(),
-        scanned
-    );
-    let text = fixpoint(&ir, Dialect::Vacask);
+    let read: Vec<&str> = w
+        .text
+        .lines()
+        .filter_map(|l| l.trim().strip_prefix("section "))
+        .map(str::trim)
+        .collect();
+    assert_eq!(read, scanned);
+    let text = fixpoint(&src, Dialect::Vacask);
 
     // `tm` includes `cmos180n.lib`'s other sections: that name is the
     // written file.
@@ -390,15 +404,58 @@ fn vacask_library_round_trips_through_sections() {
     assert_eq!(got.to_bits(), want.to_bits(), "{got} != {want}");
 }
 
-/// Emitting `ir` in `d` and reading it back gives `ir` again, and emitting
-/// that gives the same text. Returns the text.
-fn fixpoint(ir: &CircuitIR, d: Dialect) -> String {
-    let text = netlist(ir, d).unwrap_or_else(|e| panic!("{d:?}: {e}"));
-    let (again, _) = parse(&text, &ir.top.name, d).unwrap();
-    assert_eq!(&again.sections, &ir.sections, "{d:?}:\n{text}");
-    assert_eq!(&again, ir, "{d:?}:\n{text}");
-    assert_eq!(netlist(&again, d).unwrap(), text, "{d:?}");
+/// `src` (read in `d`) written for `to`, which must not refuse it.
+fn written(src: &str, d: Dialect, name: &str, to: Dialect) -> Written {
+    render_text(src, d, name, to).unwrap_or_else(|e| panic!("{to:?}: {}", e.messages))
+}
+
+/// The codes of the notes on a written deck, in source order.
+fn codes(w: &Written) -> Vec<Code> {
+    w.notes.diags.iter().map(|d| d.code).collect()
+}
+
+/// `src` written in `d`, read back and written again: the same text, which
+/// is returned.
+fn fixpoint(src: &str, d: Dialect) -> String {
+    let text = written(src, d, "f", d).text;
+    assert_eq!(written(&text, d, "f", d).text, text, "{d:?}");
     text
+}
+
+/// Each `.lib name` … `.endl` block of `src`, by a line scan: its name and
+/// its lines.
+fn sections(src: &str) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    let mut open = false;
+    for l in src.lines() {
+        let words: Vec<&str> = l.split_whitespace().collect();
+        let head = words.first().map(|w| w.to_ascii_lowercase());
+        match (head.as_deref(), words.len()) {
+            (Some(".lib"), 2) if !open => {
+                open = true;
+                out.push((words[1].to_string(), String::new()));
+            }
+            (Some(".endl"), _) if open => open = false,
+            _ => {}
+        }
+        if let Some((_, block)) = out
+            .last_mut()
+            .filter(|_| open || head.as_deref() == Some(".endl"))
+        {
+            block.push_str(l);
+            block.push('\n');
+        }
+    }
+    out
+}
+
+/// The assignments on a `.param` card's text.
+fn split_params(s: &str) -> usize {
+    s.matches('=').count()
+        - s.matches("==").count() * 2
+        - s.matches("!=").count()
+        - s.matches("<=").count()
+        - s.matches(">=").count()
 }
 
 /// ESPice reading `deck` as HSPICE (`--tokenizer=hspice`) and its run.
@@ -420,19 +477,4 @@ fn espice_hspice(deck: &str) -> spicerack::result::RawData {
         String::from_utf8_lossy(&out.stderr)
     );
     spicerack::rawfile::parse_raw(&std::fs::read(&raw).unwrap()).unwrap()
-}
-
-/// `p` with its `.` and `..` parts resolved, lexically.
-fn normalized(p: &Path) -> std::path::PathBuf {
-    let mut out = std::path::PathBuf::new();
-    for c in p.components() {
-        match c {
-            std::path::Component::ParentDir => {
-                out.pop();
-            }
-            std::path::Component::CurDir => {}
-            c => out.push(c),
-        }
-    }
-    out
 }

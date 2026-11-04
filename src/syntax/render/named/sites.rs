@@ -1,6 +1,6 @@
 //! The Monte Carlo lift's sites (`lift`): every expression the old IR
-//! held as text, block by block, in the old pass's order
-//! (`codegen::statistics::exprs_mut`): the top, its definitions, each
+//! held as text, block by block, in the old statistics pass's
+//! order: the top, its definitions, each
 //! section's body and definitions; in each its parameters, models,
 //! instances, elements and branches. A site is the owner and field its
 //! variables are named after, and the value items its text is spelled

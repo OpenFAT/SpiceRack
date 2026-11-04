@@ -104,8 +104,10 @@ class TestPassiveComponents:
             value=0.0,
             raw_spice="9kOhm",
         )
+        # The text is read as the deck's own: ngspice ignores the letters
+        # after a scale factor (manual §2.1.3), so `9kOhm` is the number 9k.
         netlist = str(c)
-        assert "R1 in out 9kOhm" in netlist
+        assert "R1 in out 9k" in netlist
 
 
 class TestSources:

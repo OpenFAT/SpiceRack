@@ -1,17 +1,18 @@
-//! Verilog: a `verilog(...)` call → an `ir::VerilogBlock`, and each block
-//! → what simulates it (a `d_cosim` XSPICE instance, or synthesized
-//! standard cells). Cites ngspice's `d_cosim` and `adc_bridge`/`dac_bridge`
-//! code models.
+//! Verilog: a `verilog(...)` call → a `veriloga::VerilogBlock`, and each
+//! block → the cards that simulate it (a `d_cosim` XSPICE instance, or
+//! synthesized standard cells). Cites ngspice's `d_cosim` and
+//! `adc_bridge`/`dac_bridge` code models.
 //!
 //! Contents:
 //! - `pub(super) fn verilog_block(py, source, mode, instance_name, connections, pdk, liberty, spice_models) -> PyResult<VerilogBlock>`
-//! - `pub(super) fn lower_verilog(sub: &mut ir::Subcircuit) -> Result<(), String>`
+//! - `pub(super) fn lower_verilog(body: &mut Body) -> Result<(), String>`
 
 use std::collections::HashMap;
 
 use pyo3::prelude::*;
 
-use crate::ir::{self, Component};
+use super::model::{Body, Card, need};
+use crate::veriloga::{VerilogBlock, VerilogConnection, VerilogMode};
 
 /// The IR block for a `verilog(...)` call; connection values are a net name
 /// or a list of net names (a bus).
@@ -25,8 +26,7 @@ pub(super) fn verilog_block(
     pdk: Option<&str>,
     liberty: Option<&str>,
     spice_models: Option<&str>,
-) -> PyResult<crate::ir::VerilogBlock> {
-    use crate::ir::{VerilogConnection, VerilogMode};
+) -> PyResult<VerilogBlock> {
     let mode = match mode {
         "simulate" => VerilogMode::Simulate,
         "synthesize" => VerilogMode::Synthesize,
@@ -50,7 +50,7 @@ pub(super) fn verilog_block(
         };
         conns.insert(port.clone(), conn);
     }
-    Ok(crate::ir::VerilogBlock {
+    Ok(VerilogBlock {
         source: source.to_string(),
         mode,
         instance_name: instance_name.to_string(),
@@ -61,60 +61,41 @@ pub(super) fn verilog_block(
     })
 }
 
-/// Expand each Verilog block of `sub` into what simulates it: a `d_cosim`
-/// XSPICE instance (simulate) or the synthesized standard-cell instances
-/// (synthesize).
-pub(super) fn lower_verilog(sub: &mut ir::Subcircuit) -> Result<(), String> {
-    for vb in std::mem::take(&mut sub.verilog_blocks) {
+/// Expand each Verilog block of `body` into the cards that simulate it: a
+/// `d_cosim` XSPICE instance (simulate) or the synthesized standard-cell
+/// instances (synthesize).
+pub(super) fn lower_verilog(body: &mut Body) -> Result<(), String> {
+    for vb in std::mem::take(&mut body.verilog) {
         match crate::veriloga::lower(&vb)? {
             crate::veriloga::Lowered::Cosim { vvp, ports } => {
                 let bridges = [
-                    (
-                        "adc_buf",
-                        "adc_bridge",
-                        [("in_low", "0.5"), ("in_high", "0.5")],
-                    ),
-                    (
-                        "dac_buf",
-                        "dac_bridge",
-                        [("out_low", "0.0"), ("out_high", "1.8")],
-                    ),
+                    ("adc_buf", "adc_bridge", "in_low=0.5 in_high=0.5"),
+                    ("dac_buf", "dac_bridge", "out_low=0.0 out_high=1.8"),
                 ];
                 for (name, kind, params) in bridges {
-                    if !sub.models.iter().any(|m| m.kind == kind) {
-                        sub.models.push(ir::ModelDef {
-                            name: name.into(),
-                            kind: kind.into(),
-                            parameters: params
-                                .iter()
-                                .map(|(k, v)| (k.to_string(), v.to_string()))
-                                .collect(),
-                        });
+                    let kind_of = |m: &String| m.split_whitespace().nth(2) == Some(kind);
+                    if !body.models.iter().any(kind_of) {
+                        body.models.push(format!(".model {name} {kind} ({params})"));
                     }
                 }
                 let model = format!("cosim_{}", vb.instance_name);
-                sub.raw_spice.push(format!(
+                body.raw.push(format!(
                     ".model {model} d_cosim(delay=1n simulation_id=\"{vvp}\")"
                 ));
-                sub.components.push(Component::Xspice {
-                    name: vb.instance_name.clone(),
-                    connections: ports,
-                    model,
-                });
+                let text = format!("A{} {} {model}", vb.instance_name, ports.join(" "));
+                let mut card = Card::element(&vb.instance_name, text);
+                card.needs = need::XSPICE;
+                body.elements.push(card);
             }
             crate::veriloga::Lowered::Gates {
                 spice_models,
                 cells,
             } => {
-                sub.includes.push(spice_models);
-                sub.instances
-                    .extend(cells.into_iter().map(|c| ir::Instance {
-                        name: c.name,
-                        subcircuit: c.cell,
-                        port_mapping: c.nodes,
-                        parameters: vec![],
-                        at: None,
-                    }));
+                body.includes.push(spice_models);
+                for c in cells {
+                    let text = format!("X{} {} {}", c.name, c.nodes.join(" "), c.cell);
+                    body.instances.push(Card::element(&c.name, text));
+                }
             }
         }
     }

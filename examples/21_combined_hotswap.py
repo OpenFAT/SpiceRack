@@ -4,7 +4,7 @@ Example 21: Combined Backend + PDK Hotswap
 The same CMOS inverter across a matrix of PDKs and backends: one circuit, any
 PDK, any backend that reads the PDK's model files.
 
-ModelLibrary accepts per-backend paths as keyword arguments, and the codegen
+ModelLibrary accepts per-backend paths as keyword arguments, and the deck
 picks the right file. The open PDKs ship ngspice model files only, so the
 matrix runs the backends that read those: ngspice, and ESPice where it reads
 the PDK. VACASK and Spectre would need a `vacask=`/`spectre=` path to the

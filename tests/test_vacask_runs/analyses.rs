@@ -11,7 +11,7 @@ use super::*;
 
 #[test]
 fn op_solves_a_resistive_divider() {
-    let raw = run(&rc_ir(vec![Analysis::Op]));
+    let raw = run(&rc(".op"));
     // 3 V across 1k+1k: out = 1.5 V, i(vdd) = -1.5 mA (VACASK's branch flow
     // points into the source's positive terminal).
     close(col(&raw, "out")[0], 1.5, 1e-9);
@@ -21,15 +21,7 @@ fn op_solves_a_resistive_divider() {
 
 #[test]
 fn dc_sweeps_a_source_on_spices_own_grid() {
-    let ir = rc_ir(vec![Analysis::Dc {
-        sweeps: vec![DcSweep {
-            source: "Vdd".into(),
-            start: 0.0,
-            stop: 10.0,
-            step: 0.5,
-        }],
-    }]);
-    let raw = run(&ir);
+    let raw = run(&rc(".dc Vdd 0 10 0.5"));
     let sweep = col(&raw, "vsweep");
     // 0..10 by 0.5 is 21 SPICE samples, not 21 intervals.
     assert_eq!(sweep.len(), 21, "sweep grid: {:?}", sweep);
@@ -45,15 +37,7 @@ fn dc_sweeps_a_source_on_spices_own_grid() {
 fn dc_sweep_stops_before_passing_the_endpoint() {
     // SPICE walks from START by STEP and never reaches 1.1; VACASK always
     // lands ON `to`, so `to` has to be recomputed or the grids diverge.
-    let ir = rc_ir(vec![Analysis::Dc {
-        sweeps: vec![DcSweep {
-            source: "Vdd".into(),
-            start: 0.0,
-            stop: 1.1,
-            step: 0.2,
-        }],
-    }]);
-    let raw = run(&ir);
+    let raw = run(&rc(".dc Vdd 0 1.1 0.2"));
     let sweep = col(&raw, "vsweep");
     assert_eq!(sweep.len(), 6, "{:?}", sweep);
     close(sweep[5], 1.0, 1e-12);
@@ -62,33 +46,9 @@ fn dc_sweep_stops_before_passing_the_endpoint() {
 
 #[test]
 fn two_source_dc_runs_inner_sweep_fastest() {
-    let mut top = empty_sub("two_src");
-    top.components = vec![r("1", "a", "b", 1000.0), r("2", "b", "0", 1000.0)];
-    let mut tb = empty_tb(vec![Analysis::Dc {
-        sweeps: vec![
-            // SPICE's FIRST source is the fast one.
-            DcSweep {
-                source: "Va".into(),
-                start: 0.0,
-                stop: 1.0,
-                step: 0.5,
-            },
-            DcSweep {
-                source: "Vb".into(),
-                start: 0.0,
-                stop: 2.0,
-                step: 1.0,
-            },
-        ],
-    }]);
-    tb.stimulus = vec![vsrc("a", "a", "0", 0.0), vsrc("b", "c", "0", 0.0)];
-    top.components.push(r("3", "c", "0", 1000.0));
-    let ir = CircuitIR {
-        top,
-        testbench: Some(tb),
-        ..Default::default()
-    };
-    let raw = run(&ir);
+    // SPICE's FIRST source is the fast one.
+    let deck = "two_src\nR1 a b 1k\nR2 b 0 1k\nR3 c 0 1k\nVa a 0 0\nVb c 0 0\n.dc Va 0 1 0.5 Vb 0 2 1\n.end\n";
+    let raw = run(deck);
     // 3 outer x 3 inner = 9 points, inner fastest.
     let a = col(&raw, "a");
     assert_eq!(a.len(), 9, "{:?}", a);
@@ -105,36 +65,8 @@ fn two_source_dc_runs_inner_sweep_fastest() {
 #[test]
 fn ac_finds_the_rc_corner() {
     // 1k || 1k = 500 ohm driving 1 uF: f_3dB = 1/(2*pi*500*1e-6) = 318.31 Hz.
-    let mut top = empty_sub("rc_ac");
-    top.components = vec![
-        r("1", "vdd", "out", 1000.0),
-        r("2", "out", "0", 1000.0),
-        c("1", "out", "0", 1e-6),
-    ];
-    let mut tb = empty_tb(vec![Analysis::Ac {
-        sweep: FreqSweep {
-            variation: Sweep::Dec,
-            points: 200,
-            start: 1.0,
-            stop: 1e5,
-        },
-    }]);
-    tb.stimulus = vec![Component::VoltageSource {
-        name: "dd".into(),
-        np: "vdd".into(),
-        nm: "0".into(),
-        value: IrValue::Numeric { value: 0.0 },
-        ac_magnitude: Some(1.0),
-        ac_phase: Some(0.0),
-        waveform: None,
-        port: None,
-    }];
-    let ir = CircuitIR {
-        top,
-        testbench: Some(tb),
-        ..Default::default()
-    };
-    let raw = run(&ir);
+    let deck = "rc_ac\nR1 vdd out 1k\nR2 out 0 1k\nC1 out 0 1u\nVdd vdd 0 0 AC 1 0\n.ac dec 200 1 100k\n.end\n";
+    let raw = run(deck);
     assert!(raw.is_complex, "AC must come back as a complex plot");
 
     let f = col(&raw, "frequency");
@@ -160,32 +92,7 @@ fn ac_finds_the_rc_corner() {
 
 #[test]
 fn ac_phase_on_a_source_is_honoured() {
-    let mut top = empty_sub("acphase");
-    top.components = vec![r("1", "vin", "0", 1000.0)];
-    let mut tb = empty_tb(vec![Analysis::Ac {
-        sweep: FreqSweep {
-            variation: Sweep::Lin,
-            points: 2,
-            start: 1e3,
-            stop: 2e3,
-        },
-    }]);
-    tb.stimulus = vec![Component::VoltageSource {
-        name: "1".into(),
-        np: "vin".into(),
-        nm: "0".into(),
-        value: IrValue::Numeric { value: 0.0 },
-        ac_magnitude: Some(2.0),
-        ac_phase: Some(90.0),
-        waveform: None,
-        port: None,
-    }];
-    let ir = CircuitIR {
-        top,
-        testbench: Some(tb),
-        ..Default::default()
-    };
-    let raw = run(&ir);
+    let raw = run("acphase\nR1 vin 0 1k\nV1 vin 0 0 AC 2 90\n.ac lin 2 1k 2k\n.end\n");
     let v = cplx(&raw, "vin");
     close(v[0].norm(), 2.0, 1e-9);
     close(v[0].arg().to_degrees(), 90.0, 1e-6);
@@ -194,39 +101,8 @@ fn ac_phase_on_a_source_is_honoured() {
 #[test]
 fn tran_follows_the_rc_step_response() {
     // tau = 1k * 1u = 1 ms, driven by a 1 V step at t=0.
-    let mut top = empty_sub("rc_tran");
-    top.components = vec![r("1", "vin", "out", 1000.0), c("1", "out", "0", 1e-6)];
-    let mut tb = empty_tb(vec![Analysis::Transient {
-        step: 1e-5,
-        stop: 5e-3,
-        start: None,
-        max_step: Some(1e-5),
-        uic: true,
-    }]);
-    tb.stimulus = vec![Component::VoltageSource {
-        name: "1".into(),
-        np: "vin".into(),
-        nm: "0".into(),
-        value: IrValue::Numeric { value: 0.0 },
-        ac_magnitude: None,
-        ac_phase: None,
-        waveform: Some(IrWaveform::Pulse {
-            initial: 0.0.into(),
-            pulsed: 1.0.into(),
-            delay: 0.0.into(),
-            rise_time: 1e-9.into(),
-            fall_time: 1e-9.into(),
-            pulse_width: 1.0.into(),
-            period: 0.0.into(),
-        }),
-        port: None,
-    }];
-    let ir = CircuitIR {
-        top,
-        testbench: Some(tb),
-        ..Default::default()
-    };
-    let raw = run(&ir);
+    let deck = "rc_tran\nR1 vin out 1k\nC1 out 0 1u\nV1 vin 0 0 PULSE(0 1 0 1n 1n 1 0)\n.tran 10u 5m 0 10u UIC\n.end\n";
+    let raw = run(deck);
     let t = col(&raw, "time");
     let out = col(&raw, "out");
     // 1 - exp(-1) = 0.6321 at one time constant.
@@ -243,24 +119,10 @@ fn tran_follows_the_rc_step_response() {
 fn tran_emits_maxstep_so_the_grid_is_spices() {
     // Without `maxstep` VACASK's `step` is only a STARTING step and it strides
     // far past SPICE's output interval.
-    let mut top = empty_sub("grid");
-    top.components = vec![r("1", "vin", "out", 1000.0), c("1", "out", "0", 1e-6)];
-    let mut tb = empty_tb(vec![Analysis::Transient {
-        step: 1e-4,
-        stop: 1e-2,
-        start: None,
-        max_step: None,
-        uic: false,
-    }]);
-    tb.stimulus = vec![vsrc("1", "vin", "0", 1.0)];
-    let ir = CircuitIR {
-        top,
-        testbench: Some(tb),
-        ..Default::default()
-    };
-    let netlist = emit(&ir, Dialect::Vacask).unwrap();
+    let deck = "grid\nR1 vin out 1k\nC1 out 0 1u\nV1 vin 0 1\n.tran 100u 10m\n.end\n";
+    let netlist = emit(deck).unwrap();
     assert!(netlist.contains("maxstep="), "{}", netlist);
-    let raw = run(&ir);
+    let raw = run(deck);
     let t = col(&raw, "time");
     // 10 ms / 100 us = 100 intervals; without maxstep VACASK returns far fewer.
     assert!(
@@ -280,37 +142,8 @@ fn tran_emits_maxstep_so_the_grid_is_spices() {
 fn noise_matches_a_resistors_thermal_floor() {
     // A single 1k resistor into a unity-gain probe: the output noise density
     // is 4kTR = 1.66e-17 V^2/Hz at 27 C, flat with frequency.
-    let mut top = empty_sub("rnoise");
-    top.components = vec![r("1", "vin", "out", 1000.0), r("2", "out", "0", 1000.0)];
-    let mut tb = empty_tb(vec![Analysis::Noise {
-        output: "out".into(),
-        reference: "0".into(),
-        source: "V1".into(),
-        sweep: FreqSweep {
-            variation: Sweep::Dec,
-            points: 5,
-            start: 1e3,
-            stop: 1e5,
-        },
-        points_per_summary: None,
-    }]);
-    tb.stimulus = vec![Component::VoltageSource {
-        name: "1".into(),
-        np: "vin".into(),
-        nm: "0".into(),
-        value: IrValue::Numeric { value: 0.0 },
-        ac_magnitude: Some(1.0),
-        ac_phase: None,
-        waveform: None,
-        port: None,
-    }];
-    tb.temperature = Some(27.0);
-    let ir = CircuitIR {
-        top,
-        testbench: Some(tb),
-        ..Default::default()
-    };
-    let raw = run(&ir);
+    let deck = "rnoise\nR1 vin out 1k\nR2 out 0 1k\nV1 vin 0 0 AC 1\n.temp 27\n.noise V(out) V1 dec 5 1k 100k\n.end\n";
+    let raw = run(deck);
 
     let onoise = col(&raw, "onoise");
     // Two 1k resistors in parallel (500 ohm) seen from `out`: 4kT*500.
@@ -326,11 +159,7 @@ fn noise_matches_a_resistors_thermal_floor() {
 fn dc_transfer_function_runs() {
     // VACASK's `dcxf` reports the transfer function from EVERY source to `out`
     // in one plot, so SPICE's input-source argument is implicit.
-    let ir = rc_ir(vec![Analysis::Tf {
-        output: "V(out)".into(),
-        source: "Vdd".into(),
-    }]);
-    let raw = run(&ir);
+    let raw = run(&rc(".tf V(out) Vdd"));
     close(col(&raw, "tf(vdd)")[0], 0.5, 1e-9);
     close(col(&raw, "zin(vdd)")[0], 2000.0, 1e-9);
 }

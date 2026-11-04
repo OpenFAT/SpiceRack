@@ -9,6 +9,7 @@
 //! - `pub struct UnitValue`, `UnitValue::str_spice(&self) -> String`, `impl Display for UnitValue`
 //! - `pub fn parse_spice_number(t: &str) -> Option<(f64, usize, &'static str)>`
 //! - `pub fn ngspice_value(t: &str) -> Option<f64>`
+//! - `pub fn format_spice_number(v: f64) -> String`
 //! - `pub fn ngspice_spelling(v: f64) -> String`
 //! - `pub fn si_prefix(v: f64) -> (f64, &'static str)`
 //! - `pub fn scale(v: f64, mult: f64) -> f64`
@@ -212,6 +213,24 @@ pub fn ngspice_value(t: &str) -> Option<f64> {
     Some(sign * mantis * 10f64.powf((expo1 + expsgn * expo2) as f64))
 }
 
+/// `v` in SPICE notation, with an SI suffix when that spelling reads back as
+/// exactly `v` (`10k`, `2.5n`), else the shortest exact exponent form
+/// (`2.0000000000000002e-7`). Rounding the mantissa (`200n` for that value)
+/// would hand the simulator a different number.
+pub fn format_spice_number(v: f64) -> String {
+    let (mult, suffix) = si_prefix(v);
+    let exp = mult.log10().round() as i32; // the prefixes are powers of ten
+    let m = unscale(v, mult);
+    let rounded = m.round();
+    let whole = (rounded.abs() < 1e15).then(|| format!("{}", rounded as i64));
+    for mantissa in whole.into_iter().chain([format!("{m}")]) {
+        if format!("{mantissa}e{exp}").parse::<f64>() == Ok(v) {
+            return mantissa + suffix;
+        }
+    }
+    format!("{v:e}")
+}
+
 /// `v` spelled for ngspice: the fewest digits (SI prefix, plain decimal or
 /// exponent form) that [`ngspice_value`] reads back as exactly `v`, so a
 /// value read from an ngspice deck is written back bit for bit. Zeros count
@@ -257,7 +276,7 @@ pub fn unscale(v: f64, mult: f64) -> f64 {
 impl UnitValue {
     /// SPICE number text: "1k", "10p", "3.3".
     pub fn str_spice(&self) -> String {
-        crate::codegen::format_spice_number(self.value)
+        format_spice_number(self.value)
     }
 }
 
@@ -291,13 +310,13 @@ fn spell(v: f64) -> String {
             }
         }
         if !m.ends_with('0') || digits == 1 {
-            found.insert(0, crate::codegen::format_spice_number(x));
+            found.insert(0, format_spice_number(x));
         }
         if let Some(s) = found.into_iter().find(|s| ngspice_value(s) == Some(v)) {
             return s;
         }
     }
-    crate::codegen::format_spice_number(v)
+    format_spice_number(v)
 }
 
 /// The mantissa `m` (`-3.30`) times `10^e` as plain decimal, every digit kept.

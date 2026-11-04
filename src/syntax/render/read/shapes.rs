@@ -21,7 +21,7 @@
 //! - `Rd::group_items(&self, g: u32) -> &[u32]`
 
 use super::Rd;
-use crate::codegen::Dialect;
+use crate::syntax::Dialect;
 use crate::syntax::ast::{NONE, Node, Tag};
 use crate::syntax::token::Tag as T;
 

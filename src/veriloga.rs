@@ -2,10 +2,11 @@
 //! Verilog blocks, plus the external tools that compile them.
 //!
 //! `veriloga()` records the `.va` source in a subcircuit's load list; each
-//! backend's codegen decides what that becomes. ngspice and VACASK load OSDI,
-//! so their codegen compiles the source with OpenVAF ([`compile_osdi`]);
-//! Spectre includes it with `ahdl_include`; ESPice compiles it itself through
-//! VerA (`.hdl`), so no OpenVAF run happens on that path.
+//! target's writer (`syntax::render`) decides what that becomes. ngspice and
+//! VACASK load OSDI, so their writer compiles the source with OpenVAF
+//! ([`compile_osdi`]); Spectre includes it with `ahdl_include`; ESPice
+//! compiles it itself through VerA (`.hdl`), so no OpenVAF run happens on
+//! that path.
 //!
 //! A digital Verilog block ([`lower`]) is either co-simulated (Icarus `.vvp`
 //! under ngspice `d_cosim`) or synthesized by Yosys into standard cells.
@@ -13,6 +14,7 @@
 //! Cites: none (OpenVAF, Icarus and Yosys command lines; ngspice `d_cosim`).
 //!
 //! Contents:
+//! - `pub struct VerilogBlock`, `pub enum VerilogMode`, `pub enum VerilogConnection`
 //! - `pub fn is_source(path: &str) -> bool`
 //! - `pub fn osdi_loads(loads: &[String]) -> Result<Vec<String>, String>` (without `backend`: the paths
 //!   as given, or an error for a `.va` source)
@@ -22,8 +24,37 @@
 //!   `pub struct Cell`, `pub fn lower(vb: &VerilogBlock) -> Result<Lowered, String>`,
 //!   `pub(super) fn gate_instances(netlist: &str) -> Vec<(String, String, Vec<String>)>`
 
+use std::collections::BTreeMap;
+
 #[cfg(feature = "backend")]
 pub use run::{Cell, Lowered, compile_osdi, lower, osdi_loads, resolve};
+
+/// A digital Verilog block: its source (a path or inline text), whether it
+/// is co-simulated or synthesized, the instance's name and its port nets.
+#[derive(Debug, Clone, PartialEq)]
+pub struct VerilogBlock {
+    pub source: String,
+    pub mode: VerilogMode,
+    pub instance_name: String,
+    pub connections: BTreeMap<String, VerilogConnection>,
+    pub pdk: Option<String>,
+    pub liberty: Option<String>,
+    pub spice_models: Option<String>,
+}
+
+/// How a [`VerilogBlock`] reaches the simulator.
+#[derive(Debug, Clone, PartialEq)]
+pub enum VerilogMode {
+    Simulate,
+    Synthesize,
+}
+
+/// A Verilog port connection: single net or a bus (vector of nets)
+#[derive(Debug, Clone, PartialEq)]
+pub enum VerilogConnection {
+    Single(String),
+    Bus(Vec<String>),
+}
 
 /// True for a load-list entry that is Verilog-A source rather than a binary.
 pub fn is_source(path: &str) -> bool {
@@ -39,7 +70,7 @@ mod run {
     use std::process::Command;
 
     use super::is_source;
-    use crate::ir::{VerilogBlock, VerilogConnection, VerilogMode};
+    use super::{VerilogBlock, VerilogConnection, VerilogMode};
 
     /// The `.va` file for a path or inline source.
     pub fn resolve(source_or_path: &str) -> Result<PathBuf, String> {

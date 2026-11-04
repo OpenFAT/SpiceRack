@@ -14,9 +14,10 @@ fn a_repeating_pwl_two_periods_on_equals_its_first_period() {
     // r=0 td=0.5m: the 2 ms triangle from 0.5 ms on, forever. Two periods
     // later the value is the same, and both are the closed-form triangle.
     let ir = bench(
-        source(false, triangle(Some(0.0.into()), Some(ms(0.5)))),
+        &source(false, &triangle(Some("0"), Some("0.5m"))),
         1e-5,
         7e-3,
+        "",
     );
     let deck = netlist(&ir, Dialect::Ngspice).unwrap();
     assert!(
@@ -50,7 +51,7 @@ fn a_repeating_pwl_two_periods_on_equals_its_first_period() {
 #[test]
 fn a_pwl_without_repeat_holds_its_last_value() {
     // The neighbour of the test above: no r= means once, then the final 0 V.
-    let ir = bench(source(false, triangle(None, None)), 1e-5, 5e-3);
+    let ir = bench(&source(false, &triangle(None, None)), 1e-5, 5e-3, "");
     let deck = netlist(&ir, Dialect::Ngspice).unwrap();
     assert!(deck.contains("PWL(0 0 0.001 1 0.002 0)\n"), "{deck}");
     let raw = ngspice(&deck);
@@ -59,54 +60,35 @@ fn a_pwl_without_repeat_holds_its_last_value() {
 
 #[test]
 fn pwl_repeat_and_delay_are_refused_where_no_dialect_form_exists() {
-    let tri = || triangle(Some(0.0.into()), Some(ms(0.5)));
+    let tri = || triangle(Some("0"), Some("0.5m"));
+    let v = bench(&source(false, &tri()), 1e-5, 1e-3, "");
+    let i = bench(&source(true, &tri()), 1e-5, 1e-3, "");
     // ngspice reads r=/td= on a V source only (manual §4.1.4; ngspice 45
-    // answers an I source with "unknown parameter (r)"); ESPice reads both.
-    assert!(
-        netlist(&bench(source(true, tri()), 1e-5, 1e-3), Dialect::Ngspice)
-            .unwrap_err()
-            .to_string()
-            .contains("PWL")
-    );
-    assert!(
-        netlist(&bench(source(true, tri()), 1e-5, 1e-3), Dialect::Espice)
-            .unwrap()
-            .contains(") r=0 td=0.0005")
-    );
-    for d in [
-        Dialect::Ltspice,
-        Dialect::Hspice,
-        Dialect::Xyce,
-        Dialect::Vacask,
-    ] {
-        let e = netlist(&bench(source(false, tri()), 1e-5, 1e-3), d)
-            .unwrap_err()
-            .to_string();
-        assert!(e.contains("PWL"), "{d:?}: {e}");
+    // answers an I source with "unknown parameter (r)"), `W0008`; ESPice
+    // reads both.
+    assert!(refuses(netlist(&i, Dialect::Ngspice), Code::W0008));
+    let espice = netlist(&i, Dialect::Espice).unwrap();
+    assert!(espice.contains(") r=0 td=0.0005"), "{espice}");
+    for d in [Dialect::Ltspice, Dialect::Hspice, Dialect::Xyce] {
+        assert!(refuses(netlist(&v, d), Code::W0008), "{d:?}");
     }
+    // VACASK has no PWL at all (`W0108`, it runs as zero there).
+    assert!(refuses(netlist(&v, Dialect::Vacask), Code::W0108));
     // Spectre: `delay` and `pwlperiod`, but only for an r= that is exactly a
     // period (test_spectre_golden/); r=1m repeats from mid-waveform.
-    assert!(
-        netlist(&bench(source(false, tri()), 1e-5, 1e-3), Dialect::Spectre)
-            .unwrap()
-            .contains("delay=500u pwlperiod=2m")
-    );
-    let mid = triangle(Some(ms(1.0)), None);
-    assert!(
-        netlist(&bench(source(false, mid), 1e-5, 1e-3), Dialect::Spectre)
-            .unwrap_err()
-            .to_string()
-            .contains("PWL")
-    );
+    let spectre = netlist(&v, Dialect::Spectre).unwrap();
+    assert!(spectre.contains("delay=500u pwlperiod=2m"), "{spectre}");
+    let mid = bench(&source(false, &triangle(Some("1m"), None)), 1e-5, 1e-3, "");
+    assert!(netlist(&mid, Dialect::Spectre).is_err());
     // Without r=/td= every dialect but VACASK (no PWL at all) writes it.
+    let plain = bench(&source(false, &triangle(None, None)), 1e-5, 1e-3, "");
     for d in [
         Dialect::Ltspice,
         Dialect::Hspice,
         Dialect::Xyce,
         Dialect::Spectre,
     ] {
-        netlist(&bench(source(false, triangle(None, None)), 1e-5, 1e-3), d)
-            .unwrap_or_else(|e| panic!("{d:?}: {e}"));
+        netlist(&plain, d).unwrap_or_else(|e| panic!("{d:?}: {}", e.messages));
     }
 }
 
@@ -114,9 +96,10 @@ fn pwl_repeat_and_delay_are_refused_where_no_dialect_form_exists() {
 fn espice_reads_the_repeating_pwl_current_source() {
     // ESPice takes r=/td= on an I source too: 1 A into 1 Ω, two periods on.
     let ir = bench(
-        source(true, triangle(Some(0.0.into()), Some(ms(0.5)))),
+        &source(true, &triangle(Some("0"), Some("0.5m"))),
         1e-5,
         7e-3,
+        "",
     );
     let deck = netlist(&ir, Dialect::Espice).unwrap();
     let raw = Dialect::Espice

@@ -1,7 +1,7 @@
-//! `spicerack::import` over the spice-bench suites (VAMS-Conformance-Suite
-//! `external/spice-bench`): every deck must parse, survive the JSON round
-//! trip, keep its analysis and `.meas` cards, and, re-emitted as ngspice,
-//! reproduce every plot at every point and every `.meas` result.
+//! The transpiler over the spice-bench suites (VAMS-Conformance-Suite
+//! `external/spice-bench`): every deck must be written back as ngspice as a
+//! text fixpoint, keep its analysis and `.meas` cards, and, written as
+//! ngspice, reproduce every plot at every point and every `.meas` result.
 //!
 //!   nix develop .#testing -c cargo test --no-default-features --features corpus --release --test test_import_suite -- --nocapture
 //!
@@ -16,18 +16,18 @@
 //! ones ngspice-45 cannot run. Every dialect is also emitted, and the decks
 //! each backend refuses are counted, not failed.
 //!
-//! Cites: real ngspice, run on the original deck and on the deck written from
-//! its IR.
+//! Cites: real ngspice, run on the original deck and on the deck written
+//! from it.
 //!
 //! Contents: none (tests only).
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use spicerack::codegen::{Dialect, netlist};
-use spicerack::import::parse;
-use spicerack::ir::CircuitIR;
 use std::collections::BTreeMap;
+
+use spicerack::syntax::Dialect;
+use spicerack::syntax::render::render_text;
 
 use num_complex::Complex64;
 use spicerack::measure_parse::parse_measures;
@@ -114,7 +114,7 @@ fn decks(dir: &Path, out: &mut Vec<PathBuf>) {
 /// (-b) with -r rawfile set!"), and with it `.option autostop`, which then
 /// stops a transient at t = 0. So a deck with `.meas` runs once without
 /// `-r`, from a `.control` block that ends in `write`: the converted deck
-/// already runs its analysis from one (the codegen writes it, and the block
+/// already runs its analysis from one (the renderer writes it, and the block
 /// gets the `write`, as `backend::ngspice` does); any other gets `run` +
 /// `write`. An original whose own `.control` block runs its analysis keeps
 /// the `-r` run (`converted` is false), so which originals ngspice can run
@@ -205,7 +205,7 @@ fn ngspice(dir: &Path, deck: &str, secs: u64, converted: bool) -> Result<Option<
             return Ok(None);
         }
         let text = String::from_utf8_lossy(&out.stdout);
-        measures = parse_measures(&text, Some(spicerack::ir::Dialect::Ngspice))
+        measures = parse_measures(&text, Some(spicerack::syntax::Dialect::Ngspice))
             .into_iter()
             .map(|m| (m.name.to_lowercase(), m.value))
             .collect();
@@ -235,7 +235,7 @@ fn runs_in_control(deck: &str) -> bool {
 }
 
 /// Analysis and `.meas` cards by kind; inside a `.control` block, the
-/// command of the same name (`tran`, `fourier`, `meas`): the codegen runs a
+/// command of the same name (`tran`, `fourier`, `meas`): the renderer runs a
 /// deck's `.meas`/`.four` analysis from one.
 fn analyses(deck: &str) -> BTreeMap<&'static str, usize> {
     const KINDS: [(&str, &str); 14] = [
@@ -369,18 +369,10 @@ fn check(
         Err(e) => return Outcome::Fail(e.to_string()),
     };
     let stem = deck.file_stem().unwrap().to_string_lossy();
-    let ir = match parse(&src, &stem, Dialect::Ngspice) {
-        Ok((ir, _)) => ir,
-        Err(e) => return Outcome::Fail(e),
-    };
-    let converted = match fixpoint(&ir, Dialect::Ngspice) {
+    let converted = match fixpoint(&src, &stem, Dialect::Ngspice) {
         Ok(t) => t,
         Err(why) => return Outcome::Fail(why),
     };
-    let back: CircuitIR = serde_json::from_str(&serde_json::to_string(&ir).unwrap()).unwrap();
-    if back != ir {
-        return Outcome::Fail("JSON round trip changed the IR".into());
-    }
     for d in [
         Dialect::Hspice,
         Dialect::Ltspice,
@@ -388,7 +380,7 @@ fn check(
         Dialect::Vacask,
         Dialect::Espice,
     ] {
-        if netlist(&ir, d).is_err() {
+        if render_text(&src, Dialect::Ngspice, &stem, d).is_err() {
             *refused.lock().unwrap().entry(format!("{d:?}")).or_default() += 1;
         }
     }

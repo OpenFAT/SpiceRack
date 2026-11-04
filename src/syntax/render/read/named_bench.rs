@@ -3,8 +3,7 @@
 //! testbench as the old lowering applied them; `None` when the IR could not
 //! hold one; and [`Rd::bench_cards`], every testbench item's views.
 //!
-//! Cites: the old lowering's named analyses (as
-//! `syntax::adapter::named_analyses` ports them); Spectre Circuit Simulator
+//! Cites: the old lowering's named analyses; Spectre Circuit Simulator
 //! Reference `[REF]` analysis statements; VACASK `share/doc/vacask/demo`
 //! (`analysis`, `sweep`, `options`).
 //!

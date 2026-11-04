@@ -15,7 +15,7 @@
 //! - `Rd::probe_outs(&self, n: u32) -> Option<Vec<String>>`
 
 use super::Rd;
-use crate::codegen::Dialect;
+use crate::syntax::Dialect;
 
 /// the old SPICE grammar's `(s PrintKind)?`: the analysis word after `.print`, and the
 /// text after it.

@@ -2,8 +2,10 @@
 #
 #   <input-set>/<relpath> <target> <reason>
 #
-# <target> is a dialect name, or `ir`, `report` or `parse` (the output file's
-# stem under the input's golden directory). `golden diff --xfail` fails on
+# <target> is a dialect name, or `parse` (the output file's stem under the
+# input's golden directory). The `ir` and `report` lines went with the IR
+# (phase 6): `golden diff` passes over a baseline's `ir.json` and
+# `report.json`. `golden diff --xfail` fails on
 # any difference not listed here, and on a listed line that is now identical
 # (XPASS): delete the line then. Every line is a reviewed, intended change.
 
@@ -12,10 +14,6 @@
 # next card into one raw line ("v2\" 2 0 1\nv3 3\" 0 1"); the tokenizer ends
 # a string at its line (Xyce RG §2.1.39), so the two cards stay two. A bug
 # of the old card grammar, not reproduced: phase 7 keeps the new reading.
-xyce/INVALID_CHARS/double_quote_fails_device_name.cir ir today's Str rule crosses a line end; the two cards stay two
-xyce/INVALID_CHARS/double_quote_fails_device_name.cir report today's Str rule crosses a line end; the raw count follows
-xyce/INVALID_CHARS/double_quote_fails_node_name.cir ir today's Str rule crosses a line end; the two cards stay two
-xyce/INVALID_CHARS/double_quote_fails_node_name.cir report today's Str rule crosses a line end; the raw count follows
 xyce/INVALID_CHARS/double_quote_fails_device_name.cir cdl the IR above differs (one more raw card), so the xschem layout lists it
 xyce/INVALID_CHARS/double_quote_fails_device_name.cir verilog the IR above differs (one more raw card), so the xschem layout lists it
 xyce/INVALID_CHARS/double_quote_fails_node_name.cir cdl the IR above differs (one more raw card), so the xschem layout lists it
@@ -33,8 +31,6 @@ xyce/INVALID_CHARS/double_quote_fails_node_name.cir vacask the refusal quotes th
 # set: fixtures 11 lines (one input), pdk-sky130A 7 (one input); every
 # other set is identical (single-file decks are read alone, and no kit file
 # but these two changes).
-fixtures/tests/fixtures/transpiler/top.scs ir x1, x2 now instances of subckt leaf from lib.scs and m1 a MOSFET of model nch_mod from lib.scs; were 3 raw lines
-fixtures/tests/fixtures/transpiler/top.scs report the raw count follows: 3 -> 0 (x1, x2, m1 resolve in lib.scs)
 fixtures/tests/fixtures/transpiler/top.scs ngspice now written (X1, X2 of leaf, M1 of nch_mod from lib.scs); was refused for the raw Spectre line x1
 fixtures/tests/fixtures/transpiler/top.scs espice now written (X1, X2 of leaf, M1 of nch_mod from lib.scs); was refused for the raw Spectre line x1
 fixtures/tests/fixtures/transpiler/top.scs hspice now written (X1, X2 of leaf, M1 of nch_mod from lib.scs); was refused for the raw Spectre line x1
@@ -44,7 +40,6 @@ fixtures/tests/fixtures/transpiler/top.scs vacask now written (X1, X2 of leaf, M
 fixtures/tests/fixtures/transpiler/top.scs spectre x1, x2, m1 now IR (x2 written with parentheses, f1 after them as the writer orders components); were raw lines
 fixtures/tests/fixtures/transpiler/top.scs cdl the IR above holds x1, x2, m1 (leaf and nch_mod from lib.scs), no raw lines, so the xschem layout lists them
 fixtures/tests/fixtures/transpiler/top.scs verilog the IR above holds x1, x2, m1 (leaf and nch_mod from lib.scs), no raw lines, so the xschem layout lists them
-pdk-sky130A/libs.tech/combined/rescap/sky130_fd_pr__model__res.model.spice ir R0 of sky130_fd_pr__res_generic_nd__hv / __pd__hv: rndiff_v5, rpdiff_v5 now the model (declared in continuous/models_resistors.spice); was the value expression {rndiff_v5}
 pdk-sky130A/libs.tech/combined/rescap/sky130_fd_pr__model__res.model.spice ngspice R0 t1 t2 rndiff_v5 (and rpdiff_v5): the model from models_resistors.spice; was the value {rndiff_v5}, which names no parameter
 pdk-sky130A/libs.tech/combined/rescap/sky130_fd_pr__model__res.model.spice espice R0 t1 t2 rndiff_v5 (and rpdiff_v5): the model from models_resistors.spice; was the value {rndiff_v5}, which names no parameter
 pdk-sky130A/libs.tech/combined/rescap/sky130_fd_pr__model__res.model.spice hspice R0 t1 t2 rndiff_v5 (and rpdiff_v5): the model from models_resistors.spice; was the value {rndiff_v5}, which names no parameter

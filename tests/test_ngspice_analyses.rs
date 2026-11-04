@@ -19,6 +19,9 @@ use spicerack::backend::Dialect;
 
 analysis_suite!(Dialect::Ngspice, tf_columns: ("output_impedance_at_v(out)", "v1#input_impedance"));
 
+/// Two voltage sources as RF ports (manual §4.1.11), one at each node.
+const PORTS: &str = "V1 in 0 0 AC 1 portnum 1 z0 50\nV2 out 0 0 AC 1 portnum 2 z0 50\n";
+
 // ---- private ----
 
 // ── .noise ──
@@ -72,13 +75,12 @@ fn pz_finds_the_rc_pole_at_minus_one_over_rc() {
 #[test]
 fn four_prints_the_harmonic_table_to_stdout() {
     // Under `-b -r` ngspice says ".fourier line ignored since rawfile was
-    // produced." The codegen runs the transient from a `.control` block with
-    // `fourier` after it; the table then lands in stdout.
-    let deck = common::emitted(
+    // produced." The renderer runs the transient from a `.control` block
+    // with `fourier` after it; the table then lands in stdout.
+    let deck = common::written(
         Dialect::Ngspice,
         "* four\nV1 in 0 SIN(0 1 1k)\nR1 in out 1k\nC1 out 0 1n\n\
          .tran 1u 10m\n.four 1k v(out)\n.end\n",
-        |_| {},
     );
     assert!(
         deck.contains(".control\ntran 1u 10m\nfourier 1k v(out)\n.endc\n"),
@@ -115,16 +117,33 @@ fn four_prints_the_harmonic_table_to_stdout() {
 
 // ── .measure ──
 
-/// The `.control` block holding only `pre_osdi` (what the codegen emits for
-/// OSDI loads) runs nothing, so the measure still gets its own block.
+/// The `.control` block holding only `pre_osdi` (what the renderer writes
+/// for OSDI loads) runs nothing, so the measure still gets its own block.
 #[test]
 fn measure_survives_alongside_an_osdi_control_block() {
-    let deck = common::emitted(
-        Dialect::Ngspice,
-        "* osdi + meas\nV1 in 0 0\nR1 in out 10k\nR2 out 0 10k\n\
-         .meas dc vhalf FIND V(out) AT=10\n.dc V1 0 10 1\n.end\n",
-        |ir| ir.top.osdi_loads.push("/nonexistent/model.osdi".into()),
+    use spicerack::syntax::render::{Numbers, Source, render};
+    use spicerack::syntax::{lexicon::NGSPICE, parse, tokenize};
+    let text = "* osdi + meas\nV1 in 0 0\nR1 in out 10k\nR2 out 0 10k\n\
+         .meas dc vhalf FIND V(out) AT=10\n.dc V1 0 10 1\n.end\n";
+    // An ngspice deck has no load card (`pre_osdi` is a `.control`
+    // command), so the load is given beside the text.
+    let (t, loads) = (
+        tokenize(text, &NGSPICE),
+        ["/nonexistent/model.osdi".to_string()],
     );
+    let ast = parse(&t, &NGSPICE);
+    let src = Source {
+        ast: &ast,
+        tokens: &t,
+        dialect: Dialect::Ngspice,
+        name: "deck",
+        kit: None,
+        loads: &loads,
+        numbers: Numbers::Read,
+    };
+    let deck = render(&src, Dialect::Ngspice)
+        .unwrap_or_else(|e| panic!("{}", e.messages))
+        .text;
     assert!(
         deck.contains("\n.control\npre_osdi /nonexistent/model.osdi\n.endc\n"),
         "{deck}"
@@ -139,7 +158,7 @@ fn measure_survives_alongside_an_osdi_control_block() {
 }
 
 /// A hand-written deck that runs its own analysis from `.control` (the shape
-/// the codegen writes for `.measure`) gets the backend's `write` block: the
+/// the renderer writes for `.measure`) gets the backend's `write` block: the
 /// measure reaches stdout and the sweep reaches the raw file.
 #[test]
 fn hand_written_control_deck_reports_measures_and_data() {
@@ -178,20 +197,14 @@ fn top_level_meas_or_four_without_a_control_block_is_refused() {
     }
 }
 
-/// A raw `.four` line (here a testbench line with a `+` continuation) runs
-/// as `fourier` in the codegen's `.control` block: the table reaches stdout.
+/// A `.four` card with a `+` continuation runs as one `fourier` in the
+/// renderer's `.control` block: the table reaches stdout.
 #[test]
-fn raw_four_line_reports_its_fourier_table() {
-    let deck = common::emitted(
+fn continued_four_card_reports_its_fourier_table() {
+    let deck = common::written(
         Dialect::Ngspice,
-        "* four\nV1 in 0 SIN(0 1 1k)\nR1 in out 1k\nC1 out 0 1n\n.tran 1u 10m\n.end\n",
-        |ir| {
-            ir.testbench
-                .as_mut()
-                .unwrap()
-                .extra_lines
-                .extend([".four 1k".to_string(), "+ v(in)".to_string()])
-        },
+        "* four\nV1 in 0 SIN(0 1 1k)\nR1 in out 1k\nC1 out 0 1n\n.tran 1u 10m\n\
+         .four 1k\n+ v(in)\n.end\n",
     );
     assert!(
         deck.contains(".control\ntran 1u 10m\nfourier 1k v(in)\n.endc\n"),
@@ -249,7 +262,7 @@ fn xspice_s_xfer_is_the_working_laplace_path() {
 
 // ── several analyses beside a .meas ──
 
-/// Regression: with a `.meas`, the codegen moved one analysis into the
+/// Regression: with a `.meas`, the old writer moved one analysis into the
 /// `.control` block and wrote only its plot; the `.op` ran afterwards and
 /// never reached the result. Closed forms: a 1k/1k divider from 2 V is
 /// 1 V at `out`; `a` follows the 1 V, 1 kHz sine exactly (a source across a
@@ -257,70 +270,16 @@ fn xspice_s_xfer_is_the_working_laplace_path() {
 /// 1 - cos(pi * 1e-3) = 4.9e-6 of 1.
 #[test]
 fn every_analysis_of_a_measured_testbench_reaches_the_result() {
-    use spicerack::ir::*;
-    let v =
-        |name: &str, np: &str, value: f64, waveform: Option<IrWaveform>| Component::VoltageSource {
-            name: name.into(),
-            np: np.into(),
-            nm: "0".into(),
-            value: IrValue::Numeric { value },
-            ac_magnitude: None,
-            ac_phase: None,
-            waveform,
-            port: None,
-        };
-    let r = |name: &str, n1: &str, n2: &str| Component::Resistor {
-        name: name.into(),
-        n1: n1.into(),
-        n2: n2.into(),
-        value: IrValue::Numeric { value: 1e3 },
-        model: None,
-        params: vec![],
-    };
-    let sin = IrWaveform::Sin {
-        offset: 0.0.into(),
-        amplitude: 1.0.into(),
-        frequency: 1e3.into(),
-        delay: 0.0.into(),
-        damping: 0.0.into(),
-        phase: 0.0.into(),
-    };
-    let top = Subcircuit {
-        name: "op and tran".into(),
-        components: vec![
-            v("1", "in", 2.0, None),
-            r("1", "in", "out"),
-            r("2", "out", "0"),
-            v("2", "a", 0.0, Some(sin)),
-            r("3", "a", "0"),
-        ],
-        ..Default::default()
-    };
-    let tb = Testbench {
-        analyses: vec![
-            Analysis::Op,
-            Analysis::Transient {
-                step: 1e-6,
-                stop: 1e-3,
-                start: None,
-                max_step: Some(1e-6),
-                uic: false,
-            },
-        ],
-        measures: vec!["tran vmax MAX v(a)".into()],
-        ..Default::default()
-    };
-    let ir = CircuitIR {
-        top,
-        testbench: Some(tb),
-        ..Default::default()
-    };
-    let deck = spicerack::codegen::netlist(&ir, Dialect::Ngspice).unwrap();
+    let deck = common::written(
+        Dialect::Ngspice,
+        "* op and tran\nV1 in 0 2\nR1 in out 1k\nR2 out 0 1k\nV2 a 0 0 SIN(0 1 1000 0 0 0)\n\
+         R3 a 0 1k\n.meas tran vmax MAX v(a)\n.op\n.tran 1u 1m 0 1u\n.end\n",
+    );
     assert!(
         deck.contains(".control\nop\ntran 1u 1m 0 1u\n.endc\n"),
         "every analysis runs in the block:\n{deck}"
     );
-    let plots = spicerack::simulation::run_all(&ir, Some("ngspice"))
+    let plots = spicerack::simulation::run_all(Dialect::Ngspice, &deck)
         .unwrap_or_else(|e| panic!("{e}\n{deck}"));
     let names: Vec<&str> = plots.iter().map(|p| p.plot_name.as_str()).collect();
     assert_eq!(names, ["Operating Point", "Transient Analysis"]);
@@ -346,63 +305,19 @@ fn every_analysis_of_a_measured_testbench_reaches_the_result() {
 
 // ── .sp and RF ports ──
 
-/// A voltage source as an RF port, written by the codegen (manual §4.1.11).
-fn port(name: &str, node: &str, num: u32) -> spicerack::ir::Component {
-    use spicerack::ir::*;
-    Component::VoltageSource {
-        name: name.into(),
-        np: node.into(),
-        nm: "0".into(),
-        value: IrValue::Numeric { value: 0.0 },
-        ac_magnitude: Some(1.0),
-        ac_phase: None,
-        waveform: None,
-        port: Some(RfPort { num, z0: 50.0 }),
-    }
-}
-
 #[test]
 fn sp_of_a_matched_t_attenuator_reflects_nothing_and_passes_half() {
     // A T pad for K = 2 in Z0 = 50: series arms Z0 (K-1)/(K+1) = 50/3, shunt
     // 2 Z0 K/(K^2-1) = 200/3. Matched both ways, so S11 = S22 = 0 and
     // S21 = S12 = 1/K = 0.5, real, at every frequency.
-    use spicerack::ir::*;
-    let r = |name: &str, n1: &str, n2: &str, value: f64| Component::Resistor {
-        name: name.into(),
-        n1: n1.into(),
-        n2: n2.into(),
-        value: IrValue::Numeric { value },
-        model: None,
-        params: vec![],
-    };
-    let top = Subcircuit {
-        name: "t pad".into(),
-        components: vec![
-            port("1", "in", 1),
-            port("2", "out", 2),
-            r("1", "in", "mid", 50.0 / 3.0),
-            r("2", "mid", "out", 50.0 / 3.0),
-            r("3", "mid", "0", 200.0 / 3.0),
-        ],
-        ..Default::default()
-    };
-    let sp = Analysis::SPar {
-        sweep: FreqSweep {
-            variation: Sweep::Lin,
-            points: 3,
-            start: 1e3,
-            stop: 3e3,
-        },
-    };
-    let ir = CircuitIR {
-        top,
-        testbench: Some(Testbench {
-            analyses: vec![sp],
-            ..Default::default()
-        }),
-        ..Default::default()
-    };
-    let deck = spicerack::codegen::netlist(&ir, Dialect::Ngspice).unwrap();
+    let (arm, shunt) = (50.0 / 3.0, 200.0 / 3.0);
+    let deck = common::written(
+        Dialect::Ngspice,
+        &format!(
+            "* t pad\n{PORTS}R1 in mid {arm}\nR2 mid out {arm}\nR3 mid 0 {shunt}\n\
+             .sp lin 3 1000 3000\n.end\n"
+        ),
+    );
     assert!(deck.contains("V1 in 0 0 AC 1 portnum 1 z0 50\n"), "{deck}");
     let raw = Dialect::Ngspice
         .run(&deck)
@@ -423,23 +338,14 @@ fn sp_of_a_matched_t_attenuator_reflects_nothing_and_passes_half() {
 }
 
 /// An RF port puts Z0 in series with the source in every analysis (manual
-/// §4.1.11), so a dialect that cannot write one refuses rather than drop it.
+/// §4.1.11), so a dialect that cannot write one refuses (`W0007`) rather
+/// than drop it.
 #[test]
 fn rf_ports_are_refused_where_no_dialect_form_exists() {
-    use spicerack::ir::*;
-    let ir = CircuitIR {
-        top: Subcircuit {
-            name: "p".into(),
-            components: vec![port("1", "in", 1)],
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-    assert!(
-        spicerack::codegen::netlist(&ir, Dialect::Espice)
-            .unwrap()
-            .contains("V1 in 0 0 AC 1 portnum 1 z0 50")
-    );
+    use spicerack::syntax::diag::Code;
+    use spicerack::syntax::render::render_text;
+    let deck = format!("* p\n{PORTS}.end\n");
+    assert!(common::written(Dialect::Espice, &deck).contains("V1 in 0 0 AC 1 portnum 1 z0 50"));
     for d in [
         Dialect::Ltspice,
         Dialect::Hspice,
@@ -447,8 +353,12 @@ fn rf_ports_are_refused_where_no_dialect_form_exists() {
         Dialect::Spectre,
         Dialect::Vacask,
     ] {
-        let e = spicerack::codegen::netlist(&ir, d).unwrap_err().to_string();
-        assert!(e.contains("RF port"), "{d:?}: {e}");
+        let e = render_text(&deck, Dialect::Ngspice, "p", d).expect_err("refused");
+        assert!(
+            e.diags.iter().any(|x| x.code == Code::W0007),
+            "{d:?}: {}",
+            e.messages
+        );
     }
 }
 
@@ -457,34 +367,16 @@ fn rf_ports_are_refused_where_no_dialect_form_exists() {
 /// ngspice-45 as built here answers `.pss` with "unimplemented dot command"
 /// (the manual calls PSS experimental, §11.3.12), so the oracle is the
 /// manual's own example card, `.pss 624e6 1u v_plus 1024 10 150 5e-3 uic`:
-/// the card written for the same fields reads, token by token, as the same
-/// numbers ngspice would parse.
+/// read and written back, it reads, token by token, as the same numbers
+/// ngspice would parse.
 #[test]
 fn pss_card_matches_the_manual_example() {
-    use spicerack::ir::*;
-    let pss = Analysis::Pss {
-        fundamental: 624e6,
-        stabilization: 1e-6,
-        observe_node: "v_plus".into(),
-        points_per_period: 1024,
-        harmonics: 10,
-        sc_iter: Some(150),
-        steady_coeff: Some(5e-3),
-        uic: true,
-    };
-    let ir = CircuitIR {
-        testbench: Some(Testbench {
-            analyses: vec![pss],
-            ..Default::default()
-        }),
-        ..Default::default()
-    };
-    let deck = spicerack::codegen::netlist(&ir, Dialect::Ngspice).unwrap();
+    let manual = ".pss 624e6 1u v_plus 1024 10 150 5e-3 uic";
+    let deck = common::written(Dialect::Ngspice, &format!("* pss\n{manual}\n.end\n"));
     let card = deck
         .lines()
         .find(|l| l.starts_with(".pss"))
         .unwrap_or_else(|| panic!("{deck}"));
-    let manual = ".pss 624e6 1u v_plus 1024 10 150 5e-3 uic";
     let (got, want): (Vec<&str>, Vec<&str>) = (
         card.split_whitespace().collect(),
         manual.split_whitespace().collect(),
@@ -497,43 +389,6 @@ fn pss_card_matches_the_manual_example() {
             _ => assert_eq!(g, w, "{card}"),
         }
     }
-    // Positional: STEADYCOEFF alone still needs SCITER before it (default
-    // 50), and `uic` alone both (default 1e-3).
-    let only = |sc_iter, steady_coeff, uic| {
-        let a = Analysis::Pss {
-            fundamental: 1e3,
-            stabilization: 1e-3,
-            observe_node: "o".into(),
-            points_per_period: 64,
-            harmonics: 5,
-            sc_iter,
-            steady_coeff,
-            uic,
-        };
-        let ir = CircuitIR {
-            testbench: Some(Testbench {
-                analyses: vec![a],
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
-        spicerack::codegen::netlist(&ir, Dialect::Ngspice)
-            .unwrap()
-            .lines()
-            .find(|l| l.starts_with(".pss"))
-            .unwrap()
-            .to_string()
-    };
-    assert_eq!(only(None, None, false), ".pss 1000 0.001 o 64 5");
-    assert_eq!(
-        only(None, Some(5e-3), false),
-        ".pss 1000 0.001 o 64 5 50 0.005"
-    );
-    assert_eq!(only(Some(9), None, false), ".pss 1000 0.001 o 64 5 9 0.001");
-    assert_eq!(
-        only(None, None, true),
-        ".pss 1000 0.001 o 64 5 50 0.001 uic"
-    );
 }
 
 /// ngspice-45 here has no `.pss` at all: pinned, so a build that grows it

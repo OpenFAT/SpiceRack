@@ -1,35 +1,24 @@
-//! Deck text in any dialect -> [`CircuitIR`], through the transpiler's front
-//! end (`syntax`): the dialect's
-//! lexicon tokenizes it (`syntax::tokenize`), one parser builds the AST
-//! (`syntax::parse`), and the temporary bridge `syntax::ast_to_ir` builds
-//! today's `CircuitIR` from it, exactly as the reader before it did (the
-//! golden gate's `9d1d6bb` oracle).
+//! Files and text → the transpiler's front end (`syntax`): bytes decoded
+//! as a deck's text, the text read into its tokens and tree, a kit's files
+//! read from disk into a `syntax::resolve::Kit`. Thin wrappers: the reading
+//! is `syntax`'s; this owns only the file system and the text encoding.
+//! `src/bin/spice2rack/` is the CLI.
 //!
-//! A card the old card grammar refused is [`Report::unparsed`]; one the IR
-//! has no field for is [`Report::raw`]. Both stay verbatim lines, so they
-//! reach the deck's own dialect unchanged. `src/bin/spice2rack/` is the CLI.
+//! Cites: none (LTspice's UTF-16 and Latin-1 netlists are why `decode`
+//! guesses).
 //!
 //! Contents:
-//! - `pub struct Report` (what a deck lost: `unparsed` lines, `raw` count)
 //! - `pub fn decode(bytes: &[u8]) -> String`
-//! - `pub fn parse(src: &str, name: &str, d: Dialect) -> Result<(CircuitIR, Report), String>`
-//! - `pub fn parse_kit(kit: &Kit, file: FileId, name: &str) -> (CircuitIR, Report)`
+//! - `pub fn parse(src: &str, d: Dialect) -> Result<(Tokens<'_>, Ast<'_>), String>`
+//! - `pub fn kit(entries: &[PathBuf], form: Form, d: Dialect, root: &Path) -> Kit`
 //! - `pub fn dump(src: &str, d: Dialect) -> Result<String, String>`
 
-use crate::codegen::Dialect;
-use crate::ir::*;
-use crate::syntax::ast::{Ast, NONE, Node, Tag};
-use crate::syntax::resolve::{FileId, Kit, Role};
-use crate::syntax::{self, lexicon};
+use std::path::{Path, PathBuf};
 
-/// What a deck lost on the way to IR.
-#[derive(Debug, Default, Clone, PartialEq)]
-pub struct Report {
-    /// Cards the dialect grammar refused, kept as raw lines.
-    pub unparsed: Vec<String>,
-    /// Cards the grammar read that no IR field holds, kept as raw lines.
-    pub raw: usize,
-}
+use crate::syntax::ast::{Ast, NONE, Node, Tag};
+use crate::syntax::resolve::{Form, Kit, LoadError};
+use crate::syntax::token::Tokens;
+use crate::syntax::{self, Dialect, lexicon};
 
 /// Deck bytes as text: UTF-16LE with a BOM (LTspice), UTF-8, else Latin-1
 /// (LTspice's older netlists, SSR "Encoding"), so a `µ` survives.
@@ -47,37 +36,39 @@ pub fn decode(bytes: &[u8]) -> String {
     }
 }
 
-/// Parses deck text in dialect `d` (line 1 is the title) into IR named `name`.
+/// Deck text in dialect `d` (line 1 its title) as its tokens and tree; the
+/// tree's diagnostics are `Ast::diags`. Both borrow `src`.
 ///
 /// # Errors
 /// `no <d> reader yet` for a dialect with no lexicon (CDL, Verilog); the
-/// front end itself never fails, it keeps what it cannot read as raw lines.
-pub fn parse(src: &str, name: &str, d: Dialect) -> Result<(CircuitIR, Report), String> {
+/// front end itself never fails, it keeps what it cannot read as
+/// `Verbatim` statements with a `P` diagnostic.
+pub fn parse(src: &str, d: Dialect) -> Result<(Tokens<'_>, Ast<'_>), String> {
     let lex = lexicon::of(d).ok_or_else(|| format!("no {d:?} reader yet"))?;
     let t = syntax::tokenize(src, lex);
     let ast = syntax::parse(&t, lex);
-    Ok(syntax::ast_to_ir(&ast, &t, d, name, None))
+    Ok((t, ast))
 }
 
-/// Parses file `file` of `kit` (its [`File::text`], in the kit's dialect)
-/// into IR named `name`, as [`parse`] does, but for what the file alone
-/// leaves open, which `kit` answers: a master another file declares, an
-/// R/C/L card's model word, a range card's node split.
+/// The kit `entries` reach, read from disk in dialect `d`: each file
+/// decoded as [`decode`] does, and only under `root` (a path outside it is
+/// refused, `R0007`; a missing one is `R0006`).
 ///
 /// # Panics
-/// When `file` is a Verilog-A source or unread (it has no tree).
-///
-/// [`File::text`]: crate::syntax::resolve::File::text
-pub fn parse_kit(kit: &Kit, file: FileId, name: &str) -> (CircuitIR, Report) {
-    let f = kit.file(file);
-    assert!(
-        matches!(f.role, Role::Deck | Role::Library),
-        "parse_kit: a file the kit read"
-    );
-    let lex = lexicon::of(kit.dialect()).expect("a kit's dialect has a reader");
-    let t = syntax::tokenize(&f.text, lex);
-    let ast = syntax::parse(&t, lex);
-    syntax::ast_to_ir(&ast, &t, kit.dialect(), name, Some((kit, file)))
+/// When `d` has no reader (CDL, Verilog).
+pub fn kit(entries: &[PathBuf], form: Form, d: Dialect, root: &Path) -> Kit {
+    let mut load = |p: &Path| {
+        if !p.starts_with(root) {
+            return Err(LoadError::Refused);
+        }
+        if !p.is_file() {
+            return Err(LoadError::NotFound);
+        }
+        std::fs::read(p)
+            .map(|b| decode(&b))
+            .map_err(|_| LoadError::NotFound)
+    };
+    Kit::load(entries, form, d, &mut load)
 }
 
 /// The AST of `src` (debugging the parser): one row per statement and
@@ -87,9 +78,7 @@ pub fn parse_kit(kit: &Kit, file: FileId, name: &str) -> (CircuitIR, Report) {
 /// # Errors
 /// As [`parse`]: a dialect with no lexicon.
 pub fn dump(src: &str, d: Dialect) -> Result<String, String> {
-    let lex = lexicon::of(d).ok_or_else(|| format!("no {d:?} reader yet"))?;
-    let t = syntax::tokenize(src, lex);
-    let a = syntax::parse(&t, lex);
+    let (t, a) = parse(src, d)?;
     let mut out = String::new();
     let mut work: Vec<(u32, usize)> = a.fields(a.root()).iter().rev().map(|&n| (n, 0)).collect();
     while let Some((n, depth)) = work.pop() {
@@ -162,4 +151,21 @@ fn children(a: &Ast, n: Node) -> Vec<u32> {
 }
 
 #[cfg(test)]
-mod tests;
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decode_reads_utf16_utf8_and_latin1() {
+        assert_eq!(decode(&[0xFF, 0xFE, b'R', 0, b'1', 0]), "R1");
+        assert_eq!(decode("\u{feff}V1 a 0 1".as_bytes()), "V1 a 0 1");
+        assert_eq!(decode(&[b'1', 0xB5]), "1\u{b5}", "Latin-1 micro");
+    }
+
+    #[test]
+    fn parse_refuses_a_dialect_with_no_reader() {
+        assert!(parse("t\nR1 a b 1k\n", Dialect::Cdl).is_err());
+        let (t, a) = parse("t\nR1 a b 1k\n", Dialect::Ngspice).unwrap();
+        assert!(a.diags().is_empty());
+        assert!(t.len() > 4);
+    }
+}

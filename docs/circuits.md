@@ -150,15 +150,16 @@ Keyword arguments to `X` and `instance` become instance parameters
 
 ## Saving circuits
 
-Circuits round-trip through JSON, the same format any tool can write:
+A circuit is saved as its deck: the netlist text, in whichever dialect you
+write it, is the whole circuit, and any simulator or SpiceRack's reader takes
+it back.
 
 ```python
 import tempfile, os
 
-path = os.path.join(tempfile.mkdtemp(), "top.json")
-top.save_json(path)
-again = ps.Subcircuit.load_json(path)
-print(again.name, again.ports)                    # top ['in', 'out']
-text = top.to_json()                              # or keep it as a string
-same = ps.Subcircuit.from_json(text)
+tb = ps.Testbench(top)
+path = os.path.join(tempfile.mkdtemp(), "top.sp")
+with open(path, "w") as f:
+    f.write(tb.netlist("ngspice"))
+print(open(path).read().splitlines()[0])         # * top
 ```

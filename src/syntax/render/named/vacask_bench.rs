@@ -3,8 +3,8 @@
 //! and the analyses, initial conditions on each `analysis` line.
 //!
 //! Cites: VACASK `share/doc/vacask/demo` (`analysis`, `sweep`, `options`,
-//! `var`), `docs/cmd-analysis-mc.md` (as the old writer,
-//! `codegen::vacask::analyses`, probed them).
+//! `var`), `docs/cmd-analysis-mc.md` (as the old VACASK
+//! writer probed them).
 //!
 //! Contents:
 //! - `W::control(&mut self, tb: &Tb)`
@@ -12,7 +12,7 @@
 use super::W;
 use super::bench::{Step, Tb, bare_node};
 use super::vacask::{num, respell};
-use crate::codegen::Dialect;
+use crate::syntax::Dialect;
 use crate::syntax::diag::Code;
 use crate::syntax::render::capability::Construct;
 use crate::syntax::render::read::{Ana, Sweep};

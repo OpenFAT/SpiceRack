@@ -8,13 +8,13 @@
 //! `src/frontend/lines_ngspice.zig`.
 //!
 //! Contents:
-//! - `pub const NGSPICE: Lexicon`
+//! - `pub const NGSPICE: Lexicon`, `pub const NGSPICE_GIVEN: Lexicon`
 
 use super::{
     Arithmetic, Backslash, Caret, Dollar, End, Join, Lexicon, Numbers, Ops, Quote, Quoting,
     SPICE_KEYWORDS, SPICE_OPERATORS, Scale, Tail,
 };
-use crate::codegen::Dialect;
+use crate::syntax::Dialect;
 use crate::syntax::device;
 use crate::syntax::token::Tag;
 
@@ -100,6 +100,23 @@ pub const NGSPICE: Lexicon = Lexicon {
     masters: &[],
     analyses: &[],
     lang_spice: None,
+};
+
+/// ngspice text written from what a caller gave (the Python API's deck,
+/// `python::deck`), not read from a file: its numbers are read back
+/// correctly rounded, so a double's SI spelling
+/// (`unit::format_spice_number`) reads back as that double, where ngspice's
+/// digit-by-digit arithmetic can land an ulp away (`100u` is
+/// 9.999999999999999e-5 there); and it holds a `.step` (Xyce's form,
+/// `.step [lin|dec|oct] name start stop step`), which ngspice lacks and
+/// each target writes in its own form or refuses.
+pub const NGSPICE_GIVEN: Lexicon = Lexicon {
+    numbers: Numbers {
+        arithmetic: Arithmetic::Decimal,
+        ..NGSPICE.numbers
+    },
+    keywords: &[SPICE_KEYWORDS, OWN_KEYWORDS, &[(".step", Tag::KwStep)]],
+    ..NGSPICE
 };
 
 /// §1.9: quotes protect comment bytes and take backslash escapes; an

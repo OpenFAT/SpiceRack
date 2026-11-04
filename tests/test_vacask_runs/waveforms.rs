@@ -11,38 +11,7 @@ use super::*;
 
 #[test]
 fn a_sine_source_runs_with_delay_and_damping() {
-    let mut top = empty_sub("sine");
-    top.components = vec![r("1", "vin", "0", 1000.0)];
-    let mut tb = empty_tb(vec![Analysis::Transient {
-        step: 1e-5,
-        stop: 2e-3,
-        start: None,
-        max_step: Some(1e-5),
-        uic: false,
-    }]);
-    tb.stimulus = vec![Component::VoltageSource {
-        name: "1".into(),
-        np: "vin".into(),
-        nm: "0".into(),
-        value: IrValue::Numeric { value: 0.0 },
-        ac_magnitude: None,
-        ac_phase: None,
-        waveform: Some(IrWaveform::Sin {
-            offset: 0.5.into(),
-            amplitude: 2.0.into(),
-            frequency: 1e3.into(),
-            delay: 0.0.into(),
-            damping: 0.0.into(),
-            phase: 0.0.into(),
-        }),
-        port: None,
-    }];
-    let ir = CircuitIR {
-        top,
-        testbench: Some(tb),
-        ..Default::default()
-    };
-    let raw = run(&ir);
+    let raw = run("sine\nR1 vin 0 1k\nV1 vin 0 0 SIN(0.5 2 1k 0 0 0)\n.tran 10u 2m 0 10u\n.end\n");
     let t = col(&raw, "time");
     let v = col(&raw, "vin");
     // A quarter period into a 1 kHz sine: offset + amplitude.
@@ -62,39 +31,9 @@ fn a_sine_source_runs_with_delay_and_damping() {
 
 #[test]
 fn a_pulse_train_runs() {
-    let mut top = empty_sub("pulse");
-    top.components = vec![r("1", "vin", "0", 1000.0)];
-    let mut tb = empty_tb(vec![Analysis::Transient {
-        step: 1e-6,
-        stop: 5e-4,
-        start: None,
-        max_step: Some(1e-6),
-        uic: false,
-    }]);
-    tb.stimulus = vec![Component::VoltageSource {
-        name: "1".into(),
-        np: "vin".into(),
-        nm: "0".into(),
-        value: IrValue::Numeric { value: 0.0 },
-        ac_magnitude: None,
-        ac_phase: None,
-        waveform: Some(IrWaveform::Pulse {
-            initial: 0.0.into(),
-            pulsed: 1.0.into(),
-            delay: 1e-4.into(),
-            rise_time: 1e-6.into(),
-            fall_time: 1e-6.into(),
-            pulse_width: 1e-4.into(),
-            period: 2e-4.into(),
-        }),
-        port: None,
-    }];
-    let ir = CircuitIR {
-        top,
-        testbench: Some(tb),
-        ..Default::default()
-    };
-    let raw = run(&ir);
+    let raw = run(
+        "pulse\nR1 vin 0 1k\nV1 vin 0 0 PULSE(0 1 100u 1u 1u 100u 200u)\n.tran 1u 500u 0 1u\n.end\n",
+    );
     let t = col(&raw, "time");
     let v = col(&raw, "vin");
     let at = |want: f64| {

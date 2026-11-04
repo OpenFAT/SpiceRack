@@ -26,7 +26,7 @@
 use std::collections::{HashMap, HashSet};
 
 use super::{Block, Comp, Deck, Func, Rd};
-use crate::codegen::Dialect;
+use crate::syntax::Dialect;
 use crate::syntax::ast::{NONE, Node, Tag};
 
 /// The fixups of the read-back rule.

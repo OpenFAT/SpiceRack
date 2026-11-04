@@ -29,7 +29,7 @@
 //! `isource`), p.680, p.678, p.286, p.288 (`vcvs`, `vccs`, `cccs`, `ccvs`),
 //! p.856 (`bsource`), p.302 (`diode`), the `bjt` and `mos` forms (`Name c b
 //! e [s]`, `Name d g s b`); VACASK `share/doc/vacask/demo` (`model resistor
-//! sp_resistor`, `k1 () mutual`; the built-ins `codegen::vacask` declares).
+//! sp_resistor`, `k1 () mutual`; the built-ins the old VACASK writer declared).
 //!
 //! Contents:
 //! - `pub enum Primitive`, `pub struct Device`, `pub enum Terminals`, `pub enum Model`, `pub enum Value`

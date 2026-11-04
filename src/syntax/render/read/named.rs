@@ -6,8 +6,7 @@
 //! in `named_blocks`, instances in `named_elements`, analyses and options in
 //! `named_bench`.
 //!
-//! Cites: the old lowering's named statements (as `syntax::adapter::named`
-//! ports them); the old Spectre grammar (`stmt`, `named`, `Ana`, `Ctl`,
+//! Cites: the old lowering's named statements; the old Spectre grammar (`stmt`, `named`, `Ana`, `Ctl`,
 //! `Block`, `SpiceRegion`), the old VACASK grammar (`stmt`, `ControlBlock`,
 //! `Ana`); ESPice `spectre.zig:433-451` (the master map).
 //!
@@ -24,12 +23,12 @@ use std::collections::HashMap;
 
 use super::blocks::Opened;
 use super::{Acc, Bench, Block, Func, Rd, Scope};
-use crate::codegen::Dialect;
+use crate::syntax::Dialect;
 use crate::syntax::ast::{Header, NONE, Node, Tag};
 use crate::syntax::statement::Statement;
 use crate::syntax::token::Tag as T;
 
-/// The module names `codegen::vacask` declares itself (the old lowering).
+/// The module names the old VACASK writer declares itself (the old lowering).
 const VACASK_BUILTINS: &[&str] = &[
     "resistor",
     "capacitor",

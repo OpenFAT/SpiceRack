@@ -1,52 +1,53 @@
-//! CircuitSimulator: a `CircuitIR` plus a backend choice; each analysis
-//! call runs a copy of the deck holding only that analysis and wraps the
+//! CircuitSimulator: a `Deck` plus a backend choice; each analysis call
+//! runs a copy of the deck holding only that analysis and wraps the
 //! `RawData` in its result class. Spectre-only analyses come from
 //! `spectre.rs` through `pymethods_with_spectre!`.
 //!
 //! Contents:
 //! - `pub(super) struct PySimulator` (Python `CircuitSimulator`)
-//! - `PySimulator::tb(&mut self) -> &mut ir::Testbench`, `PySimulator::stim(&mut self, c: Component)`,
-//!   `PySimulator::deck_as_queued(&self) -> CircuitIR`
+//! - `PySimulator::tb(&mut self) -> &mut Bench`, `PySimulator::stim(&mut self, c: Card)`,
+//!   `PySimulator::deck_as_queued(&self) -> Deck`
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 // `PssBase`, `PyRawData`: names `pymethods_with_spectre!` resolves here.
+use super::analysis::{Analysis, PssBase};
 use super::args::{kw_params, kw_volts};
 use super::card::{self, dc_sweeps};
-use super::deck::{issues, run_deck};
+use super::deck::Deck;
+use super::model::{Bench, Card, Step};
 use super::results::*;
-use crate::ir::{self, Analysis, CircuitIR, Component, PssBase};
 use crate::result::{RawData, Results};
 
 #[pyclass(name = "CircuitSimulator", subclass)]
 pub(super) struct PySimulator {
-    /// `testbench` holds the config; each analysis call runs a copy with only its analysis.
-    pub(super) ir: CircuitIR,
+    /// `bench` holds the config; each analysis call runs a copy with only its analysis.
+    pub(super) deck: Deck,
     pub(super) backend: Option<String>,
     pub(super) save_currents: bool,
 }
 
 impl PySimulator {
     /// The deck's testbench, created empty on first use.
-    pub(super) fn tb(&mut self) -> &mut ir::Testbench {
-        self.ir.testbench.get_or_insert_with(Default::default)
+    pub(super) fn tb(&mut self) -> &mut Bench {
+        self.deck.bench.get_or_insert_with(Default::default)
     }
 
     /// Appends `c` to the testbench stimulus, outside the DUT.
-    pub(super) fn stim(&mut self, c: Component) {
+    pub(super) fn stim(&mut self, c: Card) {
         self.tb().stimulus.push(c);
     }
 
     /// A copy of the deck with every queued analysis.
-    pub(super) fn deck_as_queued(&self) -> CircuitIR {
-        let mut ir = self.ir.clone();
+    pub(super) fn deck_as_queued(&self) -> Deck {
+        let mut deck = self.deck.clone();
         if self.save_currents {
-            ir.testbench.get_or_insert_with(Default::default).saves =
+            deck.bench.get_or_insert_with(Default::default).saves =
                 vec!["all".into(), "@all[i]".into()];
         }
-        ir
+        deck
     }
 }
 
@@ -59,19 +60,19 @@ impl PySimulator {
 
     #[pyo3(signature = (**kwargs))]
     fn options(&mut self, kwargs: Option<Bound<'_, PyDict>>) -> PyResult<()> {
-        self.tb().options.portable.extend(kw_params(kwargs)?);
+        self.tb().options.extend(kw_params(kwargs)?);
         Ok(())
     }
 
     #[pyo3(signature = (**kwargs))]
     fn initial_condition(&mut self, kwargs: Option<Bound<'_, PyDict>>) -> PyResult<()> {
-        self.tb().initial_conditions.extend(kw_volts(kwargs)?);
+        self.tb().ics.extend(kw_volts(kwargs)?);
         Ok(())
     }
 
     #[pyo3(signature = (**kwargs))]
     fn node_set(&mut self, kwargs: Option<Bound<'_, PyDict>>) -> PyResult<()> {
-        self.tb().node_sets.extend(kw_volts(kwargs)?);
+        self.tb().nodesets.extend(kw_volts(kwargs)?);
         Ok(())
     }
 
@@ -122,20 +123,17 @@ impl PySimulator {
 
     #[getter]
     fn get_ngbehavior(&self) -> Option<String> {
-        self.ir
-            .testbench
-            .as_ref()
-            .and_then(|tb| tb.ngbehavior.clone())
+        self.deck.bench.as_ref().and_then(|tb| tb.ngbehavior.clone())
     }
 
     #[pyo3(signature = (param, start, stop, step))]
     fn step(&mut self, param: &str, start: f64, stop: f64, step: f64) {
-        self.tb().step_params.push(ir::StepParam {
+        self.tb().steps.push(Step {
             param: param.to_string(),
             start,
             stop,
             step,
-            sweep_type: None,
+            sweep: None,
         });
     }
 
@@ -148,13 +146,13 @@ impl PySimulator {
         step: f64,
         sweep_type: &str,
     ) -> PyResult<()> {
-        let sweep_type = Some(sweep_type.parse().map_err(PyValueError::new_err)?);
-        self.tb().step_params.push(ir::StepParam {
+        let sweep = Some(sweep_type.parse().map_err(PyValueError::new_err)?);
+        self.tb().steps.push(Step {
             param: param.to_string(),
             start,
             stop,
             step,
-            sweep_type,
+            sweep,
         });
         Ok(())
     }
@@ -368,14 +366,14 @@ impl PySimulator {
         start_freq: f64,
         stop_freq: f64,
     ) -> PyResult<PySParamAnalysis> {
-        let mut ir = self.deck(card::ac(variation, points, start_freq, stop_freq)?);
-        if let Some(tb) = &mut ir.testbench {
+        let mut deck = self.deck(card::ac(variation, points, start_freq, stop_freq)?);
+        if let Some(tb) = &mut deck.bench {
             tb.extra_lines.push(format!(
                 ".net {output_current} {input_source} Rout={z_out} Rin={z_in}"
             ));
         }
         Ok(PySParamAnalysis {
-            inner: Results::from_raw(run_deck(ir, self.backend.as_deref())?),
+            inner: Results::from_raw(deck.run(self.backend.as_deref())?),
         })
     }
 
@@ -415,10 +413,10 @@ impl PySimulator {
 
     #[pyo3(signature = (step_time, end_time))]
     fn transient_noise(&self, step_time: f64, end_time: f64) -> PyResult<PyTransientNoiseAnalysis> {
-        let a = Analysis::TransientNoise {
-            step: step_time,
-            stop: end_time,
-        };
+        // Every backend refuses it (`Analysis::spectre`), so the times reach
+        // no deck.
+        let _ = (step_time, end_time);
+        let a = Analysis::TransientNoise;
         Ok(PyTransientNoiseAnalysis {
             inner: Results::from_raw(self.run(a)?),
         })
@@ -436,7 +434,7 @@ impl PySimulator {
 
     /// Check backend compatibility for this deck.
     fn check_backend(&self, name: &str) -> Vec<String> {
-        issues(&self.ir, name)
+        self.deck.issues(name)
     }
 
     fn __repr__(&self) -> &str {
@@ -447,18 +445,18 @@ impl PySimulator {
 
 impl PySimulator {
     /// A copy of the deck that runs `analysis` alone.
-    fn deck(&self, analysis: Analysis) -> CircuitIR {
-        let mut ir = self.deck_as_queued();
-        ir.testbench.get_or_insert_with(Default::default).analyses = vec![analysis];
-        ir
+    fn deck(&self, analysis: Analysis) -> Deck {
+        let mut deck = self.deck_as_queued();
+        deck.bench.get_or_insert_with(Default::default).analyses = vec![analysis];
+        deck
     }
 
     fn run(&self, analysis: Analysis) -> PyResult<RawData> {
-        run_deck(self.deck(analysis), self.backend.as_deref())
+        self.deck(analysis).run(self.backend.as_deref())
     }
 
     /// Spectre-only analyses always run on Spectre.
     fn run_spectre(&self, analysis: Analysis) -> PyResult<RawData> {
-        run_deck(self.deck(analysis), Some("spectre"))
+        self.deck(analysis).run(Some("spectre"))
     }
 }

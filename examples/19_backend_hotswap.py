@@ -2,7 +2,7 @@
 Example 19: Backend Hotswap
 
 Same voltage divider simulated on ngspice and vacask.
-The Testbench API generates backend-native netlists via IR codegen --
+The Testbench API writes each backend's own netlist --
 switching backends is a single `with_backend()` call.
 
 No PDK needed (passive components only).

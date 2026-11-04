@@ -16,7 +16,7 @@
 //! - `Spelling::letter(&self, p: Primitive) -> char`, `Spelling::number(&self, v: f64, exact: bool) -> String`,
 //!   `Spelling::decimal(&self, v: f64, exact: bool) -> String`, `Spelling::format(&self, v: f64) -> String`
 
-use crate::codegen::Dialect;
+use crate::syntax::Dialect;
 use crate::syntax::device::{self, Primitive};
 use crate::syntax::lexicon::{self, Lexicon, Scale};
 
@@ -111,6 +111,13 @@ const CDL: Spelling = Spelling {
     ..NGSPICE
 };
 
+/// Structural Verilog: a `//` comment; its instances' nets are names.
+const VERILOG: Spelling = Spelling {
+    target: Dialect::Verilog,
+    comment: "//",
+    ..NGSPICE
+};
+
 const LTSPICE: Spelling = Spelling {
     target: Dialect::Ltspice,
     lexicon: &lexicon::LTSPICE,
@@ -139,9 +146,6 @@ const VACASK: Spelling = Spelling {
 };
 
 /// Target `target`'s row.
-///
-/// # Panics
-/// For Spectre, VACASK and Verilog, which have no row yet.
 pub const fn spelling(target: Dialect) -> &'static Spelling {
     match target {
         Dialect::Ngspice => &NGSPICE,
@@ -152,9 +156,7 @@ pub const fn spelling(target: Dialect) -> &'static Spelling {
         Dialect::Cdl => &CDL,
         Dialect::Spectre => &SPECTRE,
         Dialect::Vacask => &VACASK,
-        Dialect::Verilog => {
-            panic!("spelling: no row yet for this target")
-        }
+        Dialect::Verilog => &VERILOG,
     }
 }
 
@@ -301,7 +303,7 @@ mod tests {
                     .map_or((1.0, &text[..]), |b| (-1.0, b));
                 let got = sign * crate::syntax::number::value(body, s.lexicon);
                 assert_eq!(got, v, "{d:?} wrote {v} as {text}");
-                assert_eq!(s.format(v), crate::codegen::format_spice_number(v), "{d:?}");
+                assert_eq!(s.format(v), crate::unit::format_spice_number(v), "{d:?}");
             }
         }
     }
@@ -320,7 +322,7 @@ mod tests {
                 .strip_prefix('-')
                 .map_or((1.0, &text[..]), |b| (-1.0, b));
             assert_eq!(sign * crate::syntax::number::value(body, s.lexicon), v);
-            let old = crate::codegen::format_spice_number(v);
+            let old = crate::unit::format_spice_number(v);
             let old = match old.strip_suffix("meg") {
                 Some(h) => format!("{h}M"),
                 None => match old.strip_suffix(['g', 't']) {

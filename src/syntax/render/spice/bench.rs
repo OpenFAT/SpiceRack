@@ -16,7 +16,7 @@
 //! - `W::control_run(&self) -> Option<Vec<String>>`, `W::bench(&mut self, control: Option<&[String]>)`, `W::runs(&self) -> bool`
 
 use super::W;
-use crate::codegen::Dialect;
+use crate::syntax::Dialect;
 use crate::syntax::diag::Code;
 use crate::syntax::render::capability::{Action, Alt, Construct, action};
 use crate::syntax::render::out::Space;

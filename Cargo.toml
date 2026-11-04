@@ -18,29 +18,24 @@ pyo3 = { version = "0.24", features = ["extension-module", "num-complex"], optio
 num-complex = "0.4"
 thiserror = "2"
 tempfile = { version = "3", optional = true }
-serde = { version = "1", features = ["derive"] }
-serde_json = { version = "1", features = ["float_roundtrip"], optional = true }
 regex = { version = "1", optional = true }
 
 [dev-dependencies]
 pretty_assertions = "1"
-serde_json = { version = "1", features = ["float_roundtrip"] }
 tempfile = "3"
 
 [features]
 default = ["python"]
 # `backend`: the simulator backends (processes, temp files), `simulation`, the
-# Verilog tools (OpenVAF, Icarus, Yosys) and `CircuitIR::check_backend`.
-# Without it the crate is the IR, the codegens and the result readers: pure,
+# Verilog tools (OpenVAF, Icarus, Yosys) and `backend::check`.
+# Without it the crate is the transpiler and the result readers: pure,
 # no I/O, and it builds for wasm32-unknown-unknown.
 backend = ["dep:tempfile", "dep:regex"]
-# `json`: IR <-> JSON (float_roundtrip: an f64 reads back as written).
-json = ["dep:serde_json"]
-python = ["dep:pyo3", "json", "backend"]
+python = ["dep:pyo3", "backend"]
 # `corpus`: the nightly tier. Builds `tests/test_import_suite/`, which runs
 # every spice-bench deck and corpus `nix develop .#testing` pins (about 20 min
 # on a 4-vCPU runner), so the merge tier leaves it out. See TESTING.md.
-corpus = ["json"]
+corpus = []
 
 [[test]]
 name = "test_import_suite"
@@ -54,9 +49,7 @@ required-features = ["corpus"]
 
 [[bin]]
 name = "spice2rack"
-required-features = ["json"]
 
 # The transpiler rewrite's golden gate (TESTING.md, "Golden gate").
 [[bin]]
 name = "golden"
-required-features = ["json"]

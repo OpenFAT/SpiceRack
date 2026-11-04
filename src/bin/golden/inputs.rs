@@ -22,14 +22,15 @@ use std::collections::{BTreeSet, VecDeque};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
-use spicerack::codegen::Dialect;
 use spicerack::import::{decode, parse};
-use spicerack::ir::CircuitIR;
-use spicerack::syntax::resolve::{self, FileId, LoadError};
+use spicerack::syntax::Dialect;
+use spicerack::syntax::render::{self, Reference};
+use spicerack::syntax::resolve::{self, FileId};
 
-/// How a file is read: a deck (line 1 is its title, the IR is named for the
-/// file's stem) or a kit's library file (an empty title line is prepended
-/// and the IR is named `pdk`, as Interop's `pdk-models` reads it).
+/// How a file is read: a deck (line 1 is its title, the deck is named for
+/// the file's stem) or a kit's library file (an empty title line is
+/// prepended and the deck is named `pdk`, as Interop's `pdk-models` reads
+/// it).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum Form {
     Deck,
@@ -201,11 +202,11 @@ pub(super) fn inputs(repo: &Path, manifest: &mut Vec<String>) -> Vec<Input> {
         let ext = path.extension()?.to_str()?;
         let &(_, dialect) = FIXTURES.iter().find(|f| f.0 == ext)?;
         let tests = repo.join("tests");
-        let kit = resolve::Kit::load(
+        let kit = spicerack::import::kit(
             std::slice::from_ref(&path),
             resolve::Form::Deck,
             dialect,
-            &mut loader(&tests),
+            &tests,
         );
         Some(Input {
             set: "fixtures",
@@ -224,7 +225,8 @@ pub(super) fn inputs(repo: &Path, manifest: &mut Vec<String>) -> Vec<Input> {
     all
 }
 
-/// The text `parse` reads for a file and the name it gives the IR.
+/// The text the reader reads for a file and the name its deck is written
+/// under.
 pub(super) fn source(text: &str, form: Form, path: &Path) -> (String, String) {
     match form {
         Form::Deck => {
@@ -236,22 +238,6 @@ pub(super) fn source(text: &str, form: Form, path: &Path) -> (String, String) {
 }
 
 // ---- private ----
-
-/// Reads a file under `root` (decoded as `import::decode` does); refuses
-/// any other path.
-fn loader(root: &Path) -> impl FnMut(&Path) -> Result<String, LoadError> + '_ {
-    move |p: &Path| {
-        if !p.starts_with(root) {
-            return Err(LoadError::Refused);
-        }
-        if !p.is_file() {
-            return Err(LoadError::NotFound);
-        }
-        std::fs::read(p)
-            .map(|b| decode(&b))
-            .map_err(|_| LoadError::NotFound)
-    }
-}
 
 /// `$<var>/<sub>` if it is set and exists; else an `absent` manifest line.
 fn root(set: &str, var: &str, sub: &str, manifest: &mut Vec<String>) -> Option<PathBuf> {
@@ -348,9 +334,10 @@ fn kit(k: &Kit, root: &Path, manifest: &mut Vec<String>) -> Vec<Input> {
         let text = std::fs::read(&p).map(|b| decode(&b)).unwrap_or_default();
         let (src, name) = source(&text, Form::Library, &p);
         let dir = p.parent().unwrap_or(Path::new("")).to_path_buf();
-        // A file `parse` refuses names nothing further; its refusal is recorded.
-        if let Ok(Ok((ir, _))) = std::panic::catch_unwind(|| parse(&src, &name, k.dialect)) {
-            for (f, va) in references(&ir) {
+        // A file the reader panics on names nothing further; the panic is
+        // recorded.
+        if let Ok(refs) = std::panic::catch_unwind(|| references(&src, &name, k.dialect)) {
+            for (f, va) in refs {
                 todo.push_back((normalize(&dir.join(f)), va));
             }
         }
@@ -367,11 +354,11 @@ fn kit(k: &Kit, root: &Path, manifest: &mut Vec<String>) -> Vec<Input> {
     // above is one of its files (it also follows includes this walk skips,
     // inside a subckt or an `.if` branch; those are no inputs).
     let entries: Vec<PathBuf> = entries.iter().map(|e| root.join(e)).collect();
-    let kit = Arc::new(resolve::Kit::load(
+    let kit = Arc::new(spicerack::import::kit(
         &entries,
         resolve::Form::Library,
         k.dialect,
-        &mut loader(root),
+        root,
     ));
     for input in &mut out {
         let f = kit.files().iter().position(|f| f.path == input.path);
@@ -381,25 +368,27 @@ fn kit(k: &Kit, root: &Path, manifest: &mut Vec<String>) -> Vec<Input> {
     out
 }
 
-/// The files `ir` names, at the top and in every section: includes and
-/// `.lib` calls (`false`), and Verilog-A sources (`true`). Interop's
-/// `references`, verbatim in effect.
-fn references(ir: &CircuitIR) -> Vec<(String, bool)> {
-    let bodies = std::iter::once(&ir.top).chain(ir.sections.iter().map(|s| &s.body));
-    bodies
-        .flat_map(|b| {
-            let libs = b.libs.iter().map(|(f, _)| (f.as_str(), false));
-            let va = b.osdi_loads.iter().map(String::as_str);
-            let va = va
-                .filter(|f| spicerack::veriloga::is_source(f))
-                .map(|f| (f, true));
-            b.includes
-                .iter()
-                .map(|f| (f.as_str(), false))
-                .chain(libs)
-                .chain(va)
+/// The files `src` names (`render::references`): netlist files (`false`)
+/// and Verilog-A sources (`true`), as Interop's `pdk-models` walks them.
+fn references(src: &str, name: &str, d: Dialect) -> Vec<(String, bool)> {
+    let Ok((tokens, ast)) = parse(src, d) else {
+        return Vec::new();
+    };
+    let file = render::Source {
+        ast: &ast,
+        tokens: &tokens,
+        dialect: d,
+        name,
+        kit: None,
+        loads: &[],
+        numbers: render::Numbers::Read,
+    };
+    render::references(&file)
+        .into_iter()
+        .map(|r| match r {
+            Reference::File(f) => (f, false),
+            Reference::VerilogA(f) => (f, true),
         })
-        .map(|(f, v)| (f.trim_matches(['"', '\'']).to_string(), v))
         .collect()
 }
 

@@ -1,24 +1,28 @@
-//! The renderer (`syntax::render`) against the old pipeline on decks the
-//! golden corpus holds none of: Spectre `statistics` blocks lowered for the
-//! SPICE family (two-layer `.param` draws; Spectre Reference 19.1
-//! pp.175-179) and Laplace sources; the same tables for Spectre and VACASK;
-//! functions whose bodies draw, inlined for Spectre at each call.
-//! The made-up fixtures (`tests/fixtures/transpiler/stats_*.scs`,
-//! `laplace.{sp,cir,net}`, `func_stats.{sp,cir}`, golden inputs too) are written by both and pinned under
-//! `tests/fixtures/transpiler/pinned/<file>_<ext>/`.
+//! The renderer (`syntax::render`) on decks the golden corpus holds none
+//! of: Spectre `statistics` blocks lowered for the SPICE family (two-layer
+//! `.param` draws; Spectre Reference 19.1 pp.175-179) and Laplace sources;
+//! the same tables for Spectre and VACASK; functions whose bodies draw,
+//! inlined for Spectre at each call. The made-up fixtures
+//! (`tests/fixtures/transpiler/stats_*.scs`, `laplace.{sp,cir,net}`,
+//! `func_stats.{sp,cir}`, golden inputs too) are pinned under
+//! `tests/fixtures/transpiler/pinned/<file>_<ext>/`, the inline decks in
+//! `pinned/inline/{statistics,laplace}.txt`.
 //!
-//! Oracle: `codegen::netlist(import::parse(deck))` at this commit, the
-//! pipeline the golden gate's baseline recorded (TESTING.md, "Golden
-//! gate"): each deck written byte for byte the same, or refused by both.
-//! That pipeline's statistics text is the one `test_monte_carlo.rs` T-R3
-//! and T-R4 check by hand,
-//! and its Laplace cards the ones `test_laplace_ngspice.rs` runs on real
-//! ngspice. `SPICERACK_BLESS=1` rewrites the pinned files.
+//! Oracle: the old pipeline (the PEG reader and the old writers), the one
+//! the golden gate's baseline recorded (TESTING.md, "Golden gate"),
+//! deleted in phase 6: until then these tests asserted the renderer wrote
+//! each deck byte for byte as it did (or both refused), and the pins are
+//! those bytes. A pinned refusal keeps the old writer's message (`old:`)
+//! beside the codes (`new:`), which alone are compared. That pipeline's
+//! statistics text is the one `test_monte_carlo.rs` T-R3 and T-R4 check by
+//! hand, and its Laplace cards the ones `test_laplace_ngspice.rs` runs on
+//! real ngspice. `SPICERACK_BLESS=1` rewrites the pinned files.
 //!
 //! Contents: none (tests only).
 
-use spicerack::codegen::{Dialect, netlist};
-use spicerack::import::parse;
+use std::path::{Path, PathBuf};
+
+use spicerack::syntax::Dialect;
 use spicerack::syntax::diag::{Code, Kind, info};
 use spicerack::syntax::render::render_text;
 
@@ -50,51 +54,39 @@ const FIXTURES: [(&str, Dialect); 9] = [
     ("func_stats.cir", Dialect::Xyce),
 ];
 
+/// One pinned file of named cases (`pinned/inline/<name>.txt`): each case
+/// `== <case>` then its text, or its refusal's `new:` line.
+struct Pins {
+    path: PathBuf,
+    want: String,
+    got: String,
+}
+
 // ---- private ----
 
 #[test]
-fn statistics_tables_are_written_as_the_old_lowering_wrote_them() {
-    for deck in &statistics_decks() {
-        let (ir, _) = parse(deck, "t", Dialect::Spectre).unwrap();
-        for d in SPICE {
-            let old = netlist(&ir, d).map_err(|e| e.to_string());
+fn statistics_tables_are_written_as_pinned() {
+    // The SPICE family lowers each table to two-layer `.param` draws;
+    // VACASK to one-layer draws (`render::draws`, `Layers::One`); Spectre
+    // keeps it. A subcircuit's mismatch draw is VACASK's only written form
+    // of a `mismatch` vary.
+    let mut pins = Pins::new("statistics");
+    let (mut lowered, mut vacask) = (0, 0);
+    for (k, deck) in statistics_decks().iter().enumerate() {
+        for d in SPICE.into_iter().chain([Dialect::Spectre, Dialect::Vacask]) {
             let new = render_text(deck, Dialect::Spectre, "t", d).map(|w| w.text);
-            match (&old, &new) {
-                (Ok(a), Ok(b)) => {
-                    assert_eq!(a, b, "{d:?}\n{deck}");
-                    assert!(
-                        a.contains("__mc=") || a.contains("__z=") || a.contains("__mm="),
-                        "{a}"
-                    );
-                }
-                (Err(_), Err(_)) => {}
-                _ => panic!("{d:?}: old {old:?}, new {new:?}\n{deck}"),
+            if let Ok(a) = &new {
+                let spice = SPICE.contains(&d);
+                lowered += usize::from(
+                    spice && (a.contains("__mc=") || a.contains("__z=") || a.contains("__mm=")),
+                );
+                vacask += usize::from(d == Dialect::Vacask && a.contains("agauss("));
             }
+            pins.check(&format!("deck {k} {}", d.name()), new);
         }
     }
-}
-
-#[test]
-fn statistics_tables_reach_the_named_family_as_the_old_writers_wrote_them() {
-    // VACASK lowers a table to one-layer draws (`render::draws`,
-    // `Layers::One`); Spectre keeps it. A subcircuit's mismatch draw is
-    // VACASK's only written form of a `mismatch` vary.
-    let mut vacask = 0;
-    for deck in &statistics_decks() {
-        let (ir, _) = parse(deck, "t", Dialect::Spectre).unwrap();
-        for d in [Dialect::Spectre, Dialect::Vacask] {
-            let old = netlist(&ir, d).map_err(|e| e.to_string());
-            let new = render_text(deck, Dialect::Spectre, "t", d).map(|w| w.text);
-            match (&old, &new) {
-                (Ok(a), Ok(b)) => {
-                    assert_eq!(a, b, "{d:?}\n{deck}");
-                    vacask += usize::from(d == Dialect::Vacask && a.contains("agauss("));
-                }
-                (Err(_), Err(_)) => {}
-                _ => panic!("{d:?}: old {old:?}, new {new:?}\n{deck}"),
-            }
-        }
-    }
+    pins.finish();
+    assert!(lowered >= 20, "the SPICE family lowered {lowered}");
     assert!(vacask >= 6, "VACASK wrote {vacask} of the tables");
 }
 
@@ -138,11 +130,6 @@ fn statistics_the_spice_family_cannot_hold_are_refused_by_code() {
     ];
     for (deck, code) in &cases {
         let deck = deck.replace("CORR", "param=[a b] cc=0.6");
-        let (ir, _) = parse(&deck, "t", Dialect::Spectre).unwrap();
-        assert!(
-            netlist(&ir, Dialect::Ngspice).is_err(),
-            "the old writer refused\n{deck}"
-        );
         let Err(refused) = render_text(&deck, Dialect::Spectre, "t", Dialect::Ngspice) else {
             panic!("refused\n{deck}");
         };
@@ -155,7 +142,7 @@ fn statistics_the_spice_family_cannot_hold_are_refused_by_code() {
 }
 
 #[test]
-fn laplace_sources_are_written_as_the_old_writer_wrote_them() {
+fn laplace_sources_are_written_as_pinned() {
     let h = [
         "Laplace(v(in), 1/(1+s*1.59e-4))",
         "Laplace(V(in), (1+s*1e-3)/(1+s*1e-6))",
@@ -182,29 +169,25 @@ fn laplace_sources_are_written_as_the_old_writer_wrote_them() {
         "Laplace(v(in))",
     ];
     let mut lifted = 0;
+    let mut pins = Pins::new("laplace");
     for e in h {
         for key in ["V", "I"] {
             let deck =
                 format!("t\nV1 in 0 1\nB1 out 0 {key}={e}\nR1 out 0 1k\n.tran 1u 1m\n.end\n");
-            let (ir, _) = parse(&deck, "t", Dialect::Ngspice).unwrap();
             for d in SPICE {
-                let old = netlist(&ir, d).map_err(|e| e.to_string());
                 let new = render_text(&deck, Dialect::Ngspice, "t", d).map(|w| w.text);
-                match (&old, &new) {
-                    (Ok(a), Ok(b)) => {
-                        assert_eq!(a, b, "{d:?}\n{deck}");
-                        lifted += usize::from(
-                            ["_xfer", "LAPLACE", "Laplace="]
-                                .iter()
-                                .any(|w| a.contains(w)),
-                        );
-                    }
-                    (Err(_), Err(_)) => {}
-                    _ => panic!("{d:?}: old {old:?}, new {new:?}\n{deck}"),
+                if let Ok(a) = &new {
+                    lifted += usize::from(
+                        ["_xfer", "LAPLACE", "Laplace="]
+                            .iter()
+                            .any(|w| a.contains(w)),
+                    );
                 }
+                pins.check(&format!("{key}={e} {}", d.name()), new);
             }
         }
     }
+    pins.finish();
     // The 11 transfer functions, as V and I, on ngspice, ESPice, HSPICE and
     // LTspice (Xyce refuses every one, LTspice the two with `^`, which it
     // reads as XOR).
@@ -212,8 +195,8 @@ fn laplace_sources_are_written_as_the_old_writer_wrote_them() {
 }
 
 #[test]
-fn fixtures_render_as_the_old_writer_did_and_as_pinned() {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/transpiler");
+fn fixtures_render_as_pinned() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/transpiler");
     let bless = std::env::var_os("SPICERACK_BLESS").is_some();
     let targets = SPICE
         .into_iter()
@@ -221,34 +204,35 @@ fn fixtures_render_as_the_old_writer_did_and_as_pinned() {
     for (file, d) in FIXTURES {
         let text = std::fs::read_to_string(dir.join(file)).unwrap();
         let stem = file.split('.').next().unwrap();
-        let (ir, _) = parse(&text, stem, d).unwrap();
         for t in targets.clone() {
-            let old = netlist(&ir, t).map_err(|e| e.to_string());
-            let new = render_text(&text, d, stem, t).map(|w| w.text);
-            let (name, body) = match (&old, &new) {
-                (Ok(a), Ok(b)) => {
-                    assert_eq!(a, b, "{file} {t:?}");
-                    (format!("{}.txt", t.name()), a.clone())
-                }
-                (Err(e), Err(codes)) => {
-                    let codes: Vec<String> = codes
-                        .diags
-                        .iter()
-                        .map(|c| format!("{:?}", c.code))
-                        .collect();
-                    let body = format!("old: {e}\nnew: {}\n", codes.join(" "));
-                    (format!("{}.refused", t.name()), body)
-                }
-                _ => panic!("{file} {t:?}: old {old:?}, new {new:?}"),
+            let pin = dir.join("pinned").join(file.replace('.', "_"));
+            let (name, body) = match render_text(&text, d, stem, t) {
+                Ok(w) => (format!("{}.txt", t.name()), w.text),
+                Err(e) => (format!("{}.refused", t.name()), new_line(&e)),
             };
-            let pin = dir.join("pinned").join(file.replace('.', "_")).join(&name);
+            let pin = pin.join(&name);
+            let want = std::fs::read_to_string(&pin).unwrap_or_default();
             if bless {
+                // A refusal keeps the old writer's message beside its codes.
+                let old = want.lines().find(|l| l.starts_with("old: "));
+                let body = old.map_or(body.clone(), |o| format!("{o}\n{body}"));
                 std::fs::create_dir_all(pin.parent().unwrap()).unwrap();
-                std::fs::write(&pin, &body).unwrap();
+                std::fs::write(&pin, body).unwrap();
+                continue;
             }
-            let want = std::fs::read_to_string(&pin)
-                .unwrap_or_else(|e| panic!("{}: {e} (SPICERACK_BLESS=1 writes it)", pin.display()));
-            assert_eq!(body, want, "{}", pin.display());
+            assert!(
+                !want.is_empty(),
+                "{}: SPICERACK_BLESS=1 writes it",
+                pin.display()
+            );
+            match name.ends_with(".refused") {
+                true => assert!(
+                    want.lines().any(|l| format!("{l}\n") == body),
+                    "{}: {body}",
+                    pin.display()
+                ),
+                false => assert_eq!(body, want, "{}", pin.display()),
+            }
         }
     }
     // Each fixture reaches the rule it is for.
@@ -412,4 +396,52 @@ fn a_diagnostic_is_anchored_at_its_statement_and_messages_are_in_source_order() 
         "t:3:1: W0003 a statistical function the target lacks\n\
          t:4:1: W0002 a `^` that means power in one dialect and XOR in the other\n"
     );
+}
+
+/// A refusal as its pinned line: `new: <codes>`.
+fn new_line(e: &spicerack::syntax::render::Diags) -> String {
+    let codes: Vec<String> = e.diags.iter().map(|c| format!("{:?}", c.code)).collect();
+    format!("new: {}\n", codes.join(" "))
+}
+
+impl Pins {
+    fn new(name: &str) -> Pins {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/transpiler/pinned/inline")
+            .join(format!("{name}.txt"));
+        let want = std::fs::read_to_string(&path).unwrap_or_default();
+        Pins {
+            path,
+            want,
+            got: String::new(),
+        }
+    }
+
+    /// Adds case `case`, written or refused, to what is compared.
+    fn check(&mut self, case: &str, r: Result<String, spicerack::syntax::render::Diags>) {
+        let body = match r {
+            Ok(text) => format!("{text}\n"),
+            Err(e) => new_line(&e),
+        };
+        self.got.push_str(&format!("== {case}\n{body}"));
+    }
+
+    /// Compares every case with the pinned file (`SPICERACK_BLESS=1`
+    /// writes it).
+    fn finish(self) {
+        if std::env::var_os("SPICERACK_BLESS").is_some() {
+            std::fs::create_dir_all(self.path.parent().unwrap()).unwrap();
+            std::fs::write(&self.path, &self.got).unwrap();
+            return;
+        }
+        assert!(
+            !self.want.is_empty(),
+            "{}: SPICERACK_BLESS=1 writes it",
+            self.path.display()
+        );
+        for (w, g) in self.want.split("\n== ").zip(self.got.split("\n== ")) {
+            assert_eq!(g, w, "{}", self.path.display());
+        }
+        assert_eq!(self.got, self.want, "{}", self.path.display());
+    }
 }

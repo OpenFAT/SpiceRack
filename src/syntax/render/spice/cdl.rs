@@ -5,15 +5,15 @@
 //! the top's models, `.END`. A schematic tool's LVS netlist: no analyses,
 //! sections, branches or includes are written, each noted (`W0028`).
 //!
-//! The layout is the old writer's (`codegen::xschem::write` of an IR with
-//! nothing beside it), byte for byte (TESTING.md, "Golden gate"); where it
+//! The layout is the old xschem layout writer's (for a deck with nothing
+//! beside it), byte for byte (TESTING.md, "Golden gate"); where it
 //! differs from the SPICE spine it is marked `// quirk:`. An element the
 //! ngspice card has no form for is a comment naming its `W` code, where the
 //! old writer named its free-text error (no corpus deck has one), and a
 //! note (`W0021`), the deck still written.
 //!
 //! Cites: Cadence CDL (`.SUBCKT`, `*.PININFO`, `.ENDS`, `.END`); the old
-//! xschem layout's module notes (`codegen::xschem`).
+//! xschem layout writer's module notes.
 //!
 //! Contents:
 //! - `W::cdl(&mut self)`
@@ -108,7 +108,7 @@ impl W<'_, '_> {
     /// Block `b`'s elements, each its line: the cards in order, then the
     /// instances (the old IR's components, then its instances).
     fn cdl_elements(&mut self, b: &Block) -> Vec<String> {
-        let coupled = match self.rd.d == crate::codegen::Dialect::Ltspice {
+        let coupled = match self.rd.d == crate::syntax::Dialect::Ltspice {
             true => Some(self.coupled(b)),
             false => None,
         };

@@ -47,7 +47,7 @@ macro_rules! analysis_suite {
         }
 
         /// ngspice has no `.step`, but `.dc temp` is a real temperature sweep.
-        /// This is the migration path the codegen's `.step` error points at.
+        /// This is the migration path a refused `.step` points at.
         #[test]
         fn dc_temp_is_a_working_temperature_sweep() {
             let raw = run("* dc temp\nV1 in 0 1\nR1 in out 1k\nR2 out 0 1k TC1=0.01\n.dc temp 0 100 25\n.end\n");
@@ -110,10 +110,10 @@ macro_rules! analysis_suite {
         // ── .measure ──
 
         /// ngspice accepts `.measure` on DC, AC, TRAN and SP. Each of the three
-        /// the codegen runs from a `.control` block on ngspice reports it.
+        /// the renderer runs from a `.control` block on ngspice reports it.
         #[test]
         fn measure_works_on_dc_ac_and_tran() {
-            let run = |deck: &str| run(&common::emitted($d, deck, |_| {}));
+            let run = |deck: &str| run(&common::written($d, deck));
             let dc = run("* meas dc\nV1 in 0 0\nR1 in out 10k\nR2 out 0 10k\n.meas dc vhalf FIND V(out) AT=10\n.dc V1 0 10 1\n.end\n");
             let dc_m = measures(&dc);
             assert!(close(dc_m[0].value, 5.0, 1e-9), "{:?}", dc_m);

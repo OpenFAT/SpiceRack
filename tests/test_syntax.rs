@@ -7,15 +7,15 @@
 //! - `kits_resolve`: every PDK kit and fixture read as one `syntax::resolve`
 //!   kit: its read order is the manifest's (`inputs.rs`'s walk), and every
 //!   instance master binds or carries an `R0001`; the counts are printed;
-//! - `throughput` (`--ignored`): tokenize, parse and `ast_to_ir`, timed.
+//! - `throughput` (`--ignored`): tokenize, parse and render (as ngspice),
+//!   timed.
 //!
 //! The comparisons phase 1 and 2 made here against the old reader in
 //! process (its logical lines, its number values, its IR) were retired when
-//! `import::parse` switched to this front end (phase 2b): with one reader the
-//! IR comparison would compare the reader with itself, and the recorded
-//! `golden` baseline (`9d1d6bb`) holds every input's IR, report and text,
-//! which `golden diff` compares file for file; the lines and numbers it does
-//! not hold are what the IR is made of.
+//! the old reader went (phase 2b): with one reader the comparison would
+//! compare the reader with itself, and the recorded `golden` baseline
+//! (`9d1d6bb`) holds every input's text, which `golden diff` compares file
+//! for file.
 //!
 //!   nix develop .#testing -c env IHP_PDK=<checkout> cargo test -j 4 --release \
 //!     --no-default-features --features corpus --test test_syntax -- --test-threads=4
@@ -34,14 +34,15 @@ use std::time::Instant;
 
 use std::collections::BTreeMap;
 
-use spicerack::codegen::Dialect;
 use spicerack::import::decode;
+use spicerack::syntax::Dialect;
 use spicerack::syntax::ast::{self, NONE, Node};
 use spicerack::syntax::diag::Code;
 use spicerack::syntax::lexicon::{self, HSPICE, SPECTRE};
+use spicerack::syntax::render::{Numbers, Source, render};
 use spicerack::syntax::resolve::{Binding, DefKind, FileId, Kit, LoadError, Role};
 use spicerack::syntax::token::Tag;
-use spicerack::syntax::{ast_to_ir, parse, tokenize};
+use spicerack::syntax::{parse, tokenize};
 
 #[path = "../src/bin/golden/inputs.rs"]
 #[allow(dead_code)]
@@ -253,13 +254,20 @@ fn kits_resolve() {
     }
 }
 
-/// Tokenize, parse and `ast_to_ir` throughput over the gate's inputs,
-/// printed; `--ignored` runs it.
+/// Tokenize, parse and render (as ngspice) throughput over the gate's
+/// inputs, printed; `--ignored` runs it.
 #[test]
 #[ignore]
 fn throughput() {
+    // A deck nested deep in `.if`s renders recursively (as `golden` runs
+    // it, on a 256 MiB stack).
+    let big = std::thread::Builder::new().stack_size(256 << 20);
+    big.spawn(timed).expect("spawn").join().expect("timed");
+}
+
+fn timed() {
     let (mut bytes, mut tokens, mut nodes) = (0usize, 0usize, 0usize);
-    let (mut lexing, mut parsing, mut adapting) = (0.0f64, 0.0f64, 0.0f64);
+    let (mut lexing, mut parsing, mut rendering) = (0.0f64, 0.0f64, 0.0f64);
     for (key, src, d) in every_input() {
         let lex = lexicon::of(d).expect("lexicon");
         let at = Instant::now();
@@ -269,14 +277,23 @@ fn throughput() {
         let ast = parse(&t, lex);
         parsing += at.elapsed().as_secs_f64();
         let at = Instant::now();
-        std::hint::black_box(ast_to_ir(&ast, &t, d, &key, None));
-        adapting += at.elapsed().as_secs_f64();
+        let file = Source {
+            ast: &ast,
+            tokens: &t,
+            dialect: d,
+            name: &key,
+            kit: None,
+            loads: &[],
+            numbers: Numbers::Read,
+        };
+        let _ = std::hint::black_box(render(&file, Dialect::Ngspice));
+        rendering += at.elapsed().as_secs_f64();
         (bytes, tokens, nodes) = (bytes + src.len(), tokens + t.len(), nodes + ast.len());
     }
     let mb = bytes as f64 / 1e6;
     println!(
         "{mb:.1} MB, {tokens} tokens, {nodes} nodes: tokenize {lexing:.2} s ({:.1} MB/s), \
-         parse {parsing:.2} s ({:.1} MB/s), ast_to_ir {adapting:.2} s",
+         parse {parsing:.2} s ({:.1} MB/s), render {rendering:.2} s",
         mb / lexing,
         mb / parsing
     );

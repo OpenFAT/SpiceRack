@@ -10,7 +10,7 @@
 //! - `Rd::dialect_raw(&self, w: &str) -> bool`
 
 use super::{Kept, Rd};
-use crate::codegen::Dialect;
+use crate::syntax::Dialect;
 use crate::syntax::token::Tag as T;
 
 /// the old SPICE grammar's `rawkind`: the dot words whose card, when no rule reads it,

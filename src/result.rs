@@ -20,7 +20,7 @@ use num_complex::Complex64;
 use std::borrow::Cow;
 use std::collections::HashMap;
 
-use crate::ir::Dialect;
+use crate::syntax::Dialect;
 
 /// One simulator plot, stored by column: `real_data[v]` or `complex_data[v]` holds every
 /// point of variable `v`. A real plot fills `real_data`; a complex plot fills

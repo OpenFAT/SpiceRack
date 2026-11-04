@@ -24,7 +24,7 @@
 //! - `pub enum Construct`, `pub enum Action`, `pub enum Alt`, `pub enum Rule`
 //! - `pub const fn action(target: Dialect, c: Construct) -> Action`
 
-use crate::codegen::Dialect;
+use crate::syntax::Dialect;
 use crate::syntax::diag::Code;
 
 /// A construct whose spelling, or whose existence, differs by target.

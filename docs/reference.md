@@ -68,7 +68,6 @@ Waveform sources, each a `...VoltageSource` and a `...CurrentSource`, also on
 | `veriloga(source_or_path)` | a Verilog-A model, compiled per backend; returns the `.va` path |
 | `osdi(path)` | a compiled OSDI model |
 | `verilog(*, source, mode="simulate", instance_name, connections, pdk=None, liberty=None, spice_models=None)` | a digital Verilog module (co-simulated or synthesized) |
-| `to_json()`, `save_json(path)`, `from_json(text)`, `load_json(path)` | the JSON form |
 | `name`, `ports`, `gnd` | read-only; `gnd` is `"0"` |
 
 `Circuit` only: `options(**kw)`, `temp(t)`, `node(name)`, `element(name)`,
@@ -82,7 +81,7 @@ Waveform sources, each a `...VoltageSource` and a `...CurrentSource`, also on
 | `add_subcircuit(subckt)` | registers a child definition |
 | `use_pdk(lib)` | attaches a `ModelLibrary` |
 | `with_backend(name)` | pins the simulator |
-| `netlist(backend="ngspice")`, `to_json()` | the deck, or its JSON |
+| `netlist(backend="ngspice")` | the deck |
 | `check_backend(name)` | reasons it will not run on `name` |
 | `global_nodes(*nodes)` | `.global` |
 | `extra_line(line)` | a raw line in the bench |

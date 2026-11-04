@@ -3,6 +3,7 @@
 //! Cites: ngspice manual §13.5.107 (`appendwrite`), §13.5.92 (`strcmp`).
 //!
 //! Contents:
+//! - `pub const NGBEHAVIOR: &str`
 //! - `pub(super) fn run(netlist: &str) -> Result<Vec<RawData>, BackendError>`
 
 use std::fmt::Write as _;
@@ -10,15 +11,25 @@ use std::path::Path;
 use std::process::Command;
 
 use super::{BackendError, exec, read_results, scratch};
-use crate::codegen::spice3::{NGBEHAVIOR, is_four, is_meas, runs_in_control};
 use crate::result::RawData;
+
+/// The comment that carries a deck's ngspice compatibility mode
+/// (`ngbehavior`): ngspice reads the mode only before parsing (no card sets
+/// it), so [`run`] lifts this line onto its command line and the deck text
+/// stays the whole input of a run.
+pub const NGBEHAVIOR: &str = "*spicerack ngbehavior=";
+
+/// Control commands that start an analysis: a `.control` block issuing one
+/// owns the run. A block that runs nothing (a `pre_osdi` load block) does
+/// not; ngspice accepts several blocks per deck (44.2).
+const RUN_COMMANDS: [&str; 5] = ["run", "op", "ac", "tran", "dc"];
 
 /// Run a deck through `ngspice -b` and read back every plot of its rawfile.
 ///
 /// A deck whose `.control` block runs the analysis writes nothing under
 /// `-b -r rawfile`, so it gets a block appended that writes every plot the
-/// run made (the codegen puts a deck with `.measure` or `.four` in that
-/// shape, and a hand-written one may be). This is run mechanics (where the
+/// run made (`syntax::render` writes a deck with `.measure` or `.four` in
+/// that shape, and a hand-written one may be). This is run mechanics (where the
 /// rawfile goes), not dialect translation.
 ///
 /// ngspice runs with `-n`, so neither `./.spiceinit` nor `~/.spiceinit` is
@@ -69,6 +80,37 @@ pub(super) fn run(netlist: &str) -> Result<Vec<RawData>, BackendError> {
 }
 
 // ---- private ----
+
+/// True if a `.control`/`.endc` block among `lines` issues a run command.
+fn runs_in_control<'a>(lines: impl IntoIterator<Item = &'a str>) -> bool {
+    let mut inside = false;
+    for line in lines {
+        let word = line.split_whitespace().next().unwrap_or("");
+        if word.eq_ignore_ascii_case(".control") {
+            inside = true;
+        } else if word.eq_ignore_ascii_case(".endc") {
+            inside = false;
+        } else if inside && RUN_COMMANDS.iter().any(|c| word.eq_ignore_ascii_case(c)) {
+            return true;
+        }
+    }
+    false
+}
+
+/// True if `line` is a `.meas`/`.measure` card (any case).
+fn is_meas(line: &str) -> bool {
+    line.split_whitespace()
+        .next()
+        .and_then(|w| w.get(..5))
+        .is_some_and(|w| w.eq_ignore_ascii_case(".meas"))
+}
+
+/// True if `line` is a `.four` card (any case).
+fn is_four(line: &str) -> bool {
+    line.split_whitespace()
+        .next()
+        .is_some_and(|w| w.eq_ignore_ascii_case(".four"))
+}
 
 /// The compatibility mode on the deck's [`NGBEHAVIOR`] line, if it has one.
 fn ngbehavior(netlist: &str) -> Option<&str> {
@@ -153,39 +195,25 @@ mod deck_tests {
     }
 
     #[test]
-    fn ngbehavior_reaches_the_ngspice_run_and_no_other_dialect() {
-        use crate::codegen::{Dialect, netlist};
-        use crate::ir::{Analysis, CircuitIR, Testbench};
-        // One analysis, and two with a measure: the plain and the `.control` deck shapes.
-        let bench = |analyses, measures| CircuitIR {
-            testbench: Some(Testbench {
-                analyses,
-                measures,
-                ngbehavior: Some("hsa".into()),
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
-        let tran = Analysis::Transient {
-            step: 1e-6,
-            stop: 1e-3,
-            start: None,
-            max_step: None,
-            uic: false,
-        };
-        for ir in [
-            bench(vec![Analysis::Op], vec![]),
-            bench(vec![Analysis::Op, tran], vec!["tran m max v(a)".into()]),
-        ] {
-            let deck = netlist(&ir, Dialect::Ngspice).unwrap();
-            assert_eq!(super::ngbehavior(&deck), Some("hsa"), "{deck}");
-            for d in [Dialect::Espice, Dialect::Ltspice, Dialect::Hspice] {
-                let deck = netlist(&ir, d).unwrap();
-                assert_eq!(super::ngbehavior(&deck), None, "{}: {deck}", d.name());
-            }
-        }
-        let plain = netlist(&CircuitIR::default(), Dialect::Ngspice).unwrap();
-        assert_eq!(super::ngbehavior(&plain), None, "{plain}");
+    fn ngbehavior_is_read_from_its_line_alone() {
+        assert_eq!(
+            super::ngbehavior("* t\n*spicerack ngbehavior=hsa\n.op\n.end"),
+            Some("hsa")
+        );
+        assert_eq!(super::ngbehavior("* t\n* ngbehavior=hsa\n.op\n.end"), None);
+    }
+
+    #[test]
+    fn a_run_command_in_a_control_block_owns_the_run() {
+        use super::{is_four, is_meas, runs_in_control};
+        assert!(runs_in_control(".control\nTRAN 1u 1m\n.endc".lines()));
+        assert!(!runs_in_control(
+            ".control\npre_osdi m.osdi\n.endc\n.op".lines()
+        ));
+        assert!(!runs_in_control("tran 1u 1m".lines()), "outside a block");
+        assert!(is_meas(".MEASURE tran v max v(a)") && is_meas(".meas x"));
+        assert!(!is_meas(".me x"));
+        assert!(is_four(".FOUR 1k v(a)") && !is_four(".fourier"));
     }
 
     #[test]
@@ -196,7 +224,7 @@ mod deck_tests {
 
     #[test]
     fn does_not_append_to_a_block_that_runs_nothing() {
-        // The codegen's `pre_osdi` block loads models and runs no analysis.
+        // A `pre_osdi` block loads models and runs no analysis.
         let deck = "* t\n.control\npre_osdi /m.osdi\n.endc\nR1 a 0 1k\n.op\n.end\n";
         assert!(append_write_block(deck, Path::new(RAW)).is_none());
     }

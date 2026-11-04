@@ -2,8 +2,10 @@
 //! xfail list.
 //!
 //! A difference is keyed by `(<set>/<relpath>, <target>)`: the input's
-//! directory and the output file's stem (a dialect name, or `ir`, `report`,
-//! `parse`), so `ngspice.txt` and `ngspice.refused` are one key. An xfail
+//! directory and the output file's stem (a dialect name, or `parse`), so
+//! `ngspice.txt` and `ngspice.refused` are one key. A baseline's `ir.json`
+//! and `report.json` (the IR and its report, gone in phase 6) are passed
+//! over, as is every file of the target `--skip` names. An xfail
 //! line is `<set>/<relpath> <target> <reason>`; `#` starts a comment. Strict,
 //! as VerA's: an unlisted difference fails, and so does a listed key that is
 //! now identical (`XPASS`). `MANIFEST` is compared without its `output`
@@ -26,26 +28,32 @@
 //!
 //! Contents:
 //! - `pub(super) const CODES: &str`
-//! - `pub(super) fn diff(a: &Path, b: &Path, xfail: Option<&Path>, report: Option<&Path>) -> std::io::Result<bool>`
+//! - `pub(super) fn diff(a: &Path, b: &Path, xfail: Option<&Path>, report: Option<&Path>, skip: Option<&str>) -> std::io::Result<bool>`
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use spicerack::codegen::Dialect;
+use spicerack::syntax::Dialect;
 
 /// The first line of a renderer's refusal starts so, its codes after it.
 pub(super) const CODES: &str = "codes: ";
 
 /// Output-file stems that are not dialects.
-const STEMS: [&str; 3] = ["ir", "report", "parse"];
+const STEMS: [&str; 1] = ["parse"];
+
+/// Output-file stems a baseline holds that no record writes any more.
+const GONE: [&str; 2] = ["ir", "report"];
 
 /// Diffs `a` against `b` and prints the verdict; `Ok(true)` when every
-/// difference is listed in `xfail` and every listed key differs.
+/// difference is listed in `xfail` and every listed key differs. With
+/// `skip`, that target's files are not compared and its xfail lines not
+/// checked.
 pub(super) fn diff(
     a: &Path,
     b: &Path,
     xfail: Option<&Path>,
     report: Option<&Path>,
+    skip: Option<&str>,
 ) -> std::io::Result<bool> {
     let listed = match xfail {
         Some(f) => parse_xfail(&std::fs::read_to_string(f)?)
@@ -76,7 +84,11 @@ pub(super) fn diff(
     let mut refusals = String::new();
     // Keys refused on both sides with other texts: the same, in the mode.
     let mut refused_both: BTreeSet<(String, String)> = BTreeSet::new();
-    for rel in fa.union(&fb) {
+    let passed = |rel: &str| {
+        let t = key(rel).1;
+        GONE.contains(&t.as_str()) || Some(t.as_str()) == skip
+    };
+    for rel in fa.union(&fb).filter(|r| !passed(r)) {
         let both = fa.contains(rel) && fb.contains(rel);
         let (ta, tb) = match both {
             true => (std::fs::read(a.join(rel))?, std::fs::read(b.join(rel))?),
@@ -127,7 +139,8 @@ pub(super) fn diff(
     }
     for (k, reason) in &listed {
         // A listed refusal text is no XPASS when only the status is compared.
-        if !differ.contains_key(k) && !refused_both.contains(k) {
+        let skipped = Some(k.1.as_str()) == skip;
+        if !differ.contains_key(k) && !refused_both.contains(k) && !skipped {
             println!("XPASS {} {}: listed ({reason}) but identical", k.0, k.1);
             ok = false;
         }
@@ -209,7 +222,7 @@ mod tests {
     fn a_key_is_the_input_and_the_file_stem() {
         let k = key("spice-bench/a b/c.sp/ngspice.refused");
         assert_eq!(k, ("spice-bench/a b/c.sp".into(), "ngspice".into()));
-        assert_eq!(key("fixtures/x.scs/ir.json").1, "ir");
+        assert_eq!(key("fixtures/x.scs/parse.refused").1, "parse");
     }
 
     #[test]

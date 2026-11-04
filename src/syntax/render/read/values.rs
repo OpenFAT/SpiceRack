@@ -19,8 +19,9 @@
 
 use super::Num;
 use super::Rd;
-use crate::codegen::Dialect;
+use crate::syntax::Dialect;
 use crate::syntax::ast::{NONE, Node, Tag};
+use crate::syntax::lexicon::Arithmetic;
 use crate::syntax::token::Tag as T;
 
 /// A value field as the old reader read it: a number, an expression
@@ -253,7 +254,7 @@ impl Rd<'_> {
         if self.named()
             && let Some(x) = self.number(n)
         {
-            return crate::codegen::format_spice_number(x);
+            return crate::unit::format_spice_number(x);
         }
         self.respell(text)
     }
@@ -290,9 +291,16 @@ impl Rd<'_> {
             return ok.then_some(if neg { -v } else { v });
         }
         if matches!(lex.dialect, Dialect::Ngspice) {
-            return ngspice_num(s)
-                .then(|| crate::unit::ngspice_value(s))
-                .flatten();
+            if !ngspice_num(s) {
+                return None;
+            }
+            // `lexicon::NGSPICE_GIVEN` reads its numbers correctly rounded.
+            if lex.numbers.arithmetic == Arithmetic::Decimal {
+                let (neg, body) = (s.starts_with('-'), s.trim_start_matches(['-', '+']));
+                let v = crate::syntax::number::value(body, lex);
+                return (!v.is_nan()).then_some(if neg { -v } else { v });
+            }
+            return crate::unit::ngspice_value(s);
         }
         let (neg, body) = match s.as_bytes().first() {
             Some(b'-') => (true, &s[1..]),

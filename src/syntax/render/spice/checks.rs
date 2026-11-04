@@ -12,7 +12,7 @@
 //! - `W::checks(&mut self)`
 
 use super::W;
-use crate::codegen::Dialect;
+use crate::syntax::Dialect;
 use crate::syntax::diag::Code;
 use crate::syntax::render::capability::{Action, Construct};
 use crate::syntax::render::read::{Block, Card, Comp, Func, Num, Val};

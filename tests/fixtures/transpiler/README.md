@@ -10,11 +10,11 @@ their goldens, each change a reviewed line in `migration.xfail`.
 No simulator has run these files. Nothing here is a hand-derived expected
 value yet; each phase-7 test that uses one adds its own. The statistics,
 Laplace and `func_stats` fixtures are not in the `9d1d6bb` baseline: `tests/test_render.rs`
-writes each with the renderer and with the old writer
-(`codegen::netlist(import::parse(..))`, whose statistics text T-R3/T-R4 of
-`tests/test_monte_carlo.rs` check by hand),
-asserts the two equal, and pins them in `pinned/<file>_<ext>/<target>.txt`
-(or `.refused`: the old message and the new codes).
+wrote each with the renderer and with the old writer (whose statistics
+text T-R3/T-R4 of `tests/test_monte_carlo.rs` check by hand), asserted the
+two equal, and pinned them in `pinned/<file>_<ext>/<target>.txt` (or
+`.refused`: the old message and the new codes); since phase 6 deleted the
+old writer, the pins are the oracle the renderer is checked against.
 
 | File | Probes |
 |---|---|

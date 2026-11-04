@@ -10,7 +10,7 @@
 //! - `W::checks(&mut self)`, `fn calls(e: &str) -> impl Iterator<Item = &str>`
 
 use super::W;
-use crate::codegen::Dialect;
+use crate::syntax::Dialect;
 use crate::syntax::ast::NONE;
 use crate::syntax::diag::Code;
 use crate::syntax::render::capability::Construct;

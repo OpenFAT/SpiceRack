@@ -11,108 +11,18 @@ use super::*;
 
 #[test]
 fn subcircuits_and_their_instances_run() {
-    let mut divider = empty_sub("divider");
-    divider.ports = vec![
-        Port {
-            name: "in".into(),
-            direction: PortDirection::Input,
-        },
-        Port {
-            name: "out".into(),
-            direction: PortDirection::Output,
-        },
-    ];
-    divider.parameters = vec![
-        ParamDef {
-            name: "rtop".into(),
-            default: Some("1k".into()),
-        },
-        ParamDef {
-            name: "rbot".into(),
-            default: Some("1k".into()),
-        },
-    ];
-    divider.components = vec![
-        Component::Resistor {
-            name: "1".into(),
-            n1: "in".into(),
-            n2: "out".into(),
-            value: IrValue::Expression {
-                expr: "rtop".into(),
-            },
-            model: None,
-            params: vec![],
-        },
-        Component::Resistor {
-            name: "2".into(),
-            n1: "out".into(),
-            n2: "0".into(),
-            value: IrValue::Expression {
-                expr: "rbot".into(),
-            },
-            model: None,
-            params: vec![],
-        },
-    ];
-
-    let mut top = empty_sub("with_subckt");
-    top.instances = vec![Instance {
-        name: "1".into(),
-        subcircuit: "divider".into(),
-        port_mapping: vec!["vdd".into(), "mid".into()],
-        parameters: vec![("rtop".into(), "1k".into()), ("rbot".into(), "3k".into())],
-        ..Default::default()
-    }];
-    let mut tb = empty_tb(vec![Analysis::Op]);
-    tb.stimulus = vec![vsrc("dd", "vdd", "0", 4.0)];
-    let ir = CircuitIR {
-        top,
-        testbench: Some(tb),
-        subcircuit_defs: vec![divider],
-        ..Default::default()
-    };
-    let raw = run(&ir);
+    let deck = "with_subckt\n.subckt divider in out PARAMS: rtop=1k rbot=1k\nR1 in out {rtop}\nR2 out 0 {rbot}\n.ends divider\nX1 vdd mid divider rtop=1k rbot=3k\nVdd vdd 0 4\n.op\n.end\n";
+    let raw = run(deck);
     // 4 V * 3k/(1k+3k) = 3 V.
     close(col(&raw, "mid")[0], 3.0, 1e-9);
 }
 
 #[test]
 fn step_params_sweep_a_netlist_variable() {
-    // VACASK's capability table claimed `step_params: false`. A `var` declared
-    // in the control block IS visible to the netlist, so it is not.
-    let mut top = empty_sub("stepped");
-    top.parameters = vec![ParamDef {
-        name: "rtop".into(),
-        default: Some("1k".into()),
-    }];
-    top.components = vec![
-        Component::Resistor {
-            name: "1".into(),
-            n1: "vdd".into(),
-            n2: "out".into(),
-            value: IrValue::Expression {
-                expr: "rtop".into(),
-            },
-            model: None,
-            params: vec![],
-        },
-        r("2", "out", "0", 1000.0),
-    ];
-    let mut tb = empty_tb(vec![Analysis::Op]);
-    tb.stimulus = vec![vsrc("dd", "vdd", "0", 2.0)];
-    tb.step_params = vec![StepParam {
-        param: "rtop".into(),
-        start: 1000.0,
-        stop: 3000.0,
-        step: 1000.0,
-        sweep_type: None,
-    }];
-    let ir = CircuitIR {
-        top,
-        testbench: Some(tb),
-        ..Default::default()
-    };
-    let raw = run(&ir);
+    // A `var` declared in the control block IS visible to the netlist, so a
+    // `.step` of a netlist parameter runs on VACASK.
+    let deck = "stepped\n.param rtop=1k\nR1 vdd out {rtop}\nR2 out 0 1k\nVdd vdd 0 2\n.step rtop 1000 3000 1000\n.op\n.end\n";
+    let raw = run(deck);
     let out = col(&raw, "out");
     assert_eq!(out.len(), 3, "{:?}", out);
     close(out[0], 2.0 * 1000.0 / 2000.0, 1e-9);
@@ -122,25 +32,10 @@ fn step_params_sweep_a_netlist_variable() {
 
 #[test]
 fn initial_conditions_reach_the_analysis() {
-    let mut top = empty_sub("ic");
-    top.components = vec![r("1", "vin", "out", 1000.0), c("1", "out", "0", 1e-6)];
-    let mut tb = empty_tb(vec![Analysis::Transient {
-        step: 2.5e-5,
-        stop: 1e-3,
-        start: None,
-        max_step: Some(2.5e-5),
-        uic: true,
-    }]);
-    tb.stimulus = vec![vsrc("1", "vin", "0", 1.0)];
-    tb.initial_conditions = vec![("out".into(), 0.5)];
-    let ir = CircuitIR {
-        top,
-        testbench: Some(tb),
-        ..Default::default()
-    };
-    let netlist = emit(&ir, Dialect::Vacask).unwrap();
+    let deck = "ic\nR1 vin out 1k\nC1 out 0 1u\nV1 vin 0 1\n.ic V(out)=0.5\n.tran 25u 1m 0 25u UIC\n.end\n";
+    let netlist = emit(deck).unwrap();
     assert!(netlist.contains("ic=[\"out\"; 5e-1]"), "{}", netlist);
-    let raw = run(&ir);
+    let raw = run(deck);
     close(col(&raw, "out")[0], 0.5, 1e-9);
 }
 
@@ -149,25 +44,8 @@ fn run_all_returns_every_analysis_in_deck_order() {
     // VACASK writes one raw file per analysis; run_all reads each, in the
     // order the deck declares them. Oracle: the divider's closed forms,
     // out = vdd/2 in every analysis (1.5 V at the 3 V rail).
-    let ir = rc_ir(vec![
-        Analysis::Op,
-        Analysis::Dc {
-            sweeps: vec![DcSweep {
-                source: "Vdd".into(),
-                start: 0.0,
-                stop: 2.0,
-                step: 1.0,
-            }],
-        },
-        Analysis::Transient {
-            step: 1e-4,
-            stop: 1e-3,
-            start: None,
-            max_step: Some(1e-4),
-            uic: false,
-        },
-    ]);
-    let netlist = emit(&ir, Dialect::Vacask).expect("emit vacask deck");
+    let deck = rc(".op\n.dc Vdd 0 2 1\n.tran 100u 1m 0 100u");
+    let netlist = emit(&deck).expect("emit vacask deck");
     assert!(
         have_vacask(),
         "vacask not on PATH: run the tests in `nix develop .#testing`"
@@ -194,6 +72,6 @@ fn run_all_returns_every_analysis_in_deck_order() {
             .all(|v| (v - 1.5).abs() <= 1e-9)
     );
     // `run` is the first analysis's plot, as for every backend.
-    assert_eq!(run(&ir).plot_name, plots[0].plot_name);
-    assert_eq!(col(&run(&ir), "out").len(), 1);
+    assert_eq!(run(&deck).plot_name, plots[0].plot_name);
+    assert_eq!(col(&run(&deck), "out").len(), 1);
 }

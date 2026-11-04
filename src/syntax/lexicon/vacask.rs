@@ -14,7 +14,7 @@
 use super::{
     Arithmetic, Backslash, Caret, Dollar, Join, Lexicon, Numbers, Ops, Quote, Quoting, Scale, Tail,
 };
-use crate::codegen::Dialect;
+use crate::syntax::Dialect;
 use crate::syntax::statement::Analysis;
 use crate::syntax::token::Tag;
 

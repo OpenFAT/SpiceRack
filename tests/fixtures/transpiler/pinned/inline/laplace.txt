@@ -1,0 +1,962 @@
+== V=Laplace(v(in), 1/(1+s*1.59e-4)) ngspice
+* t
+V1 in 0 1
+AB1 %vd(in 0) %vd(out 0) B1_xfer
+.model B1_xfer s_xfer(num_coeff=[1e0] den_coeff=[1.59e-4 1e0] int_ic=[0])
+R1 out 0 1k
+.tran 1u 1m
+.end
+== V=Laplace(v(in), 1/(1+s*1.59e-4)) espice
+* t
+V1 in 0 1
+EB1 out 0 LAPLACE in 0 1e0 / 1e0 1.59e-4
+R1 out 0 1k
+.tran 1u 1m
+.end
+== V=Laplace(v(in), 1/(1+s*1.59e-4)) hspice
+* t
+V1 in 0 1
+EB1 out 0 LAPLACE in 0 1e0 / 1e0 1.59e-4
+R1 out 0 1k
+.tran 1u 1m
+.end
+== V=Laplace(v(in), 1/(1+s*1.59e-4)) xyce
+new: W0011
+== V=Laplace(v(in), 1/(1+s*1.59e-4)) ltspice
+* t
+V1 in 0 1
+EB1 out 0 in 0 Laplace=1e0/(1.59e-4*s+1e0)
+R1 out 0 1k
+.tran 1u 1m
+.end
+== I=Laplace(v(in), 1/(1+s*1.59e-4)) ngspice
+* t
+V1 in 0 1
+AB1 %vd(in 0) %id(out 0) B1_xfer
+.model B1_xfer s_xfer(num_coeff=[1e0] den_coeff=[1.59e-4 1e0] int_ic=[0])
+R1 out 0 1k
+.tran 1u 1m
+.end
+== I=Laplace(v(in), 1/(1+s*1.59e-4)) espice
+* t
+V1 in 0 1
+GB1 out 0 LAPLACE in 0 1e0 / 1e0 1.59e-4
+R1 out 0 1k
+.tran 1u 1m
+.end
+== I=Laplace(v(in), 1/(1+s*1.59e-4)) hspice
+* t
+V1 in 0 1
+GB1 out 0 LAPLACE in 0 1e0 / 1e0 1.59e-4
+R1 out 0 1k
+.tran 1u 1m
+.end
+== I=Laplace(v(in), 1/(1+s*1.59e-4)) xyce
+new: W0011
+== I=Laplace(v(in), 1/(1+s*1.59e-4)) ltspice
+* t
+V1 in 0 1
+GB1 out 0 in 0 Laplace=1e0/(1.59e-4*s+1e0)
+R1 out 0 1k
+.tran 1u 1m
+.end
+== V=Laplace(V(in), (1+s*1e-3)/(1+s*1e-6)) ngspice
+* t
+V1 in 0 1
+AB1 %vd(in 0) %vd(out 0) B1_xfer
+.model B1_xfer s_xfer(num_coeff=[1e-3 1e0] den_coeff=[1e-6 1e0] int_ic=[0])
+R1 out 0 1k
+.tran 1u 1m
+.end
+== V=Laplace(V(in), (1+s*1e-3)/(1+s*1e-6)) espice
+* t
+V1 in 0 1
+EB1 out 0 LAPLACE in 0 1e0 1e-3 / 1e0 1e-6
+R1 out 0 1k
+.tran 1u 1m
+.end
+== V=Laplace(V(in), (1+s*1e-3)/(1+s*1e-6)) hspice
+* t
+V1 in 0 1
+EB1 out 0 LAPLACE in 0 1e0 1e-3 / 1e0 1e-6
+R1 out 0 1k
+.tran 1u 1m
+.end
+== V=Laplace(V(in), (1+s*1e-3)/(1+s*1e-6)) xyce
+new: W0011
+== V=Laplace(V(in), (1+s*1e-3)/(1+s*1e-6)) ltspice
+* t
+V1 in 0 1
+EB1 out 0 in 0 Laplace=(1e-3*s+1e0)/(1e-6*s+1e0)
+R1 out 0 1k
+.tran 1u 1m
+.end
+== I=Laplace(V(in), (1+s*1e-3)/(1+s*1e-6)) ngspice
+* t
+V1 in 0 1
+AB1 %vd(in 0) %id(out 0) B1_xfer
+.model B1_xfer s_xfer(num_coeff=[1e-3 1e0] den_coeff=[1e-6 1e0] int_ic=[0])
+R1 out 0 1k
+.tran 1u 1m
+.end
+== I=Laplace(V(in), (1+s*1e-3)/(1+s*1e-6)) espice
+* t
+V1 in 0 1
+GB1 out 0 LAPLACE in 0 1e0 1e-3 / 1e0 1e-6
+R1 out 0 1k
+.tran 1u 1m
+.end
+== I=Laplace(V(in), (1+s*1e-3)/(1+s*1e-6)) hspice
+* t
+V1 in 0 1
+GB1 out 0 LAPLACE in 0 1e0 1e-3 / 1e0 1e-6
+R1 out 0 1k
+.tran 1u 1m
+.end
+== I=Laplace(V(in), (1+s*1e-3)/(1+s*1e-6)) xyce
+new: W0011
+== I=Laplace(V(in), (1+s*1e-3)/(1+s*1e-6)) ltspice
+* t
+V1 in 0 1
+GB1 out 0 in 0 Laplace=(1e-3*s+1e0)/(1e-6*s+1e0)
+R1 out 0 1k
+.tran 1u 1m
+.end
+== V=Laplace(v(in), 4/(1+s*2+s^2*3)) ngspice
+* t
+V1 in 0 1
+AB1 %vd(in 0) %vd(out 0) B1_xfer
+.model B1_xfer s_xfer(num_coeff=[4e0] den_coeff=[3e0 2e0 1e0] int_ic=[0 0])
+R1 out 0 1k
+.tran 1u 1m
+.end
+== V=Laplace(v(in), 4/(1+s*2+s^2*3)) espice
+* t
+V1 in 0 1
+EB1 out 0 LAPLACE in 0 4e0 / 1e0 2e0 3e0
+R1 out 0 1k
+.tran 1u 1m
+.end
+== V=Laplace(v(in), 4/(1+s*2+s^2*3)) hspice
+* t
+V1 in 0 1
+EB1 out 0 LAPLACE in 0 4e0 / 1e0 2e0 3e0
+R1 out 0 1k
+.tran 1u 1m
+.end
+== V=Laplace(v(in), 4/(1+s*2+s^2*3)) xyce
+new: W0002 W0011
+== V=Laplace(v(in), 4/(1+s*2+s^2*3)) ltspice
+new: W0002
+== I=Laplace(v(in), 4/(1+s*2+s^2*3)) ngspice
+* t
+V1 in 0 1
+AB1 %vd(in 0) %id(out 0) B1_xfer
+.model B1_xfer s_xfer(num_coeff=[4e0] den_coeff=[3e0 2e0 1e0] int_ic=[0 0])
+R1 out 0 1k
+.tran 1u 1m
+.end
+== I=Laplace(v(in), 4/(1+s*2+s^2*3)) espice
+* t
+V1 in 0 1
+GB1 out 0 LAPLACE in 0 4e0 / 1e0 2e0 3e0
+R1 out 0 1k
+.tran 1u 1m
+.end
+== I=Laplace(v(in), 4/(1+s*2+s^2*3)) hspice
+* t
+V1 in 0 1
+GB1 out 0 LAPLACE in 0 4e0 / 1e0 2e0 3e0
+R1 out 0 1k
+.tran 1u 1m
+.end
+== I=Laplace(v(in), 4/(1+s*2+s^2*3)) xyce
+new: W0002 W0011
+== I=Laplace(v(in), 4/(1+s*2+s^2*3)) ltspice
+new: W0002
+== V=Laplace(v(a), 1/(1+s**2)) ngspice
+* t
+V1 in 0 1
+AB1 %vd(a 0) %vd(out 0) B1_xfer
+.model B1_xfer s_xfer(num_coeff=[1e0] den_coeff=[1e0 0e0 1e0] int_ic=[0 0])
+R1 out 0 1k
+.tran 1u 1m
+.end
+== V=Laplace(v(a), 1/(1+s**2)) espice
+* t
+V1 in 0 1
+EB1 out 0 LAPLACE a 0 1e0 / 1e0 0e0 1e0
+R1 out 0 1k
+.tran 1u 1m
+.end
+== V=Laplace(v(a), 1/(1+s**2)) hspice
+* t
+V1 in 0 1
+EB1 out 0 LAPLACE a 0 1e0 / 1e0 0e0 1e0
+R1 out 0 1k
+.tran 1u 1m
+.end
+== V=Laplace(v(a), 1/(1+s**2)) xyce
+new: W0011
+== V=Laplace(v(a), 1/(1+s**2)) ltspice
+* t
+V1 in 0 1
+EB1 out 0 a 0 Laplace=1e0/((1e0*s+0e0)*s+1e0)
+R1 out 0 1k
+.tran 1u 1m
+.end
+== I=Laplace(v(a), 1/(1+s**2)) ngspice
+* t
+V1 in 0 1
+AB1 %vd(a 0) %id(out 0) B1_xfer
+.model B1_xfer s_xfer(num_coeff=[1e0] den_coeff=[1e0 0e0 1e0] int_ic=[0 0])
+R1 out 0 1k
+.tran 1u 1m
+.end
+== I=Laplace(v(a), 1/(1+s**2)) espice
+* t
+V1 in 0 1
+GB1 out 0 LAPLACE a 0 1e0 / 1e0 0e0 1e0
+R1 out 0 1k
+.tran 1u 1m
+.end
+== I=Laplace(v(a), 1/(1+s**2)) hspice
+* t
+V1 in 0 1
+GB1 out 0 LAPLACE a 0 1e0 / 1e0 0e0 1e0
+R1 out 0 1k
+.tran 1u 1m
+.end
+== I=Laplace(v(a), 1/(1+s**2)) xyce
+new: W0011
+== I=Laplace(v(a), 1/(1+s**2)) ltspice
+* t
+V1 in 0 1
+GB1 out 0 a 0 Laplace=1e0/((1e0*s+0e0)*s+1e0)
+R1 out 0 1k
+.tran 1u 1m
+.end
+== V=Laplace(v(a), 1/(1+s*s)) ngspice
+* t
+V1 in 0 1
+AB1 %vd(a 0) %vd(out 0) B1_xfer
+.model B1_xfer s_xfer(num_coeff=[1e0] den_coeff=[1e0 0e0 1e0] int_ic=[0 0])
+R1 out 0 1k
+.tran 1u 1m
+.end
+== V=Laplace(v(a), 1/(1+s*s)) espice
+* t
+V1 in 0 1
+EB1 out 0 LAPLACE a 0 1e0 / 1e0 0e0 1e0
+R1 out 0 1k
+.tran 1u 1m
+.end
+== V=Laplace(v(a), 1/(1+s*s)) hspice
+* t
+V1 in 0 1
+EB1 out 0 LAPLACE a 0 1e0 / 1e0 0e0 1e0
+R1 out 0 1k
+.tran 1u 1m
+.end
+== V=Laplace(v(a), 1/(1+s*s)) xyce
+new: W0011
+== V=Laplace(v(a), 1/(1+s*s)) ltspice
+* t
+V1 in 0 1
+EB1 out 0 a 0 Laplace=1e0/((1e0*s+0e0)*s+1e0)
+R1 out 0 1k
+.tran 1u 1m
+.end
+== I=Laplace(v(a), 1/(1+s*s)) ngspice
+* t
+V1 in 0 1
+AB1 %vd(a 0) %id(out 0) B1_xfer
+.model B1_xfer s_xfer(num_coeff=[1e0] den_coeff=[1e0 0e0 1e0] int_ic=[0 0])
+R1 out 0 1k
+.tran 1u 1m
+.end
+== I=Laplace(v(a), 1/(1+s*s)) espice
+* t
+V1 in 0 1
+GB1 out 0 LAPLACE a 0 1e0 / 1e0 0e0 1e0
+R1 out 0 1k
+.tran 1u 1m
+.end
+== I=Laplace(v(a), 1/(1+s*s)) hspice
+* t
+V1 in 0 1
+GB1 out 0 LAPLACE a 0 1e0 / 1e0 0e0 1e0
+R1 out 0 1k
+.tran 1u 1m
+.end
+== I=Laplace(v(a), 1/(1+s*s)) xyce
+new: W0011
+== I=Laplace(v(a), 1/(1+s*s)) ltspice
+* t
+V1 in 0 1
+GB1 out 0 a 0 Laplace=1e0/((1e0*s+0e0)*s+1e0)
+R1 out 0 1k
+.tran 1u 1m
+.end
+== V=Laplace(v(in), s/(1+s*1e-3)) ngspice
+* t
+V1 in 0 1
+AB1 %vd(in 0) %vd(out 0) B1_xfer
+.model B1_xfer s_xfer(num_coeff=[1e0 0e0] den_coeff=[1e-3 1e0] int_ic=[0])
+R1 out 0 1k
+.tran 1u 1m
+.end
+== V=Laplace(v(in), s/(1+s*1e-3)) espice
+* t
+V1 in 0 1
+EB1 out 0 LAPLACE in 0 0e0 1e0 / 1e0 1e-3
+R1 out 0 1k
+.tran 1u 1m
+.end
+== V=Laplace(v(in), s/(1+s*1e-3)) hspice
+* t
+V1 in 0 1
+EB1 out 0 LAPLACE in 0 0e0 1e0 / 1e0 1e-3
+R1 out 0 1k
+.tran 1u 1m
+.end
+== V=Laplace(v(in), s/(1+s*1e-3)) xyce
+new: W0011
+== V=Laplace(v(in), s/(1+s*1e-3)) ltspice
+* t
+V1 in 0 1
+EB1 out 0 in 0 Laplace=(1e0*s+0e0)/(1e-3*s+1e0)
+R1 out 0 1k
+.tran 1u 1m
+.end
+== I=Laplace(v(in), s/(1+s*1e-3)) ngspice
+* t
+V1 in 0 1
+AB1 %vd(in 0) %id(out 0) B1_xfer
+.model B1_xfer s_xfer(num_coeff=[1e0 0e0] den_coeff=[1e-3 1e0] int_ic=[0])
+R1 out 0 1k
+.tran 1u 1m
+.end
+== I=Laplace(v(in), s/(1+s*1e-3)) espice
+* t
+V1 in 0 1
+GB1 out 0 LAPLACE in 0 0e0 1e0 / 1e0 1e-3
+R1 out 0 1k
+.tran 1u 1m
+.end
+== I=Laplace(v(in), s/(1+s*1e-3)) hspice
+* t
+V1 in 0 1
+GB1 out 0 LAPLACE in 0 0e0 1e0 / 1e0 1e-3
+R1 out 0 1k
+.tran 1u 1m
+.end
+== I=Laplace(v(in), s/(1+s*1e-3)) xyce
+new: W0011
+== I=Laplace(v(in), s/(1+s*1e-3)) ltspice
+* t
+V1 in 0 1
+GB1 out 0 in 0 Laplace=(1e0*s+0e0)/(1e-3*s+1e0)
+R1 out 0 1k
+.tran 1u 1m
+.end
+== V=Laplace(v(in), 1/(1+s*159u)) ngspice
+* t
+V1 in 0 1
+AB1 %vd(in 0) %vd(out 0) B1_xfer
+.model B1_xfer s_xfer(num_coeff=[1e0] den_coeff=[1.59e-4 1e0] int_ic=[0])
+R1 out 0 1k
+.tran 1u 1m
+.end
+== V=Laplace(v(in), 1/(1+s*159u)) espice
+* t
+V1 in 0 1
+EB1 out 0 LAPLACE in 0 1e0 / 1e0 1.59e-4
+R1 out 0 1k
+.tran 1u 1m
+.end
+== V=Laplace(v(in), 1/(1+s*159u)) hspice
+* t
+V1 in 0 1
+EB1 out 0 LAPLACE in 0 1e0 / 1e0 1.59e-4
+R1 out 0 1k
+.tran 1u 1m
+.end
+== V=Laplace(v(in), 1/(1+s*159u)) xyce
+new: W0011
+== V=Laplace(v(in), 1/(1+s*159u)) ltspice
+* t
+V1 in 0 1
+EB1 out 0 in 0 Laplace=1e0/(1.59e-4*s+1e0)
+R1 out 0 1k
+.tran 1u 1m
+.end
+== I=Laplace(v(in), 1/(1+s*159u)) ngspice
+* t
+V1 in 0 1
+AB1 %vd(in 0) %id(out 0) B1_xfer
+.model B1_xfer s_xfer(num_coeff=[1e0] den_coeff=[1.59e-4 1e0] int_ic=[0])
+R1 out 0 1k
+.tran 1u 1m
+.end
+== I=Laplace(v(in), 1/(1+s*159u)) espice
+* t
+V1 in 0 1
+GB1 out 0 LAPLACE in 0 1e0 / 1e0 1.59e-4
+R1 out 0 1k
+.tran 1u 1m
+.end
+== I=Laplace(v(in), 1/(1+s*159u)) hspice
+* t
+V1 in 0 1
+GB1 out 0 LAPLACE in 0 1e0 / 1e0 1.59e-4
+R1 out 0 1k
+.tran 1u 1m
+.end
+== I=Laplace(v(in), 1/(1+s*159u)) xyce
+new: W0011
+== I=Laplace(v(in), 1/(1+s*159u)) ltspice
+* t
+V1 in 0 1
+GB1 out 0 in 0 Laplace=1e0/(1.59e-4*s+1e0)
+R1 out 0 1k
+.tran 1u 1m
+.end
+== V=Laplace(v(in), 1/(1+s/1meg)) ngspice
+* t
+V1 in 0 1
+AB1 %vd(in 0) %vd(out 0) B1_xfer
+.model B1_xfer s_xfer(num_coeff=[1e6] den_coeff=[1e0 1e6] int_ic=[0])
+R1 out 0 1k
+.tran 1u 1m
+.end
+== V=Laplace(v(in), 1/(1+s/1meg)) espice
+* t
+V1 in 0 1
+EB1 out 0 LAPLACE in 0 1e6 / 1e6 1e0
+R1 out 0 1k
+.tran 1u 1m
+.end
+== V=Laplace(v(in), 1/(1+s/1meg)) hspice
+* t
+V1 in 0 1
+EB1 out 0 LAPLACE in 0 1e6 / 1e6 1e0
+R1 out 0 1k
+.tran 1u 1m
+.end
+== V=Laplace(v(in), 1/(1+s/1meg)) xyce
+new: W0011
+== V=Laplace(v(in), 1/(1+s/1meg)) ltspice
+* t
+V1 in 0 1
+EB1 out 0 in 0 Laplace=1e6/(1e0*s+1e6)
+R1 out 0 1k
+.tran 1u 1m
+.end
+== I=Laplace(v(in), 1/(1+s/1meg)) ngspice
+* t
+V1 in 0 1
+AB1 %vd(in 0) %id(out 0) B1_xfer
+.model B1_xfer s_xfer(num_coeff=[1e6] den_coeff=[1e0 1e6] int_ic=[0])
+R1 out 0 1k
+.tran 1u 1m
+.end
+== I=Laplace(v(in), 1/(1+s/1meg)) espice
+* t
+V1 in 0 1
+GB1 out 0 LAPLACE in 0 1e6 / 1e6 1e0
+R1 out 0 1k
+.tran 1u 1m
+.end
+== I=Laplace(v(in), 1/(1+s/1meg)) hspice
+* t
+V1 in 0 1
+GB1 out 0 LAPLACE in 0 1e6 / 1e6 1e0
+R1 out 0 1k
+.tran 1u 1m
+.end
+== I=Laplace(v(in), 1/(1+s/1meg)) xyce
+new: W0011
+== I=Laplace(v(in), 1/(1+s/1meg)) ltspice
+* t
+V1 in 0 1
+GB1 out 0 in 0 Laplace=1e6/(1e0*s+1e6)
+R1 out 0 1k
+.tran 1u 1m
+.end
+== V=LAPLACE (V(A,B), 2/(1+s*1.591549431e-9)) ngspice
+* t
+V1 in 0 1
+AB1 %vd(a b) %vd(out 0) B1_xfer
+.model B1_xfer s_xfer(num_coeff=[2e0] den_coeff=[1.591549431e-9 1e0] int_ic=[0])
+R1 out 0 1k
+.tran 1u 1m
+.end
+== V=LAPLACE (V(A,B), 2/(1+s*1.591549431e-9)) espice
+* t
+V1 in 0 1
+EB1 out 0 LAPLACE a b 2e0 / 1e0 1.591549431e-9
+R1 out 0 1k
+.tran 1u 1m
+.end
+== V=LAPLACE (V(A,B), 2/(1+s*1.591549431e-9)) hspice
+* t
+V1 in 0 1
+EB1 out 0 LAPLACE a b 2e0 / 1e0 1.591549431e-9
+R1 out 0 1k
+.tran 1u 1m
+.end
+== V=LAPLACE (V(A,B), 2/(1+s*1.591549431e-9)) xyce
+new: W0011
+== V=LAPLACE (V(A,B), 2/(1+s*1.591549431e-9)) ltspice
+* t
+V1 in 0 1
+EB1 out 0 a b Laplace=2e0/(1.591549431e-9*s+1e0)
+R1 out 0 1k
+.tran 1u 1m
+.end
+== I=LAPLACE (V(A,B), 2/(1+s*1.591549431e-9)) ngspice
+* t
+V1 in 0 1
+AB1 %vd(a b) %id(out 0) B1_xfer
+.model B1_xfer s_xfer(num_coeff=[2e0] den_coeff=[1.591549431e-9 1e0] int_ic=[0])
+R1 out 0 1k
+.tran 1u 1m
+.end
+== I=LAPLACE (V(A,B), 2/(1+s*1.591549431e-9)) espice
+* t
+V1 in 0 1
+GB1 out 0 LAPLACE a b 2e0 / 1e0 1.591549431e-9
+R1 out 0 1k
+.tran 1u 1m
+.end
+== I=LAPLACE (V(A,B), 2/(1+s*1.591549431e-9)) hspice
+* t
+V1 in 0 1
+GB1 out 0 LAPLACE a b 2e0 / 1e0 1.591549431e-9
+R1 out 0 1k
+.tran 1u 1m
+.end
+== I=LAPLACE (V(A,B), 2/(1+s*1.591549431e-9)) xyce
+new: W0011
+== I=LAPLACE (V(A,B), 2/(1+s*1.591549431e-9)) ltspice
+* t
+V1 in 0 1
+GB1 out 0 a b Laplace=2e0/(1.591549431e-9*s+1e0)
+R1 out 0 1k
+.tran 1u 1m
+.end
+== V=Laplace(v(in), 2.5) ngspice
+* t
+V1 in 0 1
+EB1 out 0 in 0 2.5
+R1 out 0 1k
+.tran 1u 1m
+.end
+== V=Laplace(v(in), 2.5) espice
+* t
+V1 in 0 1
+EB1 out 0 in 0 2.5
+R1 out 0 1k
+.tran 1u 1m
+.end
+== V=Laplace(v(in), 2.5) hspice
+* t
+V1 in 0 1
+EB1 out 0 in 0 2.5
+R1 out 0 1k
+.tran 1u 1m
+.end
+== V=Laplace(v(in), 2.5) xyce
+* t
+V1 in 0 1
+EB1 out 0 in 0 2.5
+R1 out 0 1k
+.tran 1u 1m
+.end
+== V=Laplace(v(in), 2.5) ltspice
+* t
+V1 in 0 1
+EB1 out 0 in 0 2.5
+R1 out 0 1k
+.tran 1u 1m
+.end
+== I=Laplace(v(in), 2.5) ngspice
+* t
+V1 in 0 1
+GB1 out 0 in 0 2.5
+R1 out 0 1k
+.tran 1u 1m
+.end
+== I=Laplace(v(in), 2.5) espice
+* t
+V1 in 0 1
+GB1 out 0 in 0 2.5
+R1 out 0 1k
+.tran 1u 1m
+.end
+== I=Laplace(v(in), 2.5) hspice
+* t
+V1 in 0 1
+GB1 out 0 in 0 2.5
+R1 out 0 1k
+.tran 1u 1m
+.end
+== I=Laplace(v(in), 2.5) xyce
+* t
+V1 in 0 1
+GB1 out 0 in 0 2.5
+R1 out 0 1k
+.tran 1u 1m
+.end
+== I=Laplace(v(in), 2.5) ltspice
+* t
+V1 in 0 1
+GB1 out 0 in 0 2.5
+R1 out 0 1k
+.tran 1u 1m
+.end
+== V=Laplace(v(in), 10/4) ngspice
+* t
+V1 in 0 1
+EB1 out 0 in 0 2.5
+R1 out 0 1k
+.tran 1u 1m
+.end
+== V=Laplace(v(in), 10/4) espice
+* t
+V1 in 0 1
+EB1 out 0 in 0 2.5
+R1 out 0 1k
+.tran 1u 1m
+.end
+== V=Laplace(v(in), 10/4) hspice
+* t
+V1 in 0 1
+EB1 out 0 in 0 2.5
+R1 out 0 1k
+.tran 1u 1m
+.end
+== V=Laplace(v(in), 10/4) xyce
+* t
+V1 in 0 1
+EB1 out 0 in 0 2.5
+R1 out 0 1k
+.tran 1u 1m
+.end
+== V=Laplace(v(in), 10/4) ltspice
+* t
+V1 in 0 1
+EB1 out 0 in 0 2.5
+R1 out 0 1k
+.tran 1u 1m
+.end
+== I=Laplace(v(in), 10/4) ngspice
+* t
+V1 in 0 1
+GB1 out 0 in 0 2.5
+R1 out 0 1k
+.tran 1u 1m
+.end
+== I=Laplace(v(in), 10/4) espice
+* t
+V1 in 0 1
+GB1 out 0 in 0 2.5
+R1 out 0 1k
+.tran 1u 1m
+.end
+== I=Laplace(v(in), 10/4) hspice
+* t
+V1 in 0 1
+GB1 out 0 in 0 2.5
+R1 out 0 1k
+.tran 1u 1m
+.end
+== I=Laplace(v(in), 10/4) xyce
+* t
+V1 in 0 1
+GB1 out 0 in 0 2.5
+R1 out 0 1k
+.tran 1u 1m
+.end
+== I=Laplace(v(in), 10/4) ltspice
+* t
+V1 in 0 1
+GB1 out 0 in 0 2.5
+R1 out 0 1k
+.tran 1u 1m
+.end
+== V=laplace(v(in), (s+1)^-1) ngspice
+* t
+V1 in 0 1
+AB1 %vd(in 0) %vd(out 0) B1_xfer
+.model B1_xfer s_xfer(num_coeff=[1e0] den_coeff=[1e0 1e0] int_ic=[0])
+R1 out 0 1k
+.tran 1u 1m
+.end
+== V=laplace(v(in), (s+1)^-1) espice
+* t
+V1 in 0 1
+EB1 out 0 LAPLACE in 0 1e0 / 1e0 1e0
+R1 out 0 1k
+.tran 1u 1m
+.end
+== V=laplace(v(in), (s+1)^-1) hspice
+* t
+V1 in 0 1
+EB1 out 0 LAPLACE in 0 1e0 / 1e0 1e0
+R1 out 0 1k
+.tran 1u 1m
+.end
+== V=laplace(v(in), (s+1)^-1) xyce
+new: W0002 W0011
+== V=laplace(v(in), (s+1)^-1) ltspice
+new: W0002
+== I=laplace(v(in), (s+1)^-1) ngspice
+* t
+V1 in 0 1
+AB1 %vd(in 0) %id(out 0) B1_xfer
+.model B1_xfer s_xfer(num_coeff=[1e0] den_coeff=[1e0 1e0] int_ic=[0])
+R1 out 0 1k
+.tran 1u 1m
+.end
+== I=laplace(v(in), (s+1)^-1) espice
+* t
+V1 in 0 1
+GB1 out 0 LAPLACE in 0 1e0 / 1e0 1e0
+R1 out 0 1k
+.tran 1u 1m
+.end
+== I=laplace(v(in), (s+1)^-1) hspice
+* t
+V1 in 0 1
+GB1 out 0 LAPLACE in 0 1e0 / 1e0 1e0
+R1 out 0 1k
+.tran 1u 1m
+.end
+== I=laplace(v(in), (s+1)^-1) xyce
+new: W0002 W0011
+== I=laplace(v(in), (s+1)^-1) ltspice
+new: W0002
+== V={Laplace(v(in), 1/(1+s))} ngspice
+* t
+V1 in 0 1
+AB1 %vd(in 0) %vd(out 0) B1_xfer
+.model B1_xfer s_xfer(num_coeff=[1e0] den_coeff=[1e0 1e0] int_ic=[0])
+R1 out 0 1k
+.tran 1u 1m
+.end
+== V={Laplace(v(in), 1/(1+s))} espice
+* t
+V1 in 0 1
+EB1 out 0 LAPLACE in 0 1e0 / 1e0 1e0
+R1 out 0 1k
+.tran 1u 1m
+.end
+== V={Laplace(v(in), 1/(1+s))} hspice
+* t
+V1 in 0 1
+EB1 out 0 LAPLACE in 0 1e0 / 1e0 1e0
+R1 out 0 1k
+.tran 1u 1m
+.end
+== V={Laplace(v(in), 1/(1+s))} xyce
+new: W0011
+== V={Laplace(v(in), 1/(1+s))} ltspice
+* t
+V1 in 0 1
+EB1 out 0 in 0 Laplace=1e0/(1e0*s+1e0)
+R1 out 0 1k
+.tran 1u 1m
+.end
+== I={Laplace(v(in), 1/(1+s))} ngspice
+* t
+V1 in 0 1
+AB1 %vd(in 0) %id(out 0) B1_xfer
+.model B1_xfer s_xfer(num_coeff=[1e0] den_coeff=[1e0 1e0] int_ic=[0])
+R1 out 0 1k
+.tran 1u 1m
+.end
+== I={Laplace(v(in), 1/(1+s))} espice
+* t
+V1 in 0 1
+GB1 out 0 LAPLACE in 0 1e0 / 1e0 1e0
+R1 out 0 1k
+.tran 1u 1m
+.end
+== I={Laplace(v(in), 1/(1+s))} hspice
+* t
+V1 in 0 1
+GB1 out 0 LAPLACE in 0 1e0 / 1e0 1e0
+R1 out 0 1k
+.tran 1u 1m
+.end
+== I={Laplace(v(in), 1/(1+s))} xyce
+new: W0011
+== I={Laplace(v(in), 1/(1+s))} ltspice
+* t
+V1 in 0 1
+GB1 out 0 in 0 Laplace=1e0/(1e0*s+1e0)
+R1 out 0 1k
+.tran 1u 1m
+.end
+== V=Laplace(v(in), 1/(1+s*tau)) ngspice
+new: W0010
+== V=Laplace(v(in), 1/(1+s*tau)) espice
+new: W0010
+== V=Laplace(v(in), 1/(1+s*tau)) hspice
+new: W0010
+== V=Laplace(v(in), 1/(1+s*tau)) xyce
+new: W0010
+== V=Laplace(v(in), 1/(1+s*tau)) ltspice
+new: W0010
+== I=Laplace(v(in), 1/(1+s*tau)) ngspice
+new: W0010
+== I=Laplace(v(in), 1/(1+s*tau)) espice
+new: W0010
+== I=Laplace(v(in), 1/(1+s*tau)) hspice
+new: W0010
+== I=Laplace(v(in), 1/(1+s*tau)) xyce
+new: W0010
+== I=Laplace(v(in), 1/(1+s*tau)) ltspice
+new: W0010
+== V=Laplace(v(in), s^2) ngspice
+new: W0010
+== V=Laplace(v(in), s^2) espice
+new: W0010
+== V=Laplace(v(in), s^2) hspice
+new: W0010
+== V=Laplace(v(in), s^2) xyce
+new: W0002 W0010
+== V=Laplace(v(in), s^2) ltspice
+new: W0002 W0010
+== I=Laplace(v(in), s^2) ngspice
+new: W0010
+== I=Laplace(v(in), s^2) espice
+new: W0010
+== I=Laplace(v(in), s^2) hspice
+new: W0010
+== I=Laplace(v(in), s^2) xyce
+new: W0002 W0010
+== I=Laplace(v(in), s^2) ltspice
+new: W0002 W0010
+== V=Laplace(I(V1), 1/(1+s)) ngspice
+new: W0010
+== V=Laplace(I(V1), 1/(1+s)) espice
+new: W0010
+== V=Laplace(I(V1), 1/(1+s)) hspice
+new: W0010
+== V=Laplace(I(V1), 1/(1+s)) xyce
+new: W0010
+== V=Laplace(I(V1), 1/(1+s)) ltspice
+new: W0010
+== I=Laplace(I(V1), 1/(1+s)) ngspice
+new: W0010
+== I=Laplace(I(V1), 1/(1+s)) espice
+new: W0010
+== I=Laplace(I(V1), 1/(1+s)) hspice
+new: W0010
+== I=Laplace(I(V1), 1/(1+s)) xyce
+new: W0010
+== I=Laplace(I(V1), 1/(1+s)) ltspice
+new: W0010
+== V=2*Laplace(v(in), 1/(1+s)) ngspice
+new: W0010
+== V=2*Laplace(v(in), 1/(1+s)) espice
+new: W0010
+== V=2*Laplace(v(in), 1/(1+s)) hspice
+new: W0010
+== V=2*Laplace(v(in), 1/(1+s)) xyce
+new: W0010
+== V=2*Laplace(v(in), 1/(1+s)) ltspice
+new: W0010
+== I=2*Laplace(v(in), 1/(1+s)) ngspice
+new: W0010
+== I=2*Laplace(v(in), 1/(1+s)) espice
+new: W0010
+== I=2*Laplace(v(in), 1/(1+s)) hspice
+new: W0010
+== I=2*Laplace(v(in), 1/(1+s)) xyce
+new: W0010
+== I=2*Laplace(v(in), 1/(1+s)) ltspice
+new: W0010
+== V=Laplace(v(in), 1/(1+s)) + 1 ngspice
+new: W0010
+== V=Laplace(v(in), 1/(1+s)) + 1 espice
+new: W0010
+== V=Laplace(v(in), 1/(1+s)) + 1 hspice
+new: W0010
+== V=Laplace(v(in), 1/(1+s)) + 1 xyce
+new: W0010
+== V=Laplace(v(in), 1/(1+s)) + 1 ltspice
+new: W0010
+== I=Laplace(v(in), 1/(1+s)) + 1 ngspice
+new: W0010
+== I=Laplace(v(in), 1/(1+s)) + 1 espice
+new: W0010
+== I=Laplace(v(in), 1/(1+s)) + 1 hspice
+new: W0010
+== I=Laplace(v(in), 1/(1+s)) + 1 xyce
+new: W0010
+== I=Laplace(v(in), 1/(1+s)) + 1 ltspice
+new: W0010
+== V=Laplace(v(in), 1/(s-s)) ngspice
+new: W0010
+== V=Laplace(v(in), 1/(s-s)) espice
+new: W0010
+== V=Laplace(v(in), 1/(s-s)) hspice
+new: W0010
+== V=Laplace(v(in), 1/(s-s)) xyce
+new: W0010
+== V=Laplace(v(in), 1/(s-s)) ltspice
+new: W0010
+== I=Laplace(v(in), 1/(s-s)) ngspice
+new: W0010
+== I=Laplace(v(in), 1/(s-s)) espice
+new: W0010
+== I=Laplace(v(in), 1/(s-s)) hspice
+new: W0010
+== I=Laplace(v(in), 1/(s-s)) xyce
+new: W0010
+== I=Laplace(v(in), 1/(s-s)) ltspice
+new: W0010
+== V=Laplace(v(in), s^0.5/(1+s)) ngspice
+new: W0010
+== V=Laplace(v(in), s^0.5/(1+s)) espice
+new: W0010
+== V=Laplace(v(in), s^0.5/(1+s)) hspice
+new: W0010
+== V=Laplace(v(in), s^0.5/(1+s)) xyce
+new: W0002 W0010
+== V=Laplace(v(in), s^0.5/(1+s)) ltspice
+new: W0002 W0010
+== I=Laplace(v(in), s^0.5/(1+s)) ngspice
+new: W0010
+== I=Laplace(v(in), s^0.5/(1+s)) espice
+new: W0010
+== I=Laplace(v(in), s^0.5/(1+s)) hspice
+new: W0010
+== I=Laplace(v(in), s^0.5/(1+s)) xyce
+new: W0002 W0010
+== I=Laplace(v(in), s^0.5/(1+s)) ltspice
+new: W0002 W0010
+== V=Laplace(v(in)) ngspice
+new: W0010
+== V=Laplace(v(in)) espice
+new: W0010
+== V=Laplace(v(in)) hspice
+new: W0010
+== V=Laplace(v(in)) xyce
+new: W0010
+== V=Laplace(v(in)) ltspice
+new: W0010
+== I=Laplace(v(in)) ngspice
+new: W0010
+== I=Laplace(v(in)) espice
+new: W0010
+== I=Laplace(v(in)) hspice
+new: W0010
+== I=Laplace(v(in)) xyce
+new: W0010
+== I=Laplace(v(in)) ltspice
+new: W0010

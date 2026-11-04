@@ -1,7 +1,7 @@
 //! [`Ast`] (and its [`Kit`]) → deck text in any dialect: the transpiler's
 //! last stage. Two
 //! structural writers, because there are two statement shapes: the SPICE
-//! family (`spice`: ngspice, ESPice, HSPICE, Xyce, LTspice, CDL) and the named
+//! family (`spice`: ngspice, ESPice, HSPICE, Xyce, LTspice, CDL, Verilog) and the named
 //! family (`named`: Spectre, VACASK). Each reads the reader's plan
 //! (`read`: which statement is written where, and its views), spells
 //! through the target's [`spelling::Spelling`] row, asks
@@ -9,8 +9,8 @@
 //! every byte through one token choke point (`out`).
 //!
 //! A written deck ([`Written`]) is the old pipeline's text, byte for byte
-//! (TESTING.md, "Golden gate"): the Python API's `codegen::netlist(&CircuitIR,
-//! d)` stays until phase 6. Either way the file's diagnostics come with it
+//! (TESTING.md, "Golden gate"); the Python API's decks are written here too
+//! (`python::deck`). The file's diagnostics come with it
 //! ([`Diags`]): the parser's and the kit's notes (`P`, `R`) and the
 //! writer's (`W`), sorted by source position, with their messages; a
 //! refusal is a writer's `W` code of `diag::Kind::Refusal`.
@@ -20,10 +20,11 @@
 //!
 //! Contents:
 //! - `pub mod capability`, `pub mod spelling`
-//! - `pub struct Source<'a>`, `pub struct Written`, `pub struct Diags`
+//! - `pub struct Source<'a>`, `pub enum Numbers`, `pub struct Written`, `pub struct Diags`
 //! - `pub fn render(src: &Source, target: Dialect) -> Result<Written, Diags>`
 //! - `pub fn render_kit(kit: &Kit, file: FileId, name: &str, target: Dialect) -> Result<Written, Diags>`
 //! - `pub fn render_text(text: &str, d: Dialect, name: &str, target: Dialect) -> Result<Written, Diags>`
+//! - `pub enum Reference`, `pub fn references(src: &Source) -> Vec<Reference>`
 //! - `pub fn writes(target: Dialect) -> bool`
 
 pub mod capability;
@@ -36,7 +37,7 @@ mod role;
 pub mod spelling;
 mod spice;
 
-use crate::codegen::Dialect;
+use crate::syntax::Dialect;
 use crate::syntax::ast::Ast;
 use crate::syntax::diag::{self, Diag, Kind};
 use crate::syntax::resolve::{FileId, Kit, Role};
@@ -44,14 +45,36 @@ use crate::syntax::token::Tokens;
 use crate::syntax::{lexicon, parse, tokenize};
 
 /// One file to write: its tree and tokens, the dialect it was read in, the
-/// name its deck is written under (the title), and the kit it was read in,
-/// whose answers fill what the file alone leaves open.
+/// name its deck is written under (the title), the kit it was read in,
+/// whose answers fill what the file alone leaves open, and the Verilog-A
+/// sources and OSDI binaries its top loads beyond those it names itself.
 pub struct Source<'a> {
     pub ast: &'a Ast<'a>,
     pub tokens: &'a Tokens<'a>,
     pub dialect: Dialect,
     pub name: &'a str,
     pub kit: Option<(&'a Kit, FileId)>,
+    /// Loads no statement of the file holds: an ngspice deck has no load
+    /// card (its `pre_osdi` is a `.control` command), so a deck built as
+    /// ngspice text (the Python API's) names them here; each target writes
+    /// them as it writes its own (`pre_osdi`, `.hdl`, `ahdl_include`,
+    /// `load`). Empty for a file read as it is.
+    pub loads: &'a [String],
+    /// How an ngspice target spells a number.
+    pub numbers: Numbers,
+}
+
+/// How an ngspice (or ESPice) deck spells the file's numbers.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Numbers {
+    /// Each so ngspice reads back the double the file's own reading gave
+    /// (`unit::ngspice_spelling` for a file read as ngspice text, whose
+    /// numbers carry ngspice's arithmetic), as the old writer did.
+    #[default]
+    Read,
+    /// In SI form (`100u`), as given: the doubles were the caller's, not
+    /// read, and the Python API has always written them so.
+    Given,
 }
 
 /// A deck written, and the notes on its file.
@@ -70,6 +93,15 @@ pub struct Diags {
     pub messages: String,
 }
 
+/// A file another file names, as [`references`] lists it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Reference {
+    /// An `.include`, `.lib` call or `include … section=`: a netlist file.
+    File(String),
+    /// A Verilog-A source a load names (`ahdl_include`, `load`).
+    VerilogA(String),
+}
+
 /// `src` written for `target`, with the file's notes; every diagnostic on
 /// the file, the `W` refusals among them, when the target cannot say
 /// something the deck holds.
@@ -79,7 +111,9 @@ pub struct Diags {
 /// `src.ast`'s.
 pub fn render(src: &Source, target: Dialect) -> Result<Written, Diags> {
     assert!(writes(target), "render: a target with a writer");
-    let (mut rd, deck) = read::read(src.ast, src.tokens, src.dialect, src.name, src.kit);
+    let (mut rd, mut deck) = read::read(src.ast, src.tokens, src.dialect, src.name, src.kit);
+    deck.given_loads = src.loads.to_vec();
+    deck.numbers = src.numbers;
     let (text, written) = match target {
         Dialect::Spectre | Dialect::Vacask => named::write(&mut rd, &deck, target),
         _ => spice::write(&mut rd, &deck, target),
@@ -125,6 +159,8 @@ pub fn render_kit(kit: &Kit, file: FileId, name: &str, target: Dialect) -> Resul
         dialect: kit.dialect(),
         name,
         kit: Some((kit, file)),
+        loads: &[],
+        numbers: Numbers::Read,
     };
     render(&src, target)
 }
@@ -143,13 +179,49 @@ pub fn render_text(text: &str, d: Dialect, name: &str, target: Dialect) -> Resul
         dialect: d,
         name,
         kit: None,
+        loads: &[],
+        numbers: Numbers::Read,
     };
     render(&src, target)
 }
 
-/// Whether [`render`] writes `target`: every target but Verilog, which
-/// stays on the old layout writer (its element lines are the old IR's own
-/// text).
+/// The files `src` names at its top and in each library section, in the
+/// order a deck holds them (each block's includes, then its `.lib` calls,
+/// then its Verilog-A sources): what a kit walk follows from this file, the
+/// walk Interop's `pdk-models` and `golden` make. A subcircuit's or a
+/// branch's include is not listed (`resolve::Kit::load` follows those
+/// too). Paths are as written, quotes removed.
+pub fn references(src: &Source) -> Vec<Reference> {
+    let (rd, deck) = read::read(src.ast, src.tokens, src.dialect, src.name, src.kit);
+    let blocks = std::iter::once(&deck.top).chain(deck.sections.iter().map(|s| &s.body));
+    let unquoted = |p: String| p.trim_matches(['"', '\'']).to_string();
+    let mut out = Vec::new();
+    for b in blocks {
+        out.extend(
+            b.includes
+                .iter()
+                .map(|&n| Reference::File(unquoted(rd.include_path(n)))),
+        );
+        out.extend(
+            b.libs
+                .iter()
+                .map(|&n| Reference::File(unquoted(rd.lib_view(n).0))),
+        );
+        let loads = b
+            .loads
+            .iter()
+            .map(|&n| unquoted(rd.unquote(rd.fields(n)[0])));
+        out.extend(
+            loads
+                .filter(|p| crate::veriloga::is_source(p))
+                .map(Reference::VerilogA),
+        );
+    }
+    out
+}
+
+/// Whether [`render`] writes `target`: every target, Verilog as structural
+/// modules (`spice::verilog`).
 pub fn writes(target: Dialect) -> bool {
-    target != Dialect::Verilog
+    Dialect::ALL.contains(&target)
 }

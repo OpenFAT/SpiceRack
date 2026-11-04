@@ -22,8 +22,8 @@
 //! Contents:
 //! - `pub fn parse_measures(text: &str, backend: Option<Dialect>) -> Vec<MeasureResult>`
 
-use crate::ir::Dialect;
 use crate::result::MeasureResult;
+use crate::syntax::Dialect;
 
 /// Parse measure results from `backend`'s output, in its format; with no
 /// backend (or one whose format is not known here), whichever format finds

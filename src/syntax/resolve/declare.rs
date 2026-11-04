@@ -19,7 +19,7 @@
 use std::collections::{HashMap, HashSet};
 
 use super::{Def, DefKind, FileId, Polarity, Role, Scope, key, walk};
-use crate::codegen::Dialect;
+use crate::syntax::Dialect;
 use crate::syntax::ast::{Ast, NONE, Name, Node, Tag};
 use crate::syntax::device::{self, Primitive};
 use crate::syntax::diag::{Code, Diag};

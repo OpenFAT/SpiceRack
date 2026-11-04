@@ -7,8 +7,7 @@
 //! other word is spelled from the statement's tokens when it is written.
 //!
 //! **The old reader** is the PEG grammars and the lowering at `9d1d6bb`,
-//! which `syntax::adapter` ports onto the AST for the old writers; this
-//! reader decides what each statement is by the same rules (`// quirk:`
+//! and this reader decides what each statement is by the same rules (`// quirk:`
 //! marks each rule of the old reader it keeps), so the renderer's output is
 //! the old pipeline's, byte for byte, which the golden gate checks
 //! (TESTING.md, "Golden gate"). Phase 6 deletes the adapter and leaves these
@@ -21,8 +20,7 @@
 //! `cards`, `testbench`, `outputs` and `options` dot cards.
 //!
 //! Cites: the old lowering
-//! and its SPICE grammar's `card`, `Raw`, `Unparsed` (as `syntax::adapter`
-//! cites them).
+//! and its SPICE grammar's `card`, `Raw`, `Unparsed`.
 //!
 //! Contents:
 //! - `pub(in crate::syntax::render) struct Rd`, `enum Kept`, `struct Deck`, `struct Block`, `enum Comp`,
@@ -35,7 +33,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::codegen::Dialect;
+use crate::syntax::Dialect;
 use crate::syntax::ast::{Ast, NONE, Node, Tag};
 use crate::syntax::diag::Diag;
 use crate::syntax::resolve::{FileId, Kit, Role, Split};
@@ -107,6 +105,11 @@ pub(in crate::syntax::render) struct Deck {
     pub(in crate::syntax::render) bench: Vec<Bench>,
     /// The reader's notes: what it read and leaves out.
     pub(in crate::syntax::render) notes: Vec<Diag>,
+    /// The top's Verilog-A and OSDI loads given beside the text
+    /// ([`super::Source::loads`]), after those read from it.
+    pub(in crate::syntax::render) given_loads: Vec<String>,
+    /// [`super::Source::numbers`].
+    pub(in crate::syntax::render) numbers: super::Numbers,
 }
 
 /// A testbench item: a statement, and how it adds to the testbench.
@@ -266,7 +269,7 @@ impl Default for Block {
 
 /// Reads `ast` (the parse of `t`, in dialect `d`) into the plan the writer
 /// spells, the top block named `name`; with `kit`, what the file alone
-/// leaves open is the kit's answer, as `ast_to_ir` reads it.
+/// leaves open is the kit's answer.
 ///
 /// # Panics
 /// When `ast` is not `kit`'s tree of its file.
@@ -317,6 +320,8 @@ pub(in crate::syntax::render) fn read<'a>(
         funcs: acc.funcs,
         bench: acc.bench,
         notes: acc.notes,
+        given_loads: Vec::new(),
+        numbers: super::Numbers::Read,
     };
     rd.unlift(&mut deck);
     (rd, deck)

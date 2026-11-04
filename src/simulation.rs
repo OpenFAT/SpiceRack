@@ -1,39 +1,31 @@
-//! The one pipeline: `CircuitIR` → codegen in the selected backend's dialect
-//! → backend runs the text verbatim → `RawData`, one per plot or, matched
-//! by plot name (ngspice and ESPice `Plotname`s, checked on both), one per
-//! analysis.
+//! A deck rendered for one simulator → the backend runs the text verbatim
+//! → `RawData`, one per plot or, matched by plot name (ngspice and ESPice
+//! `Plotname`s, checked on both), one per analysis. The simulator is
+//! picked first (`backend::select`), since the deck's text is that
+//! simulator's dialect.
 //!
 //! Cites: none (plot names are ngspice's and ESPice's `Plotname` lines).
 //!
 //! Contents:
-//! - `pub fn run(ir: &CircuitIR, backend: Option<&str>) -> Result<RawData, BackendError>`
-//! - `pub fn run_all(ir: &CircuitIR, backend: Option<&str>) -> Result<Vec<RawData>, BackendError>`
-//! - `pub fn run_each(ir: &CircuitIR, backend: Option<&str>) -> Result<Vec<Option<RawData>>, BackendError>`
+//! - `pub fn run(sim: Dialect, deck: &str) -> Result<RawData, BackendError>`
+//! - `pub fn run_all(sim: Dialect, deck: &str) -> Result<Vec<RawData>, BackendError>`
+//! - `pub fn run_each(sim: Dialect, deck: &str, analyses: &[Kind]) -> Result<Vec<Option<RawData>>, BackendError>`
 
-use crate::backend::{BackendError, Dialect, netlist, select};
-use crate::ir::{Analysis, CircuitIR};
+use crate::backend::{BackendError, Dialect, Kind};
 use crate::result::RawData;
 
-/// Run `ir`'s testbench on `backend` (or the best detected backend for its
-/// first analysis and features), tagging the result with the backend name and
-/// its parsed `.meas` values. The first plot: [`run_all`] returns them all.
-pub fn run(ir: &CircuitIR, backend: Option<&str>) -> Result<RawData, BackendError> {
-    let first = run_all(ir, backend)?.into_iter().next();
+/// Runs `deck`, written in `sim`'s dialect, on `sim`, tagging the result
+/// with the backend and its parsed `.meas` values. The first plot:
+/// [`run_all`] returns them all.
+pub fn run(sim: Dialect, deck: &str) -> Result<RawData, BackendError> {
+    let first = run_all(sim, deck)?.into_iter().next();
     Ok(first.expect("a raw file read holds at least one plot"))
 }
 
 /// [`run`], returning every plot the run wrote (ngspice: one per analysis,
 /// in run order), each tagged with the backend and the run's `.meas` values.
-pub fn run_all(ir: &CircuitIR, backend: Option<&str>) -> Result<Vec<RawData>, BackendError> {
-    let op = Analysis::Op;
-    let first = ir
-        .testbench
-        .as_ref()
-        .and_then(|tb| tb.analyses.first())
-        .unwrap_or(&op);
-    let sim = select(first, backend, &ir.compute_features())?;
-    let deck = netlist(ir, sim).map_err(|e| BackendError::SimulationError(e.to_string()))?;
-    let mut plots = sim.run_all(&deck)?;
+pub fn run_all(sim: Dialect, deck: &str) -> Result<Vec<RawData>, BackendError> {
+    let mut plots = sim.run_all(deck)?;
     // LTspice writes `.meas` results to its log, everyone else to stdout;
     // every plot carries the same run's text.
     let p = &plots[0];
@@ -54,12 +46,12 @@ pub fn run_all(ir: &CircuitIR, backend: Option<&str>) -> Result<Vec<RawData>, Ba
     Ok(plots)
 }
 
-/// [`run_all`], one entry per analysis of `ir`'s testbench, in its order:
-/// that analysis's first plot, or `None` for a `Fourier`, which prints its
-/// table and writes none. ngspice runs a deck's analyses in its own order,
-/// so a plot is matched by its `Plotname` (ngspice's and ESPice's), not by
-/// position; VACASK's are in deck order, one per analysis. A lone analysis
-/// takes the first plot, as [`run`].
+/// [`run_all`], one entry per analysis of the deck, `analyses` in its
+/// order: that analysis's first plot, or `None` for a `Fourier`, which
+/// prints its table and writes none. ngspice runs a deck's analyses in its
+/// own order, so a plot is matched by its `Plotname` (ngspice's and
+/// ESPice's), not by position; VACASK's are in deck order, one per
+/// analysis. A lone analysis takes the first plot, as [`run`].
 ///
 /// # Errors
 /// As [`run_all`], and `SimulationError` when an analysis's plot is not
@@ -67,11 +59,11 @@ pub fn run_all(ir: &CircuitIR, backend: Option<&str>) -> Result<Vec<RawData>, Ba
 /// matched here (`pss`, `hb`, `stb`, transient noise, the Spectre-only
 /// ones) run beside others.
 pub fn run_each(
-    ir: &CircuitIR,
-    backend: Option<&str>,
+    sim: Dialect,
+    deck: &str,
+    analyses: &[Kind],
 ) -> Result<Vec<Option<RawData>>, BackendError> {
-    let analyses = ir.testbench.as_ref().map_or(&[][..], |tb| &tb.analyses);
-    let mut plots: Vec<Option<RawData>> = run_all(ir, backend)?.into_iter().map(Some).collect();
+    let mut plots: Vec<Option<RawData>> = run_all(sim, deck)?.into_iter().map(Some).collect();
     assert!(!plots.is_empty(), "a run returns at least one plot");
     if analyses.len() <= 1 {
         plots.truncate(1);
@@ -80,7 +72,7 @@ pub fn run_each(
     let missing = |what: &str| {
         BackendError::SimulationError(format!("no {what} plot among those the run wrote"))
     };
-    if plots[0].as_ref().and_then(|p| p.backend_hint) == Some(Dialect::Vacask) {
+    if sim == Dialect::Vacask {
         if plots.len() != analyses.len() {
             return Err(missing(&format!(
                 "one-per-analysis ({} plots, {} analyses)",
@@ -91,37 +83,33 @@ pub fn run_each(
         return Ok(plots);
     }
     let mut out = Vec::with_capacity(analyses.len());
-    for a in analyses {
+    for &a in analyses {
         let name = match a {
-            Analysis::Fourier { .. } => {
+            Kind::Fourier => {
                 out.push(None);
                 continue;
             }
-            Analysis::Op => "Operating Point",
-            Analysis::Dc { .. } => "DC transfer characteristic",
-            Analysis::Ac { .. } => "AC Analysis",
-            Analysis::Transient { .. } => "Transient Analysis",
-            Analysis::Noise { .. } => "Noise Spectral Density Curves",
-            Analysis::Tf { .. } => "Transfer Function",
-            Analysis::Sensitivity { .. } => "Sensitivity Analysis",
-            Analysis::PoleZero { .. } => "Pole-Zero Analysis",
-            Analysis::Distortion { .. } => "DISTORTION",
-            Analysis::SPar { .. } => "SP Analysis",
-            Analysis::Pss { .. }
-            | Analysis::HarmonicBalance { .. }
-            | Analysis::Stability { .. }
-            | Analysis::TransientNoise { .. }
-            | Analysis::SpectreSweep { .. }
-            | Analysis::SpectreMonteCarlo { .. }
-            | Analysis::SpectrePac { .. }
-            | Analysis::SpectrePnoise { .. }
-            | Analysis::SpectrePxf { .. }
-            | Analysis::SpectrePstb { .. } => {
-                let kind = format!("{a:?}");
-                return Err(missing(&format!(
-                    "matchable {}",
-                    kind.split([' ', '{']).next().unwrap_or_default()
-                )));
+            Kind::Op => "Operating Point",
+            Kind::Dc => "DC transfer characteristic",
+            Kind::Ac => "AC Analysis",
+            Kind::Tran => "Transient Analysis",
+            Kind::Noise => "Noise Spectral Density Curves",
+            Kind::Tf => "Transfer Function",
+            Kind::Sens | Kind::SensAc => "Sensitivity Analysis",
+            Kind::Pz => "Pole-Zero Analysis",
+            Kind::Disto => "DISTORTION",
+            Kind::Sp => "SP Analysis",
+            Kind::Pss
+            | Kind::Hb
+            | Kind::Stb
+            | Kind::TranNoise
+            | Kind::SpectreSweep
+            | Kind::SpectreMonteCarlo
+            | Kind::Pac
+            | Kind::Pnoise
+            | Kind::Pxf
+            | Kind::Pstb => {
+                return Err(missing(&format!("matchable {}", unmatched(a))));
             }
         };
         let i = plots
@@ -132,4 +120,34 @@ pub fn run_each(
     }
     assert_eq!(out.len(), analyses.len());
     Ok(out)
+}
+
+// ---- private ----
+
+/// The analysis's name in a `run_each` error, as the Python API names it.
+fn unmatched(a: Kind) -> &'static str {
+    match a {
+        Kind::Pss => "Pss",
+        Kind::Hb => "HarmonicBalance",
+        Kind::Stb => "Stability",
+        Kind::TranNoise => "TransientNoise",
+        Kind::SpectreSweep => "SpectreSweep",
+        Kind::SpectreMonteCarlo => "SpectreMonteCarlo",
+        Kind::Pac => "SpectrePac",
+        Kind::Pnoise => "SpectrePnoise",
+        Kind::Pxf => "SpectrePxf",
+        Kind::Pstb => "SpectrePstb",
+        Kind::Op
+        | Kind::Dc
+        | Kind::Ac
+        | Kind::Tran
+        | Kind::Noise
+        | Kind::Tf
+        | Kind::Sens
+        | Kind::SensAc
+        | Kind::Pz
+        | Kind::Disto
+        | Kind::Sp
+        | Kind::Fourier => a.name(),
+    }
 }

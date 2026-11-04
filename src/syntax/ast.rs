@@ -71,7 +71,7 @@ pub enum Tag {
     /// diagnostic. `lhs`: its last token; `rhs`: the [`Dialect`] index
     /// (`Dialect::ALL`) of the lexicon that read it.
     ///
-    /// [`Dialect`]: crate::codegen::Dialect
+    /// [`Dialect`]: crate::syntax::Dialect
     Verbatim,
     /// `.include`, `include`. Fields: the path.
     Include,

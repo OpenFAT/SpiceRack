@@ -1,0 +1,638 @@
+== deck 0 ngspice
+* t
+.param p__mc={agauss(1k, (1k)*(10)/100, 1)}
+.param p=p__mc
+.param q__mc={exp(agauss(log(2), 100m, 1))}
+.param q=q__mc
+.param r__mc={aunif(3, 200m)}
+.param r=r__mc
+
+.subckt s a b
+.param q__mm_r={agauss(q, 50m, 1)}
+.param q__mm=q__mm_r
+R1 a b {q__mm*1k}
+.ends s
+R1 a 0 {p}
+X1 a 0 s
+.end
+== deck 0 espice
+* t
+.param p__mc={agauss(1k, (1k)*(10)/100, 1)}
+.param p=p__mc
+.param q__mc={exp(agauss(log(2), 100m, 1))}
+.param q=q__mc
+.param r__mc={aunif(3, 200m)}
+.param r=r__mc
+
+.subckt s a b
+.param q__mm_r={agauss(q, 50m, 1)}
+.param q__mm=q__mm_r
+R1 a b {q__mm*1k}
+.ends s
+R1 a 0 {p}
+X1 a 0 s
+.end
+== deck 0 hspice
+* t
+.param p__mc='agauss(1k, (1k)*(10)/100, 1)'
+.param p=p__mc
+.param q__mc='exp(agauss(log(2), 100m, 1))'
+.param q=q__mc
+.param r__mc='aunif(3, 200m)'
+.param r=r__mc
+
+.subckt s a b
+.param q__mm_r='agauss(q, 50m, 1)'
+.param q__mm=q__mm_r
+R1 a b 'q__mm*1k'
+.ends s
+R1 a 0 'p'
+X1 a 0 s
+== deck 0 xyce
+* t
+.param p__mc={agauss(1k, (1k)*(10)/100, 1)}
+.param p=p__mc
+.param q__mc={exp(agauss(log(2), 100m, 1))}
+.param q=q__mc
+.param r__mc={aunif(3, 200m)}
+.param r=r__mc
+
+.subckt s a b
+.param q__mm_r={agauss(q, 50m, 1)}
+.param q__mm=q__mm_r
+R1 a b {q__mm*1k}
+.ends s
+R1 a 0 {p}
+X1 a 0 s
+.end
+== deck 0 ltspice
+new: W0003
+== deck 0 spectre
+// t
+
+simulator lang=spectre
+
+parameters p=1k q=2 r=3
+statistics {
+    process {
+        vary p dist=gauss std=10 percent=yes
+        vary q dist=lnorm std=100m
+        vary r dist=unif N=200m
+    }
+    mismatch {
+        vary q dist=gauss std=50m
+    }
+}
+
+subckt s (a b)
+r1 (a b) resistor r=q*1k
+ends s
+
+r1 (a 0) resistor r=p
+x1 (a 0) s
+
+== deck 0 vacask
+t
+
+ground 0
+
+load "spice/resistor.osdi"
+
+model resistor sp_resistor
+
+parameters p=agauss(1k, (1k)*(10)/100, 1) q=exp(agauss(log(2), 100m, 1)) r=aunif(3, 200m)
+
+subckt s (a b)
+parameters q__mm=agauss(q, 50m, 1)
+  r1 (a b) resistor r=q__mm*1k
+ends
+
+r1 (a 0) resistor r=p
+x1 (a 0) s
+
+control
+  options rawfile="binary"
+endc
+
+== deck 1 ngspice
+* t
+.param a__z__r={agauss(0, 1, 1)}
+.param a__z=a__z__r
+.param a={(1) + (100m)*((1e0)*a__z)}
+.param b__z__r={agauss(0, 1, 1)}
+.param b__z=b__z__r
+.param b={(2) + (200m)*((6e-1)*a__z + (8e-1)*b__z)}
+R1 x 0 {a+b}
+.end
+== deck 1 espice
+* t
+.param a__z__r={agauss(0, 1, 1)}
+.param a__z=a__z__r
+.param a={(1) + (100m)*((1e0)*a__z)}
+.param b__z__r={agauss(0, 1, 1)}
+.param b__z=b__z__r
+.param b={(2) + (200m)*((6e-1)*a__z + (8e-1)*b__z)}
+R1 x 0 {a+b}
+.end
+== deck 1 hspice
+* t
+.param a__z__r='agauss(0, 1, 1)'
+.param a__z=a__z__r
+.param a='(1) + (100m)*((1e0)*a__z)'
+.param b__z__r='agauss(0, 1, 1)'
+.param b__z=b__z__r
+.param b='(2) + (200m)*((6e-1)*a__z + (8e-1)*b__z)'
+R1 x 0 'a+b'
+== deck 1 xyce
+* t
+.param a__z__r={agauss(0, 1, 1)}
+.param a__z=a__z__r
+.param a={(1) + (100m)*((1e0)*a__z)}
+.param b__z__r={agauss(0, 1, 1)}
+.param b__z=b__z__r
+.param b={(2) + (200m)*((6e-1)*a__z + (8e-1)*b__z)}
+R1 x 0 {a+b}
+.end
+== deck 1 ltspice
+new: W0003
+== deck 1 spectre
+// t
+
+simulator lang=spectre
+
+parameters a=1 b=2
+statistics {
+    process {
+        vary a dist=gauss std=100m
+        vary b dist=gauss std=200m
+    }
+    correlate param=[a b] cc=600m
+}
+
+r1 (x 0) resistor r=a+b
+
+== deck 1 vacask
+t
+
+ground 0
+
+load "spice/resistor.osdi"
+
+model resistor sp_resistor
+
+parameters a__z=agauss(0, 1, 1) a=(1) + (100m)*((1e0)*a__z) b__z=agauss(0, 1, 1) b=(2) + (200m)*((6e-1)*a__z + (8e-1)*b__z)
+
+r1 (x 0) resistor r=a+b
+
+control
+  options rawfile="binary"
+endc
+
+== deck 2 ngspice
+* t
+.param a__z__r={agauss(0, 1, 1)}
+.param a__z=a__z__r
+.param a={(1) + (100m)*((1)*a__z)}
+.param b__z__r={agauss(0, 1, 1)}
+.param b__z=b__z__r
+.param b={(2) + (200m)*(((k))*a__z + (sqrt(1-(k)*(k)))*b__z)}
+.param k=500m
+R1 x 0 {a+b}
+.end
+== deck 2 espice
+* t
+.param a__z__r={agauss(0, 1, 1)}
+.param a__z=a__z__r
+.param a={(1) + (100m)*((1)*a__z)}
+.param b__z__r={agauss(0, 1, 1)}
+.param b__z=b__z__r
+.param b={(2) + (200m)*(((k))*a__z + (sqrt(1-(k)*(k)))*b__z)}
+.param k=500m
+R1 x 0 {a+b}
+.end
+== deck 2 hspice
+* t
+.param a__z__r='agauss(0, 1, 1)'
+.param a__z=a__z__r
+.param a='(1) + (100m)*((1)*a__z)'
+.param b__z__r='agauss(0, 1, 1)'
+.param b__z=b__z__r
+.param b='(2) + (200m)*(((k))*a__z + (sqrt(1-(k)*(k)))*b__z)'
+.param k=500m
+R1 x 0 'a+b'
+== deck 2 xyce
+* t
+.param a__z__r={agauss(0, 1, 1)}
+.param a__z=a__z__r
+.param a={(1) + (100m)*((1)*a__z)}
+.param b__z__r={agauss(0, 1, 1)}
+.param b__z=b__z__r
+.param b={(2) + (200m)*(((k))*a__z + (sqrt(1-(k)*(k)))*b__z)}
+.param k=500m
+R1 x 0 {a+b}
+.end
+== deck 2 ltspice
+new: W0003
+== deck 2 spectre
+// t
+
+simulator lang=spectre
+
+parameters a=1 b=2 k=500m
+statistics {
+    process {
+        vary a dist=gauss std=100m
+        vary b dist=gauss std=200m
+    }
+    correlate param=[a b] cc=k
+}
+
+r1 (x 0) resistor r=a+b
+
+== deck 2 vacask
+t
+
+ground 0
+
+load "spice/resistor.osdi"
+
+model resistor sp_resistor
+
+parameters a__z=agauss(0, 1, 1) a=(1) + (100m)*((1)*a__z) b__z=agauss(0, 1, 1) b=(2) + (200m)*(((k))*a__z + (sqrt(1-(k)*(k)))*b__z) k=500m
+
+r1 (x 0) resistor r=a+b
+
+control
+  options rawfile="binary"
+endc
+
+== deck 3 ngspice
+* t
+.param a__z__r={agauss(0, 1, 1)}
+.param a__z=a__z__r
+.param a={(1) + (100m)*((1e0)*a__z)}
+.param b__z__r={agauss(0, 1, 1)}
+.param b__z=b__z__r
+.param b={(2) + (200m)*((6e-1)*a__z + (8e-1)*b__z)}
+R1 x 0 {a+b}
+.end
+== deck 3 espice
+* t
+.param a__z__r={agauss(0, 1, 1)}
+.param a__z=a__z__r
+.param a={(1) + (100m)*((1e0)*a__z)}
+.param b__z__r={agauss(0, 1, 1)}
+.param b__z=b__z__r
+.param b={(2) + (200m)*((6e-1)*a__z + (8e-1)*b__z)}
+R1 x 0 {a+b}
+.end
+== deck 3 hspice
+* t
+.param a__z__r='agauss(0, 1, 1)'
+.param a__z=a__z__r
+.param a='(1) + (100m)*((1e0)*a__z)'
+.param b__z__r='agauss(0, 1, 1)'
+.param b__z=b__z__r
+.param b='(2) + (200m)*((6e-1)*a__z + (8e-1)*b__z)'
+R1 x 0 'a+b'
+== deck 3 xyce
+* t
+.param a__z__r={agauss(0, 1, 1)}
+.param a__z=a__z__r
+.param a={(1) + (100m)*((1e0)*a__z)}
+.param b__z__r={agauss(0, 1, 1)}
+.param b__z=b__z__r
+.param b={(2) + (200m)*((6e-1)*a__z + (8e-1)*b__z)}
+R1 x 0 {a+b}
+.end
+== deck 3 ltspice
+new: W0003
+== deck 3 spectre
+// t
+
+simulator lang=spectre
+
+parameters a=1 b=2
+statistics {
+    process {
+        vary a dist=gauss std=100m
+        vary b dist=gauss std=200m
+    }
+    correlate param=[a b] cc=600m
+    truncate tr=4
+}
+
+r1 (x 0) resistor r=a+b
+
+== deck 3 vacask
+t
+
+ground 0
+
+load "spice/resistor.osdi"
+
+model resistor sp_resistor
+
+parameters a__z=agauss(0, 1, 1) a=(1) + (100m)*((1e0)*a__z) b__z=agauss(0, 1, 1) b=(2) + (200m)*((6e-1)*a__z + (8e-1)*b__z)
+
+r1 (x 0) resistor r=a+b
+
+control
+  options rawfile="binary"
+endc
+
+== deck 4 ngspice
+* t
+.param a__z__r={agauss(0, 1, 1)}
+.param a__z=a__z__r
+.param a={(1) + (100m)*((1e0)*a__z)}
+.param b__z__r={agauss(0, 1, 1)}
+.param b__z=b__z__r
+.param b={(2) + (200m)*((5e-1)*a__z + (8.660254037844386e-1)*b__z)}
+.param c__z__r={agauss(0, 1, 1)}
+.param c__z=c__z__r
+.param c={(3) + ((3)*(300m)/100)*((5e-1)*a__z + (2.886751345948129e-1)*b__z + (8.16496580927726e-1)*c__z)}
+R1 x 0 {a+b+c}
+.end
+== deck 4 espice
+* t
+.param a__z__r={agauss(0, 1, 1)}
+.param a__z=a__z__r
+.param a={(1) + (100m)*((1e0)*a__z)}
+.param b__z__r={agauss(0, 1, 1)}
+.param b__z=b__z__r
+.param b={(2) + (200m)*((5e-1)*a__z + (8.660254037844386e-1)*b__z)}
+.param c__z__r={agauss(0, 1, 1)}
+.param c__z=c__z__r
+.param c={(3) + ((3)*(300m)/100)*((5e-1)*a__z + (2.886751345948129e-1)*b__z + (8.16496580927726e-1)*c__z)}
+R1 x 0 {a+b+c}
+.end
+== deck 4 hspice
+* t
+.param a__z__r='agauss(0, 1, 1)'
+.param a__z=a__z__r
+.param a='(1) + (100m)*((1e0)*a__z)'
+.param b__z__r='agauss(0, 1, 1)'
+.param b__z=b__z__r
+.param b='(2) + (200m)*((5e-1)*a__z + (8.660254037844386e-1)*b__z)'
+.param c__z__r='agauss(0, 1, 1)'
+.param c__z=c__z__r
+.param c='(3) + ((3)*(300m)/100)*((5e-1)*a__z + (2.886751345948129e-1)*b__z + (8.16496580927726e-1)*c__z)'
+R1 x 0 'a+b+c'
+== deck 4 xyce
+* t
+.param a__z__r={agauss(0, 1, 1)}
+.param a__z=a__z__r
+.param a={(1) + (100m)*((1e0)*a__z)}
+.param b__z__r={agauss(0, 1, 1)}
+.param b__z=b__z__r
+.param b={(2) + (200m)*((5e-1)*a__z + (8.660254037844386e-1)*b__z)}
+.param c__z__r={agauss(0, 1, 1)}
+.param c__z=c__z__r
+.param c={(3) + ((3)*(300m)/100)*((5e-1)*a__z + (2.886751345948129e-1)*b__z + (8.16496580927726e-1)*c__z)}
+R1 x 0 {a+b+c}
+.end
+== deck 4 ltspice
+new: W0003
+== deck 4 spectre
+// t
+
+simulator lang=spectre
+
+parameters a=1 b=2 c=3
+statistics {
+    process {
+        vary a dist=gauss std=100m
+        vary b dist=gauss std=200m
+        vary c dist=gauss std=300m percent=yes
+    }
+    correlate param=[a b c] cc=500m
+}
+
+r1 (x 0) resistor r=a+b+c
+
+== deck 4 vacask
+t
+
+ground 0
+
+load "spice/resistor.osdi"
+
+model resistor sp_resistor
+
+parameters a__z=agauss(0, 1, 1) a=(1) + (100m)*((1e0)*a__z) b__z=agauss(0, 1, 1) b=(2) + (200m)*((5e-1)*a__z + (8.660254037844386e-1)*b__z) c__z=agauss(0, 1, 1) c=(3) + ((3)*(300m)/100)*((5e-1)*a__z + (2.886751345948129e-1)*b__z + (8.16496580927726e-1)*c__z)
+
+r1 (x 0) resistor r=a+b+c
+
+control
+  options rawfile="binary"
+endc
+
+== deck 5 ngspice
+* t
+.param w=1u
+.param l=2u
+
+.subckt s1 a b PARAMS: m=w__mm*2
+.param l__mm_r={aunif(l, 20m)}
+.param l__mm=l__mm_r
+.param w__mm_r={agauss(w, 10m, 1)}
+.param w__mm=w__mm_r
+R1 a b {w__mm*1meg+l__mm*1meg}
+.ends s1
+
+.subckt s2 a b
+R1 a b 1k
+.ends s2
+
+.subckt s3 a b
+.param w__mm_r={agauss(w, 10m, 1)}
+.param w__mm=w__mm_r
+X1 a b s1 m=w__mm
+.ends s3
+X1 a 0 s1
+X2 a 0 s2
+.end
+== deck 5 espice
+* t
+.param w=1u
+.param l=2u
+
+.subckt s1 a b PARAMS: m=w__mm*2
+.param l__mm_r={aunif(l, 20m)}
+.param l__mm=l__mm_r
+.param w__mm_r={agauss(w, 10m, 1)}
+.param w__mm=w__mm_r
+R1 a b {w__mm*1meg+l__mm*1meg}
+.ends s1
+
+.subckt s2 a b
+R1 a b 1k
+.ends s2
+
+.subckt s3 a b
+.param w__mm_r={agauss(w, 10m, 1)}
+.param w__mm=w__mm_r
+X1 a b s1 m=w__mm
+.ends s3
+X1 a 0 s1
+X2 a 0 s2
+.end
+== deck 5 hspice
+* t
+.param w=1u
+.param l=2u
+
+.subckt s1 a b m=w__mm*2
+.param l__mm_r='aunif(l, 20m)'
+.param l__mm=l__mm_r
+.param w__mm_r='agauss(w, 10m, 1)'
+.param w__mm=w__mm_r
+R1 a b 'w__mm*1meg+l__mm*1meg'
+.ends s1
+
+.subckt s2 a b
+R1 a b 1k
+.ends s2
+
+.subckt s3 a b
+.param w__mm_r='agauss(w, 10m, 1)'
+.param w__mm=w__mm_r
+X1 a b s1 m=w__mm
+.ends s3
+X1 a 0 s1
+X2 a 0 s2
+== deck 5 xyce
+* t
+.param w=1u
+.param l=2u
+
+.subckt s1 a b PARAMS: m=w__mm*2
+.param l__mm_r={aunif(l, 20m)}
+.param l__mm=l__mm_r
+.param w__mm_r={agauss(w, 10m, 1)}
+.param w__mm=w__mm_r
+R1 a b {w__mm*1meg+l__mm*1meg}
+.ends s1
+
+.subckt s2 a b
+R1 a b 1k
+.ends s2
+
+.subckt s3 a b
+.param w__mm_r={agauss(w, 10m, 1)}
+.param w__mm=w__mm_r
+X1 a b s1 m=w__mm
+.ends s3
+X1 a 0 s1
+X2 a 0 s2
+.end
+== deck 5 ltspice
+new: W0003
+== deck 5 spectre
+// t
+
+simulator lang=spectre
+
+parameters w=1u l=2u
+statistics {
+    mismatch {
+        vary w dist=gauss std=10m
+        vary l dist=unif N=20m
+    }
+}
+
+subckt s1 (a b)
+parameters m=w*2
+r1 (a b) resistor r=w*1meg+l*1meg
+ends s1
+
+subckt s2 (a b)
+r1 (a b) resistor r=1k
+ends s2
+
+subckt s3 (a b)
+x1 (a b) s1 m=w
+ends s3
+
+x1 (a 0) s1
+x2 (a 0) s2
+
+== deck 5 vacask
+t
+
+ground 0
+
+load "spice/resistor.osdi"
+
+model resistor sp_resistor
+
+parameters w=1u l=2u
+
+subckt s1 (a b)
+parameters m=w__mm*2
+parameters l__mm=aunif(l, 20m) w__mm=agauss(w, 10m, 1)
+  r1 (a b) resistor r=w__mm*1meg+l__mm*1meg
+ends
+
+subckt s2 (a b)
+  r1 (a b) resistor r=1e3
+ends
+
+subckt s3 (a b)
+parameters w__mm=agauss(w, 10m, 1)
+  x1 (a b) s1 $mfactor=w__mm
+ends
+
+x1 (a 0) s1
+x2 (a 0) s2
+
+control
+  options rawfile="binary"
+endc
+
+== deck 6 ngspice
+new: P0003 P0003 P0004 W0001 P0001 P0009 P0004 P0004
+== deck 6 espice
+new: P0003 P0003 P0004 W0001 P0001 P0009 P0004 P0004
+== deck 6 hspice
+new: P0003 P0003 P0004 W0001 P0001 P0009 P0004 P0004
+== deck 6 xyce
+new: P0003 P0003 P0004 W0001 P0001 P0009 P0004 P0004
+== deck 6 ltspice
+new: W0012 P0003 P0003 W0003 P0004 W0001 P0001 P0009 P0004 P0004
+== deck 6 spectre
+// t
+
+simulator lang=spectre
+
+
+library lib
+section tt
+parameters v=1 v=2
+statistics {
+    process {
+        vary v dist=gauss std=100m
+    }
+}
+statistics {
+    process {
+        vary v dist=unif N=100m
+    }
+    mismatch {
+        vary v dist=gauss std=10m
+    }
+}
+ends tt
+section ss
+ends ss
+endlibrary
+subckt s (a b)
+r1 (a b) resistor r=v
+ends s
+endsection tt
+endlibrary lib
+
+
+== deck 6 vacask
+new: P0003 P0003 P0004 W0001 P0001 P0009 P0004 P0004

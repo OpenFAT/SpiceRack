@@ -11,7 +11,7 @@
 //! Contents:
 //! - `pub fn canonical(name: &str, backend: Option<Dialect>) -> (String, bool)`
 
-use crate::ir::Dialect;
+use crate::syntax::Dialect;
 
 /// Canonical form of a raw vector name written by `backend` (`None`: named
 /// as ngspice names it), and whether it names a current. One lowercased copy
