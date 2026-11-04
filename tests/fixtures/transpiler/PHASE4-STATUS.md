@@ -15,20 +15,30 @@ against the `daa0ad0` baseline (TESTING.md, "Golden gate").
 | LTspice | `render::spice` (a row) | IDENTICAL | as ngspice |
 | CDL | `render::spice` (a row: ngspice cards in the xschem layout, `spice/cdl.rs`) | IDENTICAL | `codegen::xschem`: kept for the Python path and Verilog |
 | Verilog | not ported: `golden record --writer syntax` writes it with `codegen::netlist` (see "Verilog" below) | n/a (old path; IDENTICAL) | `codegen::xschem` |
-| Spectre | the named writer, on branch `render-named` | n/a here | `codegen::spectre`, `codegen::statistics::lift` |
-| VACASK | as Spectre | n/a here | `codegen::vacask`, `codegen::statistics::{lower, vacask_calls}` |
+| Spectre | `render::named` | IDENTICAL (3,538 written, 11,400 refused) | `codegen::spectre`, `codegen::statistics::lift`: kept, as ngspice's |
+| VACASK | `render::named` (its own spine, `named/vacask*.rs`) | IDENTICAL (the one flip against the raw baseline is the listed phase-3 `top.scs vacask`) | `codegen::vacask`, `codegen::statistics::{lower, vacask_calls}`: kept, as ngspice's |
 
-No written-versus-refused flip on any SPICE target. The refusal text report
+No written-versus-refused flip on any SPICE or named target. The refusal text report
 (`--refusal-status-only <file>`) pairs each old free-text refusal with its
 `W` codes: 26,368 pairs, all the same status.
 
-Every input dialect reaches every SPICE target through the new reader
+Every input dialect reaches every SPICE and named target through the new reader
 (`render::read`), SPICE and named alike (Spectre, VACASK: `read/named*.rs`).
 
 The last `--writer syntax` record is `/tmp/claude-1000/spicerack-golden/p4s-6`
 (the statistics lift, the Laplace rule, the role frame, the name map and
 CDL; `check-determinism --writer syntax` IDENTICAL; the merge tier 460
 tests), the baseline `/tmp/claude-1000/spicerack-golden/baseline-daa0ad0`.
+The named writer's (branch `render-named`, rebased on `c74a5ef`): every
+target IDENTICAL, `check-determinism --writer syntax` IDENTICAL (records
+deleted for disk room).
+
+The six T-S1..T-S3 decks real Spectre 21.1 ran (`tests/spectre/`) are
+written byte for byte by `render::named` from their SPICE sources, plus
+their `mc1 montecarlo` statement, which no SPICE source holds
+(`named::lift`'s `the_decks_spectre_ran_are_written_byte_for_byte`); the
+statistics tables reach Spectre (kept) and VACASK (one-layer draws) as
+`codegen::netlist` writes them (`test_render.rs`).
 
 The corpus holds no deck the statistics lift or the Laplace rule writes
 (each Spectre deck with a `statistics` block is refused first for its
@@ -69,17 +79,20 @@ others are recorded through `codegen::netlist`, so the whole tree diffs.
   Vec<Diag>>`; `writes(target)`.
 - `render/out.rs`: the one token choke point (`Out::token(text, Space)`), the
   stream owns indentation (`indent`/`dedent`, used by the named writer).
-- `render/spelling.rs`: the `Spelling` row per target (6 rows: the SPICE
-  family and CDL): comment leader, path quote, expression delimiters, function form,
+- `render/spelling.rs`: the `Spelling` row per target (8 rows: the SPICE
+  family, CDL, Spectre, VACASK): comment leader, path quote, expression
+  delimiters, function form (`Real` for Spectre, `None` for VACASK),
   `PARAMS:`, ngspice arithmetic; letters from the lexicon's device table
   (primitive → letter; test: inverts `device::find`); numbers from the
   lexicon's suffix table read in reverse (test: reads back to the same
   double, and equals `codegen::format_spice_number`).
-- `render/capability.rs`: `const fn action(target, Construct) -> Action`, 28
+- `render/capability.rs`: `const fn action(target, Construct) -> Action`, 29
   constructs × 9 targets, one `match`, no `_` arm. `Action::{Native,
-  Spell(Alt), Lift(Rule), Refuse(Code)}`; 10 `Alt`s, 4 `Rule`s.
+  Spell(Alt), Lift(Rule), Refuse(Code)}`; 13 `Alt`s, 6 `Rule`s.
 - `syntax/diag.rs`: W0001–W0020 added (W0019 a `vary` of an undeclared
-  parameter, W0020 a correlation matrix that is not positive definite).
+  parameter, W0020 a correlation matrix that is not positive definite);
+  W0101–W0109 the named writer's (numbered apart while the two branches
+  landed separately).
 - `render/read/`: the reader. A port of `syntax::adapter`'s rules onto a
   plan of node ids (`Deck`, `Block`: which statement lands in which block and
   bucket, as the old reader placed it) and per-statement views (`Card`,
@@ -90,35 +103,61 @@ others are recorded through `codegen::netlist`, so the whole tree diffs.
   value with them); no byte scanner.
 - `render/spice/`: the SPICE-family writer: spine (`mod.rs`), cards
   (`cards.rs`), testbench (`bench.rs`), deck-wide refusals (`checks.rs`),
-  the statistics lift (`draws.rs`), the Laplace rule (`laplace.rs`), the
-  name map (`names.rs`), CDL's xschem layout (`cdl.rs`).
+  the Laplace rule (`laplace.rs`), the name map (`names.rs`), CDL's
+  xschem layout (`cdl.rs`).
+- `render/draws.rs`: the statistics lift, shared: SPICE's two-layer draws,
+  VACASK's one-layer ones (`Layers`).
+- `render/named/`: the named-family writer: the Spectre spine (`mod.rs`),
+  its instances, waveforms and models (`cards.rs`), its testbench
+  (`bench.rs`: the fold both targets share), the deck-wide refusals both
+  share (`checks.rs`), the Monte Carlo rules (`lift.rs`), the VACASK spine
+  (`vacask.rs`), instances (`vacask_cards.rs`) and `control` block
+  (`vacask_bench.rs`). The two decks share the plan, the views, the checks,
+  the fold, the lift's walk, the draws and the frame; their spines differ
+  (VACASK loads a module and declares a model per device kind and writes
+  one `control` block), so VACASK is a spine of its own, not a row. Its
+  names are the old writers' (a lowercase letter, then the name escaped:
+  Spectre `\`, VACASK `'…'`), spelled where written; the SPICE name map's
+  letters would change bytes (phase 7).
 - `render/role.rs`: the file role rule (`frame(Role) -> Frame`: title,
-  `.end`, control blocks); `Rd::role` is the kit's answer, or
+  `.end`, control blocks, ground); `Rd::role` is the kit's answer, or
   `resolve::role` for a file read alone. A writer asks it once and keeps
   the old rules beside it as quirks (Phase 7 list).
-- Fixups a writer's `Lift` records in the reader: `Rd::respell_token` (a
-  value token spelled as other text; `Rd::etext` applies it); the
-  statistics lift's `.param` insertions, replaced values and subcircuit
-  locals are its own side table (`draws::Draws`), keyed by node.
+- Fixups a writer's `Lift` records in the reader: one table keyed by token
+  (`read::Fix`), applied by `Rd::espan`/`Rd::etext` beside the read-back's
+  calls: `Fix::Respell` (`Rd::respell_token`: a value token spelled as
+  other text, the draws' mismatch references) and `Fix::Lift`
+  (`Rd::lift_call`: a statistical call rewritten: Spectre's
+  `rack_f(args, v)`, VACASK's `limit` ternary and sigma, Xyce's clamp; a
+  read-back call lifted again is one fixup). The statistics lift's
+  `.param` insertions, replaced values and subcircuit locals are its own
+  side table (`draws::Draws`), keyed by node; the Monte Carlo lift's
+  variables and `rack_*` functions `named::lift::Lifted`'s.
 
 ## Open (in the order the next agent meets them)
 
-1. **Spectre and VACASK writers** (targets 3, 4): on branch `render-named`
-   (`render/named/`), rebased onto this branch. It shares `role::frame`
-   (VACASK's library rules and `ground` are the case the spec names: add
-   `ground` to `Frame` there) and the name map's policy (`spice/names.rs`
-   holds the SPICE letters; the named writer's escaping is the same kind
-   of map). The VACASK one-layer statistics lowering is `draws.rs` with one
-   layer: share it rather than port `statistics::lower(…, true)` again.
+1. **Spectre and VACASK writers: done** (`render/named/`). What they
+   leave, each a `ponytail:` in the code, none reached by the gate:
+   - a `.func` whose body calls a statistical function is refused
+     (`W0107`); the old lift inlined it at each call site (T-G8);
+   - a source's lifted expressions are walked in item order (the old pass:
+     the waveform's, then the value; a source with no DC value repeats its
+     waveform's first value, which one fixup per token cannot name twice);
+     a Spectre model group's own parameters are shared by its bins, so a
+     call there would be named once;
+   - a view holds a value as SPICE text, so its number is read again
+     (`named::spice_num`, the old `parse_spice_num`); `named::checks::calls`
+     scans a function body's text for `v()`/`i()` (as item 3).
 2. **Verilog** (target 5b) stays on `codegen::xschem` (see "Verilog").
 3. **`check_functions` and `^`** (`spice/checks.rs`) scan the kept value
    text, as the old writer did (`calls`, `contains('^')`, a `ponytail:`);
    over `Call` nodes and the operator tokens they would be a walk of the
    value trees, with the same verdict on the corpus to be checked.
-4. **Two capability cells reproduce a silent drop** (`// quirk:` in
-   `capability.rs`): LTspice drops a Verilog-A/OSDI load (`Spell(Omit)`);
-   CDL copies another family's text (`ForeignText`: `Native`). Phase 7
-   decides (Refuse).
+4. **Seven capability cells reproduce a silent drop** (`// quirk:` in
+   `capability.rs`): LTspice drops a Verilog-A/OSDI load (`Spell(Omit)`,
+   two cells); CDL copies another family's text (`ForeignText`: `Native`);
+   Spectre and VACASK write a sectionless `.lib` as `include "f"
+   section=` and drop a `.print` (two cells each). Phase 7 decides.
 5. The reader duplicates `syntax::adapter`'s rules (copied, then typed to
    views). Phase 6 deletes the adapter; the rules live here after it.
 6. `Spelling` holds what the six rows differ in; the dot-card keywords the
@@ -177,6 +216,9 @@ reference does not):
   letter only to a name that does not start with it; it is the SPICE →
   Spectre direction's (the named writer's) case.
 
+- P7-11. Spectre and VACASK title a library too, and VACASK gives it
+  `ground 0` and a `control` block (`named::W::frame`).
+
 **CDL** (`spice/cdl.rs`):
 - P7-9. Another family's text is copied as written (`ForeignText`:
   `Native`, a capability quirk).
@@ -186,8 +228,8 @@ reference does not):
 ## Differences from the old pipeline the corpus does not reach
 
 No golden input meets these; `tests/test_render.rs` pins the first three.
-- A `statistics` block inside a subcircuit or a branch is refused (W0018);
-  the old writer dropped it unwritten.
+- A `statistics` block inside a subcircuit or a branch is refused (W0018),
+  on the SPICE targets and VACASK; the old writers dropped it unwritten.
 - A `vary` of an undeclared parameter is W0019, a correlation matrix that is
   not positive definite W0020 (the old free-text refusals; same status).
 - A Laplace number is the token's value (decoded once by the lexicon), not
