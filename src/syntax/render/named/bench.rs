@@ -14,7 +14,7 @@
 //!
 //! Contents:
 //! - `pub(super) struct Tb`, `pub(super) type Step`
-//! - `W::bench(&mut self)`, `W::fold(&self) -> Tb`
+//! - `W::bench(&mut self)`, `W::fold(&self) -> Tb`, `W::unwritten_outputs(&mut self, tb: &Tb)`
 //! - `fn bare_node(s: &str) -> &str`
 
 use super::W;
@@ -29,13 +29,21 @@ pub(super) struct Tb {
     pub(super) analyses: Vec<(Ana, u32)>,
     /// The portable options, with their statement's first token.
     pub(super) options: Vec<(String, String, u32)>,
-    /// VACASK's own options, values as written.
-    pub(super) vacask: Vec<(String, String)>,
+    /// VACASK's own options, values as written, with their statement's
+    /// first token.
+    pub(super) vacask: Vec<(String, String, u32)>,
     pub(super) temp: Option<f64>,
     pub(super) tnom: Option<f64>,
     pub(super) ics: Vec<(String, f64)>,
     pub(super) nodesets: Vec<(String, f64)>,
     pub(super) saves: Vec<String>,
+    /// The first save card's first token.
+    pub(super) save_tok: Option<u32>,
+    /// Each `.print`'s first token (neither target writes one).
+    pub(super) prints: Vec<u32>,
+    /// The first token of each options card holding Xyce's own options,
+    /// which neither target writes.
+    pub(super) xyce: Vec<u32>,
     /// Each `.meas` line, with its statement's first token.
     pub(super) measures: Vec<(String, u32)>,
     /// Each `.step`'s sweep, name, numbers and first token.
@@ -52,6 +60,13 @@ impl W<'_, '_> {
     /// The testbench's statements.
     pub(super) fn bench(&mut self) {
         let tb = self.fold();
+        self.unwritten_outputs(&tb);
+        // VACASK's own options are not Spectre's.
+        let mut vacask: Vec<u32> = tb.vacask.iter().map(|o| o.2).collect();
+        vacask.dedup();
+        for tok in vacask {
+            self.note(Code::W0024, tok);
+        }
         // `[REF]` p.236: `o1 options scale=1.2`; options take `name=value`
         // only. A portable option is SPICE's: its name lowercased and
         // mapped, its number respelled (SPICE `VNTOL=1M` is milli).
@@ -139,6 +154,21 @@ impl W<'_, '_> {
 }
 
 impl W<'_, '_> {
+    /// Notes what the testbench holds that neither target writes: each
+    /// `.print`, Xyce's own options, the save list where the target saves
+    /// every node.
+    pub(super) fn unwritten_outputs(&mut self, tb: &Tb) {
+        for &tok in &tb.prints {
+            self.ask(Construct::Print, tok);
+        }
+        for &tok in &tb.xyce {
+            self.note(Code::W0024, tok);
+        }
+        if let Some(tok) = tb.save_tok {
+            self.ask(Construct::Save, tok);
+        }
+    }
+
     /// The deck's testbench items, folded in read order.
     pub(super) fn fold(&self) -> Tb {
         let mut tb = Tb::default();
@@ -161,21 +191,28 @@ impl W<'_, '_> {
                                 Opt::Portable(k, v) => tb.options.push((k, v, tok)),
                                 Opt::Temp(t) => tb.temp = Some(t),
                                 Opt::Tnom(t) => tb.tnom = Some(t),
-                                Opt::Vacask(k, v) => tb.vacask.push((k, v)),
-                                // Xyce's own options.
-                                Opt::Xyce(..) => {}
+                                Opt::Vacask(k, v) => tb.vacask.push((k, v, tok)),
+                                Opt::Xyce(..) => {
+                                    if !tb.xyce.contains(&tok) {
+                                        tb.xyce.push(tok);
+                                    }
+                                }
                             }
                         }
                     }
-                    BenchCard::Saves(s) => tb.saves.extend(s),
+                    BenchCard::Saves(s) => {
+                        tb.save_tok.get_or_insert(tok);
+                        tb.saves.extend(s);
+                    }
                     BenchCard::Step { sweep, param, nums } => {
                         tb.steps.push((sweep, param, nums, tok))
                     }
                     BenchCard::Temp(t) => tb.temp = Some(t),
                     BenchCard::NodeVals(true, v) => tb.ics.extend(v),
                     BenchCard::NodeVals(false, v) => tb.nodesets.extend(v),
-                    // `Construct::Print` is `Spell(Omit)` here (a quirk).
-                    BenchCard::Print(..) => {}
+                    // `Construct::Print` is `Spell(Omit)` here (a quirk):
+                    // asked, and noted, by [`W::unwritten_outputs`].
+                    BenchCard::Print(..) => tb.prints.push(tok),
                     BenchCard::Meas(m) => tb.measures.push((m, tok)),
                     BenchCard::Extra(l) => tb.extra.push(l),
                 }

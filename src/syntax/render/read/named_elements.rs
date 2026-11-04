@@ -372,6 +372,7 @@ impl<'a> Rd<'a> {
                 ],
                 repeat: None,
                 delay: None,
+                cut: false,
             },
             Some("sine") if self.get(p, "fmmodindex").is_some() => Wave {
                 kind: WaveKind::Sffm,
@@ -384,6 +385,7 @@ impl<'a> Rd<'a> {
                 ],
                 repeat: None,
                 delay: None,
+                cut: false,
             },
             Some("sine") => Wave {
                 kind: WaveKind::Sin,
@@ -397,6 +399,7 @@ impl<'a> Rd<'a> {
                 ],
                 repeat: None,
                 delay: None,
+                cut: false,
             },
             Some("exp") if self.d == Dialect::Vacask => {
                 let n = |k: &str| self.get(p, k).map_or(Some(0.0), |v| self.number(v));
@@ -412,6 +415,7 @@ impl<'a> Rd<'a> {
                     ],
                     repeat: None,
                     delay: None,
+                    cut: false,
                 }
             }
             Some("exp") => Wave {
@@ -426,6 +430,7 @@ impl<'a> Rd<'a> {
                 ],
                 repeat: None,
                 delay: None,
+                cut: false,
             },
             Some("fm") => Wave {
                 kind: WaveKind::Sffm,
@@ -438,6 +443,7 @@ impl<'a> Rd<'a> {
                 ],
                 repeat: None,
                 delay: None,
+                cut: false,
             },
             Some("am") => Wave {
                 kind: WaveKind::Am,
@@ -450,6 +456,7 @@ impl<'a> Rd<'a> {
                 ],
                 repeat: None,
                 delay: None,
+                cut: false,
             },
             Some("pwl") if self.d == Dialect::Spectre => {
                 let w = self.get(p, "wave")?;
@@ -475,6 +482,7 @@ impl<'a> Rd<'a> {
                     args: xs,
                     repeat,
                     delay,
+                    cut: false,
                 }
             }
             Some(_) => return None,

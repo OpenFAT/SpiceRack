@@ -342,6 +342,58 @@ catalogue! {
         cite: "Spectre Reference 19.1 p.177 (correlate); docs/research/monte-carlo-spectre.md §6b",
         explain: "The correlations given have no Cholesky factor (a coefficient outside [-1, 1], or an inconsistent set), so no draw has them. Check the `cc=` values.",
     }
+    /// An element CDL's layout writes as an `* error:` comment: its ngspice
+    /// card has no form (the writer's refusal codes), or a Verilog-A load.
+    W0021 Note {
+        title: "an element written as an error comment",
+        cite: "no clause: the xschem layout's own form (codegen::xschem)",
+        explain: "The CDL netlist is still written, with this element as an `* error:` comment naming why (the ngspice card's refusal codes, or a Verilog-A load CDL cannot hold). An LVS run sees no device there; fix the element for ngspice first.",
+    }
+    /// A Verilog-A or OSDI load not written: on LTspice (no OSDI loader),
+    /// or inside a subcircuit (the writers load the top's alone).
+    W0022 Note {
+        title: "a Verilog-A load not written",
+        cite: "LTspice help (no OSDI or Verilog-A loader); docs/research/transpiler-architecture.md §5 phase 7",
+        explain: "The writer leaves the load out, as the old writer did: LTspice has no way to load a compiled model (phase 7 refuses it), and a load inside a subcircuit is not written on any target but ESPice. An instance of the model then names nothing the simulator knows; load it at the top.",
+    }
+    /// An output request (`.print`, `.save`, `.probe`) not written.
+    W0023 Note {
+        title: "an output request not written",
+        cite: "LTspice help, Xyce RG §2.1.21, VACASK docs (every vector saved); Spectre Reference 19.1 (no `.print` mapped)",
+        explain: "The target saves every vector anyway (LTspice, Xyce, VACASK), or the writer has no form for the request (Spectre's and VACASK's `.print`, HSPICE's `.probe` under a noise run). Select the outputs in the target's post-processing.",
+    }
+    /// An option not written: another simulator's own, or one with no effect
+    /// on the numbers.
+    W0024 Note {
+        title: "an option not written",
+        cite: "Xyce RG pp.96-104 (`.options <pkg>`); VACASK docs/cmd-options.md",
+        explain: "The option is another simulator's own (VACASK's on a SPICE target, Xyce's packaged options on Spectre or VACASK) or only cosmetic, so it is left out. Set the target's own option if one has the same effect.",
+    }
+    /// A `.control` line other than an analysis: not written.
+    W0025 Note {
+        title: "a control-block line not written",
+        cite: "ngspice manual ch.13 (the control language is a script, not a netlist)",
+        explain: "Only the analyses of an ngspice `.control` block are read; its script lines (`let`, `alter`, `write`, `plot` …) are not translated. Run the script on ngspice, or rewrite it for the target's own scripting.",
+    }
+    /// A waveform's arguments past the count the target's form takes.
+    W0026 Note {
+        title: "a waveform argument past the target's count not written",
+        cite: "ngspice manual §4.1.1 (PULSE's NP), §4.1.2 (SIN)",
+        explain: "The source's waveform has more arguments than the form written takes (ngspice's PULSE pulse count NP), and the extra ones are left out. Check that the waveform does not depend on them.",
+    }
+    /// A statement kept as text, copied as written into a target of its own
+    /// family (or CDL's layout).
+    W0027 Note {
+        title: "a statement kept as text, copied as written",
+        cite: "no clause: the text is the source dialect's (Pandoc's RawBlock rule)",
+        explain: "The reader kept this statement as its source's text (P0001, or a form the reader keeps raw), and the target reads that text, so it is copied unchecked: no capability or `^` check looks inside it.",
+    }
+    /// A statement the CDL layout (an LVS netlist) does not write.
+    W0028 Note {
+        title: "a statement the CDL layout does not write",
+        cite: "Cadence CDL (no analyses); the xschem layout (codegen::xschem)",
+        explain: "CDL is a netlist for LVS: analyses, library sections, conditionals, includes, functions and a subcircuit's models are not written. Netlist the deck for a simulator to keep them.",
+    }
     // W0101–W0200: the named writer's (Spectre, VACASK).
     /// A flag (a parameter with no value) a target taking only `name=value` cannot spell.
     W0101 Refusal {
@@ -396,6 +448,18 @@ catalogue! {
         title: "a measurement the target has no statement for",
         cite: "VACASK docs (no `measure`: post-process the raw file)",
         explain: "VACASK has no measurement statement. Compute the measurement from the raw file after the run.",
+    }
+    /// A `.lib file` with no section written as `include "file" section=`.
+    W0110 Note {
+        title: "a sectionless library call written with an empty section",
+        cite: "Spectre Reference 19.1 p.493 (include ... section=); docs/research/transpiler-architecture.md §5 phase 7",
+        explain: "The SPICE `.lib file` names no section; the writer writes `include \"file\" section=` with an empty section, as the old writer did (phase 7 refuses it). Name the section, or use `.include`.",
+    }
+    /// A `.model` level that is no number, mapped as level 1.
+    W0111 Note {
+        title: "a model level that is no number, read as level 1",
+        cite: "Spectre Reference 19.1 p.498 (model masters)",
+        explain: "The model's `level` is an expression, so the master is chosen as for level 1 (`mos1`, `bjt`). Write the level as a number so the master matches the model's equations.",
     }
 }
 

@@ -33,7 +33,7 @@ mod vacask;
 mod vacask_bench;
 mod vacask_cards;
 
-use super::capability::{Action, Construct, Rule, action};
+use super::capability::{Action, Alt, Construct, Rule, action};
 use super::draws::{self, Draws, Layers};
 use super::names::Names;
 use super::out::{Out, Space};
@@ -63,15 +63,17 @@ struct W<'a, 'r> {
     /// The deck's element names (the name map both writers share).
     names: Names,
     o: Out,
-    refused: Vec<Diag>,
+    /// The deck's diagnostics: refusals and notes.
+    diags: Vec<Diag>,
 }
 
-/// The deck `rd` read, written for `target`; the refusals when any
-/// construct has no meaning-keeping form there.
+/// The deck `rd` read, written for `target`, and its diagnostics: the
+/// refusals when any construct has no meaning-keeping form there (the text
+/// is then not the deck), the notes of what is kept or left out.
 ///
 /// # Panics
 /// For a target outside the named family (Spectre, VACASK).
-pub(super) fn write(rd: &mut Rd, deck: &Deck, target: Dialect) -> Result<String, Vec<Diag>> {
+pub(super) fn write(rd: &mut Rd, deck: &Deck, target: Dialect) -> (String, Vec<Diag>) {
     let mut refused = Vec::new();
     let lifted = match action(target, Construct::StatisticalCall) {
         Action::Lift(Rule::RackVars) => lift::lift(rd, deck, &mut refused),
@@ -100,7 +102,7 @@ pub(super) fn write(rd: &mut Rd, deck: &Deck, target: Dialect) -> Result<String,
         draws,
         names: Names::new(rd, deck),
         o: Out::new(4096),
-        refused,
+        diags: refused,
     };
     w.checks();
     match target {
@@ -108,20 +110,20 @@ pub(super) fn write(rd: &mut Rd, deck: &Deck, target: Dialect) -> Result<String,
         Dialect::Vacask => w.vacask(),
         _ => panic!("write: a named target"),
     }
-    match w.refused.is_empty() {
-        true => Ok(w.o.finish()),
-        false => Err(w.refused),
-    }
+    (w.o.finish(), w.diags)
 }
 
 // ---- private ----
 
 impl W<'_, '_> {
-    /// `c`'s action for the target; a refusal is recorded at `token`.
+    /// `c`'s action for the target; a refusal, or the note of a drop or a
+    /// copy, is recorded at `token`.
     fn ask(&mut self, c: Construct, token: u32) -> Action {
         let a = action(self.d, c);
-        if let Action::Refuse(code) = a {
-            self.refuse(code, token);
+        match a {
+            Action::Refuse(code) => self.refuse(code, token),
+            Action::Spell(Alt::Omit(code) | Alt::Copy(code)) => self.note(code, token),
+            Action::Native | Action::Spell(_) | Action::Lift(_) => {}
         }
         a
     }
@@ -146,11 +148,24 @@ impl W<'_, '_> {
     }
 
     fn refuse(&mut self, code: Code, token: u32) {
-        self.refused.push(Diag { code, token });
+        self.diags.push(Diag { code, token });
+    }
+
+    /// A note at `token`: something kept or left out, the deck still
+    /// written.
+    fn note(&mut self, code: Code, token: u32) {
+        self.diags.push(Diag { code, token });
     }
 
     fn line(&mut self, text: &str) {
         self.o.token(text, Space::Line);
+    }
+
+    /// Notes the loads inside subcircuits: the deck loads the top's alone.
+    fn unwritten_loads(&mut self) {
+        for &n in self.deck.defs.iter().flat_map(|s| &s.loads) {
+            self.note(Code::W0022, self.rd.main(n));
+        }
     }
 
     /// The whole Spectre deck, with no line end after its last line.
@@ -179,6 +194,7 @@ impl W<'_, '_> {
             let p = self.rd.unquote(self.rd.fields(n)[0]);
             self.line(&format!("ahdl_include \"{p}\""));
         }
+        self.unwritten_loads();
         self.file_cards(top);
         let params = self.param_defs(top, Some(None));
         if !params.is_empty() {

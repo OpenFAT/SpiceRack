@@ -48,7 +48,8 @@ struct W<'a, 'r> {
     /// The deck's numbers were read with ngspice's arithmetic.
     x: bool,
     o: Out,
-    refused: Vec<Diag>,
+    /// The deck's diagnostics: refusals and notes.
+    diags: Vec<Diag>,
     /// The `statistics` lift's fixups.
     draws: draws::Draws,
     /// The element names, letters added.
@@ -63,16 +64,17 @@ struct W<'a, 'r> {
     in_section: bool,
 }
 
-/// The deck `rd` read, written for `target`; the refusals when any
-/// construct has no meaning-keeping form there. The `Lift` rules record
-/// their fixups in `rd` before anything is written.
-pub(super) fn write(rd: &mut Rd, deck: &Deck, target: Dialect) -> Result<String, Vec<Diag>> {
+/// The deck `rd` read, written for `target`, and its diagnostics: the
+/// refusals when any construct has no meaning-keeping form there (the text
+/// is then not the deck), the notes of what is kept or left out. The `Lift`
+/// rules record their fixups in `rd` before anything is written.
+pub(super) fn write(rd: &mut Rd, deck: &Deck, target: Dialect) -> (String, Vec<Diag>) {
     let sp = spelling(target);
-    let mut refused = Vec::new();
+    let mut diags = Vec::new();
     let draws = match action(target, Construct::Statistics) {
         Action::Lift(Rule::StatisticsDraws) => {
             draws::lift(rd, deck, Layers::Two).unwrap_or_else(|d| {
-                refused.push(d);
+                diags.push(d);
                 draws::Draws::default()
             })
         }
@@ -88,7 +90,7 @@ pub(super) fn write(rd: &mut Rd, deck: &Deck, target: Dialect) -> Result<String,
         // which spells numbers without ngspice's arithmetic.
         x: rd.d == Dialect::Ngspice && target != Dialect::Cdl,
         o: Out::new(4096),
-        refused,
+        diags,
         draws,
         names: names::Names::new(rd, deck),
         scope: crate::syntax::ast::NONE,
@@ -98,10 +100,7 @@ pub(super) fn write(rd: &mut Rd, deck: &Deck, target: Dialect) -> Result<String,
     w.checks();
     if target == Dialect::Cdl {
         w.cdl();
-        return match w.refused.is_empty() {
-            true => Ok(w.o.finish()),
-            false => Err(w.refused),
-        };
+        return (w.o.finish(), w.diags);
     }
     let frame = w.frame();
     let control = if frame.control { w.control_run() } else { None };
@@ -129,10 +128,7 @@ pub(super) fn write(rd: &mut Rd, deck: &Deck, target: Dialect) -> Result<String,
         // The deck ends on its last card's line end.
         false => w.o.pop(),
     }
-    match w.refused.is_empty() {
-        true => Ok(w.o.finish()),
-        false => Err(w.refused),
-    }
+    (w.o.finish(), w.diags)
 }
 
 // ---- private ----
@@ -165,17 +161,26 @@ impl W<'_, '_> {
         f
     }
 
-    /// `c`'s action for the target; a refusal is recorded at `token`.
+    /// `c`'s action for the target; a refusal, or the note of a drop or a
+    /// copy, is recorded at `token`.
     fn ask(&mut self, c: Construct, token: u32) -> Action {
         let a = action(self.d, c);
-        if let Action::Refuse(code) = a {
-            self.refuse(code, token);
+        match a {
+            Action::Refuse(code) => self.refuse(code, token),
+            Action::Spell(Alt::Omit(code) | Alt::Copy(code)) => self.note(code, token),
+            Action::Native | Action::Spell(_) | Action::Lift(_) => {}
         }
         a
     }
 
     fn refuse(&mut self, code: Code, token: u32) {
-        self.refused.push(Diag { code, token });
+        self.diags.push(Diag { code, token });
+    }
+
+    /// A note at `token`: something kept or left out, the deck still
+    /// written.
+    fn note(&mut self, code: Code, token: u32) {
+        self.diags.push(Diag { code, token });
     }
 
     /// Model loads that must precede any card instantiating them:
@@ -230,7 +235,22 @@ impl W<'_, '_> {
                     }
                 }
             }
+            Dialect::Ltspice => {
+                for &n in &deck.top.loads {
+                    let c = match source(&path(n)) {
+                        true => Construct::VerilogALoad,
+                        false => Construct::OsdiLoad,
+                    };
+                    self.ask(c, self.rd.main(n));
+                }
+            }
             _ => {}
+        }
+        // ESPice loads a subcircuit's too (above); the others the top's.
+        if self.d != Dialect::Espice {
+            for &n in deck.defs.iter().flat_map(|s| &s.loads) {
+                self.note(Code::W0022, self.rd.main(n));
+            }
         }
     }
 

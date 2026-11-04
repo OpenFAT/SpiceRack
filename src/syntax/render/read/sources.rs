@@ -36,6 +36,9 @@ pub(in crate::syntax::render) struct Wave {
     /// PWL `r=`, `td=`.
     pub(in crate::syntax::render) repeat: Option<Num>,
     pub(in crate::syntax::render) delay: Option<Num>,
+    /// The statement gave more values than `args` holds (ngspice's PULSE
+    /// count NP): the rest are not written.
+    pub(in crate::syntax::render) cut: bool,
 }
 
 /// A waveform's kind, by its keyword.
@@ -309,6 +312,12 @@ impl<'a> Rd<'a> {
                 .map(|i| a.get(i).cloned().unwrap_or(Num::Num(0.0)))
                 .collect()
         };
+        let held = match w {
+            WaveKind::Sin | WaveKind::Exp => 6,
+            WaveKind::Pulse | WaveKind::Trnoise => 7,
+            WaveKind::Sffm | WaveKind::Am | WaveKind::Trrandom => 5,
+            WaveKind::Pwl => a.len(),
+        };
         let args = match w {
             WaveKind::Sin | WaveKind::Exp => padded(6),
             WaveKind::Pulse | WaveKind::Trnoise => padded(7),
@@ -332,6 +341,7 @@ impl<'a> Rd<'a> {
             args,
             repeat: None,
             delay: None,
+            cut: a.len() > held,
         })
     }
 }

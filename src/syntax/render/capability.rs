@@ -125,9 +125,10 @@ pub enum Alt {
     PreOsdi,
     /// `.probe` per output, `.option post` for all (HSPICE).
     Probe,
-    /// Not written, with no loss: an LTspice or Xyce run saves every
-    /// vector and has no stdout print.
-    Omit,
+    /// Not written, the code the note the writer records for it.
+    Omit(Code),
+    /// Written as is, the code the note the writer records for it.
+    Copy(Code),
     /// `c1 (a b) bsource q=expr` (Spectre Reference 19.1 p.459).
     BsourceCharge,
     /// PWL `r=0` as `pwlperiod=` where it repeats exactly, `td=` as
@@ -167,7 +168,7 @@ pub const fn action(target: Dialect, c: Construct) -> Action {
         Construct::ForeignText => match target {
             // quirk: the xschem layout (CDL) copies another family's text
             // as written, as the old writer did; phase 7 refuses it.
-            D::Cdl => Native,
+            D::Cdl => Spell(Alt::Copy(Code::W0027)),
             D::Ngspice | D::Espice | D::Hspice | D::Xyce | D::Ltspice => Refuse(Code::W0001),
             D::Spectre | D::Vacask | D::Verilog => Refuse(Code::W0001),
         },
@@ -185,14 +186,14 @@ pub const fn action(target: Dialect, c: Construct) -> Action {
             D::Xyce => Refuse(Code::W0004),
             // quirk: the old LTspice writer drops a load (LTspice has no
             // OSDI loader); phase 7 refuses it.
-            D::Ltspice => Spell(Alt::Omit),
+            D::Ltspice => Spell(Alt::Omit(Code::W0022)),
             D::Spectre | D::Vacask | D::Cdl | D::Verilog => Native,
         },
         Construct::OsdiLoad => match target {
             D::Ngspice => Spell(Alt::PreOsdi),
             D::Espice | D::Hspice | D::Xyce => Refuse(Code::W0004),
             // quirk: as `VerilogALoad`.
-            D::Ltspice => Spell(Alt::Omit),
+            D::Ltspice => Spell(Alt::Omit(Code::W0022)),
             D::Spectre | D::Vacask | D::Cdl | D::Verilog => Native,
         },
         Construct::LibWholeFile => match target {
@@ -200,7 +201,7 @@ pub const fn action(target: Dialect, c: Construct) -> Action {
             D::Ngspice | D::Espice | D::Hspice | D::Xyce => Refuse(Code::W0005),
             // quirk: the old Spectre and VACASK writers wrote `include
             // "file" section=` (no section); phase 7 refuses it.
-            D::Spectre | D::Vacask => Native,
+            D::Spectre | D::Vacask => Spell(Alt::Copy(Code::W0110)),
             D::Cdl | D::Verilog => Refuse(Code::W0005),
         },
         Construct::LibSection => match target {
@@ -306,17 +307,18 @@ pub const fn action(target: Dialect, c: Construct) -> Action {
             D::Cdl | D::Verilog => Native,
         },
         Construct::Print => match target {
-            D::Ltspice => Spell(Alt::Omit),
+            // An LTspice run saves every vector and has no stdout print.
+            D::Ltspice => Spell(Alt::Omit(Code::W0023)),
             D::Ngspice | D::Espice | D::Hspice | D::Xyce => Native,
             // quirk: the old Spectre and VACASK writers drop a `.print`
             // (never mapped); phase 7 decides.
-            D::Spectre | D::Vacask => Spell(Alt::Omit),
+            D::Spectre | D::Vacask => Spell(Alt::Omit(Code::W0023)),
             D::Cdl | D::Verilog => Native,
         },
         Construct::Save => match target {
             D::Hspice => Spell(Alt::Probe),
             // VACASK saves every node and source flow unless `strictsave`.
-            D::Xyce | D::Vacask => Spell(Alt::Omit),
+            D::Xyce | D::Vacask => Spell(Alt::Omit(Code::W0023)),
             D::Ngspice | D::Espice | D::Ltspice => Native,
             D::Spectre | D::Cdl | D::Verilog => Native,
         },
@@ -347,14 +349,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn spell_and_lift_never_carry_a_code_and_refusals_are_w_codes() {
-        // Every refusal is a render-stage code; the table is total over the
-        // targets the writers serve.
+    fn refusals_are_w_refusal_codes_and_omissions_w_notes() {
+        // Every refusal is a render-stage refusal code, every drop or copy a
+        // render-stage note; the table is total over the targets the writers
+        // serve.
+        use crate::syntax::diag::{Kind, info};
         for d in Dialect::ALL {
             for c in CONSTRUCTS {
-                if let Action::Refuse(code) = action(d, c) {
-                    assert!(format!("{code:?}").starts_with('W'), "{d:?} {c:?}");
-                }
+                let (code, kind) = match action(d, c) {
+                    Action::Refuse(code) => (code, Kind::Refusal),
+                    Action::Spell(Alt::Omit(code) | Alt::Copy(code)) => (code, Kind::Note),
+                    Action::Native | Action::Spell(_) | Action::Lift(_) => continue,
+                };
+                assert!(format!("{code:?}").starts_with('W'), "{d:?} {c:?}");
+                assert_eq!(info(code).kind, kind, "{d:?} {c:?}");
             }
         }
     }

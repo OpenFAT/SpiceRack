@@ -19,7 +19,7 @@
 
 use spicerack::codegen::{Dialect, netlist};
 use spicerack::import::parse;
-use spicerack::syntax::diag::Code;
+use spicerack::syntax::diag::{Code, Kind, info};
 use spicerack::syntax::render::render_text;
 
 const SPICE: [Dialect; 5] = [
@@ -312,4 +312,104 @@ fn fixtures_render_as_the_old_writer_did_and_as_pinned() {
     for f in ["func_stats.sp", "func_stats.cir"] {
         assert!(pinned(f, "vacask.refused").contains("new: W0106"), "{f}");
     }
+}
+
+#[test]
+fn what_a_writer_leaves_out_or_copies_is_a_note_by_code() {
+    // Each deck is still written; the note names what the target does not
+    // get as read (diag.rs, `Kind::Note`).
+    let spectre = "// t\nsimulator lang=spectre\nahdl_include \"m.va\"\nr1 (a 0) resistor r=1k\n";
+    let cases: [(&str, Dialect, Dialect, Code); 11] = [
+        (spectre, Dialect::Spectre, Dialect::Cdl, Code::W0021),
+        (spectre, Dialect::Spectre, Dialect::Ltspice, Code::W0022),
+        (
+            "t\nR1 a 0 1k\n.tran 1n 10n\n.print tran v(a)\n.end\n",
+            Dialect::Ngspice,
+            Dialect::Ltspice,
+            Code::W0023,
+        ),
+        (
+            "t\nR1 a 0 1k\n.op\n.save v(a)\n.end\n",
+            Dialect::Ngspice,
+            Dialect::Xyce,
+            Code::W0023,
+        ),
+        (
+            "t\nR1 a 0 1k\n.op\n.options klu\n.end\n",
+            Dialect::Ngspice,
+            Dialect::Vacask,
+            Code::W0024,
+        ),
+        (
+            "t\nR1 a 0 1k\n.control\nlet x=1\nop\n.endc\n.end\n",
+            Dialect::Ngspice,
+            Dialect::Ngspice,
+            Code::W0025,
+        ),
+        (
+            "t\nV1 a 0 PULSE(0 1 0 1n 1n 5n 10n 3)\nR1 a 0 1k\n.tran 1n 10n\n.end\n",
+            Dialect::Ngspice,
+            Dialect::Hspice,
+            Code::W0026,
+        ),
+        (
+            "t\n.subckt s a\n.func f(x) {x}\nR1 a 0 1k\n.ends\n.end\n",
+            Dialect::Ngspice,
+            Dialect::Espice,
+            Code::W0027,
+        ),
+        (
+            "t\nR1 a 0 1k\n.op\n.end\n",
+            Dialect::Ngspice,
+            Dialect::Cdl,
+            Code::W0028,
+        ),
+        (
+            "t\n.lib models.lib\nR1 a 0 1k\n.op\n.end\n",
+            Dialect::Ltspice,
+            Dialect::Spectre,
+            Code::W0110,
+        ),
+        (
+            "t\n.param x=2\n.model m nmos level={x}\nM1 d g 0 0 m\n.op\n.end\n",
+            Dialect::Ngspice,
+            Dialect::Spectre,
+            Code::W0111,
+        ),
+    ];
+    for (deck, d, t, code) in cases {
+        let written =
+            render_text(deck, d, "t", t).unwrap_or_else(|e| panic!("{t:?} refused {e:?}\n{deck}"));
+        let codes: Vec<Code> = written.notes.diags.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&code),
+            "{t:?}: {codes:?}, not {code:?}\n{deck}"
+        );
+        assert!(
+            codes.iter().all(|&c| info(c).kind == Kind::Note),
+            "{codes:?}"
+        );
+        assert!(
+            written.notes.messages.contains(&format!(" {code:?} ")),
+            "{}",
+            written.notes.messages
+        );
+    }
+}
+
+#[test]
+fn a_diagnostic_is_anchored_at_its_statement_and_messages_are_in_source_order() {
+    // LTspice reads `^` as XOR (W0002), and has no `aunif` form (W0003):
+    // each anchored at the line holding it, not the deck's first token.
+    let deck = "t\nR1 a 0 1k\nR2 a 0 {aunif(1k, 10)}\nR3 a 0 {2^3}\n.op\n.end\n";
+    let Err(refused) = render_text(deck, Dialect::Ngspice, "t", Dialect::Ltspice) else {
+        panic!("refused");
+    };
+    let codes: Vec<Code> = refused.diags.iter().map(|d| d.code).collect();
+    assert_eq!(codes, [Code::W0003, Code::W0002]);
+    assert_eq!(
+        refused.messages,
+        "t:3:1: W0003 a statistical function the target lacks\n\
+         t:4:1: W0002 a `^` that means power in one dialect and XOR in the other\n"
+    );
 }

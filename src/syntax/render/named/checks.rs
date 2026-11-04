@@ -15,24 +15,44 @@ use crate::codegen::Dialect;
 use crate::syntax::ast::NONE;
 use crate::syntax::diag::Code;
 use crate::syntax::render::capability::Construct;
-use crate::syntax::render::read::{Block, Card, Comp, Num, Raw, Val};
+use crate::syntax::render::read::{Block, Card, Comp, Func, Num, Raw, Val};
 
 impl W<'_, '_> {
     /// Records the deck-wide refusals.
     pub(super) fn checks(&mut self) {
         let blocks = self.blocks();
-        if self.rd.d != self.d
-            && let Some(tok) = blocks.iter().find_map(|b| self.first_raw(b))
-        {
-            self.ask(Construct::ForeignText, tok);
+        // Text kept from another dialect reaches only its own, which
+        // copies it unchecked.
+        let raws: Vec<u32> = blocks.iter().flat_map(|b| self.raws(b)).collect();
+        match self.rd.d != self.d {
+            true => {
+                if let Some(&tok) = raws.first() {
+                    self.ask(Construct::ForeignText, tok);
+                }
+            }
+            false => raws.iter().for_each(|&tok| self.note(Code::W0027, tok)),
+        }
+        // A waveform's values past its form's count are not written.
+        for b in &blocks {
+            for &c in &b.comps {
+                if let Comp::Card(n) = c
+                    && let Card::Source { wave: Some(w), .. } = self.rd.card_view(n)
+                    && w.cut
+                {
+                    self.note(Code::W0026, self.rd.main(n));
+                }
+            }
         }
         if let Some(tok) = blocks.iter().find_map(|b| self.first_flag(b)) {
             self.refuse(Code::W0101, tok);
         }
         if caret_means_power(self.rd.d) != caret_means_power(self.d)
-            && self.expressions(&blocks).iter().any(|e| e.contains('^'))
+            && let Some((_, tok)) = self
+                .expressions(&blocks)
+                .into_iter()
+                .find(|(e, _)| e.contains('^'))
         {
-            self.ask(Construct::CaretReread, 0);
+            self.ask(Construct::CaretReread, tok);
         }
     }
 }
@@ -85,18 +105,30 @@ impl<'r> W<'_, 'r> {
         out
     }
 
-    /// The first token of block `b`'s first statement kept as text.
-    fn first_raw(&self, b: &Block) -> Option<u32> {
-        let line = b.raw.first().map(|&r| match r {
+    /// A function's first token.
+    fn func_token(&self, f: Func) -> u32 {
+        let (Func::Param(n) | Func::Card(n) | Func::Real(n)) = f;
+        self.rd.main(n)
+    }
+
+    /// The first `statistics` statement's first token, where the draws it
+    /// lowers to anchor; 0 when the blocks hold none.
+    fn statistics_token(&self, blocks: &[&Block]) -> u32 {
+        let st = blocks.iter().find_map(|b| b.statistics.first());
+        st.map_or(0, |&n| self.rd.main(n))
+    }
+
+    /// The first token of each of block `b`'s statements kept as text: its
+    /// lines, then its elements.
+    fn raws(&self, b: &Block) -> Vec<u32> {
+        let lines = b.raw.iter().map(|&r| match r {
             Raw::Line(n) | Raw::Lines(n) | Raw::Joined(n) => n,
         });
-        let comp = || {
-            b.comps.iter().find_map(|c| match c {
-                Comp::Raw(n) => Some(*n),
-                Comp::Card(_) => None,
-            })
-        };
-        line.or_else(comp).map(|n| self.rd.main(n))
+        let comps = b.comps.iter().filter_map(|c| match c {
+            Comp::Raw(n) => Some(*n),
+            Comp::Card(_) => None,
+        });
+        lines.chain(comps).map(|n| self.rd.main(n)).collect()
     }
 
     /// The first token of block `b`'s first model or element with a flag.
@@ -131,43 +163,42 @@ impl<'r> W<'_, 'r> {
     /// functions, parameters, model, instance and element values (the old
     /// IR's expressions). Text kept as lines is not: it reaches its own
     /// dialect only.
-    fn expressions(&self, blocks: &[&Block]) -> Vec<String> {
-        let mut out: Vec<String> = self
+    fn expressions(&self, blocks: &[&Block]) -> Vec<(String, u32)> {
+        let mut out: Vec<(String, u32)> = self
             .deck
             .funcs
             .iter()
             .filter(|&&f| self.lifted.writes(f))
-            .map(|&f| self.rd.func_view(f).2)
+            .map(|&f| (self.rd.func_view(f).2, self.func_token(f)))
             .collect();
-        out.extend(self.draws.texts().map(str::to_string));
+        let at = self.statistics_token(blocks);
+        out.extend(self.draws.texts().map(|t| (t.to_string(), at)));
         for b in blocks {
             if b.node != NONE {
                 let head = self
                     .rd
                     .subckt_head(b.node)
                     .expect("the reader read the head");
-                out.extend(head.params.into_iter().map(|(_, v)| v));
+                let tok = self.rd.main(b.node);
+                out.extend(head.params.into_iter().map(|(_, v)| (v, tok)));
             }
             for &p in b.params.iter().chain(&b.locals) {
-                out.push(self.rd.param_view(p).1);
+                out.push((self.rd.param_view(p).1, self.rd.main(p)));
             }
             for &(m, bin) in &b.models {
-                out.extend(
-                    self.rd
-                        .model_view(m, bin)
-                        .params
-                        .into_iter()
-                        .map(|(_, v)| v),
-                );
+                let tok = self.rd.main(m);
+                let params = self.rd.model_view(m, bin).params;
+                out.extend(params.into_iter().map(|(_, v)| (v, tok)));
             }
             for &(_, i) in &b.insts {
                 if let Card::Inst { params, .. } = self.rd.card_view(i) {
-                    out.extend(params.into_iter().map(|(_, v)| v));
+                    let tok = self.rd.main(i);
+                    out.extend(params.into_iter().map(|(_, v)| (v, tok)));
                 }
             }
             for &c in &b.comps {
                 if let Comp::Card(n) = c {
-                    card_exprs(self.rd.card_view(n), &mut out);
+                    card_exprs(self.rd.card_view(n), self.rd.main(n), &mut out);
                 }
             }
         }
@@ -176,32 +207,33 @@ impl<'r> W<'_, 'r> {
 }
 
 /// The expressions one element carries (the old IR's `Component::exprs`).
-fn card_exprs(c: Card, out: &mut Vec<String>) {
+fn card_exprs(c: Card, tok: u32, out: &mut Vec<(String, u32)>) {
     let expr = |v: Val| match v {
-        Val::Expr(e) => Some(e),
+        Val::Expr(e) => Some((e, tok)),
         Val::Num(_) | Val::Raw(_) => None,
     };
+    let at = |(_, v): (String, String)| (v, tok);
     match c {
         Card::Rcl { value, params, .. } => {
-            out.extend(params.into_iter().map(|(_, v)| v));
+            out.extend(params.into_iter().map(at));
             out.extend(expr(value));
         }
         Card::Source { value, wave, .. } => {
             if let Some(w) = wave {
                 let nums = w.args.into_iter().chain(w.repeat).chain(w.delay);
                 out.extend(nums.filter_map(|n| match n {
-                    Num::Expr(e) => Some(e),
+                    Num::Expr(e) => Some((e, tok)),
                     Num::Num(_) => None,
                 }));
             }
             out.extend(expr(value));
         }
-        Card::Behavioural { expr, .. } => out.push(expr),
+        Card::Behavioural { expr, .. } => out.push((expr, tok)),
         Card::Charge { charge, params, .. } => {
-            out.push(charge);
-            out.extend(params.into_iter().map(|(_, v)| v));
+            out.push((charge, tok));
+            out.extend(params.into_iter().map(at));
         }
-        Card::Semi { params, .. } => out.extend(params.into_iter().map(|(_, v)| v)),
+        Card::Semi { params, .. } => out.extend(params.into_iter().map(at)),
         Card::Coupling { .. }
         | Card::Linear { .. }
         | Card::Poly { .. }

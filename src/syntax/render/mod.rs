@@ -39,7 +39,7 @@ mod spice;
 
 use crate::codegen::Dialect;
 use crate::syntax::ast::Ast;
-use crate::syntax::diag::{self, Diag};
+use crate::syntax::diag::{self, Diag, Kind};
 use crate::syntax::resolve::{FileId, Kit, Role};
 use crate::syntax::token::Tokens;
 use crate::syntax::{lexicon, parse, tokenize};
@@ -81,24 +81,23 @@ pub struct Diags {
 pub fn render(src: &Source, target: Dialect) -> Result<Written, Diags> {
     assert!(writes(target), "render: a target with a writer");
     let (mut rd, deck) = read::read(src.ast, src.tokens, src.dialect, src.name, src.kit);
-    let written = match target {
+    let (text, written) = match target {
         Dialect::Spectre | Dialect::Vacask => named::write(&mut rd, &deck, target),
         _ => spice::write(&mut rd, &deck, target),
     };
     // The earlier stages' notes: the kit's for its file (the parser's
-    // copied, then its own), else the parser's.
+    // copied, then its own), else the parser's; then the reader's and the
+    // writer's.
     let mut diags = match src.kit {
         Some((kit, f)) => kit.file(f).diags.clone(),
         None => src.ast.diags().to_vec(),
     };
-    let text = match written {
-        Ok(text) => Some(text),
-        Err(refused) => {
-            assert!(!refused.is_empty(), "a refusal has its codes");
-            diags.extend(refused);
-            None
-        }
-    };
+    diags.extend(deck.notes.iter().copied());
+    diags.extend(written);
+    let refused = diags
+        .iter()
+        .any(|d| diag::info(d.code).kind == Kind::Refusal);
+    let text = (!refused).then_some(text);
     diag::sort(&mut diags);
     let messages = diag::messages(&diags, src.tokens, src.name);
     let diags = Diags { diags, messages };

@@ -1,2 +1,2 @@
 old: Code generation error: expression 'Laplace(V(in,o1), 2/(1+s*2e-4+s^2*1e-8))' uses '^', which means power in ngspice but XOR in xyce; refusing to reinterpret it
-new: W0002 W0011 W0011
+new: W0011 W0002 W0011

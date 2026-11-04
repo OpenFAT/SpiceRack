@@ -17,7 +17,8 @@
 
 use super::W;
 use crate::codegen::Dialect;
-use crate::syntax::render::capability::{Action, Alt, Construct};
+use crate::syntax::diag::Code;
+use crate::syntax::render::capability::{Action, Alt, Construct, action};
 use crate::syntax::render::out::Space;
 use crate::syntax::render::read::{Ana, Bench, BenchCard, Opt};
 use crate::syntax::render::spelling::spelling;
@@ -27,14 +28,21 @@ use crate::syntax::render::spelling::spelling;
 pub(super) struct Tb {
     /// Each analysis, with its statement's first token.
     analyses: Vec<(Ana, u32)>,
-    portable: Vec<(String, String)>,
+    /// The portable options, with their statement's first token.
+    portable: Vec<(String, String, u32)>,
     xyce: Vec<(String, String)>,
     temp: Option<f64>,
     tnom: Option<f64>,
     ics: Vec<(String, f64)>,
     nodesets: Vec<(String, f64)>,
     saves: Vec<String>,
-    prints: Vec<(String, Vec<String>)>,
+    /// The first save card's first token.
+    save_tok: Option<u32>,
+    /// Each `.print`: its analysis, its outputs and its first token.
+    prints: Vec<(String, Vec<String>, u32)>,
+    /// The first token of each options card holding an option not
+    /// written: VACASK's own, or Xyce's on another target.
+    dropped: Vec<u32>,
     measures: Vec<String>,
     /// Each `.step`'s sweep, name, numbers and first token.
     steps: Vec<(Option<&'static str>, String, [f64; 3], u32)>,
@@ -126,6 +134,9 @@ impl W<'_, '_> {
     /// The testbench's cards.
     pub(super) fn bench(&mut self, control: Option<&[String]>) {
         let tb = self.fold();
+        for &tok in &tb.dropped {
+            self.note(Code::W0024, tok);
+        }
         if self.d == Dialect::Xyce {
             for l in self.xyce_options(&tb) {
                 self.o.token(&l, Space::Line);
@@ -134,7 +145,7 @@ impl W<'_, '_> {
             let opts: Vec<String> = tb
                 .portable
                 .iter()
-                .map(|(k, v)| {
+                .map(|(k, v, _)| {
                     let k = if k == "max_iterations" { "ITL1" } else { k };
                     if v.is_empty() {
                         k.to_string()
@@ -165,8 +176,8 @@ impl W<'_, '_> {
             self.o.token(&format!(".nodeset V({n})={v}"), Space::Line);
         }
         self.saves(&tb);
-        if self.ask(Construct::Print, 0) == Action::Native {
-            for (kind, outs) in &tb.prints {
+        for (kind, outs, tok) in &tb.prints {
+            if self.ask(Construct::Print, *tok) == Action::Native {
                 let sep = if kind.is_empty() { "" } else { " " };
                 let line = format!(".print{sep}{kind} {}", outs.join(" "));
                 self.o.token(&line, Space::Line);
@@ -236,20 +247,32 @@ impl W<'_, '_> {
                 BenchCard::Options(opts) => {
                     for o in opts {
                         match o {
-                            Opt::Portable(k, v) => tb.portable.push((k, v)),
-                            Opt::Xyce(k, v) => tb.xyce.push((k, v)),
+                            Opt::Portable(k, v) => tb.portable.push((k, v, tok)),
+                            Opt::Xyce(k, v) => {
+                                if self.d != Dialect::Xyce && !tb.dropped.contains(&tok) {
+                                    tb.dropped.push(tok);
+                                }
+                                tb.xyce.push((k, v));
+                            }
                             Opt::Temp(t) => tb.temp = Some(t),
                             Opt::Tnom(t) => tb.tnom = Some(t),
-                            Opt::Vacask(..) => {}
+                            Opt::Vacask(..) => {
+                                if !tb.dropped.contains(&tok) {
+                                    tb.dropped.push(tok);
+                                }
+                            }
                         }
                     }
                 }
-                BenchCard::Saves(s) => tb.saves.extend(s),
+                BenchCard::Saves(s) => {
+                    tb.save_tok.get_or_insert(tok);
+                    tb.saves.extend(s);
+                }
                 BenchCard::Step { sweep, param, nums } => tb.steps.push((sweep, param, nums, tok)),
                 BenchCard::Temp(t) => tb.temp = Some(t),
                 BenchCard::NodeVals(true, v) => tb.ics.extend(v),
                 BenchCard::NodeVals(false, v) => tb.nodesets.extend(v),
-                BenchCard::Print(k, outs) => tb.prints.push((k, outs)),
+                BenchCard::Print(k, outs) => tb.prints.push((k, outs, tok)),
                 BenchCard::Meas(m) => tb.measures.push(m),
                 BenchCard::Extra(l) => tb.extra.push(l),
             }
@@ -267,8 +290,10 @@ impl W<'_, '_> {
             .iter()
             .any(|(a, _)| matches!(a, Ana::Noise { .. }));
         let ngspice = matches!(self.d, Dialect::Ngspice | Dialect::Espice);
-        match self.ask(Construct::Save, 0) {
-            Action::Spell(Alt::Omit) => {}
+        // Asked here, not through `ask`: a deck with no save card has no
+        // token to note an omission at.
+        let written = match action(self.d, Construct::Save) {
+            Action::Spell(Alt::Omit(_)) => tb.saves.is_empty(),
             Action::Spell(Alt::Probe) if !noise => {
                 for s in &tb.saves {
                     let line = match s.as_str() {
@@ -277,6 +302,7 @@ impl W<'_, '_> {
                     };
                     self.o.token(&line, Space::Line);
                 }
+                true
             }
             _ if ngspice && noise => {
                 let mut line = String::from(".save all");
@@ -284,12 +310,17 @@ impl W<'_, '_> {
                     line.push_str(&format!(" {s}"));
                 }
                 self.o.token(&line, Space::Line);
+                true
             }
             _ if !tb.saves.is_empty() && !noise => {
                 self.o
                     .token(&format!(".save {}", tb.saves.join(" ")), Space::Line);
+                true
             }
-            _ => {}
+            _ => tb.saves.is_empty(),
+        };
+        if let Some(tok) = tb.save_tok.filter(|_| !written) {
+            self.note(Code::W0023, tok);
         }
     }
 
@@ -451,7 +482,7 @@ impl W<'_, '_> {
                 format!("{k}={v}")
             }
         };
-        for (k, v) in &tb.portable {
+        for (k, v, tok) in &tb.portable {
             let (pkg, key) = match k.to_ascii_lowercase().as_str() {
                 "reltol" => ("timeint", "reltol"),
                 "vntol" => ("nonlin", "abstol"),
@@ -461,7 +492,7 @@ impl W<'_, '_> {
                 "itl1" | "max_iterations" => ("nonlin", "maxstep"),
                 "itl4" => ("nonlin-tran", "maxstep"),
                 _ => {
-                    self.ask(Construct::UnmappedOption, 0);
+                    self.ask(Construct::UnmappedOption, *tok);
                     continue;
                 }
             };

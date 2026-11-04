@@ -152,7 +152,14 @@ impl Site<'_, '_> {
             return Some((b, None, d));
         }
         let name = word_text(ast, h.name)?;
-        let row = name.get(..1).and_then(|l| lex.device(l))?;
+        let Some(row) = name.get(..1).and_then(|l| lex.device(l)) else {
+            // A letter the dialect has no device for: nothing it can bind.
+            let d = Diag {
+                code: Code::R0001,
+                token: ast.main_token(n),
+            };
+            return Some((Binding::Unknown, None, Some(d)));
+        };
         let items = items(ast, n);
         match (row.model, row.terminals) {
             (Model::None, _) => Some((Binding::Primitive(row.primitive), None, None)),

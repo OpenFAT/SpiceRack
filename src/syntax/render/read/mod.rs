@@ -37,6 +37,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::codegen::Dialect;
 use crate::syntax::ast::{Ast, NONE, Node, Tag};
+use crate::syntax::diag::Diag;
 use crate::syntax::resolve::{FileId, Kit, Role, Split};
 use crate::syntax::token::{Tag as T, Tokens};
 use blocks::Opened;
@@ -104,6 +105,8 @@ pub(in crate::syntax::render) struct Deck {
     /// The testbench statements at the top, in read order (`.control`'s
     /// analyses among them); [`Rd::bench_cards`] reads each.
     pub(in crate::syntax::render) bench: Vec<Bench>,
+    /// The reader's notes: what it read and leaves out.
+    pub(in crate::syntax::render) notes: Vec<Diag>,
 }
 
 /// A testbench item: a statement, and how it adds to the testbench.
@@ -193,6 +196,8 @@ pub(in crate::syntax::render) struct Cond {
 
 /// A `.lib name` … `.endl` section.
 pub(in crate::syntax::render) struct Section {
+    /// Its `Section` node.
+    pub(in crate::syntax::render) node: u32,
     /// The Spectre `library` it sits in.
     pub(in crate::syntax::render) library: Option<String>,
     pub(in crate::syntax::render) body: Block,
@@ -236,6 +241,7 @@ struct Acc {
     defs: Vec<Block>,
     sections: Vec<Section>,
     bench: Vec<Bench>,
+    notes: Vec<Diag>,
 }
 
 impl Default for Block {
@@ -310,6 +316,7 @@ pub(in crate::syntax::render) fn read<'a>(
         globals: acc.globals,
         funcs: acc.funcs,
         bench: acc.bench,
+        notes: acc.notes,
     };
     rd.unlift(&mut deck);
     (rd, deck)
@@ -492,6 +499,12 @@ impl<'a> Rd<'a> {
                 for &c in self.body(n) {
                     if self.tag(c) == Tag::Analysis && self.testbench_peg(c) {
                         acc.bench.push(Bench::Card(c));
+                    } else {
+                        // The script's other lines are not read.
+                        acc.notes.push(Diag {
+                            code: crate::syntax::diag::Code::W0025,
+                            token: self.main(c),
+                        });
                     }
                 }
             }
@@ -513,6 +526,7 @@ impl<'a> Rd<'a> {
         let stmts = self.body(n).to_vec();
         self.cards(&stmts, &mut body, Scope::Section, acc);
         Section {
+            node: n,
             library,
             body,
             defs: acc.defs.split_off(first),

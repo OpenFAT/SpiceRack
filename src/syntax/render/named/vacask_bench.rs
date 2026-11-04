@@ -45,6 +45,7 @@ impl W<'_, '_> {
     /// The `control` block: options, then per analysis the stepped sweeps
     /// and the analysis, its initial conditions on its `analysis` line.
     pub(super) fn control(&mut self, tb: &Tb) {
+        self.unwritten_outputs(tb);
         self.line("");
         self.line("control");
         let mut opts = String::from("  options rawfile=\"binary\"");
@@ -62,9 +63,11 @@ impl W<'_, '_> {
                 }
             } else if !COSMETIC_OPTIONS.contains(&k.as_str()) {
                 self.ask(Construct::UnmappedOption, *tok);
+            } else {
+                self.note(Code::W0024, *tok);
             }
         }
-        for (k, v) in &tb.vacask {
+        for (k, v, _) in &tb.vacask {
             opts.push_str(&format!(" {k}={v}"));
         }
         if let Some(t) = tb.temp {

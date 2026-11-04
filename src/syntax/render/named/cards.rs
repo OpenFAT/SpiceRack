@@ -436,6 +436,13 @@ impl W<'_, '_> {
         if found.is_none() {
             self.refuse(Code::W0104, tok);
         }
+        let level = m
+            .params
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("level"));
+        if found.is_some() && level.is_some_and(|(_, v)| super::spice_num(v.trim()).is_none()) {
+            self.note(Code::W0111, tok);
+        }
         found
     }
 

@@ -104,6 +104,7 @@ impl W<'_, '_> {
             .iter()
             .map(|&n| self.rd.unquote(self.rd.fields(n)[0]))
             .collect();
+        self.unwritten_loads();
         match self.rd.d == Dialect::Vacask {
             true => loads.extend(paths),
             false => match crate::veriloga::osdi_loads(&paths) {
