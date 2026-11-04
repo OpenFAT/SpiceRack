@@ -2,7 +2,7 @@
 
 Phase 4 of the rewrite (TESTING.md, "Golden gate"): `src/syntax/render/`
 writes the AST (and its `resolve::Kit`) in any dialect, gated byte for byte
-against the `daa0ad0` baseline (TESTING.md, "Golden gate").
+against the `9d1d6bb` baseline (TESTING.md, "Golden gate").
 
 ## Per target
 

@@ -9,7 +9,7 @@ their goldens, each change a reviewed line in `migration.xfail`.
 
 No simulator has run these files. Nothing here is a hand-derived expected
 value yet; each phase-7 test that uses one adds its own. The statistics,
-Laplace and `func_stats` fixtures are not in the `daa0ad0` baseline: `tests/test_render.rs`
+Laplace and `func_stats` fixtures are not in the `9d1d6bb` baseline: `tests/test_render.rs`
 writes each with the renderer and with the old writer
 (`codegen::netlist(import::parse(..))`, whose statistics text T-R3/T-R4 of
 `tests/test_monte_carlo.rs` check by hand),

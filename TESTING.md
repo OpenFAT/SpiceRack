@@ -12,7 +12,7 @@ trusts. The rules behind it are in `AGENTS.md` (Testing).
 | docs | the site builds strictly; every Python example in it runs | `nix develop .#docs -c mkdocs build --strict`; `tests/test_docs.py` | `.github/workflows/docs.yaml`; pytest |
 | release | tag matches `Cargo.toml` and `pyproject.toml`, wheels for every target, sdist | `.github/scripts/bump_version.py`, then the release workflow | `.github/workflows/tags.yaml`, `publish.yaml` |
 | nightly | the spice-bench and corpus import suite (`--features corpus`) | `nix develop .#testing -c cargo test --no-default-features --features corpus --release --test test_import_suite` | `.github/workflows/nightly.yaml`, 03:17 UTC daily and on demand |
-| golden | the transpiler rewrite's byte-identical gate against `daa0ad0` ("Golden gate" below) | `golden record`, then `golden diff <baseline> <new> --xfail migration.xfail`; `golden check-determinism`; `cargo test --features corpus --test test_syntax` | local, before each rewrite phase lands |
+| golden | the transpiler rewrite's byte-identical gate against `9d1d6bb` ("Golden gate" below) | `golden record`, then `golden diff <baseline> <new> --xfail migration.xfail`; `golden check-determinism`; `cargo test --features corpus --test test_syntax` | local, before each rewrite phase lands |
 
 `.github/scripts/check_style.py` is vendored from the `code-style` skill
 (https://github.com/OmarSiwy/NixOSConfig/tree/main/skills, sha256 `55f417592f6e7ec3…`).
@@ -73,7 +73,7 @@ every input and every target dialect, the text `codegen::netlist(parse(file))`
 writes or the exact refusal, plus the IR JSON and the `Report`; a later phase
 records again and diffs. Each difference is a line in `migration.xfail`, which
 is strict: an unlisted difference fails, and so does a listed one that is now
-identical (XPASS). The oracle is `daa0ad0`.
+identical (XPASS). The oracle is `9d1d6bb`.
 
 ```sh
 export CARGO_BUILD_JOBS=4
@@ -128,7 +128,7 @@ Not covered: the inline expectations in `tests/test_spectre_golden` (they
 build IR in Rust and assert output text, so they have no input deck; the
 merge tier runs them); Spectre PDK files (none of the local kits has one).
 
-Measured on a 32-thread, 31 GB development machine, 2026-11-03, at `daa0ad0`:
+Measured on a 32-thread, 31 GB development machine, 2026-11-03, at `9d1d6bb`:
 - `golden record`, all 14,938 inputs with 4 workers (`GOLDEN_JOBS`): 37.8 s
   wall, 69.7 s user, peak RSS 2.3 GB (`command time -v`, nixpkgs `time`).
   It writes 164,318 files, 3.7 GB on disk (3.1 GB apparent).

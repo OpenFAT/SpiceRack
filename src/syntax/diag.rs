@@ -130,7 +130,7 @@ catalogue! {
     /// (`1k5` in Spectre, `0x1F` in VACASK): its token's value is NaN.
     P0005 Note {
         title: "a number the dialect does not read",
-        cite: "ngspice manual §2.1.3; the old Spectre grammar's §2.4 number rule (`daa0ad0:grammar/spectre.peg`)",
+        cite: "ngspice manual §2.1.3; the old Spectre grammar's §2.4 number rule (`9d1d6bb:grammar/spectre.peg`)",
         explain: "The token starts like a number but the dialect's suffix table does not read it. Spell it with the dialect's suffixes (Spectre has no `1k5`; SPICE's `M` is milli, `meg` mega).",
     }
     /// Nesting deeper than the parser's cap: the rest is kept as tokens.

@@ -4,11 +4,11 @@
 //! → deck text in any dialect ([`render`]), and the temporary bridge
 //! [`ast_to_ir`] from the AST to
 //! today's `CircuitIR`. `import::parse` reads every deck through it (phase
-//! 2b, TESTING.md "Golden gate"); `golden diff` against the recorded `daa0ad0` baseline, the
+//! 2b, TESTING.md "Golden gate"); `golden diff` against the recorded `9d1d6bb` baseline, the
 //! PEG reader it replaced, gates every change (TESTING.md, "Golden gate").
 //!
 //! "The old reader" in this module's comments is that PEG reader and its
-//! lowering, at `daa0ad0` (`git show daa0ad0:grammar/spice.peg`); its files
+//! lowering, at `9d1d6bb` (`git show 9d1d6bb:grammar/spice.peg`); its files
 //! are gone, so a citation names the rule it means.
 //!
 //! Contents:

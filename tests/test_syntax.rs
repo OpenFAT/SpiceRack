@@ -13,7 +13,7 @@
 //! process (its logical lines, its number values, its IR) were retired when
 //! `import::parse` switched to this front end (phase 2b): with one reader the
 //! IR comparison would compare the reader with itself, and the recorded
-//! `golden` baseline (`daa0ad0`) holds every input's IR, report and text,
+//! `golden` baseline (`9d1d6bb`) holds every input's IR, report and text,
 //! which `golden diff` compares file for file; the lines and numbers it does
 //! not hold are what the IR is made of.
 //!

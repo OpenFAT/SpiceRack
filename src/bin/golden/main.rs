@@ -1,6 +1,6 @@
 //! Every input file -> the reader and every writer -> a tree of golden
 //! files: what each phase of the transpiler rewrite must reproduce byte for
-//! byte against the recorded `daa0ad0` baseline (TESTING.md, "Golden
+//! byte against the recorded `9d1d6bb` baseline (TESTING.md, "Golden
 //! gate").
 //!
 //!   golden record [--writer syntax] <out_dir>
@@ -27,7 +27,7 @@
 //!
 //! The reader is the transpiler's front end (phase 2b): `import::parse` for
 //! a corpus deck, `import::parse_kit` for a PDK kit file or a fixture, read
-//! in its `syntax::resolve::Kit` (phase 3). A record of `daa0ad0` (the PEG
+//! in its `syntax::resolve::Kit` (phase 3). A record of `9d1d6bb` (the PEG
 //! reader it replaced) is the oracle a new record is diffed against.
 //!
 //! `MANIFEST` lists the sets, each kit's read order, each input's content
@@ -63,7 +63,7 @@ const USAGE: &str = "usage: golden record [--writer syntax] <out_dir> | \
 /// Input dialects no set reads, and why: the manifest's `skip` lines.
 /// Every target is written for every input that parses; none is skipped.
 // The text is recorded in every MANIFEST, which `diff` compares, so it stays
-// byte for byte as the `daa0ad0` baseline holds it (`import::lang` was the
+// byte for byte as the `9d1d6bb` baseline holds it (`import::lang` was the
 // PEG reader's; `import::parse` now refuses the two dialects the same way).
 const SKIPPED: [&str; 3] = [
     "skip input espice: reads ngspice text (Dialect::family), so an ESPice input is an ngspice input",

@@ -1,7 +1,7 @@
 //! Spectre's lexicon, with the `simulator lang=spice` hook.
 //!
 //! Cites (as the old Spectre grammar did; § = the labels it gives its rules,
-//! `git show daa0ad0:grammar/spectre.peg`; UG = Spectre User Guide 5.1.41, R19 = Spectre Reference 19.1): §1.2 title
+//! `git show 9d1d6bb:grammar/spectre.peg`; UG = Spectre User Guide 5.1.41, R19 = Spectre Reference 19.1): §1.2 title
 //! (UG p.29, p.50); §1.3 `*` in column 1 and `//` comments (UG p.59); §1.4
 //! `\` and `+` continuation (UG p.59); §2.1 case kept; §2.2 names (`\`
 //! escapes, `!`); §2.4 numbers (case-sensitive scales, `M` mega, `m` milli,

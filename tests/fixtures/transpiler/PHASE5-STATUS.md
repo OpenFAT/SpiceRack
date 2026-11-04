@@ -84,7 +84,7 @@ target but Verilog (which stays on the old writer), the same
 written/refused status per (input, target). `check-determinism --writer
 syntax` IDENTICAL. The merge tier 470 tests (466 at `b05f4a0`). The record
 ran in 783 s wall, most of it behind the shared heavy lock; peak RSS 3.3 GB
-(2.3 GB at `daa0ad0`, before messages and notes; not profiled).
+(2.3 GB at `9d1d6bb`, before messages and notes; not profiled).
 
 ## Left
 

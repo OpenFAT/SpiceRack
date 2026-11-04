@@ -6,7 +6,7 @@
 //! subcircuit's `parent__name`, the name map of instance masters); every
 //! other word is spelled from the statement's tokens when it is written.
 //!
-//! **The old reader** is the PEG grammars and the lowering at `daa0ad0`,
+//! **The old reader** is the PEG grammars and the lowering at `9d1d6bb`,
 //! which `syntax::adapter` ports onto the AST for the old writers; this
 //! reader decides what each statement is by the same rules (`// quirk:`
 //! marks each rule of the old reader it keeps), so the renderer's output is

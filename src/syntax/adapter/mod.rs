@@ -3,8 +3,8 @@
 //! front end feeds the old writers while they still run.
 //!
 //! **The old reader** is the PEG grammars and the lowering this front end
-//! replaced, as they stood at `daa0ad0`, the golden gate's oracle
-//! (`git show daa0ad0:grammar/spice.peg`, `daa0ad0:src/import/lower/`); they
+//! replaced, as they stood at `9d1d6bb`, the golden gate's oracle
+//! (`git show 9d1d6bb:grammar/spice.peg`, `9d1d6bb:src/import/lower/`); they
 //! are gone from the tree. A citation "the old SPICE grammar's `card`" names
 //! a rule there; "the old lowering's `raw`" a function.
 //!

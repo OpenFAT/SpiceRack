@@ -3,7 +3,7 @@
 //! lexicon tokenizes it (`syntax::tokenize`), one parser builds the AST
 //! (`syntax::parse`), and the temporary bridge `syntax::ast_to_ir` builds
 //! today's `CircuitIR` from it, exactly as the reader before it did (the
-//! golden gate's `daa0ad0` oracle).
+//! golden gate's `9d1d6bb` oracle).
 //!
 //! A card the old card grammar refused is [`Report::unparsed`]; one the IR
 //! has no field for is [`Report::raw`]. Both stay verbatim lines, so they
