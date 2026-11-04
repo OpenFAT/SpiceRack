@@ -27,6 +27,7 @@
 pub mod capability;
 mod draws;
 mod named;
+mod names;
 mod out;
 mod read;
 mod role;

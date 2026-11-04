@@ -8,7 +8,9 @@
 //! starts the `P` class, phase 3 the `R` class (`syntax::resolve`), phase 4
 //! the `W` class (`syntax::render`, each a `Capability::Refuse`); phase 5
 //! completes the catalogue (`docs/research/transpiler-architecture.md` §2.6,
-//! §5).
+//! §5). The `W` class is in two ranges that never collide: W0001–W0100 the
+//! SPICE-family writer's and the shared rules' (W0019 onward added by it
+//! in phase 4), W0101–W0200 the named writer's (Spectre, VACASK).
 //!
 //! Cites: `transpiler-architecture.md` §2.6; `compiler-architecture-reference.md`
 //! §3.5 (Zig `Ast.Error`), §8.1 (VerA `lib/diag/code.zig`).
@@ -104,8 +106,7 @@ pub enum Code {
     W0019,
     /// A Spectre `correlate` whose correlation matrix is not positive definite.
     W0020,
-    // The named family's writer (Spectre, VACASK) numbers from W0101, so
-    // the two writers' codes never collide while they land apart.
+    // W0101–W0200: the named writer's (Spectre, VACASK).
     /// A flag (a parameter with no value) a target taking only `name=value` cannot spell.
     W0101,
     /// A behavioural source whose SPICE expression the target's grammar cannot be trusted to read.

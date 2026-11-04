@@ -1,10 +1,12 @@
-//! The deck's elements → the name map of the SPICE family's letter policy
+//! The deck's elements → the name map, both writers' (`spice`, `named`)
 //! (`docs/research/transpiler-architecture.md` §2.5, "names are renamed as
 //! a whole"): each element's written name (its type letter, then its name
 //! as the reader keeps it: `r1` is `R1`; a Spectre `in1 (a 0) vsource` is
 //! `Vin1`), built once per deck, and each declaration found from a
 //! reference to it in its scope, so a reference is spelled as its
-//! declaration is. The letter is added here and nowhere else.
+//! declaration is. The letter is added here and nowhere else; the named
+//! writer spells it lowercase and escapes the name after it (Spectre `\\`,
+//! VACASK `'…'`), as the old writers did.
 //!
 //! Where the old writer spelled a reference otherwise (as written, while its
 //! declaration gained a letter), the writer keeps the old bytes beside a

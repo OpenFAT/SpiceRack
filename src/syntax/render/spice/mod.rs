@@ -10,8 +10,8 @@
 //! waveforms, `bench` the testbench and analyses, `checks` the deck-wide
 //! refusals (another family's text, `^`, statistical calls), `laplace` the
 //! transfer function a Laplace lift reads,
-//! `names` the element names with their letters, `cdl` CDL's layout; the
-//! `statistics` lift is `render::draws`, which VACASK's writer shares.
+//! `cdl` CDL's layout; the `statistics` lift (`render::draws`) and the name
+//! map (`render::names`) are shared with the named writer.
 //!
 //! Cites: ngspice manual ch.2 (the deck), §2.4.3 (`.subckt`), §2.6, §2.7
 //! (`.include`, `.lib`), §2.15 (`.if`); HSPICE `.END` (a library ends
@@ -26,10 +26,10 @@ mod cards;
 mod cdl;
 mod checks;
 mod laplace;
-mod names;
 
 use super::capability::{Action, Alt, Construct, Rule, action};
 use super::draws::{self, Layers};
+use super::names;
 use super::out::{Out, Space};
 use super::read::{Block, Comp, Deck, Elem, Func, Raw, Rd, Section};
 use super::role::{self, Frame};
