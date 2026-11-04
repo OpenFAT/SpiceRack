@@ -29,9 +29,12 @@ The last `--writer syntax` record is `/tmp/claude-1000/spicerack-golden/p4s-6`
 (the statistics lift, the Laplace rule, the role frame, the name map and
 CDL; `check-determinism --writer syntax` IDENTICAL; the merge tier 460
 tests), the baseline `/tmp/claude-1000/spicerack-golden/baseline-daa0ad0`.
-The named writer's (branch `render-named`, rebased on `c74a5ef`): every
-target IDENTICAL, `check-determinism --writer syntax` IDENTICAL (records
-deleted for disk room).
+The named writer's: `/tmp/claude-1000/spicerack-golden/rb3` (branch
+`render-named`, rebased on `cd4e498`), against `baseline-daa0ad0-fx`
+(14,945 inputs with the seven fixtures): every target IDENTICAL (the 26
+listed xfails), `check-determinism --writer syntax` IDENTICAL. The fixtures
+reach Spectre and VACASK too: `test_render.rs` writes them there against
+`codegen::netlist` and pins both.
 
 The six T-S1..T-S3 decks real Spectre 21.1 ran (`tests/spectre/`) are
 written byte for byte by `render::named` from their SPICE sources, plus
@@ -103,10 +106,12 @@ others are recorded through `codegen::netlist`, so the whole tree diffs.
   value with them); no byte scanner.
 - `render/spice/`: the SPICE-family writer: spine (`mod.rs`), cards
   (`cards.rs`), testbench (`bench.rs`), deck-wide refusals (`checks.rs`),
-  the Laplace rule (`laplace.rs`), the name map (`names.rs`), CDL's
-  xschem layout (`cdl.rs`).
+  the Laplace rule (`laplace.rs`), CDL's xschem layout (`cdl.rs`).
 - `render/draws.rs`: the statistics lift, shared: SPICE's two-layer draws,
   VACASK's one-layer ones (`Layers`).
+- `render/names.rs`: the name map, shared: each element's declaration
+  (its type letter, then its name); the named writer spells the letter
+  lowercase and escapes the name after it, as the old writers did.
 - `render/named/`: the named-family writer: the Spectre spine (`mod.rs`),
   its instances, waveforms and models (`cards.rs`), its testbench
   (`bench.rs`: the fold both targets share), the deck-wide refusals both
@@ -116,9 +121,10 @@ others are recorded through `codegen::netlist`, so the whole tree diffs.
   the fold, the lift's walk, the draws and the frame; their spines differ
   (VACASK loads a module and declares a model per device kind and writes
   one `control` block), so VACASK is a spine of its own, not a row. Its
-  names are the old writers' (a lowercase letter, then the name escaped:
-  Spectre `\`, VACASK `'…'`), spelled where written; the SPICE name map's
-  letters would change bytes (phase 7).
+  declarations are the name map's, spelled as the old writers did (a
+  lowercase letter, then the name escaped: Spectre `\`, VACASK `'…'`);
+  its references (`probe=`, `ind1=`, `iprobe=`) are as written, as the
+  old writers spelled them (P7-4..P7-6).
 - `render/role.rs`: the file role rule (`frame(Role) -> Frame`: title,
   `.end`, control blocks, ground); `Rd::role` is the kit's answer, or
   `resolve::role` for a file read alone. A writer asks it once and keeps
@@ -195,7 +201,7 @@ Each is a `// quirk:` in the code, the old bytes kept in this phase.
   library; the role ends it. (A library with no analysis agrees.)
 - P7-3. CDL: the layout titles and ends (`.END`) a library too.
 
-**The name map** (`spice/names.rs`: a declaration gains its letter, a
+**The name map** (`render/names.rs`: a declaration gains its letter, a
 reference does not):
 - P7-4. Spectre `cccs`/`ccvs` `probe=`: the controlling source as written
   (`in1`), its declaration `Vin1` (`read/named_elements.rs`).
