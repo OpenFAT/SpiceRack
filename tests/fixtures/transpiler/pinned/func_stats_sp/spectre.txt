@@ -1,0 +1,43 @@
+// func_stats
+
+simulator lang=spectre
+
+real h(real x) {
+    return x*2;
+}
+real rack_agauss(real nom, real avar, real sigma, real z) {
+    return nom + ((avar > 0 && sigma > 0) ? avar : 0) / ((sigma > 0) ? sigma : 1) * z;
+}
+real rack_aunif(real nom, real avar, real u) {
+    return nom + avar * u;
+}
+parameters p=((2)*rack_agauss(1, 0.1, 3, rack_p_1)) rack_p_1=0 rack_r1_r_1=0 rack_r1_r_2=0 rack_r2_r_1=0 rack_r2_r_2=0 rack_r2_r_3=0 rack_r3_r_1=0 rack_r3_r_2=0 rack_r3_r_3=0 rack_s_r4_r_1=0
+statistics {
+    process {
+        vary rack_p_1 dist=gauss std=1
+        vary rack_r1_r_1 dist=gauss std=1
+        vary rack_r1_r_2 dist=gauss std=1
+        vary rack_r2_r_1 dist=unif N=1
+        vary rack_r2_r_2 dist=gauss std=1
+        vary rack_r2_r_3 dist=gauss std=1
+        vary rack_r3_r_1 dist=unif N=1
+        vary rack_r3_r_2 dist=unif N=1
+        vary rack_r3_r_3 dist=gauss std=1
+    }
+    mismatch {
+        vary rack_s_r4_r_1 dist=gauss std=1
+    }
+}
+
+subckt s (n)
+parameters w=1k
+r4 (n 0) resistor r=((w)*rack_agauss(1, 0.1, 3, rack_s_r4_r_1)) + 1
+ends s
+
+v1 (a 0) vsource dc=1
+r1 (a b) resistor r=((1k)*rack_agauss(1, 0.1, 3, rack_r1_r_1)) + ((2k)*rack_agauss(1, 0.1, 3, rack_r1_r_2))
+r2 (b 0) resistor r=((1) + rack_aunif((h(3)), 0.1, rack_r2_r_1)) + ((((1)*rack_agauss(1, 0.1, 3, rack_r2_r_2)))*rack_agauss(1, 0.1, 3, rack_r2_r_3))
+r3 (b c) resistor r=((rack_aunif(1k, 10, rack_r3_r_1)) + (rack_aunif(1k, 10, rack_r3_r_2))*rack_agauss(0, 1, 1, rack_r3_r_3))
+x1 (c) s
+
+op1 dc

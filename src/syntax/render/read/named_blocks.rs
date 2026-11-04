@@ -10,7 +10,7 @@
 //! - `pub(in crate::syntax::render) struct Stats`, `struct Vary`
 //! - `Rd::named_model_ok(&mut self, n: u32, here: &mut Block) -> bool`
 //! - `Rd::named_model_view(&self, n: u32, bin: u32) -> Model`
-//! - `Rd::real_func(&self, n: u32) -> (String, Vec<String>, String)`
+//! - `Rd::real_func(&self, n: u32) -> (String, Vec<String>, String)`, `Rd::real_return(&self, n: u32) -> Option<u32>`
 //! - `Rd::statistics(&self, n: u32) -> Stats`
 
 use super::cards::Model;
@@ -75,15 +75,18 @@ impl<'a> Rd<'a> {
             .step_by(2)
             .map(|&k| self.name_of(k))
             .collect();
-        let ret = self
-            .body(n)
-            .iter()
-            .copied()
-            .find(|&k| self.ttag(self.main(k)) == T::KwReturn);
-        let body = ret.map_or(String::new(), |r| {
+        let body = self.real_return(n).map_or(String::new(), |r| {
             self.text(self.fields(r)[0]).trim().to_string()
         });
         (self.name_of(f[0]), args, body)
+    }
+
+    /// A `real` function's `return` statement, when it has one.
+    pub(in crate::syntax::render) fn real_return(&self, n: u32) -> Option<u32> {
+        self.body(n)
+            .iter()
+            .copied()
+            .find(|&k| self.ttag(self.main(k)) == T::KwReturn)
     }
 
     /// A Spectre `statistics` block (the old lowering).

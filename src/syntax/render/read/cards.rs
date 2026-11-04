@@ -17,7 +17,7 @@
 //! - `Rd::subckt_head(&self, n: u32) -> Option<Head>`, `Rd::model_head(&self, n: u32) -> Option<Node>`
 //! - `Rd::model_view(&self, n: u32) -> Model`, `Rd::include_path(&self, n: u32) -> String`,
 //!   `Rd::lib_view(&self, n: u32) -> (String, String)`, `Rd::func_view(&self, f: Func) -> (String, Vec<String>, String)`,
-//!   `Rd::param_view(&self, a: u32) -> (String, String)`
+//!   `Rd::func_span(&self, f: Func) -> Option<(u32, u32)>`, `Rd::param_view(&self, a: u32) -> (String, String)`
 
 use super::{Acc, Block, Func, Kept, Rd, Scope};
 use crate::codegen::Dialect;
@@ -37,6 +37,13 @@ pub(in crate::syntax::render) struct Model {
     pub(in crate::syntax::render) kind: String,
     /// Each `k=v` (a flag's value empty), a matrix joined by blanks.
     pub(in crate::syntax::render) params: Vec<(String, String)>,
+}
+
+/// Where a `.func` card's body is: a delimited expression's inside, or
+/// tokens `a..=b` (empty when `a > b`).
+enum Body {
+    Expr(u32),
+    Span(u32, u32),
 }
 
 impl Rd<'_> {
@@ -244,6 +251,23 @@ impl Rd<'_> {
             self.group_items(g).iter().map(|&k| self.text(k)).collect(),
             body,
         )
+    }
+
+    /// The tokens function `f`'s body ([`Rd::func_view`]'s) is spelled
+    /// from; `None` when it is empty or a string's text.
+    pub(in crate::syntax::render) fn func_span(&self, f: Func) -> Option<(u32, u32)> {
+        let v = match f {
+            Func::Param(a) => self.ast.rhs(Node(a)),
+            Func::Card(n) => match self.func_body_at(n, self.func_group(n)?)? {
+                Body::Expr(e) => return self.inner_span(e),
+                Body::Span(a, b) => return (a <= b).then_some((a, b)),
+            },
+            Func::Real(n) => *self.fields(self.real_return(n)?).first()?,
+        };
+        match self.tag(v) {
+            Tag::Delimited => self.inner_span(v),
+            _ => Some((self.first(v), self.last(v))),
+        }
     }
 
     /// A `.param` assignment's name and value text.
@@ -459,6 +483,15 @@ impl Rd<'_> {
 
     /// A `.func` card's body text (`g` its head group), when it reads.
     fn func_body(&self, n: u32, g: u32) -> Option<String> {
+        Some(match self.func_body_at(n, g)? {
+            Body::Expr(e) => self.inner(e).trim().to_string(),
+            Body::Span(a, b) if a > b => String::new(),
+            Body::Span(a, b) => self.span(a, b).trim().to_string(),
+        })
+    }
+
+    /// Where a `.func` card's body is (`g` its head group), when it reads.
+    fn func_body_at(&self, n: u32, g: u32) -> Option<Body> {
         let items = self.fields(n);
         // The body: after `)` and an optional `=`, to the card's end or a
         // ` key=` (the old SPICE grammar's `Body`).
@@ -493,12 +526,22 @@ impl Rd<'_> {
             )
             .find(|&k| k != NONE && self.first(k) == start && self.last(k) == last);
         Some(if expr.is_some_and(|e| self.expr_ok(e)) {
-            self.inner(expr.expect("checked")).trim().to_string()
+            Body::Expr(expr.expect("checked"))
         } else if self.ttag(start) == T::LBrace && self.brace_close_at(start) == Some(last) {
-            self.span(start + 1, last - 1).trim().to_string()
+            Body::Span(start + 1, last - 1)
         } else {
-            self.span(start, last).trim().to_string()
+            Body::Span(start, last)
         })
+    }
+
+    /// The tokens a delimited expression's inside ([`Rd::inner`]) is
+    /// spelled from; `None` when it is empty or a string's text (`{"…"}`).
+    fn inner_span(&self, n: u32) -> Option<(u32, u32)> {
+        let a = self.ast;
+        let (open, close) = (a.main_token(Node(n)), a.rhs(Node(n)));
+        let e = a.lhs(Node(n));
+        let string = e != NONE && self.tag(e) == Tag::Str && self.ttag(open) == T::LBrace;
+        (!string && close > open + 1).then(|| (open + 1, close - 1))
     }
 
     fn brace_close_at(&self, open: u32) -> Option<u32> {

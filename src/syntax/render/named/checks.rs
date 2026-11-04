@@ -136,6 +136,7 @@ impl<'r> W<'_, 'r> {
             .deck
             .funcs
             .iter()
+            .filter(|&&f| self.lifted.writes(f))
             .map(|&f| self.rd.func_view(f).2)
             .collect();
         out.extend(self.draws.texts().map(str::to_string));

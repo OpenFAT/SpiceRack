@@ -8,18 +8,20 @@
 //! `parameters` and `vary` rows go), and the `rack_*` functions nothing
 //! calls any more (they go). [`Rd::etext`] spells a value with them, and
 //! with a writer's `Lift` fixups ([`Fix`]: a token respelled,
-//! [`Rd::respell_token`]; a statistical call rewritten, [`Rd::lift_call`]),
-//! one table keyed by token, recorded before the writer writes.
+//! [`Rd::respell_token`]; a statistical call rewritten, [`Rd::lift_call`];
+//! a `.func` call inlined, [`Rd::inline_call`]), one table keyed by token,
+//! recorded before the writer writes.
 //!
 //! Cites: monte-carlo-spectre.md §5.2 (the `rack_*` functions), §6a; the
 //! old writer's `statistics::unlift`, which did this over the IR's text.
 //!
 //! Contents:
-//! - `pub(super) struct Unlift`, `pub(in crate::syntax::render) enum Fix`, `enum Lift`
+//! - `pub(super) struct Unlift`, `pub(in crate::syntax::render) enum Fix`, `enum Lift`, `enum Step`
 //! - `Rd::unlift(&mut self, deck: &mut Deck)`
 //! - `Rd::etext(&self, n: u32) -> String`, `Rd::espan(&self, a: u32, b: u32) -> String`,
 //!   `Rd::unlifted_var(&self, p: &str) -> bool`
 //! - `Rd::respell_token(&mut self, k: u32, text: String)`, `Rd::lift_call(&mut self, name: u32, l: Lift)`,
+//!   `Rd::inline_call(&mut self, name: u32, steps: Vec<(u32, Step)>)`,
 //!   `Rd::unlifted_call(&self, name: u32) -> Option<(&'static str, u32)>`,
 //!   `Rd::value_roots(&self, b: &Block, out: &mut Vec<u32>)`
 
@@ -47,6 +49,26 @@ pub(in crate::syntax::render) enum Fix {
     Respell(String),
     /// The call whose name is the token is rewritten.
     Lift(Lift),
+    /// The call whose name is the token is a function inlined: spelled by
+    /// these steps, the first its own [`Step::Inline`].
+    Inline(Vec<(u32, Step)>),
+}
+
+/// One step of spelling an inlined call, at a token: the steps of one
+/// [`Fix::Inline`] are in the order its expansion's text meets their
+/// tokens, a body's token met once per call and an argument's once per
+/// use, so they are a script, not a table.
+#[derive(Clone, Debug)]
+pub(in crate::syntax::render) enum Step {
+    /// The call whose name is the token is spelled `(body)`, the body the
+    /// tokens `a..=b`.
+    Inline(u32, u32),
+    /// The token, a parameter of the inlined body, is spelled `(arg)`, the
+    /// argument the tokens `a..=b`.
+    Subst(u32, u32),
+    /// The call whose name is the token is a statistical call: rewritten,
+    /// or spelled as written (`None`).
+    Call(Option<Lift>),
 }
 
 /// A statistical call a writer rewrites (monte-carlo-spectre.md §5.2,
@@ -81,6 +103,12 @@ const RACK: [&str; 5] = [
     "rack_unif",
     "rack_limit",
 ];
+
+/// The steps of one [`Fix::Inline`] and how many are spelled.
+struct Cursor<'s> {
+    steps: &'s [(u32, Step)],
+    at: usize,
+}
 
 impl<'a> Rd<'a> {
     /// Records the read-back rule's fixups for a Spectre deck and drops
@@ -236,6 +264,20 @@ impl<'a> Rd<'a> {
         self.fixes.insert(name, Fix::Lift(l));
     }
 
+    /// The call whose name is token `name` is spelled by `steps` wherever
+    /// [`Rd::etext`] spells it: a writer's `Lift` fixup, recorded before it
+    /// writes.
+    ///
+    /// # Panics
+    /// When the first step is not `name`'s [`Step::Inline`].
+    pub(in crate::syntax::render) fn inline_call(&mut self, name: u32, steps: Vec<(u32, Step)>) {
+        assert!(
+            matches!(steps.first(), Some(&(k, Step::Inline(..))) if k == name),
+            "a script opening with its own call"
+        );
+        self.fixes.insert(name, Fix::Inline(steps));
+    }
+
     /// The read-back of the call whose name is token `name`: the
     /// statistical function it reads as, and the comma before the
     /// variable it drops.
@@ -249,40 +291,7 @@ impl<'a> Rd<'a> {
     /// Tokens `a..=b` as [`Rd::span`] joins them, the read-back's calls
     /// spelled as their statistical call and a writer's fixups applied.
     pub(in crate::syntax::render) fn espan(&self, a: u32, b: u32) -> String {
-        let mut out = String::new();
-        let mut k = a;
-        while k <= b {
-            if k > a {
-                out.push_str(&self.gap(k - 1, k));
-            }
-            let unlifted = self.unlifted.calls.get(&k).copied();
-            match (unlifted, self.fixes.get(&k)) {
-                (_, Some(Fix::Lift(l))) => {
-                    let close = self.call_close(k);
-                    // The arguments' text, the read-back's variable left out.
-                    let end = unlifted.map_or(close, |(_, cut)| cut);
-                    out.push_str(&self.lifted(k, end, l));
-                    k = close + 1;
-                }
-                (Some((f, cut)), _) => {
-                    let close = self.call_close(k);
-                    out.push_str(f);
-                    out.push_str(&self.espan(k + 1, cut - 1));
-                    out.push_str(&self.gap(cut - 1, cut));
-                    out.push(')');
-                    k = close + 1;
-                }
-                (None, Some(Fix::Respell(t))) => {
-                    out.push_str(t);
-                    k += 1;
-                }
-                (None, None) => {
-                    out.push_str(self.t.text(k));
-                    k += 1;
-                }
-            }
-        }
-        out
+        self.spell(a, b, None)
     }
 
     /// The value nodes of block `b` the old IR held as expressions:
@@ -331,57 +340,132 @@ impl<'a> Rd<'a> {
             k += 1;
         }
     }
+    /// Tokens `a..=b` as [`Rd::espan`] spells them; inside an inlined call,
+    /// `cur` the script its tokens are spelled by.
+    fn spell(&self, a: u32, b: u32, mut cur: Option<&mut Cursor>) -> String {
+        let mut out = String::new();
+        let mut k = a;
+        while k <= b {
+            if k > a {
+                out.push_str(&self.gap(k - 1, k));
+            }
+            let step = cur.as_deref_mut().and_then(|c| c.take(k));
+            let unlifted = self.unlifted.calls.get(&k).copied();
+            let fix = match step {
+                Some(_) => None,
+                None => self.fixes.get(&k),
+            };
+            let lift = match (step, fix) {
+                (Some(Step::Call(l)), _) => l.as_ref(),
+                (None, Some(Fix::Lift(l))) => Some(l),
+                _ => None,
+            };
+            match (step, fix) {
+                (Some(&Step::Inline(x, y)), _) => {
+                    out.push('(');
+                    out.push_str(&self.spell(x, y, cur.as_deref_mut()));
+                    out.push(')');
+                    k = self.call_close(k) + 1;
+                    continue;
+                }
+                (Some(&Step::Subst(x, y)), _) => {
+                    out.push('(');
+                    out.push_str(&self.spell(x, y, cur.as_deref_mut()));
+                    out.push(')');
+                    k += 1;
+                    continue;
+                }
+                (None, Some(Fix::Inline(steps))) => {
+                    assert!(cur.is_none(), "an inlined call is one script");
+                    let close = self.call_close(k);
+                    let mut c = Cursor { steps, at: 0 };
+                    out.push_str(&self.spell(k, close, Some(&mut c)));
+                    assert_eq!(c.at, steps.len(), "every step spelled");
+                    k = close + 1;
+                    continue;
+                }
+                _ => {}
+            }
+            match (unlifted, lift, fix) {
+                (_, Some(l), _) => {
+                    let close = self.call_close(k);
+                    // The arguments' text, the read-back's variable left out.
+                    let end = unlifted.map_or(close, |(_, cut)| cut);
+                    out.push_str(&self.lifted(k, end, l, cur.as_deref_mut()));
+                    k = close + 1;
+                }
+                (Some((f, cut)), None, _) => {
+                    let close = self.call_close(k);
+                    out.push_str(f);
+                    out.push_str(&self.spell(k + 1, cut - 1, cur.as_deref_mut()));
+                    out.push_str(&self.gap(cut - 1, cut));
+                    out.push(')');
+                    k = close + 1;
+                }
+                (None, None, Some(Fix::Respell(t))) => {
+                    out.push_str(t);
+                    k += 1;
+                }
+                (None, None, _) => {
+                    out.push_str(self.t.text(k));
+                    k += 1;
+                }
+            }
+        }
+        out
+    }
+
     /// The lifted spelling of the call named at token `name`, its
     /// arguments the tokens between `name + 1` (its `(`) and `end` (its
     /// `)`, or the read-back's comma), each as the old writer's
     /// `rewrite_calls` joined them: the text between the delimiters kept.
-    fn lifted(&self, name: u32, end: u32, l: &Lift) -> String {
+    fn lifted(&self, name: u32, end: u32, l: &Lift, mut cur: Option<&mut Cursor>) -> String {
         let open = name + 1;
-        let between = |a: u32, b: u32| match b - a {
+        let mut between = |a: u32, b: u32| match b - a {
             1 => self.gap(a, b).into_owned(),
             _ => {
-                let inner = self.espan(a + 1, b - 1);
+                let inner = self.spell(a + 1, b - 1, cur.as_deref_mut());
                 format!("{}{inner}{}", self.gap(a, a + 1), self.gap(b - 1, b))
             }
         };
+        if let Lift::Call { f, sigma, var } = l {
+            let one = if *sigma { ",1" } else { "" };
+            return format!("rack_{f}({}{one}, {var})", between(open, end));
+        }
         // Each argument's text, the blanks around it kept.
-        let args = || {
-            let mut depth = 0i32;
-            let mut cuts = vec![open];
-            for k in open..end {
-                match self.ttag(k) {
-                    crate::syntax::token::Tag::LParen => depth += 1,
-                    crate::syntax::token::Tag::RParen => depth -= 1,
-                    crate::syntax::token::Tag::Comma if depth == 1 => cuts.push(k),
-                    _ => {}
-                }
-            }
-            cuts.push(end);
-            cuts.windows(2)
-                .map(|w| between(w[0], w[1]))
-                .collect::<Vec<String>>()
-        };
-        match l {
-            Lift::Call { f, sigma, var } => {
-                let one = if *sigma { ",1" } else { "" };
-                format!("rack_{f}({}{one}, {var})", between(open, end))
-            }
-            Lift::Sigma(f) => {
-                let a = args();
-                format!("{f}({},{},1)", a[0], a[1])
-            }
-            Lift::Limit => {
-                let a = args();
-                format!(
-                    "((aunif(0, 1) > 0) ? ({}) + ({}) : ({}) - ({}))",
-                    a[0], a[1], a[0], a[1]
-                )
-            }
-            Lift::Clamp => {
-                let a = args();
-                format!("min(max({}, {}), {})", a[0], a[1], a[2])
+        let mut depth = 0i32;
+        let mut cuts = vec![open];
+        for k in open..end {
+            match self.ttag(k) {
+                crate::syntax::token::Tag::LParen => depth += 1,
+                crate::syntax::token::Tag::RParen => depth -= 1,
+                crate::syntax::token::Tag::Comma if depth == 1 => cuts.push(k),
+                _ => {}
             }
         }
+        cuts.push(end);
+        let a: Vec<String> = cuts.windows(2).map(|w| between(w[0], w[1])).collect();
+        match l {
+            Lift::Call { .. } => unreachable!("written above"),
+            Lift::Sigma(f) => format!("{f}({},{},1)", a[0], a[1]),
+            Lift::Limit => format!(
+                "((aunif(0, 1) > 0) ? ({}) + ({}) : ({}) - ({}))",
+                a[0], a[1], a[0], a[1]
+            ),
+            Lift::Clamp => format!("min(max({}, {}), {})", a[0], a[1], a[2]),
+        }
+    }
+}
+
+impl<'s> Cursor<'s> {
+    /// The next step, when it is token `k`'s.
+    fn take(&mut self, k: u32) -> Option<&'s Step> {
+        let steps = self.steps;
+        let (t, step) = steps.get(self.at)?;
+        (*t == k).then(|| {
+            self.at += 1;
+            step
+        })
     }
 }
 

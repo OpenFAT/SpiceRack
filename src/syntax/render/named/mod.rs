@@ -8,8 +8,9 @@
 //! instances, waveforms and models, `bench` the testbench and analyses,
 //! `checks` the deck-wide refusals (both targets'), `lift` the Monte Carlo
 //! rules (Spectre's `Lift(RackVars)`, VACASK's `Lift(VacaskCalls)`: fixups
-//! over `Call` nodes), `vacask` the VACASK spine and its blocks and models,
-//! `vacask_cards` its instances, `vacask_bench` its `control` block. The two share the reader's plan, the checks, the
+//! over `Call` nodes) and `sites` the expressions they walk, `vacask` the
+//! VACASK spine and its blocks and models, `vacask_cards` its instances,
+//! `vacask_bench` its `control` block. The two share the reader's plan, the checks, the
 //! testbench fold and the lift's walk; their decks differ around them.
 //!
 //! Cites: Spectre Circuit Simulator Reference 19.1 (`[REF]`): p.494, p.493
@@ -27,6 +28,7 @@ mod bench;
 mod cards;
 mod checks;
 mod lift;
+mod sites;
 mod vacask;
 mod vacask_bench;
 mod vacask_cards;
@@ -198,11 +200,13 @@ impl W<'_, '_> {
     }
 
     /// `real f(real x) {` / `return body;` / `}`, the deck's functions
-    /// (and, with `rack`, the lift's `rack_*` functions after them). A body
-    /// reading a node or a current has no Spectre function form.
+    /// (and, with `rack`, the lift's `rack_*` functions after them), but
+    /// those the lift inlined. A body reading a node or a current has no
+    /// Spectre function form.
     fn funcs(&mut self, funcs: &[Func], rack: bool) {
         let mut all: Vec<(String, Vec<String>, String, u32)> = funcs
             .iter()
+            .filter(|&&f| self.lifted.writes(f))
             .map(|&f| {
                 let n = match f {
                     Func::Param(a) | Func::Card(a) | Func::Real(a) => a,

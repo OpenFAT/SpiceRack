@@ -1,9 +1,10 @@
 //! The renderer (`syntax::render`) against the old pipeline on decks the
 //! golden corpus holds none of: Spectre `statistics` blocks lowered for the
 //! SPICE family (`docs/research/monte-carlo-spectre.md` §6b, §10.5) and
-//! Laplace sources; the same tables for Spectre and VACASK. The made-up
-//! fixtures (`tests/fixtures/transpiler/stats_*.scs`, `laplace.{sp,cir,net}`,
-//! golden inputs too) are written by both and pinned under
+//! Laplace sources; the same tables for Spectre and VACASK; functions whose
+//! bodies draw, inlined for Spectre (monte-carlo-spectre.md §10.2 step 2).
+//! The made-up fixtures (`tests/fixtures/transpiler/stats_*.scs`,
+//! `laplace.{sp,cir,net}`, `func_stats.{sp,cir}`, golden inputs too) are written by both and pinned under
 //! `tests/fixtures/transpiler/pinned/<file>_<ext>/`.
 //!
 //! Oracle: `codegen::netlist(import::parse(deck))` at this commit, the
@@ -35,8 +36,9 @@ const TABLE: &str = "// t\nsimulator lang=spectre\nparameters p=1k q=2 r=3\nstat
 /// T-R4's base: a correlation, `CORR` its operands.
 const CORR: &str = "// t\nsimulator lang=spectre\nparameters a=1 b=2\nstatistics {\n  process {\n    vary a dist=gauss std=0.1\n    vary b dist=gauss std=0.2\n  }\n  correlate CORR\n}\nr1 (x 0) resistor r=a+b\n";
 
-/// The made-up statistics and Laplace fixtures, each read in its dialect.
-const FIXTURES: [(&str, Dialect); 7] = [
+/// The made-up statistics, Laplace and drawing-function fixtures, each
+/// read in its dialect.
+const FIXTURES: [(&str, Dialect); 9] = [
     ("stats_process.scs", Dialect::Spectre),
     ("stats_correlate.scs", Dialect::Spectre),
     ("stats_correlate_cc.scs", Dialect::Spectre),
@@ -44,6 +46,8 @@ const FIXTURES: [(&str, Dialect); 7] = [
     ("laplace.sp", Dialect::Ngspice),
     ("laplace.cir", Dialect::Xyce),
     ("laplace.net", Dialect::Ltspice),
+    ("func_stats.sp", Dialect::Ngspice),
+    ("func_stats.cir", Dialect::Xyce),
 ];
 
 // ---- private ----
@@ -281,5 +285,26 @@ fn fixtures_render_as_the_old_writer_did_and_as_pinned() {
     assert!(pinned("laplace.sp", "ltspice.refused").contains("new: W0002"));
     for f in ["laplace.cir", "laplace.net"] {
         assert!(pinned(f, "ltspice.txt").contains(" Laplace="), "{f}");
+    }
+    // Spectre inlines a drawing function at each call, each drawn on its
+    // own, and writes no `real` function for it; VACASK has no functions.
+    let sp = pinned("func_stats.sp", "spectre.txt");
+    assert!(
+        sp.contains("r=((1k)*rack_agauss(1, 0.1, 3, rack_r1_r_1))"),
+        "{sp}"
+    );
+    assert!(sp.contains("vary rack_s_r4_r_1 dist=gauss std=1"), "{sp}");
+    assert!(
+        !sp.contains("real f(") && !sp.contains("real unused("),
+        "{sp}"
+    );
+    assert!(sp.contains("real h(real x)"), "{sp}");
+    let cir = pinned("func_stats.cir", "spectre.txt");
+    assert!(
+        cir.contains("r=(min(max((3),  0),  2) + rack_agauss((3), 1,1, rack_r1_r_1))*1k"),
+        "{cir}"
+    );
+    for f in ["func_stats.sp", "func_stats.cir"] {
+        assert!(pinned(f, "vacask.refused").contains("new: W0106"), "{f}");
     }
 }

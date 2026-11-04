@@ -1,0 +1,18 @@
+* func_stats
+.param f(x)='x*agauss(1, 0.1, 3)'
+.param g(a, b)='a + aunif(b, 0.1)'
+.param h(x)='x*2'
+.param d(x)='x + x*agauss(0, 1, 1)'
+.param unused(x)='agauss(x, 1, 1)'
+.param p=f(2)
+
+.subckt s n w=1k
+R4 n 0 'f(w) + 1'
+.ends s
+V1 a 0 1
+R1 a b 'f(1k) + F( 2k )'
+R2 b 0 'g(1, h(3)) + f(f(1))'
+R3 b c 'd(aunif(1k, 10))'
+X1 c s
+.op
+.end

@@ -61,6 +61,15 @@ record's MANIFEST (`/tmp/claude-1000/spicerack-golden/baseline-daa0ad0-fx`).
 new writer with the old one on them; against the plain baseline the same
 record differs only in those inputs (MANIFEST `+` lines, absent files).
 
+`func_stats.{sp,cir}` (the inlined `.func`s) extend it the same way:
+`baseline-daa0ad0-fx9` is `baseline-daa0ad0-fx` hard-linked (`cp -al`), its
+MANIFEST with `set fixtures 27` and the two inputs' `input`/`output` lines,
+and their directories, all from an old-writer record (`golden record`, no
+`--writer`) at `b05f4a0` plus the fixtures; that record's other MANIFEST
+lines equal the baseline's. Against it the `--writer syntax` record is
+IDENTICAL (the 26 listed xfails) and `check-determinism --writer syntax`
+IDENTICAL; the merge tier 466 tests.
+
 ## Run the gate
 
 ```sh
@@ -144,8 +153,12 @@ others are recorded through `codegen::netlist`, so the whole tree diffs.
 
 1. **Spectre and VACASK writers: done** (`render/named/`). What they
    leave, each a `ponytail:` in the code, none reached by the gate:
-   - a `.func` whose body calls a statistical function is refused
-     (`W0107`); the old lift inlined it at each call site (T-G8);
+   - a `.func` whose body calls a statistical function: **done**, inlined
+     on Spectre at each call as the old lift did (T-G8,
+     monte-carlo-spectre.md §10.2 step 2), a script fixup per inlined call
+     (`Fix::Inline`, `Step`: a body's tokens are spelled once per call, an
+     argument's once per use, so one fixup per token cannot say it);
+     VACASK refuses any function (`W0106`), as the old writer did;
    - a source's lifted expressions are walked in item order (the old pass:
      the waveform's, then the value; a source with no DC value repeats its
      waveform's first value, which one fixup per token cannot name twice);

@@ -9,11 +9,12 @@
 //! and `rack_*` functions the writer declares ([`Lifted`]).
 //!
 //! The walk is the old pass's (`codegen::statistics::exprs_mut`): every
-//! expression the old IR held as text, block by block (the top, its
-//! definitions, each section's body and definitions; in each its
-//! parameters, models, instances, elements and branches), each call in
-//! post-order (inner calls first), so variables are named and declared in
-//! its order.
+//! expression the old IR held as text (`sites`), each call in post-order
+//! (inner calls first), so variables are named and declared in its order. A top-level `.func` whose body calls a statistical function
+//! is inlined at each call, as the old pass's text was (`(body)`, each
+//! parameter `(arg)`), each inlined call's draws its own; the call's fixup
+//! is a script of steps (`Fix::Inline`), as its body's tokens are spelled
+//! once per call.
 //!
 //! VACASK has `agauss`, `gauss`, `aunif` and `unif`, drawn once per call
 //! site per scope as Spectre's process/mismatch split (VACASK
@@ -28,15 +29,17 @@
 //! - `pub(super) struct Lifted`, `pub(super) struct Var`
 //! - `pub(super) fn lift(rd: &mut Rd, deck: &Deck, refused: &mut Vec<Diag>) -> Lifted`
 //! - `pub(super) fn vacask_calls(rd: &mut Rd, deck: &Deck, refused: &mut Vec<Diag>)`
-//! - `Lifted::vars_at(&self, at: Option<usize>) -> impl Iterator<Item = &Var>`,
+//! - `Lifted::writes(&self, f: Func) -> bool`,
+//!   `Lifted::vars_at(&self, at: Option<usize>) -> impl Iterator<Item = &Var>`,
 //!   `Lifted::block_at(&self, at: Option<usize>) -> Option<Stats>`,
 //!   `Lifted::rack(&self) -> impl Iterator<Item = (&str, [&str; 4], &str)>`
 
 use std::collections::HashSet;
 
+use super::sites::{Site, sites};
 use crate::syntax::ast::{NONE, Name, Node, Tag};
 use crate::syntax::diag::{Code, Diag};
-use crate::syntax::render::read::{Block, Card, Comp, Deck, Func, Lift, Rd, Stats, Vary};
+use crate::syntax::render::read::{Deck, Func, Lift, Rd, Stats, Step, Vary};
 
 /// The lift's declarations: its variables in walk order and the `rack_*`
 /// functions the deck then calls.
@@ -45,6 +48,8 @@ pub(super) struct Lifted {
     vars: Vec<Var>,
     /// Which of [`RACK`] the lifted deck calls.
     rack: [bool; 5],
+    /// The functions inlined at their calls, by node: not written.
+    inlined: HashSet<u32>,
 }
 
 /// One lifted variable: its name, its scope (`mismatch` inside a
@@ -89,26 +94,38 @@ const RACK: [(&str, [&str; 4], &str); 5] = [
     ),
 ];
 
-/// One expression the old IR held as text: the owner and field its
-/// variables are named after, and the value items its text is spelled
-/// from.
-struct Site {
-    owner: String,
-    field: String,
+/// A `.func` whose body calls a statistical function, inlined at each
+/// call (§10.2 step 2): its name lowercased (the old pass matched a call
+/// ignoring case), its parameters, the items its body's nodes are under,
+/// and the tokens its body is spelled from.
+struct Drawn {
+    name: String,
+    params: Vec<String>,
     roots: Vec<u32>,
+    span: (u32, u32),
 }
 
-/// What the walk found in one block: where it sits, and its sites.
-struct Scoped {
-    subckt: Option<String>,
-    section: Option<usize>,
-    sites: Vec<Site>,
+/// One item of [`Rd::expand`]'s walk: a node to enter (inside the inlined
+/// call `frame`, its steps in script `script`), or a call to emit after
+/// its arguments (`slot` its step).
+enum Walk {
+    Enter {
+        n: u32,
+        frame: Option<usize>,
+        script: Option<usize>,
+    },
+    Exit {
+        n: u32,
+        slot: Option<(usize, usize)>,
+    },
 }
 
 /// Lifts every statistical call of the deck `rd` read: records each
 /// call's fixup in `rd` and returns the variables and functions to
-/// declare; nothing when the deck calls none. A call with no Spectre form
-/// is refused into `refused`.
+/// declare; nothing when the deck calls none. A top-level `.func` whose
+/// body calls one is inlined at each of its calls, each inlined call drawn
+/// on its own (§10.2 step 2), and is not written. A call with no Spectre
+/// form is refused into `refused`.
 pub(super) fn lift(rd: &mut Rd, deck: &Deck, refused: &mut Vec<Diag>) -> Lifted {
     let scoped = sites(rd, deck);
     let stat = |rd: &Rd, call: u32| {
@@ -121,8 +138,8 @@ pub(super) fn lift(rd: &mut Rd, deck: &Deck, refused: &mut Vec<Diag>) -> Lifted 
         .flat_map(|s| &s.sites)
         .flat_map(|s| &s.roots)
         .any(|&r| rd.calls_in(r).into_iter().any(|c| stat(rd, c)));
-    // ponytail: a `.func` whose body calls one is inlined at each call site
-    // by the old pass (§5.1); here it is refused, never written undrawn.
+    let mut out = Lifted::default();
+    let mut drawn = Vec::new();
     for &f in &deck.funcs {
         let roots: Vec<u32> = match f {
             Func::Param(a) => vec![rd.ast.rhs(Node(a))],
@@ -134,32 +151,49 @@ pub(super) fn lift(rd: &mut Rd, deck: &Deck, refused: &mut Vec<Diag>) -> Lifted 
                 .copied()
                 .collect(),
         };
-        let tok = match f {
-            Func::Param(a) | Func::Card(a) | Func::Real(a) => rd.main(a),
+        let n = match f {
+            Func::Param(a) | Func::Card(a) | Func::Real(a) => a,
         };
-        if roots
+        if !roots
             .iter()
             .any(|&r| rd.calls_in(r).into_iter().any(|c| stat(rd, c)))
         {
-            any = true;
+            continue;
+        }
+        any = true;
+        out.inlined.insert(n);
+        let Some(span) = rd.func_span(f) else {
+            // A call found outside the body's tokens: nothing to inline.
             refused.push(Diag {
                 code: Code::W0107,
-                token: tok,
+                token: rd.main(n),
             });
-        }
+            continue;
+        };
+        let (name, params, _) = rd.func_view(f);
+        drawn.push(Drawn {
+            name: name.to_ascii_lowercase(),
+            params,
+            roots,
+            span,
+        });
     }
     if !any {
         return Lifted::default();
     }
-    let mut out = Lifted::default();
     let mut used: HashSet<String> = HashSet::new();
     let mut fixes: Vec<(u32, Lift)> = Vec::new();
+    let mut scripts: Vec<(u32, Vec<(u32, Step)>)> = Vec::new();
     for s in &scoped {
         for site in &s.sites {
             let mut k = 0;
             for &r in &site.roots {
-                for call in rd.calls_in(r) {
+                for (call, slot) in rd.expand(r, &drawn, &mut scripts) {
                     let tok = rd.main(call);
+                    let mut put = |l: Lift| match slot {
+                        None => fixes.push((tok, l)),
+                        Some((s, i)) => scripts[s].1[i].1 = Step::Call(Some(l)),
+                    };
                     let (name, args) = rd.call_of(call);
                     let f = name.to_ascii_lowercase();
                     let Some(f) = STATISTICAL.iter().copied().find(|s| *s == f) else {
@@ -169,7 +203,7 @@ pub(super) fn lift(rd: &mut Rd, deck: &Deck, refused: &mut Vec<Diag>) -> Lifted 
                         continue;
                     };
                     if f == "limit" && args == 3 {
-                        fixes.push((tok, Lift::Clamp));
+                        put(Lift::Clamp);
                         continue;
                     }
                     let gauss = f.contains("gauss");
@@ -199,13 +233,16 @@ pub(super) fn lift(rd: &mut Rd, deck: &Deck, refused: &mut Vec<Diag>) -> Lifted 
                         .position(|s| *s == f)
                         .expect("a statistical call");
                     out.rack[i] = true;
-                    fixes.push((tok, Lift::Call { f, sigma, var }));
+                    put(Lift::Call { f, sigma, var });
                 }
             }
         }
     }
     for (tok, l) in fixes {
         rd.lift_call(tok, l);
+    }
+    for (tok, steps) in scripts {
+        rd.inline_call(tok, steps);
     }
     out
 }
@@ -256,6 +293,13 @@ pub(super) fn vacask_calls(rd: &mut Rd, deck: &Deck, refused: &mut Vec<Diag>) {
 }
 
 impl Lifted {
+    /// Whether function `f` is written: not when it is inlined at its
+    /// calls.
+    pub(super) fn writes(&self, f: Func) -> bool {
+        let (Func::Param(n) | Func::Card(n) | Func::Real(n)) = f;
+        !self.inlined.contains(&n)
+    }
+
     /// The variables declared in section `at` (`None`: the deck's top).
     pub(super) fn vars_at(&self, at: Option<usize>) -> impl Iterator<Item = &Var> {
         self.vars.iter().filter(move |v| v.section == at)
@@ -293,206 +337,6 @@ impl Lifted {
 
 // ---- private ----
 
-/// Every block's sites, in the old pass's order.
-fn sites(rd: &Rd, deck: &Deck) -> Vec<Scoped> {
-    let mut out = Vec::new();
-    block(rd, &deck.top, None, None, &mut out);
-    for sc in &deck.defs {
-        block(rd, sc, Some(&sc.name), None, &mut out);
-    }
-    for (k, s) in deck.sections.iter().enumerate() {
-        block(rd, &s.body, None, Some(k), &mut out);
-        for sc in &s.defs {
-            block(rd, sc, Some(&sc.name), Some(k), &mut out);
-        }
-    }
-    out
-}
-
-/// Block `b`'s sites (inside subcircuit `subckt`, section `section`), then
-/// its branches'.
-fn block(rd: &Rd, b: &Block, subckt: Option<&str>, section: Option<usize>, out: &mut Vec<Scoped>) {
-    let mut work = vec![b];
-    while let Some(b) = work.pop() {
-        let mut sites = Vec::new();
-        let site = |owner: &str, field: &str, roots: Vec<u32>| Site {
-            owner: owner.to_string(),
-            field: field.to_string(),
-            roots,
-        };
-        // Parameters: a subcircuit head's defaults, its `parameters`, its
-        // `.param` locals.
-        let head: Vec<u32> = match b.node {
-            NONE => vec![],
-            n => assigns(rd, rd.fields(n)),
-        };
-        for &a in head.iter().chain(&b.params).chain(&b.locals) {
-            sites.push(site(&rd.key(a), "", vec![rd.ast.rhs(Node(a))]));
-        }
-        for &(m, bin) in &b.models {
-            let name = rd.model_view(m, bin).name;
-            let mut pairs = model_pairs(rd, m);
-            if bin != NONE {
-                pairs.extend(rd.pairs(bin));
-            }
-            for (k, v) in pairs {
-                sites.push(site(&name, &k, vec![v]));
-            }
-        }
-        for &(_, i) in &b.insts {
-            let Card::Inst { name, .. } = rd.card_view(i) else {
-                unreachable!("an instance's view");
-            };
-            for (k, v) in elem_pairs(rd, i) {
-                sites.push(site(&format!("x{name}"), &k, vec![v]));
-            }
-        }
-        for &c in &b.comps {
-            if let Comp::Card(n) = c {
-                card_sites(rd, n, &mut sites);
-            }
-        }
-        out.push(Scoped {
-            subckt: subckt.map(str::to_string),
-            section,
-            sites,
-        });
-        let branches = b.conds.iter().flat_map(|(_, c)| &c.branches);
-        let mut inner: Vec<&Block> = branches.map(|(_, body)| body).collect();
-        inner.reverse();
-        work.extend(inner);
-    }
-}
-
-/// Element `n`'s sites, as the old pass named them: an R, C or L value
-/// first (its field the letter), a charge (`q`), then its parameters; a
-/// source's and a semiconductor's every expression under `e`.
-fn card_sites(rd: &Rd, n: u32, sites: &mut Vec<Site>) {
-    let site = |owner: &str, field: &str, roots: Vec<u32>| Site {
-        owner: owner.to_string(),
-        field: field.to_string(),
-        roots,
-    };
-    let pairs = elem_pairs(rd, n);
-    match rd.card_view(n) {
-        Card::Rcl {
-            letter,
-            name,
-            value,
-            ..
-        } => {
-            let l = letter.to_ascii_lowercase();
-            let owner = format!("{l}{name}");
-            let key = l.to_string();
-            // The value: the item after the nodes, else the first `l=` pair
-            // (all of them, read named).
-            let positional = match rd.named() {
-                true => None,
-                false => rd
-                    .items(n)
-                    .get(2)
-                    .copied()
-                    .filter(|&v| rd.tag(v) != Tag::Assign),
-            };
-            let from_pair = positional.is_none();
-            if let crate::syntax::render::read::Val::Expr(_) = value {
-                let v = positional.or_else(|| {
-                    pairs
-                        .iter()
-                        .find(|(k, _)| k.eq_ignore_ascii_case(&key))
-                        .map(|p| p.1)
-                });
-                if let Some(v) = v {
-                    sites.push(site(&owner, &key, vec![v]));
-                }
-            }
-            let mut skipped = false;
-            for (k, v) in pairs {
-                let is_key = k.eq_ignore_ascii_case(&key);
-                if from_pair && is_key && (rd.named() || !skipped) {
-                    skipped = true;
-                    continue;
-                }
-                sites.push(site(&owner, &k, vec![v]));
-            }
-        }
-        Card::Charge { name, .. } => {
-            let owner = format!("c{name}");
-            let q = pairs.iter().position(|(k, _)| k.eq_ignore_ascii_case("q"));
-            if let Some(i) = q {
-                sites.push(site(&owner, "q", vec![pairs[i].1]));
-            }
-            for (i, (k, v)) in pairs.into_iter().enumerate() {
-                if Some(i) != q {
-                    sites.push(site(&owner, &k, vec![v]));
-                }
-            }
-        }
-        // ponytail: a source's expressions in item order (the old pass:
-        // the waveform's, then the value); no corpus source calls one.
-        Card::Source { letter, name, .. } => {
-            let owner = format!("{}{name}", letter.to_ascii_lowercase());
-            let items: Vec<u32> = match rd.named() {
-                true => pairs.into_iter().map(|p| p.1).collect(),
-                false => rd.items(n).into_iter().skip(2).collect(),
-            };
-            for v in items {
-                sites.push(site(&owner, "e", vec![v]));
-            }
-        }
-        Card::Semi { letter, name, .. } => {
-            let l = match letter {
-                'D' | 'Q' | 'M' => letter.to_ascii_lowercase(),
-                _ => 'e',
-            };
-            for (_, v) in pairs {
-                sites.push(site(&format!("{l}{name}"), "e", vec![v]));
-            }
-        }
-        // A behavioural source has no Spectre form (refused); the rest
-        // carry no expression.
-        Card::Behavioural { .. }
-        | Card::Coupling { .. }
-        | Card::Linear { .. }
-        | Card::Poly { .. }
-        | Card::Switch { .. }
-        | Card::Line { .. }
-        | Card::Inst { .. } => {}
-    }
-}
-
-/// The `Assign` items among `items`.
-fn assigns(rd: &Rd, items: &[u32]) -> Vec<u32> {
-    items
-        .iter()
-        .copied()
-        .filter(|&k| rd.tag(k) == Tag::Assign)
-        .collect()
-}
-
-/// A model's `k=v` pairs (key, value item), in card order.
-fn model_pairs(rd: &Rd, m: u32) -> Vec<(String, u32)> {
-    match rd.named() {
-        true => rd.pairs(m),
-        false => pairs_of(rd, &assigns(rd, &rd.fields(m)[2..])),
-    }
-}
-
-/// An element's `k=v` pairs (key, value item), in card order.
-fn elem_pairs(rd: &Rd, n: u32) -> Vec<(String, u32)> {
-    match rd.named() {
-        true => rd.pairs(n),
-        false => pairs_of(rd, &assigns(rd, &rd.items(n))),
-    }
-}
-
-fn pairs_of(rd: &Rd, assigns: &[u32]) -> Vec<(String, u32)> {
-    assigns
-        .iter()
-        .map(|&a| (rd.key(a), rd.ast.rhs(Node(a))))
-        .collect()
-}
-
 /// `rack_<subckt>_<owner>_<field>_<k>`, identifier bytes only, a counter
 /// suffix on a collision (§5.2, §11: the subcircuit names a mismatch
 /// variable, as one local name recurs across a PDK's subcircuits).
@@ -529,41 +373,132 @@ impl Rd<'_> {
     /// The `Call` nodes of expression `root`, inner calls first, left to
     /// right (the order the old pass's scanner rewrote them in).
     fn calls_in(&self, root: u32) -> Vec<u32> {
+        let calls = self.expand(root, &[], &mut Vec::new());
+        calls.into_iter().map(|(c, _)| c).collect()
+    }
+
+    /// The `Call` nodes of expression `root` as [`Rd::calls_in`] orders
+    /// them, each call of a `drawn` function inlined as the old pass's text
+    /// was: its body's calls in its place, an argument's at each use of its
+    /// parameter. Each inlined call outside another opens a script in
+    /// `scripts` (its name token, its steps in the order its text meets
+    /// them); a statistical call inside one comes with its step's slot.
+    fn expand(
+        &self,
+        root: u32,
+        drawn: &[Drawn],
+        scripts: &mut Vec<(u32, Vec<(u32, Step)>)>,
+    ) -> Vec<(u32, Option<(usize, usize)>)> {
         let a = self.ast;
         let mut out = Vec::new();
-        let mut work = vec![(root, false)];
-        while let Some((n, done)) = work.pop() {
+        // The inlined calls: the function and its argument nodes.
+        let mut frames: Vec<(usize, Vec<u32>)> = Vec::new();
+        let mut work = vec![Walk::Enter {
+            n: root,
+            frame: None,
+            script: None,
+        }];
+        while let Some(w) = work.pop() {
+            let (n, frame, script) = match w {
+                Walk::Exit { n, slot } => {
+                    out.push((n, slot));
+                    continue;
+                }
+                Walk::Enter { n, frame, script } => (n, frame, script),
+            };
             if n == NONE {
-                continue;
-            }
-            if done {
-                out.push(n);
                 continue;
             }
             let node = Node(n);
             let at = a.rhs(node);
+            let tok = a.main_token(node);
+            // Inside an inlined body, only its tokens are spelled.
+            let spelled = frame.is_none_or(|f| {
+                let (x, y) = drawn[frames[f].0].span;
+                (x..=y).contains(&tok)
+            });
+            let enter = |k: u32| Walk::Enter {
+                n: k,
+                frame,
+                script,
+            };
             // Children pushed last first, so the first is walked first.
             match a.tag(node) {
+                Tag::Ident => {
+                    let Some(f) = frame.filter(|_| spelled) else {
+                        continue;
+                    };
+                    let (d, args) = (&drawn[frames[f].0], &frames[f].1);
+                    // quirk: the old pass's `rename_idents`: a parameter
+                    // matched as written, an argument it has none for kept.
+                    let text = self.text(n);
+                    let arg = d.params.iter().position(|p| *p == text);
+                    if let Some(&arg) = arg.and_then(|j| args.get(j)) {
+                        let s = script.expect("a body is inlined in a script");
+                        let step = Step::Subst(self.first(arg), self.last(arg));
+                        scripts[s].1.push((tok, step));
+                        work.push(Walk::Enter {
+                            n: arg,
+                            frame: None,
+                            script,
+                        });
+                    }
+                }
                 Tag::Call => {
-                    work.push((n, true));
+                    let unlifted = self.unlifted_call(tok).is_some();
                     let mut args = a.list(at + 1);
-                    if self.unlifted_call(a.main_token(node)).is_some() {
+                    if unlifted {
                         args = &args[..args.len() - 1];
                     }
-                    work.extend(args.iter().rev().map(|&k| (k, false)));
+                    let name = self.call_of(n).0.to_ascii_lowercase();
+                    // quirk: the old pass inlined once, so a call inside an
+                    // inlined body stays a call.
+                    let d = drawn.iter().position(|d| d.name == name);
+                    if let Some(d) = d.filter(|_| frame.is_none() && !unlifted) {
+                        let step = (tok, Step::Inline(drawn[d].span.0, drawn[d].span.1));
+                        let s = match script {
+                            Some(s) => {
+                                scripts[s].1.push(step);
+                                s
+                            }
+                            None => {
+                                scripts.push((tok, vec![step]));
+                                scripts.len() - 1
+                            }
+                        };
+                        frames.push((d, args.to_vec()));
+                        let f = frames.len() - 1;
+                        work.extend(drawn[d].roots.iter().rev().map(|&r| Walk::Enter {
+                            n: r,
+                            frame: Some(f),
+                            script: Some(s),
+                        }));
+                        continue;
+                    }
+                    if spelled {
+                        let slot = match script {
+                            Some(s) if STATISTICAL.contains(&name.as_str()) => {
+                                scripts[s].1.push((tok, Step::Call(None)));
+                                Some((s, scripts[s].1.len() - 1))
+                            }
+                            _ => None,
+                        };
+                        work.push(Walk::Exit { n, slot });
+                    }
+                    work.extend(args.iter().rev().map(|&k| enter(k)));
                 }
-                Tag::Unary | Tag::Paren | Tag::Delimited => work.push((a.lhs(node), false)),
-                Tag::Binary | Tag::Assign => work.extend([(at, false), (a.lhs(node), false)]),
+                Tag::Unary | Tag::Paren | Tag::Delimited => work.push(enter(a.lhs(node))),
+                Tag::Binary | Tag::Assign => work.extend([enter(at), enter(a.lhs(node))]),
                 Tag::Ternary => work.extend([
-                    (a.extra(at + 1), false),
-                    (a.extra(at), false),
-                    (a.lhs(node), false),
+                    enter(a.extra(at + 1)),
+                    enter(a.extra(at)),
+                    enter(a.lhs(node)),
                 ]),
                 Tag::Vector | Tag::List | Tag::Group => {
-                    work.extend(a.list(at + 1).iter().rev().map(|&k| (k, false)));
+                    work.extend(a.list(at + 1).iter().rev().map(|&k| enter(k)));
                 }
-                Tag::Seq => work.extend(a.list(a.lhs(node)).iter().rev().map(|&k| (k, false))),
-                Tag::Index => work.extend([(a.extra(at), false), (a.lhs(node), false)]),
+                Tag::Seq => work.extend(a.list(a.lhs(node)).iter().rev().map(|&k| enter(k))),
+                Tag::Index => work.extend([enter(a.extra(at)), enter(a.lhs(node))]),
                 // else: leaves hold no call.
                 _ => {}
             }

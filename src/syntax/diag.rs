@@ -119,7 +119,7 @@ pub enum Code {
     W0105,
     /// A function the target cannot define (a body over `v()`/`i()`; VACASK has none).
     W0106,
-    /// A statistical call with no form in the target (HSPICE's multiplier, a wrong argument count, a call inside a function).
+    /// A statistical call with no form in the target (HSPICE's multiplier, a wrong argument count).
     W0107,
     /// A source waveform the target cannot run as SPICE does (Spectre's AM; VACASK's PWL, a SIN phase, an EXP delay that is no number).
     W0108,

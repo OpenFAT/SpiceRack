@@ -1,0 +1,2 @@
+old: Code generation error: expression 'limit(x, 0, 2) + agauss(x, 1)' calls the statistical function limit(), which ltspice has no function for; refusing to drop its random term
+new: W0003

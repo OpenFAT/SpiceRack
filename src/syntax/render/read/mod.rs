@@ -65,7 +65,7 @@ pub(in crate::syntax::render) use named_blocks::{Stats, Vary};
 pub(in crate::syntax::render) use options::Opt;
 pub(in crate::syntax::render) use sources::{Num, Wave, WaveKind};
 pub(in crate::syntax::render) use testbench::{Ana, BenchCard, Sweep};
-pub(in crate::syntax::render) use unlift::Lift;
+pub(in crate::syntax::render) use unlift::{Lift, Step};
 pub(in crate::syntax::render) use values::Val;
 
 /// The reader: the file, its kit, and the deck-wide facts every statement's

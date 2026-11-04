@@ -8,8 +8,8 @@ that. Phase 3 (resolve) and phase 7 (new guarantees) are expected to change
 their goldens, each change a reviewed line in `migration.xfail`.
 
 No simulator has run these files. Nothing here is a hand-derived expected
-value yet; each phase-7 test that uses one adds its own. The statistics and
-Laplace fixtures are not in the `daa0ad0` baseline: `tests/test_render.rs`
+value yet; each phase-7 test that uses one adds its own. The statistics,
+Laplace and `func_stats` fixtures are not in the `daa0ad0` baseline: `tests/test_render.rs`
 writes each with the renderer and with the old writer
 (`codegen::netlist(import::parse(..))`, whose statistics text T-R3/T-R4 of
 `tests/test_monte_carlo.rs` check against monte-carlo-spectre.md §10.6),
@@ -23,6 +23,7 @@ asserts the two equal, and pins them in `pinned/<file>_<ext>/<target>.txt`
 | `gf180_inverter.scs` | From the paused `pdk-zero` work (`d1dc27e`, `tests/spectre/kits/`): a gf180mcu inverter that includes the PDK's ngspice files, one with `section=typical`, and instantiates `pfet_03v3`/`nfet_03v3` defined there. |
 | `stats_process.scs`, `stats_correlate.scs`, `stats_correlate_cc.scs`, `stats_refused.scs` | Spectre `statistics` tables lowered for SPICE (`docs/research/monte-carlo-spectre.md` §6b, §10.5), none of which the corpus holds: process and mismatch `vary`, gauss, unif and lnorm, `percent`, `truncate` (4 sigma and over), a 2x2 `correlate` with a numeric `cc` and one with an expression `cc` in a library section; and the refused forms (`correlate dev=`, `truncate tr=3`). |
 | `laplace.sp`, `laplace.cir`, `laplace.net` | Laplace behavioural sources (a lead-lag `V=` and a two-pole `I=`, each a numerator over a denominator) read as ngspice, Xyce and LTspice: the ngspice `s_xfer`, HSPICE/ESPice `LAPLACE` and LTspice `Laplace=` forms, Xyce's refusal. |
+| `func_stats.sp`, `func_stats.cir` | A `.func` whose body calls a statistical function, which Spectre inlines at each call, each drawn on its own (`docs/research/monte-carlo-spectre.md` §10.2 step 2): calls at the top, in one value twice (one spelled in capitals), nested in its own argument, with an argument that draws and is used twice, in a subcircuit (mismatch), and a function nothing calls; read as Xyce, a clamp `limit` and a sigma-less `agauss` in the body. VACASK has no functions (refused). |
 | `sky130_nmos.scs` | From the same place: a sky130 NMOS that includes the combined library with `section=tt` and instantiates `sky130_fd_pr__nfet_01v8` defined there. |
 
 `f1.scs`, `top.scs` and `lib.scs` were written for the audit

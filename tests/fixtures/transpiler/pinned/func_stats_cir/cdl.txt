@@ -1,0 +1,6 @@
+* func_stats
+.SUBCKT func_stats
+R1 a 0 {c(3)*1k}
+V1 a 0 1
+.ENDS func_stats
+.END
