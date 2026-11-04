@@ -1,6 +1,6 @@
 func_stats: a function whose body draws, read as Xyce
-* Made up (tests/fixtures/transpiler/README.md). monte-carlo-spectre.md
-* §10.2 step 2, as func_stats.sp; Xyce's three-argument limit is a clamp
+* Made up (tests/fixtures/transpiler/README.md). Each call of the drawing
+* function is inlined, as in func_stats.sp; Xyce's three-argument limit is a clamp
 * (XY-RG Table 2-33) and its two-argument agauss takes sigma 1, inside
 * the inlined body too. Oracle: the old writer (codegen::netlist).
 .func c(x) {limit(x, 0, 2) + agauss(x, 1)}

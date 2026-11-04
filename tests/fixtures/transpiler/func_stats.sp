@@ -1,9 +1,12 @@
 func_stats: functions whose bodies draw
-* Made up (tests/fixtures/transpiler/README.md). monte-carlo-spectre.md
-* §10.2 step 2: for Spectre, each call of a .func whose body calls a
-* statistical function is inlined, `(body)` with each parameter `(arg)`,
-* and each inlined call is drawn on its own (§5.1); the function is not
-* written. Oracle: the old writer (codegen::netlist), byte for byte.
+* Made up (tests/fixtures/transpiler/README.md). For Spectre, each call
+* of a .func whose body calls a statistical function is inlined, `(body)`
+* with each parameter `(arg)`, and each inlined call is drawn on its own:
+* a Spectre user function's body may reference only its arguments and
+* temp/tnom (Spectre Reference 19.1 p.481), so a draw cannot sit in it,
+* and ngspice draws a .func body's call once per call of the function.
+* The function is not written. Oracle: the old writer (codegen::netlist),
+* byte for byte.
 * Probes: a call at the top (p), two in one value (R1, the second
 * spelled F), a call nested in its own argument and one whose argument
 * calls a function (R2), an argument that draws, used twice (R3), a call

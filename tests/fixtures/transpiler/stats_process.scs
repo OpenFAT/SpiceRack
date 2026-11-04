@@ -1,7 +1,10 @@
-// A made-up Spectre statistics table (docs/research/monte-carlo-spectre.md
-// §6b, §10.5): process gauss with percent, unif, lnorm; mismatch gauss and
-// unif with percent, read by one subcircuit and not by another; truncate
-// at the block's top and in process, both at 4 sigma or more.
+// A made-up Spectre statistics table (Spectre Reference 19.1 pp.175-179):
+// process gauss with percent, unif, lnorm; mismatch gauss and unif with
+// percent, read by one subcircuit and not by another (mismatch is drawn
+// per subcircuit instance, so only the subcircuit that reads it gets a
+// draw); truncate at the block's top and in process, both at 4 sigma or
+// more, which SPICE has no form for and which changes a gauss std by
+// under 0.1% (a 4-sigma rejection: 0.99946), so it is written as nothing.
 simulator lang=spectre
 parameters rsh=100 vth=0.45 tox=4n cg=1p
 statistics {

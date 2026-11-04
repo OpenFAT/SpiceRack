@@ -1,7 +1,8 @@
-// A made-up Spectre statistics table (docs/research/monte-carlo-spectre.md
-// §6b, §10.5): a 2x2 correlate of gauss process parameters with a numeric
-// cc (the Cholesky factor), one with percent, a third parameter left
-// uncorrelated, and truncate in process.
+// A made-up Spectre statistics table (Spectre Reference 19.1 p.179,
+// `correlate param=[...] cc=`): a 2x2 correlate of gauss process
+// parameters with a numeric cc, which SPICE writes as independent unit
+// draws mixed by the correlation matrix's Cholesky factor; one parameter
+// with percent, a third left uncorrelated, and truncate in process.
 simulator lang=spectre
 parameters a=1 b=2 c=3
 statistics {

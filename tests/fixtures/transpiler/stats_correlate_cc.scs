@@ -1,6 +1,7 @@
-// A made-up Spectre statistics table (docs/research/monte-carlo-spectre.md
-// §6b): a 2x2 correlate whose cc is an expression (the 2x2 closed form,
-// sqrt(1-cc*cc)), inside a library section.
+// A made-up Spectre statistics table (Spectre Reference 19.1 p.179: "Correlation
+// coefficients can be constants or expressions"): a 2x2 correlate whose cc
+// is an expression, which SPICE writes in the 2x2 Cholesky closed form
+// (b's draw is cc*z1 + sqrt(1-cc*cc)*z2), inside a library section.
 simulator lang=spectre
 library mc
 section tt
