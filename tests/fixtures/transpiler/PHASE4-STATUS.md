@@ -76,7 +76,7 @@ IDENTICAL; the merge tier 466 tests.
 export CARGO_BUILD_JOBS=4 CARGO_TARGET_DIR=/tmp/claude-1000/spicerack-transpiler-target
 cargo build -j 4 --release --no-default-features --features json --bin golden
 G=$CARGO_TARGET_DIR/release/golden
-nix develop .#testing -c env IHP_PDK=/home/omare/pdks/IHP-Open-PDK $G record --writer syntax <out>
+nix develop .#testing -c env IHP_PDK=<path to IHP-Open-PDK> $G record --writer syntax <out>
 $G diff <baseline-daa0ad0> <out> --xfail migration.xfail --refusal-status-only <report>
 nix develop .#testing -c env IHP_PDK=... $G check-determinism --writer syntax   # IDENTICAL
 ```
