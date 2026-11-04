@@ -25,9 +25,9 @@ No written-versus-refused flip on any SPICE target. The refusal text report
 Every input dialect reaches every SPICE target through the new reader
 (`render::read`), SPICE and named alike (Spectre, VACASK: `read/named*.rs`).
 
-The last `--writer syntax` record is `/tmp/claude-1000/spicerack-golden/p4s-5`
+The last `--writer syntax` record is `/tmp/claude-1000/spicerack-golden/p4s-6`
 (the statistics lift, the Laplace rule, the role frame, the name map and
-CDL; `check-determinism --writer syntax` IDENTICAL; the merge tier 459
+CDL; `check-determinism --writer syntax` IDENTICAL; the merge tier 460
 tests), the baseline `/tmp/claude-1000/spicerack-golden/baseline-daa0ad0`.
 
 The corpus holds no deck the statistics lift or the Laplace rule writes
