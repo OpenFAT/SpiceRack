@@ -169,6 +169,17 @@ The note at the top of `src/syntax/mod.rs` shows the three steps.
 - pytest: 513 (510 at `949be79`, one failing): the three JSON
   serialization tests replaced by six store tests, the failing one fixed.
 
+### Gates for decisions 1 and 2 (`6061c42`..)
+
+- golden: record against `baseline-daa0ad0-fx11` (`--refusal-status-only`,
+  `--skip verilog`): IDENTICAL except the 15 listed xfails;
+  `check-determinism`: IDENTICAL.
+- fmt, clippy `-D warnings` (all targets, all features), `check_style.py`:
+  clean.
+- merge tier: 370 (366 + the region reader's test and the store's three).
+- pytest: 521 (507 at `b11d249` + 14: the store, the removed JSON methods
+  one each, a deck's dialect text).
+
 ## Left
 
 - The writers recurse over a branch's body (`spice::W::body` ↔
