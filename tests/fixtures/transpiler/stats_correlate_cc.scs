@@ -1,0 +1,16 @@
+// A made-up Spectre statistics table (docs/research/monte-carlo-spectre.md
+// §6b): a 2x2 correlate whose cc is an expression (the 2x2 closed form,
+// sqrt(1-cc*cc)), inside a library section.
+simulator lang=spectre
+library mc
+section tt
+parameters k=0.5 a=1 b=2
+statistics {
+  process {
+    vary a dist=gauss std=0.1
+    vary b dist=gauss std=0.2
+  }
+  correlate param=[a b] cc=k
+}
+endsection tt
+endlibrary mc

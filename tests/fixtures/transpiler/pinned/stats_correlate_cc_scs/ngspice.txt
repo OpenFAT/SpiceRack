@@ -1,0 +1,12 @@
+* stats_correlate_cc
+
+.lib tt
+.param k=500m
+.param a__z__r={agauss(0, 1, 1)}
+.param a__z=a__z__r
+.param a={(1) + (100m)*((1)*a__z)}
+.param b__z__r={agauss(0, 1, 1)}
+.param b__z=b__z__r
+.param b={(2) + (200m)*(((k))*a__z + (sqrt(1-(k)*(k)))*b__z)}
+.endl tt
+.end

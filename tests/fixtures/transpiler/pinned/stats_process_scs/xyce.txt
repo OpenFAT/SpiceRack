@@ -1,0 +1,27 @@
+* stats_process
+.param rsh__mc={agauss(100, (100)*(5)/100, 1)}
+.param rsh=rsh__mc
+.param vth__mc={aunif(450m, 20m)}
+.param vth=vth__mc
+.param tox__mc={exp(agauss(log(4n), 30m, 1))}
+.param tox=tox__mc
+.param cg=1p
+
+.subckt cell a b
+.param cg__mm_r={aunif(cg, (cg)*(2)/100)}
+.param cg__mm=cg__mm_r
+.param vth__mm_r={agauss(vth, 5m, 1)}
+.param vth__mm=vth__mm_r
+R1 a b {rsh*10}
+C1 b 0 {cg__mm*2}
+V1 b 0 {vth__mm}
+.ends cell
+
+.subckt plain a b
+R1 a b 1k
+.ends plain
+X1 in out cell
+X2 out 0 plain
+V0 in 0 1
+.op
+.end

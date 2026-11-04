@@ -1,0 +1,6 @@
+* stats_correlate
+.SUBCKT stats_correlate a=1 b=2 c=3
+I1 0 x 1m
+R1 x 0 {a+b+c}
+.ENDS stats_correlate
+.END

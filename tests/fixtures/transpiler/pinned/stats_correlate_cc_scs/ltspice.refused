@@ -1,0 +1,2 @@
+old: Code generation error: expression '{agauss(0, 1, 1)}' calls the statistical function agauss(), which ltspice has no function for; refusing to drop its random term
+new: W0003 W0012

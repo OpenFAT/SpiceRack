@@ -1,0 +1,13 @@
+* stats_correlate
+.param a__z__r={agauss(0, 1, 1)}
+.param a__z=a__z__r
+.param a={(1) + (100m)*((1e0)*a__z)}
+.param b__z__r={agauss(0, 1, 1)}
+.param b__z=b__z__r
+.param b={(2) + ((2)*(200m)/100)*((6e-1)*a__z + (8e-1)*b__z)}
+.param c__mc={agauss(3, 300m, 1)}
+.param c=c__mc
+R1 x 0 {a+b+c}
+I1 0 x 1m
+.op
+.end

@@ -1,0 +1,4 @@
+* stats_correlate_cc
+.SUBCKT stats_correlate_cc
+.ENDS stats_correlate_cc
+.END

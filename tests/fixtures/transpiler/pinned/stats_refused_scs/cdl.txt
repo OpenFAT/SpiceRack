@@ -1,0 +1,6 @@
+* stats_refused
+.SUBCKT stats_refused a=1 b=2
+I1 0 x 1m
+R1 x 0 {a+b}
+.ENDS stats_refused
+.END

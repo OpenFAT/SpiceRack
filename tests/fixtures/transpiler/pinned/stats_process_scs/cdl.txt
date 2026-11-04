@@ -1,0 +1,17 @@
+* stats_process
+.SUBCKT stats_process rsh=100 vth=450m tox=4n cg=1p
+V0 in 0 1
+X1 in out cell
+X2 out 0 plain
+.ENDS stats_process
+.SUBCKT cell a b
+*.PININFO a:B b:B
+C1 b 0 {cg*2}
+R1 a b {rsh*10}
+V1 b 0 {vth}
+.ENDS cell
+.SUBCKT plain a b
+*.PININFO a:B b:B
+R1 a b 1k
+.ENDS plain
+.END

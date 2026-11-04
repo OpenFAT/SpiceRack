@@ -1,0 +1,18 @@
+// A made-up Spectre statistics table (docs/research/monte-carlo-spectre.md
+// §6b, §10.5): a 2x2 correlate of gauss process parameters with a numeric
+// cc (the Cholesky factor), one with percent, a third parameter left
+// uncorrelated, and truncate in process.
+simulator lang=spectre
+parameters a=1 b=2 c=3
+statistics {
+  process {
+    vary a dist=gauss std=0.1
+    vary b dist=gauss std=0.2 percent=yes
+    vary c dist=gauss std=0.3
+    truncate tr=4
+  }
+  correlate param=[a b] cc=0.6
+}
+r1 (x 0) resistor r=a+b+c
+i1 (0 x) isource dc=1m
+op1 dc

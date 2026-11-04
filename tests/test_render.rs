@@ -1,13 +1,17 @@
 //! The renderer (`syntax::render`) against the old pipeline on decks the
 //! golden corpus holds none of: Spectre `statistics` blocks lowered for the
 //! SPICE family (`docs/research/monte-carlo-spectre.md` §6b, §10.5) and
-//! Laplace sources.
+//! Laplace sources. The made-up fixtures (`tests/fixtures/transpiler/
+//! stats_*.scs`, `laplace.{sp,cir,net}`, golden inputs too) are written by
+//! both and pinned under `tests/fixtures/transpiler/pinned/<file>_<ext>/`.
 //!
 //! Oracle: `codegen::netlist(import::parse(deck))` at this commit, the
 //! pipeline the golden gate's baseline recorded (TESTING.md, "Golden
 //! gate"): each deck written byte for byte the same, or refused by both.
-//! `test_monte_carlo.rs` (T-R3, T-R4) and `test_laplace_ngspice.rs` check
-//! the old pipeline's text against the research note and real ngspice.
+//! That pipeline's statistics text is the one `test_monte_carlo.rs` T-R3
+//! and T-R4 check against monte-carlo-spectre.md §10.6 (its §6b table),
+//! and its Laplace cards the ones `test_laplace_ngspice.rs` runs on real
+//! ngspice. `SPICERACK_BLESS=1` rewrites the pinned files.
 //!
 //! Contents: none (tests only).
 
@@ -29,6 +33,17 @@ const TABLE: &str = "// t\nsimulator lang=spectre\nparameters p=1k q=2 r=3\nstat
 
 /// T-R4's base: a correlation, `CORR` its operands.
 const CORR: &str = "// t\nsimulator lang=spectre\nparameters a=1 b=2\nstatistics {\n  process {\n    vary a dist=gauss std=0.1\n    vary b dist=gauss std=0.2\n  }\n  correlate CORR\n}\nr1 (x 0) resistor r=a+b\n";
+
+/// The made-up statistics and Laplace fixtures, each read in its dialect.
+const FIXTURES: [(&str, Dialect); 7] = [
+    ("stats_process.scs", Dialect::Spectre),
+    ("stats_correlate.scs", Dialect::Spectre),
+    ("stats_correlate_cc.scs", Dialect::Spectre),
+    ("stats_refused.scs", Dialect::Spectre),
+    ("laplace.sp", Dialect::Ngspice),
+    ("laplace.cir", Dialect::Xyce),
+    ("laplace.net", Dialect::Ltspice),
+];
 
 // ---- private ----
 
@@ -157,4 +172,72 @@ fn laplace_sources_are_written_as_the_old_writer_wrote_them() {
     // LTspice (Xyce refuses every one, LTspice the two with `^`, which it
     // reads as XOR).
     assert_eq!(lifted, (11 * 4 - 2) * 2);
+}
+
+#[test]
+fn fixtures_render_as_the_old_writer_did_and_as_pinned() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/transpiler");
+    let bless = std::env::var_os("SPICERACK_BLESS").is_some();
+    let targets = SPICE.into_iter().chain([Dialect::Cdl]);
+    for (file, d) in FIXTURES {
+        let text = std::fs::read_to_string(dir.join(file)).unwrap();
+        let stem = file.split('.').next().unwrap();
+        let (ir, _) = parse(&text, stem, d).unwrap();
+        for t in targets.clone() {
+            let old = netlist(&ir, t).map_err(|e| e.to_string());
+            let new = render_text(&text, d, stem, t);
+            let (name, body) = match (&old, &new) {
+                (Ok(a), Ok(b)) => {
+                    assert_eq!(a, b, "{file} {t:?}");
+                    (format!("{}.txt", t.name()), a.clone())
+                }
+                (Err(e), Err(codes)) => {
+                    let codes: Vec<String> =
+                        codes.iter().map(|c| format!("{:?}", c.code)).collect();
+                    let body = format!("old: {e}\nnew: {}\n", codes.join(" "));
+                    (format!("{}.refused", t.name()), body)
+                }
+                _ => panic!("{file} {t:?}: old {old:?}, new {new:?}"),
+            };
+            let pin = dir.join("pinned").join(file.replace('.', "_")).join(&name);
+            if bless {
+                std::fs::create_dir_all(pin.parent().unwrap()).unwrap();
+                std::fs::write(&pin, &body).unwrap();
+            }
+            let want = std::fs::read_to_string(&pin)
+                .unwrap_or_else(|e| panic!("{}: {e} (SPICERACK_BLESS=1 writes it)", pin.display()));
+            assert_eq!(body, want, "{}", pin.display());
+        }
+    }
+    // Each fixture reaches the rule it is for.
+    let pinned = |f: &str, t: &str| {
+        std::fs::read_to_string(dir.join("pinned").join(f.replace('.', "_")).join(t)).unwrap()
+    };
+    for f in [
+        "stats_process.scs",
+        "stats_correlate.scs",
+        "stats_correlate_cc.scs",
+    ] {
+        let sp = pinned(f, "ngspice.txt");
+        assert!(
+            sp.contains("__mc={") || sp.contains("__z__r={"),
+            "{f}\n{sp}"
+        );
+    }
+    assert!(pinned("stats_process.scs", "ngspice.txt").contains("__mm_r={"));
+    assert!(pinned("stats_refused.scs", "ngspice.refused").contains("new: W0018"));
+    for f in ["laplace.sp", "laplace.cir", "laplace.net"] {
+        assert!(
+            pinned(f, "ngspice.txt").contains("s_xfer(num_coeff=["),
+            "{f}"
+        );
+        assert!(pinned(f, "hspice.txt").contains(" LAPLACE "), "{f}");
+        assert!(pinned(f, "xyce.refused").contains(" W0011"), "{f}");
+    }
+    // LTspice reads the ngspice deck's `s^2` as XOR: refused there, written
+    // from the two decks that spell it `s*s`.
+    assert!(pinned("laplace.sp", "ltspice.refused").contains("new: W0002"));
+    for f in ["laplace.cir", "laplace.net"] {
+        assert!(pinned(f, "ltspice.txt").contains(" Laplace="), "{f}");
+    }
 }

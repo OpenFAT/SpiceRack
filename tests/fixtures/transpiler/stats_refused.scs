@@ -1,0 +1,17 @@
+// A made-up Spectre statistics table SPICE cannot hold
+// (docs/research/monte-carlo-spectre.md §10.5): a correlate over matched
+// instances (dev=) and a truncate below 4 sigma. Refused for every SPICE
+// target (W0018).
+simulator lang=spectre
+parameters a=1 b=2
+statistics {
+  process {
+    vary a dist=gauss std=0.1
+    vary b dist=gauss std=0.2
+    truncate tr=3
+  }
+  correlate dev=[x1 x2] cc=0.6
+}
+r1 (x 0) resistor r=a+b
+i1 (0 x) isource dc=1m
+op1 dc

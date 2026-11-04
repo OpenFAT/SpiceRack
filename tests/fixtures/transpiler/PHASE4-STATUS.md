@@ -32,11 +32,21 @@ tests), the baseline `/tmp/claude-1000/spicerack-golden/baseline-daa0ad0`.
 
 The corpus holds no deck the statistics lift or the Laplace rule writes
 (each Spectre deck with a `statistics` block is refused first for its
-`montecarlo` line; no deck has a Laplace source): `tests/test_render.rs`
-checks both against `codegen::netlist` byte for byte, on the T-R3/T-R4
-tables, correlations (2x2 numeric and expression `cc`, 3x3), mismatch in
-several subcircuits, library sections, and 21 Laplace expressions (written
-and refused) as `V` and `I`, on all five SPICE targets.
+`montecarlo` line; no deck has a Laplace source). Seven made-up fixtures
+cover them (`tests/fixtures/transpiler/stats_*.scs`, `laplace.{sp,cir,net}`,
+README.md): `tests/test_render.rs` writes each with the renderer and the old
+writer on all five SPICE targets and CDL, asserts them equal and pins them
+(`pinned/`); it also checks inline decks (the T-R3/T-R4 tables, a 3x3
+correlation, mismatch in several subcircuits, 21 Laplace expressions).
+
+The fixtures are golden inputs too, which `baseline-daa0ad0` lacks. The gate
+for them is an extended baseline: `baseline-daa0ad0` hard-linked, plus the
+old writer's record (`golden record`, no `--writer`) of the inputs it lacks,
+their `input`/`output` lines and the `set fixtures` count taken from that
+record's MANIFEST (`/tmp/claude-1000/spicerack-golden/baseline-daa0ad0-fx`).
+`golden diff baseline-daa0ad0-fx <record --writer syntax>` then compares the
+new writer with the old one on them; against the plain baseline the same
+record differs only in those inputs (MANIFEST `+` lines, absent files).
 
 ## Run the gate
 

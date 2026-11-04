@@ -1,0 +1,31 @@
+// A made-up Spectre statistics table (docs/research/monte-carlo-spectre.md
+// §6b, §10.5): process gauss with percent, unif, lnorm; mismatch gauss and
+// unif with percent, read by one subcircuit and not by another; truncate
+// at the block's top and in process, both at 4 sigma or more.
+simulator lang=spectre
+parameters rsh=100 vth=0.45 tox=4n cg=1p
+statistics {
+  truncate tr=4
+  process {
+    vary rsh dist=gauss std=5 percent=yes
+    vary vth dist=unif N=0.02
+    vary tox dist=lnorm std=0.03
+    truncate tr=5
+  }
+  mismatch {
+    vary vth dist=gauss std=0.005
+    vary cg dist=unif N=2 percent=yes
+  }
+}
+subckt cell (a b)
+r1 (a b) resistor r=rsh*10
+c1 (b 0) capacitor c=cg*2
+v1 (b 0) vsource dc=vth
+ends cell
+subckt plain (a b)
+r1 (a b) resistor r=1k
+ends plain
+x1 (in out) cell
+x2 (out 0) plain
+v0 (in 0) vsource dc=1
+op1 dc

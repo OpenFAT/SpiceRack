@@ -1,0 +1,9 @@
+* laplace
+V1 in 0 0 AC 1
+AB1 %vd(in 0) %vd(o1 0) B1_xfer
+.model B1_xfer s_xfer(num_coeff=[1e-3 1e0] den_coeff=[1e-6 1e0] int_ic=[0])
+AB2 %vd(in o1) %id(o2 0) B2_xfer
+.model B2_xfer s_xfer(num_coeff=[2e0] den_coeff=[1e-8 2e-4 1e0] int_ic=[0 0])
+R1 o2 0 1k
+.ac dec 10 1 1meg
+.end
