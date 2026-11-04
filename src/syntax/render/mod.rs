@@ -25,6 +25,7 @@
 //! - `pub fn writes(target: Dialect) -> bool`
 
 pub mod capability;
+mod draws;
 mod named;
 mod out;
 mod read;

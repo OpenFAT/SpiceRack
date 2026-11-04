@@ -1,7 +1,7 @@
 //! A file's role → what a target writes around it: the file role rule
 //! (`docs/research/transpiler-architecture.md` §2.5): a deck gets its
-//! title, its `.end` and its control blocks; a library none of them, in any
-//! target. The writers ask [`frame`] once per file; where the old writers'
+//! title, its `.end`, its control blocks and its ground; a library none
+//! of them, in any target. The writers ask [`frame`] once per file; where the old writers'
 //! rules give other bytes, a writer keeps them as a `// quirk:` beside its
 //! one call, until phase 7 (`tests/fixtures/transpiler/PHASE4-STATUS.md`).
 //!
@@ -26,8 +26,11 @@ pub(super) struct Frame {
     /// The closing `.end`.
     pub(super) end: bool,
     /// Control blocks: ngspice's `.control` (its `pre_osdi` loads, the run
-    /// a `.meas` needs).
+    /// a `.meas` needs), VACASK's `control`.
     pub(super) control: bool,
+    /// The ground declaration: VACASK's `ground 0` (a library leaves it to
+    /// the deck that reads it).
+    pub(super) ground: bool,
 }
 
 /// What `role` says a file carries.
@@ -40,11 +43,13 @@ pub(super) const fn frame(role: Role) -> Frame {
             title: true,
             end: true,
             control: true,
+            ground: true,
         },
         Role::Library => Frame {
             title: false,
             end: false,
             control: false,
+            ground: false,
         },
         Role::VerilogA | Role::Unread(_) => panic!("frame: a file the kit read"),
     }

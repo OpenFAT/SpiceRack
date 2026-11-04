@@ -8,9 +8,10 @@
 //! `.end`; the frame of title, `.end` and control blocks decided once, by
 //! the file's role) and the block-level cards; `cards` writes elements and
 //! waveforms, `bench` the testbench and analyses, `checks` the deck-wide
-//! refusals (another family's text, `^`, statistical calls), `draws` the
-//! `statistics` lift, `laplace` the transfer function a Laplace lift reads,
-//! `names` the element names with their letters, `cdl` CDL's layout.
+//! refusals (another family's text, `^`, statistical calls), `laplace` the
+//! transfer function a Laplace lift reads,
+//! `names` the element names with their letters, `cdl` CDL's layout; the
+//! `statistics` lift is `render::draws`, which VACASK's writer shares.
 //!
 //! Cites: ngspice manual ch.2 (the deck), §2.4.3 (`.subckt`), §2.6, §2.7
 //! (`.include`, `.lib`), §2.15 (`.if`); HSPICE `.END` (a library ends
@@ -24,11 +25,11 @@ mod bench;
 mod cards;
 mod cdl;
 mod checks;
-mod draws;
 mod laplace;
 mod names;
 
 use super::capability::{Action, Alt, Construct, Rule, action};
+use super::draws::{self, Layers};
 use super::out::{Out, Space};
 use super::read::{Block, Comp, Deck, Elem, Func, Raw, Rd, Section};
 use super::role::{self, Frame};
@@ -69,10 +70,12 @@ pub(super) fn write(rd: &mut Rd, deck: &Deck, target: Dialect) -> Result<String,
     let sp = spelling(target);
     let mut refused = Vec::new();
     let draws = match action(target, Construct::Statistics) {
-        Action::Lift(Rule::StatisticsDraws) => draws::lift(rd, deck).unwrap_or_else(|d| {
-            refused.push(d);
-            draws::Draws::default()
-        }),
+        Action::Lift(Rule::StatisticsDraws) => {
+            draws::lift(rd, deck, Layers::Two).unwrap_or_else(|d| {
+                refused.push(d);
+                draws::Draws::default()
+            })
+        }
         _ => draws::Draws::default(),
     };
     let rd: &Rd = rd;
@@ -149,6 +152,7 @@ impl W<'_, '_> {
                 title: true,
                 end: true,
                 control: true,
+                ground: true,
             };
         }
         if self.d == Dialect::Hspice {

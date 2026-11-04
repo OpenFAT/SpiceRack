@@ -1,11 +1,13 @@
-//! Spectre `statistics` blocks → SPICE statistical draws: the
+//! Spectre `statistics` blocks → SPICE and VACASK statistical draws: the
 //! `Lift(StatisticsDraws)` rule (`docs/research/monte-carlo-spectre.md`
-//! §6b, §10.5). A `process` vary is the parameter drawn once per run, as
-//! the two-layer idiom (`.param p__mc={agauss(v, s, 1)}`, `.param
-//! p=p__mc`); a `mismatch` vary is a two-layer draw in every subcircuit
-//! that reads the parameter, its references there renamed `p__mm`;
-//! correlated gauss process parameters are a Cholesky combination of
-//! normalized two-layer draws. The rule records fixups, never touching the
+//! §6b, §7, §10.5), shared by both writers. A `process` vary is the
+//! parameter drawn once per run, as the two-layer idiom (`.param
+//! p__mc={agauss(v, s, 1)}`, `.param p=p__mc`); a `mismatch` vary is a
+//! two-layer draw in every subcircuit that reads the parameter, its
+//! references there renamed `p__mm`; correlated gauss process parameters
+//! are a Cholesky combination of normalized two-layer draws. SPICE draws a
+//! one-layer `.param` at every reference; a VACASK `parameters` call is
+//! already one value, so VACASK's draws are one layer ([`Layers::One`]). The rule records fixups, never touching the
 //! tree: parameters written before a parameter, a parameter's new value,
 //! locals written first in a subcircuit, and each renamed reference's token
 //! ([`Rd::respell_token`]).
@@ -24,8 +26,8 @@
 //! this is byte for byte.
 //!
 //! Contents:
-//! - `pub(super) struct Draws`
-//! - `fn lift(rd: &mut Rd, deck: &Deck) -> Result<Draws, Diag>`
+//! - `pub(super) struct Draws`, `pub(super) enum Layers`
+//! - `fn lift(rd: &mut Rd, deck: &Deck, layers: Layers) -> Result<Draws, Diag>`
 //! - `Draws::before(&self, a: u32) -> &[(String, String)]`, `Draws::value(&self, a: u32) -> Option<&str>`,
 //!   `Draws::locals(&self, sc: u32) -> &[(String, String)]`, `Draws::texts(&self) -> impl Iterator<Item = &str>`
 
@@ -47,6 +49,16 @@ pub(super) struct Draws {
     locals: HashMap<u32, Vec<(String, String)>>,
 }
 
+/// How many `.param` layers a draw takes.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum Layers {
+    /// SPICE: a one-layer `.param` is drawn at every reference, so a draw
+    /// is `p__mc = draw`, `p = p__mc`.
+    Two,
+    /// VACASK: `p = draw`.
+    One,
+}
+
 /// One parameter of a body while the rule rewrites it: `node` is its
 /// assignment, `NONE` for one the rule adds.
 struct P {
@@ -57,7 +69,7 @@ struct P {
 
 /// The rule's fixups for `deck`; the first refusal when a block has no SPICE
 /// form. Each renamed reference is recorded in `rd`.
-pub(super) fn lift(rd: &mut Rd, deck: &Deck) -> Result<Draws, Diag> {
+pub(super) fn lift(rd: &mut Rd, deck: &Deck, layers: Layers) -> Result<Draws, Diag> {
     let mut out = Draws::default();
     let mut mismatch: Vec<(String, String)> = Vec::new(); // (param, draw around it)
     let bodies = std::iter::once(&deck.top).chain(deck.sections.iter().map(|s| &s.body));
@@ -81,13 +93,18 @@ pub(super) fn lift(rd: &mut Rd, deck: &Deck) -> Result<Draws, Diag> {
             let tok = rd.main(st);
             let s = rd.statistics(st);
             truncation(&s).map_err(|c| diag(c, tok))?;
-            let correlated = correlate(&mut ps, &s).map_err(|c| diag(c, tok))?;
+            let correlated = correlate(&mut ps, &s, layers).map_err(|c| diag(c, tok))?;
             for v in s.process.iter().filter(|v| !correlated.contains(&v.param)) {
                 let i = declared(&ps, &v.param).map_err(|c| diag(c, tok))?;
                 let draw = draw(v, &ps[i].value).map_err(|c| diag(c, tok))?;
-                let r = format!("{}__mc", v.param);
-                ps[i].value = r.clone();
-                ps.insert(i, new(r, braced(&draw)));
+                match layers {
+                    Layers::One => ps[i].value = braced(&draw),
+                    Layers::Two => {
+                        let r = format!("{}__mc", v.param);
+                        ps[i].value = r.clone();
+                        ps.insert(i, new(r, braced(&draw)));
+                    }
+                }
             }
             for v in &s.mismatch {
                 let draw = draw(v, &v.param).map_err(|c| diag(c, tok))?;
@@ -115,8 +132,13 @@ pub(super) fn lift(rd: &mut Rd, deck: &Deck) -> Result<Draws, Diag> {
             for k in refs {
                 rd.respell_token(k, to.clone());
             }
-            let r = format!("{to}_r");
-            let mut locals = vec![(r.clone(), braced(draw)), (to.clone(), r)];
+            let mut locals = match layers {
+                Layers::One => vec![(to.clone(), braced(draw))],
+                Layers::Two => {
+                    let r = format!("{to}_r");
+                    vec![(r.clone(), braced(draw)), (to.clone(), r)]
+                }
+            };
             locals.extend(out.locals.remove(&sc.node).unwrap_or_default());
             out.locals.insert(sc.node, locals);
         }
@@ -237,7 +259,7 @@ fn braced(e: &str) -> String {
 /// draws `p__z`, then `p = v + s*sum(L*z)` with `L` the Cholesky factor of
 /// the correlation matrix (unlisted pairs 0). Returns the parameters
 /// handled.
-fn correlate(ps: &mut Vec<P>, st: &Stats) -> Result<Vec<String>, Code> {
+fn correlate(ps: &mut Vec<P>, st: &Stats, layers: Layers) -> Result<Vec<String>, Code> {
     let mut names: Vec<String> = Vec::new();
     for (params, devices, _) in &st.correlations {
         if !devices.is_empty() {
@@ -296,8 +318,13 @@ fn correlate(ps: &mut Vec<P>, st: &Stats) -> Result<Vec<String>, Code> {
     for p in &names {
         let i = declared(ps, p)?;
         let z = format!("{p}__z");
-        let r = format!("{z}__r");
-        let decl = [new(r.clone(), "{agauss(0, 1, 1)}".into()), new(z, r)];
+        let decl = match layers {
+            Layers::One => vec![new(z, "{agauss(0, 1, 1)}".into())],
+            Layers::Two => {
+                let r = format!("{z}__r");
+                vec![new(r.clone(), "{agauss(0, 1, 1)}".into()), new(z, r)]
+            }
+        };
         ps.splice(i..i, decl);
     }
     for (a, p) in names.iter().enumerate() {
