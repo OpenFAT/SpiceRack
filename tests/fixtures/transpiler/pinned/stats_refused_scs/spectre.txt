@@ -1,0 +1,18 @@
+// stats_refused
+
+simulator lang=spectre
+
+parameters a=1 b=2
+statistics {
+    process {
+        vary a dist=gauss std=100m
+        vary b dist=gauss std=200m
+        truncate tr=3
+    }
+    correlate dev=[x1 x2] cc=600m
+}
+
+r1 (x 0) resistor r=a+b
+i1 (0 x) isource dc=1m
+
+op1 dc

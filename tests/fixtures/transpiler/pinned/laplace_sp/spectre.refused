@@ -1,0 +1,2 @@
+old: Unsupported component for backend spectre: behavioural source (Spectre bsource uses v(a,b) / i("inst:idx") / $time, not SPICE V()/I()/time; the expression cannot be translated safely)
+new: W0102 W0102

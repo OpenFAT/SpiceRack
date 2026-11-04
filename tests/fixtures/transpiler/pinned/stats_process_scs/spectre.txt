@@ -1,0 +1,34 @@
+// stats_process
+
+simulator lang=spectre
+
+parameters rsh=100 vth=450m tox=4n cg=1p
+statistics {
+    process {
+        vary rsh dist=gauss std=5 percent=yes
+        vary vth dist=unif N=20m
+        vary tox dist=lnorm std=30m
+        truncate tr=5
+    }
+    mismatch {
+        vary vth dist=gauss std=5m
+        vary cg dist=unif N=2 percent=yes
+    }
+    truncate tr=4
+}
+
+subckt cell (a b)
+r1 (a b) resistor r=rsh*10
+c1 (b 0) capacitor c=cg*2
+v1 (b 0) vsource dc=vth
+ends cell
+
+subckt plain (a b)
+r1 (a b) resistor r=1k
+ends plain
+
+x1 (in out) cell
+x2 (out 0) plain
+v0 (in 0) vsource dc=1
+
+op1 dc

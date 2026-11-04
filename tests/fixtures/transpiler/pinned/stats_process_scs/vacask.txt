@@ -1,0 +1,32 @@
+stats_process
+
+ground 0
+
+load "spice/capacitor.osdi"
+load "spice/resistor.osdi"
+
+model capacitor sp_capacitor
+model resistor sp_resistor
+model vsource vsource
+
+parameters rsh=agauss(100, (100)*(5)/100, 1) vth=aunif(450m, 20m) tox=exp(agauss(log(4n), 30m, 1)) cg=1p
+
+subckt cell (a b)
+parameters cg__mm=aunif(cg, (cg)*(2)/100) vth__mm=agauss(vth, 5m, 1)
+  r1 (a b) resistor r=rsh*10
+  c1 (b 0) capacitor c=cg__mm*2
+  v1 (b 0) vsource dc=vth__mm
+ends
+
+subckt plain (a b)
+  r1 (a b) resistor r=1e3
+ends
+
+x1 (in out) cell
+x2 (out 0) plain
+v0 (in 0) vsource dc=1e0
+
+control
+  options rawfile="binary"
+  analysis op1 op
+endc

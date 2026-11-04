@@ -20,10 +20,12 @@ impl W<'_, '_> {
     /// refused.
     pub(super) fn vacask_card(&mut self, n: u32) -> Option<String> {
         let tok = self.rd.main(n);
+        // The declaration's name after its type letter (the name map's).
+        let own = &self.names.decl(n)[1..].to_string();
         Some(match self.rd.card_view(n) {
             Card::Rcl {
                 letter,
-                name,
+                name: _,
                 n1,
                 n2,
                 value,
@@ -41,25 +43,23 @@ impl W<'_, '_> {
                 };
                 format!(
                     "{l}{} ({} {}) {m} {l}={}{}",
-                    q(&name),
+                    q(own),
                     q(&n1),
                     q(&n2),
                     self.vval(&value),
                     self.inst_params(&params)
                 )
             }
-            Card::Coupling {
-                name, l1, l2, k, ..
-            } => format!(
+            Card::Coupling { l1, l2, k, .. } => format!(
                 "k{} () mutual k={} ind1=\"l{}\" ind2=\"l{}\"",
-                q(&name),
+                q(own),
                 num(k),
                 q(&l1),
                 q(&l2)
             ),
             Card::Source {
                 letter,
-                name,
+                name: _,
                 np,
                 nm,
                 value,
@@ -82,7 +82,7 @@ impl W<'_, '_> {
                 };
                 let mut s = format!(
                     "{l}{} ({} {}) {m} dc={}",
-                    q(&name),
+                    q(own),
                     q(&np),
                     q(&nm),
                     self.vval(&value)
@@ -101,12 +101,12 @@ impl W<'_, '_> {
             }
             Card::Linear {
                 letter,
-                name,
+                name: _,
                 nodes,
                 gain,
             } => {
                 let ns: Vec<String> = nodes.iter().map(|x| q(x)).collect();
-                let name = q(&name);
+                let name = q(own);
                 let g = num(gain);
                 match letter {
                     'E' => format!("e{name} ({}) vcvs gain={g}", ns.join(" ")),
@@ -123,7 +123,7 @@ impl W<'_, '_> {
             }
             Card::Semi {
                 letter,
-                name,
+                name: _,
                 nodes,
                 model,
                 params,
@@ -136,14 +136,14 @@ impl W<'_, '_> {
                 format!(
                     "{}{} ({}) {}{}",
                     letter.to_ascii_lowercase(),
-                    q(&name),
+                    q(own),
                     ns.join(" "),
                     q(&model),
                     self.inst_params(&params)
                 )
             }
             Card::Inst {
-                name,
+                name: _,
                 ports,
                 master,
                 params,
@@ -151,7 +151,7 @@ impl W<'_, '_> {
                 let ps: Vec<String> = ports.iter().map(|p| q(p)).collect();
                 format!(
                     "x{} ({}) {}{}",
-                    q(&name),
+                    q(own),
                     ps.join(" "),
                     q(&master),
                     self.inst_params(&params)

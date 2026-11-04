@@ -1,0 +1,18 @@
+// stats_correlate_cc
+
+simulator lang=spectre
+
+
+library mc
+section tt
+parameters k=500m a=1 b=2
+statistics {
+    process {
+        vary a dist=gauss std=100m
+        vary b dist=gauss std=200m
+    }
+    correlate param=[a b] cc=k
+}
+endsection tt
+endlibrary mc
+

@@ -34,10 +34,12 @@ impl W<'_, '_> {
     /// refused.
     pub(super) fn card(&mut self, n: u32) -> Option<String> {
         let tok = self.rd.main(n);
+        // The declaration's name after its type letter (the name map's).
+        let own = &self.names.decl(n)[1..].to_string();
         let line = match self.rd.card_view(n) {
             Card::Rcl {
                 letter,
-                name,
+                name: _,
                 n1,
                 n2,
                 value,
@@ -55,7 +57,7 @@ impl W<'_, '_> {
                 };
                 format!(
                     "{l}{} ({} {}) {master} {l}={}{}",
-                    self.dev(&name),
+                    self.dev(own),
                     self.node(&n1),
                     self.node(&n2),
                     self.val(&value),
@@ -63,7 +65,7 @@ impl W<'_, '_> {
                 )
             }
             Card::Charge {
-                name,
+                name: _,
                 n1,
                 n2,
                 charge,
@@ -85,24 +87,22 @@ impl W<'_, '_> {
                 self.ask(Construct::ChargeCapacitor, tok);
                 format!(
                     "c{} ({} {}) bsource q={q}{}",
-                    self.dev(&name),
+                    self.dev(own),
                     self.node(&n1),
                     self.node(&n2),
                     self.params(&params)
                 )
             }
-            Card::Coupling {
-                name, l1, l2, k, ..
-            } => format!(
+            Card::Coupling { l1, l2, k, .. } => format!(
                 "k{} mutual_inductor coupling={} ind1=l{} ind2=l{}",
-                self.dev(&name),
+                self.dev(own),
                 self.num(k),
                 self.dev(&l1),
                 self.dev(&l2)
             ),
             Card::Source {
                 letter,
-                name,
+                name: _,
                 np,
                 nm,
                 value,
@@ -125,7 +125,7 @@ impl W<'_, '_> {
                 };
                 let mut s = format!(
                     "{l}{} ({} {}) {master} dc={}",
-                    self.dev(&name),
+                    self.dev(own),
                     self.node(&np),
                     self.node(&nm),
                     self.val(&value)
@@ -148,13 +148,13 @@ impl W<'_, '_> {
             }
             Card::Linear {
                 letter,
-                name,
+                name: _,
                 nodes,
                 gain,
             } => {
                 let ns: Vec<String> = nodes.iter().map(|x| self.node(x)).collect();
                 let g = self.num(gain);
-                let name = self.dev(&name);
+                let name = self.dev(own);
                 match letter {
                     'E' => format!("e{name} ({}) vcvs gain={g}", ns.join(" ")),
                     'G' => format!("g{name} ({}) vccs gm={g}", ns.join(" ")),
@@ -174,7 +174,7 @@ impl W<'_, '_> {
             }
             Card::Poly {
                 letter,
-                name,
+                name: _,
                 np,
                 nm,
                 controls,
@@ -189,7 +189,7 @@ impl W<'_, '_> {
                     _ => "pccvs",
                 };
                 let l = letter.to_ascii_lowercase();
-                let (name, np, nm) = (self.dev(&name), self.node(&np), self.node(&nm));
+                let (name, np, nm) = (self.dev(own), self.node(&np), self.node(&nm));
                 let coeffs: Vec<String> = coeffs.iter().map(|&c| self.num(c)).collect();
                 let coeffs = coeffs.join(" ");
                 if matches!(letter, 'E' | 'G') {
@@ -208,7 +208,7 @@ impl W<'_, '_> {
             }
             Card::Semi {
                 letter,
-                name,
+                name: _,
                 nodes,
                 model,
                 params,
@@ -223,7 +223,7 @@ impl W<'_, '_> {
                 format!(
                     "{}{} ({}) {}{}",
                     letter.to_ascii_lowercase(),
-                    self.dev(&name),
+                    self.dev(own),
                     ns.join(" "),
                     self.node(&model),
                     self.params(&params)
@@ -231,7 +231,7 @@ impl W<'_, '_> {
             }
             Card::Switch {
                 letter,
-                name,
+                name: _,
                 nodes,
                 model,
             } => {
@@ -243,13 +243,13 @@ impl W<'_, '_> {
                 let ns: Vec<String> = nodes.iter().map(|x| self.node(x)).collect();
                 format!(
                     "s{} ({}) {}",
-                    self.dev(&name),
+                    self.dev(own),
                     ns.join(" "),
                     self.node(&model)
                 )
             }
             Card::Line {
-                name,
+                name: _,
                 nodes,
                 z0,
                 td,
@@ -257,14 +257,14 @@ impl W<'_, '_> {
                 let ns: Vec<String> = nodes.iter().map(|x| self.node(x)).collect();
                 format!(
                     "t{} ({}) tline z0={} td={}",
-                    self.dev(&name),
+                    self.dev(own),
                     ns.join(" "),
                     self.num(z0),
                     self.num(td)
                 )
             }
             Card::Inst {
-                name,
+                name: _,
                 ports,
                 master,
                 params,
@@ -272,7 +272,7 @@ impl W<'_, '_> {
                 let ps: Vec<String> = ports.iter().map(|p| self.node(p)).collect();
                 format!(
                     "x{} ({}) {}{}",
-                    self.dev(&name),
+                    self.dev(own),
                     ps.join(" "),
                     self.node(&master),
                     self.params(&params)

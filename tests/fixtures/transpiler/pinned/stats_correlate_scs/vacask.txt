@@ -1,0 +1,18 @@
+stats_correlate
+
+ground 0
+
+load "spice/resistor.osdi"
+
+model resistor sp_resistor
+model isource isource
+
+parameters a__z=agauss(0, 1, 1) a=(1) + (100m)*((1e0)*a__z) b__z=agauss(0, 1, 1) b=(2) + ((2)*(200m)/100)*((6e-1)*a__z + (8e-1)*b__z) c=agauss(3, 300m, 1)
+
+r1 (x 0) resistor r=a+b+c
+i1 (0 x) isource dc=1e-3
+
+control
+  options rawfile="binary"
+  analysis op1 op
+endc

@@ -33,6 +33,7 @@ mod vacask_cards;
 
 use super::capability::{Action, Construct, Rule, action};
 use super::draws::{self, Draws, Layers};
+use super::names::Names;
 use super::out::{Out, Space};
 use super::read::{Block, Comp, Deck, Elem, Func, Raw, Rd, Section};
 use super::role::{self, Frame};
@@ -57,6 +58,8 @@ struct W<'a, 'r> {
     lifted: Lifted,
     /// The `statistics` lift's draws (VACASK, one layer).
     draws: Draws,
+    /// The deck's element names (the name map both writers share).
+    names: Names,
     o: Out,
     refused: Vec<Diag>,
 }
@@ -93,6 +96,7 @@ pub(super) fn write(rd: &mut Rd, deck: &Deck, target: Dialect) -> Result<String,
         keep_case: rd.d == target,
         lifted,
         draws,
+        names: Names::new(rd, deck),
         o: Out::new(4096),
         refused,
     };

@@ -1,0 +1,2 @@
+old: Code generation error: statistics: truncate tr=3 has no SPICE form (SPICE does not truncate; only tr>=4 is within 0.06% of the std)
+new: W0018

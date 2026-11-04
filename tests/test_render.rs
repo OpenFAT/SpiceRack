@@ -209,7 +209,9 @@ fn laplace_sources_are_written_as_the_old_writer_wrote_them() {
 fn fixtures_render_as_the_old_writer_did_and_as_pinned() {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/transpiler");
     let bless = std::env::var_os("SPICERACK_BLESS").is_some();
-    let targets = SPICE.into_iter().chain([Dialect::Cdl]);
+    let targets = SPICE
+        .into_iter()
+        .chain([Dialect::Cdl, Dialect::Spectre, Dialect::Vacask]);
     for (file, d) in FIXTURES {
         let text = std::fs::read_to_string(dir.join(file)).unwrap();
         let stem = file.split('.').next().unwrap();
@@ -257,6 +259,15 @@ fn fixtures_render_as_the_old_writer_did_and_as_pinned() {
     }
     assert!(pinned("stats_process.scs", "ngspice.txt").contains("__mm_r={"));
     assert!(pinned("stats_refused.scs", "ngspice.refused").contains("new: W0018"));
+    // Spectre keeps a table; VACASK draws it in one layer, a subcircuit's
+    // mismatch draw first among its parameters.
+    assert!(pinned("stats_process.scs", "spectre.txt").contains("statistics {"));
+    let va = pinned("stats_process.scs", "vacask.txt");
+    assert!(
+        va.contains("rsh=agauss(") && va.contains("__mm=agauss("),
+        "{va}"
+    );
+    assert!(pinned("stats_refused.scs", "vacask.refused").contains("new: W0018"));
     for f in ["laplace.sp", "laplace.cir", "laplace.net"] {
         assert!(
             pinned(f, "ngspice.txt").contains("s_xfer(num_coeff=["),

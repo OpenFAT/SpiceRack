@@ -1,0 +1,14 @@
+stats_correlate_cc
+
+ground 0
+
+
+
+section tt
+parameters k=500m a__z=agauss(0, 1, 1) a=(1) + (100m)*((1)*a__z) b__z=agauss(0, 1, 1) b=(2) + (200m)*(((k))*a__z + (sqrt(1-(k)*(k)))*b__z)
+endsection
+
+
+control
+  options rawfile="binary"
+endc
