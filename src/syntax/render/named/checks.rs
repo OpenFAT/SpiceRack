@@ -138,6 +138,7 @@ impl<'r> W<'_, 'r> {
             .iter()
             .map(|&f| self.rd.func_view(f).2)
             .collect();
+        out.extend(self.draws.texts().map(str::to_string));
         for b in blocks {
             if b.node != NONE {
                 let head = self

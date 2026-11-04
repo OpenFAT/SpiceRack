@@ -1,9 +1,10 @@
 //! The renderer (`syntax::render`) against the old pipeline on decks the
 //! golden corpus holds none of: Spectre `statistics` blocks lowered for the
 //! SPICE family (`docs/research/monte-carlo-spectre.md` §6b, §10.5) and
-//! Laplace sources. The made-up fixtures (`tests/fixtures/transpiler/
-//! stats_*.scs`, `laplace.{sp,cir,net}`, golden inputs too) are written by
-//! both and pinned under `tests/fixtures/transpiler/pinned/<file>_<ext>/`.
+//! Laplace sources; the same tables for Spectre and VACASK. The made-up
+//! fixtures (`tests/fixtures/transpiler/stats_*.scs`, `laplace.{sp,cir,net}`,
+//! golden inputs too) are written by both and pinned under
+//! `tests/fixtures/transpiler/pinned/<file>_<ext>/`.
 //!
 //! Oracle: `codegen::netlist(import::parse(deck))` at this commit, the
 //! pipeline the golden gate's baseline recorded (TESTING.md, "Golden
@@ -49,20 +50,7 @@ const FIXTURES: [(&str, Dialect); 7] = [
 
 #[test]
 fn statistics_tables_are_written_as_the_old_lowering_wrote_them() {
-    let decks = [
-        TABLE.to_string(),
-        CORR.replace("CORR", "param=[a b] cc=0.6"),
-        CORR.replace("CORR", "param=[a b] cc=k").replace("a=1 b=2", "a=1 b=2 k=0.5"),
-        CORR.replace("CORR", "param=[a b] cc=0.6\n  truncate tr=4"),
-        // Three parameters, numeric: the Cholesky factor.
-        "// t\nsimulator lang=spectre\nparameters a=1 b=2 c=3\nstatistics {\n  process {\n    vary a dist=gauss std=0.1\n    vary b dist=gauss std=0.2\n    vary c dist=gauss std=0.3 percent=yes\n  }\n  correlate param=[a b c] cc=0.5\n}\nr1 (x 0) resistor r=a+b+c\n".into(),
-        // Mismatch in two subcircuits, one reading it in a model and an
-        // instance parameter, one not at all; two mismatch parameters.
-        "// t\nsimulator lang=spectre\nparameters w=1u l=2u\nstatistics {\n  mismatch {\n    vary w dist=gauss std=0.01\n    vary l dist=unif N=0.02\n  }\n}\nsubckt s1 (a b)\nparameters m=w*2\nr1 (a b) resistor r=w*1meg+l*1meg\nends s1\nsubckt s2 (a b)\nr1 (a b) resistor r=1k\nends s2\nsubckt s3 (a b)\nx1 (a b) s1 m=w\nends s3\nx1 (a 0) s1\nx2 (a 0) s2\n".into(),
-        // A library's sections, each with its own table.
-        "// t\nsimulator lang=spectre\nlibrary lib\nsection tt\nparameters v=1\nstatistics {\n  process { vary v dist=gauss std=0.1 }\n}\nends tt\nsection ss\nparameters v=2\nstatistics {\n  process { vary v dist=unif N=0.1 }\n  mismatch { vary v dist=gauss std=0.01 }\n}\nsubckt s (a b)\nr1 (a b) resistor r=v\nends s\nends ss\nendlibrary\n".into(),
-    ];
-    for deck in &decks {
+    for deck in &statistics_decks() {
         let (ir, _) = parse(deck, "t", Dialect::Spectre).unwrap();
         for d in SPICE {
             let old = netlist(&ir, d).map_err(|e| e.to_string());
@@ -80,6 +68,49 @@ fn statistics_tables_are_written_as_the_old_lowering_wrote_them() {
             }
         }
     }
+}
+
+#[test]
+fn statistics_tables_reach_the_named_family_as_the_old_writers_wrote_them() {
+    // VACASK lowers a table to one-layer draws (`render::draws`,
+    // `Layers::One`); Spectre keeps it. A subcircuit's mismatch draw is
+    // VACASK's only written form of a `mismatch` vary.
+    let mut vacask = 0;
+    for deck in &statistics_decks() {
+        let (ir, _) = parse(deck, "t", Dialect::Spectre).unwrap();
+        for d in [Dialect::Spectre, Dialect::Vacask] {
+            let old = netlist(&ir, d).map_err(|e| e.to_string());
+            let new = render_text(deck, Dialect::Spectre, "t", d);
+            match (&old, &new) {
+                (Ok(a), Ok(b)) => {
+                    assert_eq!(a, b, "{d:?}\n{deck}");
+                    vacask += usize::from(d == Dialect::Vacask && a.contains("agauss("));
+                }
+                (Err(_), Err(_)) => {}
+                _ => panic!("{d:?}: old {old:?}, new {new:?}\n{deck}"),
+            }
+        }
+    }
+    assert!(vacask >= 6, "VACASK wrote {vacask} of the tables");
+}
+
+/// Spectre decks with `statistics` tables: T-R3's, T-R4's correlations
+/// (numeric, expression, 3x3), mismatch in several subcircuits, a library's
+/// sections.
+fn statistics_decks() -> Vec<String> {
+    vec![
+        TABLE.to_string(),
+        CORR.replace("CORR", "param=[a b] cc=0.6"),
+        CORR.replace("CORR", "param=[a b] cc=k").replace("a=1 b=2", "a=1 b=2 k=0.5"),
+        CORR.replace("CORR", "param=[a b] cc=0.6\n  truncate tr=4"),
+        // Three parameters, numeric: the Cholesky factor.
+        "// t\nsimulator lang=spectre\nparameters a=1 b=2 c=3\nstatistics {\n  process {\n    vary a dist=gauss std=0.1\n    vary b dist=gauss std=0.2\n    vary c dist=gauss std=0.3 percent=yes\n  }\n  correlate param=[a b c] cc=0.5\n}\nr1 (x 0) resistor r=a+b+c\n".into(),
+        // Mismatch in two subcircuits, one reading it in a model and an
+        // instance parameter, one not at all; two mismatch parameters.
+        "// t\nsimulator lang=spectre\nparameters w=1u l=2u\nstatistics {\n  mismatch {\n    vary w dist=gauss std=0.01\n    vary l dist=unif N=0.02\n  }\n}\nsubckt s1 (a b)\nparameters m=w*2\nr1 (a b) resistor r=w*1meg+l*1meg\nends s1\nsubckt s2 (a b)\nr1 (a b) resistor r=1k\nends s2\nsubckt s3 (a b)\nx1 (a b) s1 m=w\nends s3\nx1 (a 0) s1\nx2 (a 0) s2\n".into(),
+        // A library's sections, each with its own table.
+        "// t\nsimulator lang=spectre\nlibrary lib\nsection tt\nparameters v=1\nstatistics {\n  process { vary v dist=gauss std=0.1 }\n}\nends tt\nsection ss\nparameters v=2\nstatistics {\n  process { vary v dist=unif N=0.1 }\n  mismatch { vary v dist=gauss std=0.01 }\n}\nsubckt s (a b)\nr1 (a b) resistor r=v\nends s\nends ss\nendlibrary\n".into(),
+    ]
 }
 
 #[test]

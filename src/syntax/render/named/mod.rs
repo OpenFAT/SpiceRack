@@ -32,12 +32,15 @@ mod vacask_bench;
 mod vacask_cards;
 
 use super::capability::{Action, Construct, Rule, action};
+use super::draws::{self, Draws, Layers};
 use super::out::{Out, Space};
 use super::read::{Block, Comp, Deck, Elem, Func, Raw, Rd, Section};
+use super::role::{self, Frame};
 use super::spelling::{Spelling, spelling};
 use crate::codegen::Dialect;
 use crate::syntax::ast::NONE;
 use crate::syntax::diag::{Code, Diag};
+use crate::syntax::resolve::Role;
 use lift::Lifted;
 
 /// The writer's state for one deck.
@@ -52,6 +55,8 @@ struct W<'a, 'r> {
     keep_case: bool,
     /// The Monte Carlo lift's variables and functions.
     lifted: Lifted,
+    /// The `statistics` lift's draws (VACASK, one layer).
+    draws: Draws,
     o: Out,
     refused: Vec<Diag>,
 }
@@ -71,6 +76,15 @@ pub(super) fn write(rd: &mut Rd, deck: &Deck, target: Dialect) -> Result<String,
         }
         _ => Lifted::default(),
     };
+    let draws = match action(target, Construct::Statistics) {
+        Action::Lift(Rule::StatisticsDraws) => {
+            draws::lift(rd, deck, Layers::One).unwrap_or_else(|d| {
+                refused.push(d);
+                Draws::default()
+            })
+        }
+        _ => Draws::default(),
+    };
     let mut w = W {
         rd,
         deck,
@@ -78,6 +92,7 @@ pub(super) fn write(rd: &mut Rd, deck: &Deck, target: Dialect) -> Result<String,
         d: target,
         keep_case: rd.d == target,
         lifted,
+        draws,
         o: Out::new(4096),
         refused,
     };
@@ -105,6 +120,25 @@ impl W<'_, '_> {
         a
     }
 
+    /// What the deck is written in: what its role says ([`role::frame`]),
+    /// but for the old writers' rules where they give other bytes, which
+    /// the golden gate holds until phase 7.
+    fn frame(&self) -> Frame {
+        let role = self.rd.role();
+        match role {
+            // quirk: the old Spectre and VACASK writers titled a library,
+            // and VACASK gave it `ground 0` and a `control` block, as any
+            // deck; phase 7 writes it bare.
+            Role::Library => Frame {
+                title: true,
+                end: true,
+                control: true,
+                ground: true,
+            },
+            _ => role::frame(role),
+        }
+    }
+
     fn refuse(&mut self, code: Code, token: u32) {
         self.refused.push(Diag { code, token });
     }
@@ -119,8 +153,10 @@ impl W<'_, '_> {
         let top = &deck.top;
         // `[KUN]` B.2: `//` is a comment; a netlist begins with its
         // language.
-        self.line(&format!("{} {}", self.sp.comment, top.name));
-        self.line("");
+        if self.frame().title {
+            self.line(&format!("{} {}", self.sp.comment, top.name));
+            self.line("");
+        }
         self.line("simulator lang=spectre");
         self.line("");
         self.funcs(&deck.funcs, true);

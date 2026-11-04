@@ -28,7 +28,7 @@ use super::W;
 use crate::codegen::Dialect;
 use crate::syntax::ast::NONE;
 use crate::syntax::diag::Code;
-use crate::syntax::render::capability::{Action, Construct};
+use crate::syntax::render::capability::Construct;
 use crate::syntax::render::read::Func;
 use crate::syntax::render::read::{Block, Card, Comp, Elem, Model, Num, Raw, Val};
 
@@ -53,15 +53,6 @@ impl W<'_, '_> {
             .chain(deck.sections.iter().flat_map(|s| &s.funcs));
         if let Some(&(Func::Param(n) | Func::Card(n) | Func::Real(n))) = funcs.next() {
             self.ask(Construct::Func, self.rd.main(n));
-        }
-        // ponytail: the `statistics` lowering (`Lift(StatisticsDraws)`, one
-        // layer here) is not ported: a deck holding a block is refused,
-        // never written without its draws. No corpus deck keeps one.
-        let tables = std::iter::once(&deck.top).chain(deck.sections.iter().map(|s| &s.body));
-        if let Some(&st) = tables.flat_map(|b| &b.statistics).next()
-            && let Action::Lift(_) = self.ask(Construct::Statistics, self.rd.main(st))
-        {
-            self.refuse(Code::W0018, self.rd.main(st));
         }
         let mut needs: BTreeSet<Need> = BTreeSet::new();
         for b in &blocks {
@@ -126,10 +117,15 @@ impl W<'_, '_> {
             true => "circuit".to_string(),
             false => title,
         };
-        self.line(&title);
-        self.line("");
-        self.line("ground 0");
-        self.line("");
+        let frame = self.frame();
+        if frame.title {
+            self.line(&title);
+            self.line("");
+        }
+        if frame.ground {
+            self.line("ground 0");
+            self.line("");
+        }
         if !deck.globals.is_empty() {
             let gs: Vec<String> = deck.globals.iter().map(|g| q(g)).collect();
             self.line(&format!("global {}", gs.join(" ")));
@@ -166,13 +162,7 @@ impl W<'_, '_> {
         // netlist parameters.
         let tb = self.fold();
         let stepped: Vec<String> = tb.steps.iter().map(|s| s.1.to_ascii_lowercase()).collect();
-        let mut params = String::new();
-        for &a in &deck.top.params {
-            let (k, v) = self.rd.param_view(a);
-            if !stepped.contains(&k.to_ascii_lowercase()) {
-                params.push_str(&format!(" {}={}", k.to_ascii_lowercase(), self.expr(&v)));
-            }
-        }
+        let params = self.param_list(&deck.top.params, &stepped);
         if !params.is_empty() {
             self.line(&format!("parameters{params}"));
             self.line("");
@@ -192,7 +182,9 @@ impl W<'_, '_> {
             self.line("");
         }
         self.vacask_elements(&deck.top, "");
-        self.control(&tb);
+        if frame.control {
+            self.control(&tb);
+        }
     }
 }
 
@@ -367,22 +359,44 @@ impl W<'_, '_> {
                 params.push_str(&format!(" {}={}", k.to_ascii_lowercase(), self.expr(v)));
             }
         }
-        for &a in &b.params {
-            let (k, v) = self.rd.param_view(a);
-            params.push_str(&format!(" {}={}", k.to_ascii_lowercase(), self.expr(&v)));
-        }
+        params.push_str(&self.param_list(&b.params, &[]));
         if !params.is_empty() {
             self.line(&format!("parameters{params}"));
         }
-        if !b.locals.is_empty() {
-            let mut s = String::from("parameters");
-            for &a in &b.locals {
-                let (k, v) = self.rd.param_view(a);
-                s.push_str(&format!(" {}={}", k.to_ascii_lowercase(), self.expr(&v)));
-            }
-            self.line(&s);
+        // A subcircuit's mismatch draws come first among its locals.
+        let draws = match b.node {
+            NONE => &[][..],
+            n => self.draws.locals(n),
+        };
+        let mut locals: String = draws
+            .iter()
+            .map(|(k, v)| format!(" {}={}", k.to_ascii_lowercase(), self.expr(v)))
+            .collect();
+        locals.push_str(&self.param_list(&b.locals, &[]));
+        if !locals.is_empty() {
+            self.line(&format!("parameters{locals}"));
         }
         self.vacask_elements(b, "  ");
+    }
+
+    /// ` name=value …` for `params` (the names in `skip` left out), each
+    /// after the draws the `statistics` lift puts before it and with the
+    /// value it gives it (one layer: `p = agauss(…)`).
+    fn param_list(&self, params: &[u32], skip: &[String]) -> String {
+        let mut s = String::new();
+        let mut put = |k: &str, v: &str| {
+            if !skip.contains(&k.to_ascii_lowercase()) {
+                s.push_str(&format!(" {}={}", k.to_ascii_lowercase(), self.expr(v)));
+            }
+        };
+        for &a in params {
+            for (k, v) in self.draws.before(a) {
+                put(k, v);
+            }
+            let (k, v) = self.rd.param_view(a);
+            put(&k, self.draws.value(a).unwrap_or(&v));
+        }
+        s
     }
 
     /// Elements, instances and conditionals in place, then the text kept,
