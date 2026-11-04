@@ -7,16 +7,16 @@ trusts. The rules behind it are in `AGENTS.md` (Testing).
 
 | Tier | Runs | Command | Where |
 |---|---|---|---|
-| pre-commit | format, lints, house style | `cargo fmt --check && cargo clippy --all-targets --all-features -- -D warnings && python3 tools/check_style.py src tests tools` | local; the same three run as the `lint` job in `.github/workflows/test.yaml` on every PR |
+| pre-commit | format, lints, house style | `cargo fmt --check && cargo clippy --all-targets --all-features -- -D warnings && python3 .github/scripts/check_style.py src tests` | local; the same three run as the `lint` job in `.github/workflows/test.yaml` on every PR |
 | merge | both suites in the testing shell | `nix develop .#testing -c cargo test`, then `maturin develop && python3 -m pytest` in a `--system-site-packages` venv | `.github/workflows/test.yaml`, every PR and every push to `main` |
 | docs | the site builds strictly; every Python example in it runs | `nix develop .#docs -c mkdocs build --strict`; `tests/test_docs.py` | `.github/workflows/docs.yaml`; pytest |
-| release | tag matches `Cargo.toml` and `pyproject.toml`, wheels for every target, sdist | `tools/bump_version.py`, then the release workflow | `.github/workflows/tags.yaml`, `publish.yaml` |
+| release | tag matches `Cargo.toml` and `pyproject.toml`, wheels for every target, sdist | `.github/scripts/bump_version.py`, then the release workflow | `.github/workflows/tags.yaml`, `publish.yaml` |
 | nightly | the spice-bench and corpus import suite (`--features corpus`) | `nix develop .#testing -c cargo test --no-default-features --features corpus --release --test test_import_suite` | `.github/workflows/nightly.yaml`, 03:17 UTC daily and on demand |
 | golden | the transpiler rewrite's byte-identical gate against `daa0ad0` ("Golden gate" below) | `golden record`, then `golden diff <baseline> <new> --xfail migration.xfail`; `golden check-determinism`; `cargo test --features corpus --test test_syntax` | local, before each rewrite phase lands |
 
-`tools/check_style.py` is vendored from the `code-style` skill
+`.github/scripts/check_style.py` is vendored from the `code-style` skill
 (https://github.com/OmarSiwy/NixOSConfig/tree/main/skills, sha256 `55f417592f6e7ec3…`).
-`python3 tools/check_style.py --self-test` checks the checker.
+`python3 .github/scripts/check_style.py --self-test` checks the checker.
 
 ## Oracles
 
@@ -68,7 +68,7 @@ and AST, with the `ast_to_ir` adapter feeding the old writers (2b:
 `Kit`); 4 the renderers, one target at a time; 5 the diagnostic catalogue;
 6 the Python API builds an AST, and `CircuitIR` and the adapter go; 7 the new
 guarantees (`write(read(x, d), d) == x`, the `2*1M` fix, the proprietary-kit
-fixes), the behaviour changes the gate holds back until then. `tools/golden` records, for
+fixes), the behaviour changes the gate holds back until then. `src/bin/golden` records, for
 every input and every target dialect, the text `codegen::netlist(parse(file))`
 writes or the exact refusal, plus the IR JSON and the `Report`; a later phase
 records again and diffs. Each difference is a line in `migration.xfail`, which

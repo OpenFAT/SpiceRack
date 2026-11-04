@@ -37,7 +37,7 @@ jobs:
         run: nix develop --command cargo clippy --all-targets --all-features -- -D warnings
 
       - name: House style
-        run: nix develop --command python3 tools/check_style.py src tests tools
+        run: nix develop --command python3 .github/scripts/check_style.py src tests
 
   test:
     runs-on: ubuntu-latest

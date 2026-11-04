@@ -1,6 +1,6 @@
 //! The transpiler front end over every input of the golden gate (TESTING.md,
 //! "Golden gate": the corpora, the PDK kits and `tests/**` fixtures, found by
-//! `tools/golden/inputs.rs`):
+//! `src/bin/golden/inputs.rs`):
 //!
 //! - `lang_switch`: the Spectre fixtures' `simulator lang=spice` regions are
 //!   HSPICE tokens, against `bare.scs` read by hand;
@@ -43,7 +43,7 @@ use spicerack::syntax::resolve::{Binding, DefKind, FileId, Kit, LoadError, Role}
 use spicerack::syntax::token::Tag;
 use spicerack::syntax::{ast_to_ir, parse, tokenize};
 
-#[path = "../tools/golden/inputs.rs"]
+#[path = "../src/bin/golden/inputs.rs"]
 #[allow(dead_code)]
 mod inputs;
 

@@ -3,7 +3,7 @@ name: Publish
 # Releasing a version is one click: Actions -> Publish -> Run workflow, pick
 # the bump (patch/minor/major or an explicit X.Y.Z). One run then:
 #   1. opens a pull request moving the version in Cargo.toml, pyproject.toml
-#      and Cargo.lock (tools/bump_version.py);
+#      and Cargo.lock (.github/scripts/bump_version.py);
 #   2. runs the full test suite on that branch;
 #   3. merges the pull request only if the tests passed;
 #   4. at the merge commit, runs the Release workflow (tags.yaml: tests again,
@@ -58,7 +58,7 @@ jobs:
         id: bump
         env:
           BUMP: ${{ inputs.bump }}
-        run: python3 tools/bump_version.py "$BUMP" >> "$GITHUB_OUTPUT"
+        run: python3 .github/scripts/bump_version.py "$BUMP" >> "$GITHUB_OUTPUT"
 
       - name: Open the release pull request
         id: pr

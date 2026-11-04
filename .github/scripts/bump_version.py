@@ -1,6 +1,6 @@
 """Bump the package version in Cargo.toml, pyproject.toml and Cargo.lock.
 
-    python3 tools/bump_version.py patch|minor|major|X.Y.Z
+    python3 .github/scripts/bump_version.py patch|minor|major|X.Y.Z
 
 Prints ``version=X.Y.Z`` (for ``$GITHUB_OUTPUT``). Refuses manifests that
 disagree, and a version that does not move forward. Release workflow:
@@ -10,7 +10,7 @@ import re
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 MANIFESTS = ("Cargo.toml", "pyproject.toml")
 SEMVER = re.compile(r"(\d+)\.(\d+)\.(\d+)")
 VERSION_LINE = re.compile(r'(?m)^version = "([^"]+)"$')

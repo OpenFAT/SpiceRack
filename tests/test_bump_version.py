@@ -1,4 +1,4 @@
-"""tools/bump_version.py on a copy of the manifests: each bump kind, and the refusals."""
+""".github/scripts/bump_version.py on a copy of the manifests: each bump kind, and the refusals."""
 import importlib.util
 import shutil
 from pathlib import Path
@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-spec = importlib.util.spec_from_file_location("bump_version", ROOT / "tools" / "bump_version.py")
+spec = importlib.util.spec_from_file_location("bump_version", ROOT / ".github" / "scripts" / "bump_version.py")
 bv = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(bv)
 

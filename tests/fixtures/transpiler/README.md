@@ -3,7 +3,7 @@
 Made-up Spectre inputs for the transpiler rewrite (TESTING.md, "Golden
 gate"). They are known-bug inputs:
 today's reader keeps several of their lines raw or refuses them, and the
-golden baseline (`tools/golden`, TESTING.md "Golden gate") records exactly
+golden baseline (`src/bin/golden`, TESTING.md "Golden gate") records exactly
 that. Phase 3 (resolve) and phase 7 (new guarantees) are expected to change
 their goldens, each change a reviewed line in `migration.xfail`.
 

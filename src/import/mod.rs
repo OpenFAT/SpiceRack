@@ -7,7 +7,7 @@
 //!
 //! A card the old card grammar refused is [`Report::unparsed`]; one the IR
 //! has no field for is [`Report::raw`]. Both stay verbatim lines, so they
-//! reach the deck's own dialect unchanged. `tools/spice2rack/` is the CLI.
+//! reach the deck's own dialect unchanged. `src/bin/spice2rack/` is the CLI.
 //!
 //! Contents:
 //! - `pub struct Report` (what a deck lost: `unparsed` lines, `raw` count)
