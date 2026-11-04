@@ -69,6 +69,7 @@ Waveform sources, each a `...VoltageSource` and a `...CurrentSource`, also on
 | `osdi(path)` | a compiled OSDI model |
 | `verilog(*, source, mode="simulate", instance_name, connections, pdk=None, liberty=None, spice_models=None)` | a digital Verilog module (co-simulated or synthesized) |
 | `name`, `ports`, `gnd` | read-only; `gnd` is `"0"` |
+| `to_source()`, `save(path)`, `Subcircuit.from_source(text, dialect=None)`, `Subcircuit.load(path)` | the store: the deck's source text behind a `* spicerack-source ngspice` line (`dialect=None` reads that line; another dialect is written as ngspice first); the JSON methods raise `NotImplementedError` naming these |
 
 `Circuit` only: `options(**kw)`, `temp(t)`, `node(name)`, `element(name)`,
 `set_source_value(name, value)`, `subcircuit(subckt)`, `simulator(simulator=None)`.
@@ -82,9 +83,10 @@ Waveform sources, each a `...VoltageSource` and a `...CurrentSource`, also on
 | `use_pdk(lib)` | attaches a `ModelLibrary` |
 | `with_backend(name)` | pins the simulator |
 | `netlist(backend="ngspice")` | the deck |
+| `to_source()`, `save_source(path)`, `Testbench.from_source(text, dialect=None)`, `Testbench.load(path)` | the store, as for `Subcircuit` (`save(*outputs)` stays the `.save` card): a deck read back writes the same netlists; its analyses are its text, and `run()` runs those queued on it |
 | `check_backend(name)` | reasons it will not run on `name` |
 | `global_nodes(*nodes)` | `.global` |
-| `extra_line(line)` | a raw line in the bench |
+| `extra_line(line, dialect="ngspice")` | a line of `dialect`'s text: copied as written on a target of that dialect's family, refused (`W0001`) on any other |
 | `add_operating_point()`, `add_dc(**sweeps)`, `add_ac(...)`, `add_transient(...)`, `add_noise(...)`, `add_tf(...)`, `add_fourier(f0, outputs)`, `add_spectre_sweep(...)`, `add_spectre_monte_carlo(...)`, ... | queue an analysis card instead of running it |
 | `run()` | runs every queued analysis as one deck: a list, one result per analysis in queue order (`None` for `add_fourier`) |
 

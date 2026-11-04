@@ -17,18 +17,56 @@ Decisions D1–D3 (the spec, `transpiler-architecture.md` §6) as adopted.
   form). The tree's rows are the parser's, by construction: a token's text
   is re-lexed from the source, so any builder writes source bytes; this one
   writes them and lets the one parser make the rows.
-- What no ngspice card holds goes beside the text:
-  `render::Source::loads` (the top's Verilog-A/OSDI loads; ngspice loads
-  them from a `.control` command, which the reader keeps no load of) and
-  `render::Numbers::Given` (SI spelling, as the old Python path wrote).
-  Added to the rendered text, never parsed: ngspice's `ngbehavior` line,
-  the analyses ngspice has no card for and `.pss` on Spectre
-  (`python/analysis.rs`, `Analysis::native`/`spectre`), and on Spectre and
-  VACASK the `extra_line`s (in their own dialect).
-- `to_json`/`from_json`/`save_json`/`load_json` are removed (D3: the store
-  is source files; save the deck). The three serialization tests went
-  with them; the 52 tests that inspected the JSON now check the card each
-  call writes (`tests/test_python_subcircuit.py`'s `cards()`).
+- No side channel around the tree (user decision 1): each statement is
+  spelled in a dialect that has it, ngspice by default; nothing is added to
+  a rendered deck: `git grep -n 'render::render\|insert_str' src/python`
+  finds one line, `Deck::write`'s call, which returns `w.text` as is.
+  - What only another dialect says is that dialect's text in a `simulator
+    lang=<dialect>` region of the source: `NGSPICE_GIVEN`'s
+    `Lexicon::regions` (ngspice, spectre, vacask, hspice, ltspice, xyce)
+    switch the tokenizer to that lexicon until `simulator lang=spice`; the
+    parser reads the region's statements as that dialect's nodes (a
+    `Region` node; test `a_given_ngspice_deck_holds_regions_of_other_dialects`),
+    and the reader keeps each as that dialect's text span (`Raw::Lines`,
+    `Rd::text_dialect`): the `Verbatim{dialect, span}` contract. Only that
+    dialect's family writes it (`W0027`, copied as written); every other
+    refuses it (`W0001`, the capability table's `ForeignText`).
+  - The analyses ngspice has no card for (sweep, montecarlo, pac, pnoise,
+    pxf, pstb, hb, stb) are Spectre statements in the `spectre` region
+    (`python/analysis.rs`, `Analysis::spectre`). `pss` is ngspice's `.pss`
+    on every target; a Spectre target refuses it (`W0001`), where phase 6
+    appended a Spectre `pss`. Transient noise has no statement in any
+    dialect and is refused when the deck is built.
+  - `extra_line(line, dialect="ngspice")` is a line in that dialect
+    family's region (`deck::region_dialect`); `CornerCase` passes its
+    backend, `network_params` LTspice (`.net`). One ngspice rule still
+    reads such text: a `.four` there becomes the `fourier` command when
+    the deck runs from `.control` (`spice::bench`, as for any `.four` the
+    reader keeps), or ngspice ignores it under `-b -r`.
+  - `ngbehavior` is an `.options ngbehavior=<mode>` card: the reader's
+    `Opt::NgBehavior`, the capability table's `Construct::NgBehavior`:
+    ngspice spells it as the `render::NGBEHAVIOR` line after the title,
+    which its backend lifts onto the command line; every other target
+    notes `W0030` (new) and writes nothing.
+- Beside the text, in `render::Source`: `loads` (the top's Verilog-A/OSDI
+  loads; ngspice loads them from a `.control` command, which the reader
+  keeps no load of) and `numbers: Numbers::Given` (SI spelling, as the old
+  Python path wrote).
+- The store is source text (user decision 2, D3; `python/store.rs`): the
+  deck's ngspice source behind a first line `* spicerack-source ngspice`,
+  the loads as a `.control` block of `pre_osdi` lines after the title.
+  `to_source()`, `from_source(text, dialect=None)` (`None`: the header's
+  dialect, else ngspice; another dialect's text is written as ngspice
+  first), `load(path)` on `Subcircuit` and `Testbench`, `Subcircuit.save(path)`
+  and `Testbench.save_source(path)` (`Testbench.save(*outputs)` is the
+  `.save` card every simulator call takes). A `Subcircuit` reads back into
+  the cards its calls wrote; a `Testbench` as its top's statements, byte
+  for byte: the same netlist on every target (`TestTestbenchStore`). Its
+  analyses are text, so `run()` runs only those queued after loading. The source is the same for every target but one
+  part: a `ModelLibrary`'s per-backend path (`backend_paths`), which the
+  store keeps as its ngspice path. `to_json`, `from_json`, `save_json`,
+  `load_json` raise `NotImplementedError` naming their replacement, on
+  both classes (`TestRemovedJson`, one test each).
 - The pre-existing failure `test_x_params_reach_the_card_on_every_backend`
   expects Spectre's bare `w=wn*2` (Spectre Reference 19.1 p.506).
 
@@ -57,6 +95,15 @@ Every deck pytest builds was logged on every target through both paths
 - Not carried: `add_fourier`'s `num_harmonics` (ngspice's `.four` has
   none; LTspice's has); a Python `A()` element on LTspice is refused
   (`W0001`), where the old writer wrote a `* XSPICE` comment.
+- A Spectre-only analysis is written among the top's elements, before the
+  analyses the renderer writes (not in queue order), its block's body
+  unindented; a VACASK `extra_line` is written at the deck's top level, not
+  inside `control`.
+- An `extra_line` is one dialect's text (ngspice's by default), written for
+  that family only: an ngspice line on HSPICE, Xyce or LTspice is refused
+  (`W0001`), where the old writer copied it to every SPICE target. A
+  Python `pss` on Spectre is refused (`W0001`). `ngbehavior` is written
+  after the title on ngspice (was the second line too).
 
 ## The backends
 
@@ -119,8 +166,8 @@ The note at the top of `src/syntax/mod.rs` shows the three steps.
   analysis, Verilog, `backend::check`, the ngspice deck predicates), +2
   T-N0/T-N1. `test_import_suite` (corpus tier): its JSON round trip and the
   `GOLDEN_DIR` dump deleted; the 7 fixpoints (now text fixpoints) pass.
-- pytest: 507 (510 at `949be79`, one failing): the three JSON
-  serialization tests deleted, the failing one fixed.
+- pytest: 513 (510 at `949be79`, one failing): the three JSON
+  serialization tests replaced by six store tests, the failing one fixed.
 
 ## Left
 
@@ -130,10 +177,16 @@ The note at the top of `src/syntax/mod.rs` shows the three steps.
   (`src/syntax/tests/render.rs` runs it on 256 MiB, as `golden` does). A
   worklist over the branches (and a manual `Drop`) is the fix; the adapter
   it replaced walked them on a heap stack.
-- Python decks: the Spectre-only analyses are appended after the rendered
-  analyses (not interleaved in queue order) and outside `.step` sweeps; a
+- Python decks: the Spectre-only analyses sit outside `.step` sweeps; a
   VACASK `montecarlo` is refused (the old writer wrapped the inner analysis
-  in `mc`); a `log` `.step` is not read (Xyce's form has none).
+  in `mc`); a `log` `.step` is not read (Xyce's form has none). The
+  reader keeps a region's statements as text; reading a Spectre region's
+  analyses as `Bench::Analysis` (as a Spectre file's are) would let
+  `pac`, `sweep` and the rest be checked and spelled per target, and
+  reading ngspice's `.pss` as an analysis would give Spectre its `pss`
+  back.
+- The store keeps a `ModelLibrary`'s ngspice path: a library with
+  `backend_paths` stores the deck its ngspice netlist is written from.
 - `.options itl1=` reaches Spectre as `itl1=` (only the portable name
   `max_iterations` maps to `dcmaxiters`): a quirk older than this phase.
 - A VACASK charge-defined capacitor is refused `W0105`; `W0103` (a charge

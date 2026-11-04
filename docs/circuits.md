@@ -150,16 +150,18 @@ Keyword arguments to `X` and `instance` become instance parameters
 
 ## Saving circuits
 
-A circuit is saved as its deck: the netlist text, in whichever dialect you
-write it, is the whole circuit, and any simulator or SpiceRack's reader takes
-it back.
+A subcircuit is saved as its source text: the ngspice deck that defines it,
+behind one line naming the dialect (`* spicerack-source ngspice`). Any
+dialect reads back (`from_source(text, dialect)`); a `Testbench` saves and
+loads the same way. The JSON form is gone.
 
 ```python
 import tempfile, os
 
-tb = ps.Testbench(top)
 path = os.path.join(tempfile.mkdtemp(), "top.sp")
-with open(path, "w") as f:
-    f.write(tb.netlist("ngspice"))
-print(open(path).read().splitlines()[0])         # * top
+top.save(path)
+again = ps.Subcircuit.load(path)
+print(again.name, again.ports)                    # top ['in', 'out']
+text = top.to_source()                            # or keep it as a string
+same = ps.Subcircuit.from_source(text)            # the first line names the dialect
 ```
