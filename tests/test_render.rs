@@ -58,7 +58,7 @@ fn statistics_tables_are_written_as_the_old_lowering_wrote_them() {
         let (ir, _) = parse(deck, "t", Dialect::Spectre).unwrap();
         for d in SPICE {
             let old = netlist(&ir, d).map_err(|e| e.to_string());
-            let new = render_text(deck, Dialect::Spectre, "t", d);
+            let new = render_text(deck, Dialect::Spectre, "t", d).map(|w| w.text);
             match (&old, &new) {
                 (Ok(a), Ok(b)) => {
                     assert_eq!(a, b, "{d:?}\n{deck}");
@@ -84,7 +84,7 @@ fn statistics_tables_reach_the_named_family_as_the_old_writers_wrote_them() {
         let (ir, _) = parse(deck, "t", Dialect::Spectre).unwrap();
         for d in [Dialect::Spectre, Dialect::Vacask] {
             let old = netlist(&ir, d).map_err(|e| e.to_string());
-            let new = render_text(deck, Dialect::Spectre, "t", d);
+            let new = render_text(deck, Dialect::Spectre, "t", d).map(|w| w.text);
             match (&old, &new) {
                 (Ok(a), Ok(b)) => {
                     assert_eq!(a, b, "{d:?}\n{deck}");
@@ -143,9 +143,11 @@ fn statistics_the_spice_family_cannot_hold_are_refused_by_code() {
             netlist(&ir, Dialect::Ngspice).is_err(),
             "the old writer refused\n{deck}"
         );
-        let refused = render_text(&deck, Dialect::Spectre, "t", Dialect::Ngspice).unwrap_err();
+        let Err(refused) = render_text(&deck, Dialect::Spectre, "t", Dialect::Ngspice) else {
+            panic!("refused\n{deck}");
+        };
         assert_eq!(
-            refused.iter().map(|d| d.code).collect::<Vec<_>>(),
+            refused.diags.iter().map(|d| d.code).collect::<Vec<_>>(),
             [*code],
             "{deck}"
         );
@@ -187,7 +189,7 @@ fn laplace_sources_are_written_as_the_old_writer_wrote_them() {
             let (ir, _) = parse(&deck, "t", Dialect::Ngspice).unwrap();
             for d in SPICE {
                 let old = netlist(&ir, d).map_err(|e| e.to_string());
-                let new = render_text(&deck, Dialect::Ngspice, "t", d);
+                let new = render_text(&deck, Dialect::Ngspice, "t", d).map(|w| w.text);
                 match (&old, &new) {
                     (Ok(a), Ok(b)) => {
                         assert_eq!(a, b, "{d:?}\n{deck}");
@@ -222,15 +224,18 @@ fn fixtures_render_as_the_old_writer_did_and_as_pinned() {
         let (ir, _) = parse(&text, stem, d).unwrap();
         for t in targets.clone() {
             let old = netlist(&ir, t).map_err(|e| e.to_string());
-            let new = render_text(&text, d, stem, t);
+            let new = render_text(&text, d, stem, t).map(|w| w.text);
             let (name, body) = match (&old, &new) {
                 (Ok(a), Ok(b)) => {
                     assert_eq!(a, b, "{file} {t:?}");
                     (format!("{}.txt", t.name()), a.clone())
                 }
                 (Err(e), Err(codes)) => {
-                    let codes: Vec<String> =
-                        codes.iter().map(|c| format!("{:?}", c.code)).collect();
+                    let codes: Vec<String> = codes
+                        .diags
+                        .iter()
+                        .map(|c| format!("{:?}", c.code))
+                        .collect();
                     let body = format!("old: {e}\nnew: {}\n", codes.join(" "));
                     (format!("{}.refused", t.name()), body)
                 }

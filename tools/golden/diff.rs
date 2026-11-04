@@ -11,6 +11,10 @@
 //! a set, a kit's read order) means the two trees read different inputs,
 //! which no xfail line excuses.
 //!
+//! A refusal the renderer wrote (`codes: …` on its first line) is compared
+//! by its codes, never its messages: two such files with one code line are
+//! the same.
+//!
 //! With a refusal report (`--refusal-status-only <file>`), a key refused on
 //! both sides is the same whatever the two texts say (the old refusals are
 //! free text, the renderer's are `W` codes until phase 5's messages), and
@@ -21,12 +25,16 @@
 //! Cites: VerA `tools/vera.xfail:1-5` (strict xfail).
 //!
 //! Contents:
+//! - `pub(super) const CODES: &str`
 //! - `pub(super) fn diff(a: &Path, b: &Path, xfail: Option<&Path>, report: Option<&Path>) -> std::io::Result<bool>`
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use spicerack::codegen::Dialect;
+
+/// The first line of a renderer's refusal starts so, its codes after it.
+pub(super) const CODES: &str = "codes: ";
 
 /// Output-file stems that are not dialects.
 const STEMS: [&str; 3] = ["ir", "report", "parse"];
@@ -75,6 +83,9 @@ pub(super) fn diff(
             false => (vec![], vec![]),
         };
         if both && ta == tb {
+            continue;
+        }
+        if both && rel.ends_with(".refused") && codes(&ta).is_some_and(|c| Some(c) == codes(&tb)) {
             continue;
         }
         if both && report.is_some() && rel.ends_with(".refused") {
@@ -151,6 +162,12 @@ fn walk(root: &Path, rel: &str, out: &mut BTreeSet<String>) {
     }
 }
 
+/// A renderer's refusal's code line; `None` for another text.
+fn codes(text: &[u8]) -> Option<&[u8]> {
+    let line = text.split(|&b| b == b'\n').next()?;
+    line.starts_with(CODES.as_bytes()).then_some(line)
+}
+
 /// `<set>/<relpath>/<target>.<ext>` -> `(<set>/<relpath>, <target>)`.
 fn key(rel: &str) -> (String, String) {
     let (input, file) = rel.rsplit_once('/').unwrap_or(("", rel));
@@ -193,6 +210,16 @@ mod tests {
         let k = key("spice-bench/a b/c.sp/ngspice.refused");
         assert_eq!(k, ("spice-bench/a b/c.sp".into(), "ngspice".into()));
         assert_eq!(key("fixtures/x.scs/ir.json").1, "ir");
+    }
+
+    #[test]
+    fn a_coded_refusal_is_its_code_line() {
+        let a = b"codes: W0013 W0013\nt:3:1: W0013 a conditional block the target lacks\n";
+        let b = b"codes: W0013 W0013\nt:4:1: W0013 reworded\n";
+        assert_eq!(codes(a), codes(b));
+        assert!(codes(a).is_some());
+        assert_ne!(codes(a), codes(b"codes: W0013\n"));
+        assert_eq!(codes(b"Unsupported component\n"), None);
     }
 
     #[test]

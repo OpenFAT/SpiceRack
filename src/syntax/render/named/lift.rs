@@ -537,7 +537,9 @@ mod tests {
                     R2 p 0 {w}\n\
                     .ends\n\
                     .end\n";
-        let out = render_text(deck, Dialect::Ngspice, "t", Dialect::Spectre).expect("written");
+        let out = render_text(deck, Dialect::Ngspice, "t", Dialect::Spectre)
+            .map(|w| w.text)
+            .unwrap_or_else(|_| panic!("written"));
         for want in [
             "r1 (a 0) resistor r=rack_agauss(1k, 100, 3, rack_r1_r_1)",
             "parameters w=rack_aunif(1, 0.1, rack_s_w_1)",
@@ -558,7 +560,9 @@ mod tests {
         let deck = "t\n\
                     R1 a 0 {agauss(agauss(0,1,1),1,1) + limit(x,1,2) + agauss(1,2)}\n\
                     .end\n";
-        let out = render_text(deck, Dialect::Xyce, "t", Dialect::Spectre).expect("written");
+        let out = render_text(deck, Dialect::Xyce, "t", Dialect::Spectre)
+            .map(|w| w.text)
+            .unwrap_or_else(|_| panic!("written"));
         let want = "r=rack_agauss(rack_agauss(0,1,1, rack_r1_r_1),1,1, rack_r1_r_2) \
                     + min(max(x, 1), 2) + rack_agauss(1,2,1, rack_r1_r_3)";
         assert!(out.contains(want), "no `{want}` in\n{out}");
@@ -588,8 +592,9 @@ mod tests {
             ("t_s3_nested.scs", nested.to_string(), Some("mismatch")),
         ];
         for (file, deck, variations) in decks {
-            let mut text =
-                render_text(&deck, Dialect::Ngspice, file, Dialect::Spectre).expect(file);
+            let mut text = render_text(&deck, Dialect::Ngspice, file, Dialect::Spectre)
+                .map(|w| w.text)
+                .unwrap_or_else(|_| panic!("{file}"));
             text.push('\n');
             if let Some(v) = variations {
                 text.push_str(&format!(
@@ -607,7 +612,9 @@ mod tests {
         // gauss, aunif and unif with ngspice's arguments, no `limit` (an
         // `aunif` ternary), and Xyce's sigma-less `agauss` takes sigma 1.
         let deck = "t\nR1 a 0 {agauss(1k,100,3) + limit(0, 50)}\nR2 a 0 {agauss(1, 2)}\n.end\n";
-        let out = render_text(deck, Dialect::Xyce, "t", Dialect::Vacask).expect("written");
+        let out = render_text(deck, Dialect::Xyce, "t", Dialect::Vacask)
+            .map(|w| w.text)
+            .unwrap_or_else(|_| panic!("written"));
         for want in [
             "r1 (a 0) resistor r=agauss(1k,100,3) + ((aunif(0, 1) > 0) ? (0) + ( 50) : (0) - ( 50))",
             "r2 (a 0) resistor r=agauss(1, 2,1)",

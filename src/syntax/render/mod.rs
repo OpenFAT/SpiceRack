@@ -8,9 +8,12 @@
 //! [`capability::action`] for everything a target may not say, and writes
 //! every byte through one token choke point (`out`).
 //!
-//! A refusal is a list of `W` diagnostics ([`Diag`]); a written deck is the
-//! old pipeline's text, byte for byte (TESTING.md, "Golden gate"): the
-//! Python API's `codegen::netlist(&CircuitIR, d)` stays until phase 6.
+//! A written deck ([`Written`]) is the old pipeline's text, byte for byte
+//! (TESTING.md, "Golden gate"): the Python API's `codegen::netlist(&CircuitIR,
+//! d)` stays until phase 6. Either way the file's diagnostics come with it
+//! ([`Diags`]): the parser's and the kit's notes (`P`, `R`) and the
+//! writer's (`W`), sorted by source position, with their messages; a
+//! refusal is a writer's `W` code of `diag::Kind::Refusal`.
 //!
 //! Cites: `transpiler-architecture.md` §2.5, §2.6, §5 phase 4;
 //! `compiler-architecture-reference.md` §4 (Zig `Ast/Render.zig`), §12.4,
@@ -18,10 +21,10 @@
 //!
 //! Contents:
 //! - `pub mod capability`, `pub mod spelling`
-//! - `pub struct Source<'a>`
-//! - `pub fn render(src: &Source, target: Dialect) -> Result<String, Vec<Diag>>`
-//! - `pub fn render_kit(kit: &Kit, file: FileId, name: &str, target: Dialect) -> Result<String, Vec<Diag>>`
-//! - `pub fn render_text(text: &str, d: Dialect, name: &str, target: Dialect) -> Result<String, Vec<Diag>>`
+//! - `pub struct Source<'a>`, `pub struct Written`, `pub struct Diags`
+//! - `pub fn render(src: &Source, target: Dialect) -> Result<Written, Diags>`
+//! - `pub fn render_kit(kit: &Kit, file: FileId, name: &str, target: Dialect) -> Result<Written, Diags>`
+//! - `pub fn render_text(text: &str, d: Dialect, name: &str, target: Dialect) -> Result<Written, Diags>`
 //! - `pub fn writes(target: Dialect) -> bool`
 
 pub mod capability;
@@ -36,7 +39,7 @@ mod spice;
 
 use crate::codegen::Dialect;
 use crate::syntax::ast::Ast;
-use crate::syntax::diag::Diag;
+use crate::syntax::diag::{self, Diag};
 use crate::syntax::resolve::{FileId, Kit, Role};
 use crate::syntax::token::Tokens;
 use crate::syntax::{lexicon, parse, tokenize};
@@ -52,18 +55,56 @@ pub struct Source<'a> {
     pub kit: Option<(&'a Kit, FileId)>,
 }
 
-/// `src` written for `target`; the `W` refusals when the target cannot say
+/// A deck written, and the notes on its file.
+#[derive(Debug)]
+pub struct Written {
+    pub text: String,
+    /// Every diagnostic on the file; none refuses.
+    pub notes: Diags,
+}
+
+/// A file's diagnostics, sorted by source position ([`diag::sort`]), and
+/// their messages ([`diag::messages`], one a line, named after the deck).
+#[derive(Debug)]
+pub struct Diags {
+    pub diags: Vec<Diag>,
+    pub messages: String,
+}
+
+/// `src` written for `target`, with the file's notes; every diagnostic on
+/// the file, the `W` refusals among them, when the target cannot say
 /// something the deck holds.
 ///
 /// # Panics
 /// When `target` is not one [`writes`] names; when `src.kit`'s file is not
 /// `src.ast`'s.
-pub fn render(src: &Source, target: Dialect) -> Result<String, Vec<Diag>> {
+pub fn render(src: &Source, target: Dialect) -> Result<Written, Diags> {
     assert!(writes(target), "render: a target with a writer");
     let (mut rd, deck) = read::read(src.ast, src.tokens, src.dialect, src.name, src.kit);
-    match target {
+    let written = match target {
         Dialect::Spectre | Dialect::Vacask => named::write(&mut rd, &deck, target),
         _ => spice::write(&mut rd, &deck, target),
+    };
+    // The earlier stages' notes: the kit's for its file (the parser's
+    // copied, then its own), else the parser's.
+    let mut diags = match src.kit {
+        Some((kit, f)) => kit.file(f).diags.clone(),
+        None => src.ast.diags().to_vec(),
+    };
+    let text = match written {
+        Ok(text) => Some(text),
+        Err(refused) => {
+            assert!(!refused.is_empty(), "a refusal has its codes");
+            diags.extend(refused);
+            None
+        }
+    };
+    diag::sort(&mut diags);
+    let messages = diag::messages(&diags, src.tokens, src.name);
+    let diags = Diags { diags, messages };
+    match text {
+        Some(text) => Ok(Written { text, notes: diags }),
+        None => Err(diags),
     }
 }
 
@@ -71,12 +112,7 @@ pub fn render(src: &Source, target: Dialect) -> Result<String, Vec<Diag>> {
 ///
 /// # Panics
 /// As [`render`]; when `file` is a Verilog-A source or unread.
-pub fn render_kit(
-    kit: &Kit,
-    file: FileId,
-    name: &str,
-    target: Dialect,
-) -> Result<String, Vec<Diag>> {
+pub fn render_kit(kit: &Kit, file: FileId, name: &str, target: Dialect) -> Result<Written, Diags> {
     let f = kit.file(file);
     assert!(
         matches!(f.role, Role::Deck | Role::Library),
@@ -99,12 +135,7 @@ pub fn render_kit(
 ///
 /// # Panics
 /// As [`render`]; when `d` has no reader (CDL, Verilog).
-pub fn render_text(
-    text: &str,
-    d: Dialect,
-    name: &str,
-    target: Dialect,
-) -> Result<String, Vec<Diag>> {
+pub fn render_text(text: &str, d: Dialect, name: &str, target: Dialect) -> Result<Written, Diags> {
     let lex = lexicon::of(d).expect("a dialect with a reader");
     let t = tokenize(text, lex);
     let ast = parse(&t, lex);

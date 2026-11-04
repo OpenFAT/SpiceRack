@@ -20,8 +20,10 @@
 //! With `--writer syntax`, every target `syntax::render::writes` names is
 //! written by the transpiler's renderer (`syntax::render`, phase 4) from the
 //! file's AST and kit instead of `codegen::netlist` from its IR; a refusal
-//! is its `W` codes, one per line (`<code> <title>`). The other targets,
-//! `ir.json` and `report.json` are recorded as without it.
+//! is its codes, sorted, on a first line (`codes: P0001 W0013`), then its
+//! messages (`diag::messages`: `<deck>:<line>:<column>: <code> <title>`),
+//! which `diff` does not compare. The other targets, `ir.json` and
+//! `report.json` are recorded as without it.
 //!
 //! The reader is the transpiler's front end (phase 2b): `import::parse` for
 //! a corpus deck, `import::parse_kit` for a PDK kit file or a fixture, read
@@ -47,8 +49,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use spicerack::codegen::{Dialect, netlist};
 use spicerack::import::{decode, parse, parse_kit};
-use spicerack::syntax::diag::{Diag, info};
-use spicerack::syntax::render;
+use spicerack::syntax::render::{self, Diags};
 
 mod diff;
 mod inputs;
@@ -233,7 +234,8 @@ fn record_one(out: &Path, input: &Input, syntax: bool) -> std::io::Result<Vec<St
                 Some((kit, f)) => render::render_kit(kit, *f, &name, d),
                 None => render::render_text(&src, input.dialect, &name, d),
             };
-            catch_unwind(AssertUnwindSafe(render)).map(|r| r.map_err(|e| codes(&e)))
+            catch_unwind(AssertUnwindSafe(render))
+                .map(|r| r.map(|w| w.text).map_err(|e| refused(&e)))
         } else {
             catch_unwind(AssertUnwindSafe(|| netlist(&ir, d)))
                 .map(|r| r.map_err(|e| format!("{e}\n")))
@@ -247,12 +249,12 @@ fn record_one(out: &Path, input: &Input, syntax: bool) -> std::io::Result<Vec<St
     Ok(lines)
 }
 
-/// A renderer's refusal as text: each code and its title, one a line.
-fn codes(diags: &[Diag]) -> String {
-    diags
-        .iter()
-        .map(|d| format!("{:?} {}\n", d.code, info(d.code).title))
-        .collect()
+/// A renderer's refusal as text: its codes, sorted, on one line (what
+/// `diff` compares), then its messages.
+fn refused(d: &Diags) -> String {
+    let mut codes: Vec<String> = d.diags.iter().map(|d| format!("{:?}", d.code)).collect();
+    codes.sort();
+    format!("{}{}\n{}", diff::CODES, codes.join(" "), d.messages)
 }
 
 /// A panic's message, without its location (which moves with every edit).

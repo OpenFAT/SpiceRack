@@ -81,11 +81,15 @@ nix develop .#testing -c env IHP_PDK=<...> $G check-determinism
 
 Phase 4 records the renderer (`syntax::render`) with `golden record --writer
 syntax <out_dir>`: each target `render::writes` names is written from the
-file's AST and kit, the others through `codegen::netlist`, and a refusal is
-its `W` codes. `golden diff … --refusal-status-only <report>` compares a
-refusal by status only (the old texts are free text, the new ones codes until
-phase 5) and writes each old/new pair to `<report>` for review; written versus
-refused still differs. `check-determinism --writer syntax` checks the same
+file's AST and kit, the others through `codegen::netlist`. Since phase 5 a
+refusal is its codes, sorted, on a first line (`codes: P0001 W0013`: the
+file's parse and kit notes and the writer's codes), then their messages
+(`<deck>:<line>:<column>: <code> <title>`); `golden diff` compares two such
+files by the code line alone, so a reworded message is no difference. `golden
+diff … --refusal-status-only <report>` compares a refusal by status only (the
+baseline's texts are free text) and writes each old/new pair to `<report>` for
+review; written versus refused still differs. The old messages beside the
+codes they became, once, before the switch: `tests/fixtures/transpiler/refusal-map.txt`. `check-determinism --writer syntax` checks the same
 record. The per-target state is `tests/fixtures/transpiler/PHASE4-STATUS.md`.
 
 Inputs (the `MANIFEST` of each record lists them, with content hashes):
