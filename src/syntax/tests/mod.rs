@@ -277,6 +277,44 @@ fn region_reads_spice_inside_spectre() {
 }
 
 #[test]
+fn a_given_ngspice_deck_holds_regions_of_other_dialects() {
+    // `lexicon::NGSPICE_GIVEN`: `simulator lang=spectre` opens a region read
+    // as Spectre (Spectre Reference 19.1 p.406 `sweep … { … }`, p.174
+    // `montecarlo`), `simulator lang=spice` closes it; `lang=ltspice` reads
+    // LTspice (its `.net` a card of its own). The cards around stay ngspice.
+    // Checks: 4.
+    use crate::syntax::lexicon::NGSPICE_GIVEN;
+    let src = "t\nR1 a 0 1k\nsimulator lang=spectre\nsweep1 sweep param=r start=1k stop=2k step=1k {\n  ac1 ac\n}\nsimulator lang=spice\n.op\nsimulator lang=ltspice\n.net I(R1) V1\nsimulator lang=spice\n";
+    let t = tokenize(src, &NGSPICE_GIVEN);
+    let a = parse(&t, &NGSPICE_GIVEN);
+    let top: Vec<Tag> = a.fields(a.root()).iter().map(|&n| a.tag(Node(n))).collect();
+    assert_eq!(
+        top,
+        [
+            Tag::Title,
+            Tag::Instance,
+            Tag::Region,
+            Tag::Analysis,
+            Tag::Region
+        ]
+    );
+    let spectre = a.body(Node(a.fields(a.root())[2]));
+    assert_eq!(
+        a.tag(Node(spectre[0])),
+        Tag::Analysis,
+        "the sweep, a Spectre analysis"
+    );
+    assert_eq!(
+        t.lexicon_at(a.main_token(Node(spectre[0]))).dialect,
+        crate::syntax::Dialect::Spectre
+    );
+    assert!(a.diags().is_empty(), "{:?}", a.diags());
+    // The same text in plain ngspice holds no region.
+    let (top, _) = read(src, &NGSPICE);
+    assert!(top.iter().all(|s| !s.starts_with("Region")), "{top:?}");
+}
+
+#[test]
 fn data_block_is_lines() {
     // HSPICE UG `.DATA` ... `.ENDDATA`: rows of numbers, kept as lines.
     // Checks: 2.

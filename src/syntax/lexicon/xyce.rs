@@ -97,7 +97,7 @@ pub const XYCE: Lexicon = Lexicon {
     devices: &[device::SPICE],
     masters: &[],
     analyses: &[],
-    lang_spice: None,
+    regions: &[],
 };
 
 /// §2.1.39.2: a `;` inside quotes still starts a comment.

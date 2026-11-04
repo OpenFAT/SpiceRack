@@ -99,7 +99,7 @@ pub const NGSPICE: Lexicon = Lexicon {
     devices: &[device::SPICE, device::NGSPICE_OWN],
     masters: &[],
     analyses: &[],
-    lang_spice: None,
+    regions: &[],
 };
 
 /// ngspice text written from what a caller gave (the Python API's deck,
@@ -109,13 +109,25 @@ pub const NGSPICE: Lexicon = Lexicon {
 /// digit-by-digit arithmetic can land an ulp away (`100u` is
 /// 9.999999999999999e-5 there); and it holds a `.step` (Xyce's form,
 /// `.step [lin|dec|oct] name start stop step`), which ngspice lacks and
-/// each target writes in its own form or refuses.
+/// each target writes in its own form or refuses; and its `simulator
+/// lang=<dialect>` regions hold what only that dialect says (a Spectre
+/// `sweep`, a line given as one dialect's text; `lang=ngspice` is
+/// ngspice's), read by that dialect's lexicon until `simulator lang=spice`
+/// and kept as that dialect's text.
 pub const NGSPICE_GIVEN: Lexicon = Lexicon {
     numbers: Numbers {
         arithmetic: Arithmetic::Decimal,
         ..NGSPICE.numbers
     },
     keywords: &[SPICE_KEYWORDS, OWN_KEYWORDS, &[(".step", Tag::KwStep)]],
+    regions: &[
+        ("ngspice", &NGSPICE),
+        ("spectre", &super::SPECTRE),
+        ("vacask", &super::VACASK),
+        ("hspice", &super::HSPICE),
+        ("ltspice", &super::LTSPICE),
+        ("xyce", &super::XYCE),
+    ],
     ..NGSPICE
 };
 

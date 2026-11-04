@@ -27,14 +27,12 @@ impl W<'_, '_> {
         // Text kept from another family reaches only its own; its own
         // family copies it unchecked.
         let raws: Vec<u32> = blocks.iter().flat_map(|b| self.raws(b)).collect();
-        match self.rd.d.family() != self.d.family() {
-            true => {
-                if let Some(&tok) = raws.first() {
-                    self.ask(Construct::ForeignText, tok);
-                }
-            }
-            false => raws.iter().for_each(|&tok| self.note(Code::W0027, tok)),
+        let foreign = |tok: &u32| self.rd.text_dialect(*tok).family() != self.d.family();
+        let (other, own): (Vec<u32>, Vec<u32>) = raws.iter().partition(|t| foreign(t));
+        if let Some(&tok) = other.first() {
+            self.ask(Construct::ForeignText, tok);
         }
+        own.iter().for_each(|&tok| self.note(Code::W0027, tok));
         // A waveform's values past its form's count are not written.
         for b in &blocks {
             for &c in &b.comps {

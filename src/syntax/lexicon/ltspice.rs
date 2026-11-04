@@ -97,7 +97,7 @@ pub const LTSPICE: Lexicon = Lexicon {
     devices: &[device::SPICE],
     masters: &[],
     analyses: &[],
-    lang_spice: None,
+    regions: &[],
 };
 
 /// SSR "Engineering Multipliers": no atto.

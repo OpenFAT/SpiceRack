@@ -71,6 +71,7 @@ pub fn tokenize<'s>(source: &'s str, lexicon: &'static Lexicon) -> Tokens<'s> {
             number_tokens: Vec::new(),
             number_values: Vec::new(),
             switches: Vec::new(),
+            switch_lexicons: Vec::new(),
         },
     };
     if lexicon.title {
@@ -269,13 +270,15 @@ impl Lexer<'_> {
         if self.out.tags.len() > first {
             self.push(Tag::EndOfStatement, self.pos);
         }
-        if let Some(tag) = switch {
+        if let Some((tag, to)) = switch {
             self.out.switches.push(self.out.tags.len() as u32);
+            self.out.switch_lexicons.push(to);
             self.push(tag, self.pos);
-            (self.lex, self.home) = match self.home {
-                Some(home) => (home, None),
-                None => (self.lex.lang_spice.unwrap_or(self.lex), Some(self.lex)),
+            self.home = match self.home {
+                Some(_) => None,
+                None => Some(self.lex),
             };
+            self.lex = to;
         }
     }
 
@@ -294,16 +297,28 @@ impl Lexer<'_> {
         None
     }
 
-    /// Spectre's hook: the switch the statement at `at` makes, read off the
-    /// raw line as the old Spectre grammar did (`l_to_spice` in lowercase only,
-    /// `l_to_spectre` in any case).
-    fn switch_at(&self, at: usize) -> Option<Tag> {
-        let (to, tag) = match self.home {
-            Some(_) => ("spectre", Tag::LangSpectre),
-            None if self.lex.lang_spice.is_some() => ("spice", Tag::LangSpice),
-            None => return None,
-        };
-        let fold = self.home.is_some();
+    /// The switch the statement at `at` makes, and the lexicon after it,
+    /// read off the raw line as the old Spectre grammar did (`l_to_spice`
+    /// in lowercase only, `l_to_spectre` in any case; a SPICE file's
+    /// regions in any case).
+    fn switch_at(&self, at: usize) -> Option<(Tag, &'static Lexicon)> {
+        match self.home {
+            Some(home) => {
+                let back = if home.named { "spectre" } else { "spice" };
+                self.lang_is(at, back, true)
+                    .then_some((Tag::LangSpectre, home))
+            }
+            None => {
+                let fold = !self.lex.named;
+                let open = self.lex.regions.iter();
+                let mut open = open.filter(|(name, _)| self.lang_is(at, name, fold));
+                open.next().map(|&(_, lex)| (Tag::LangSpice, lex))
+            }
+        }
+    }
+
+    /// Whether the statement at `at` is `simulator lang=<to>`.
+    fn lang_is(&self, at: usize, to: &str, fold: bool) -> bool {
         let word = |p: &mut usize, w: &str| {
             let hit = self.src.get(*p..*p + w.len()).is_some_and(|s| {
                 if fold {
@@ -320,16 +335,16 @@ impl Lexer<'_> {
         let gap = blanks(self.src, p) > 0;
         p += blanks(self.src, p);
         if !(simulator && gap && word(&mut p, "lang")) {
-            return None;
+            return false;
         }
         p += blanks(self.src, p);
         if !word(&mut p, "=") {
-            return None;
+            return false;
         }
         p += blanks(self.src, p);
         let after = self.src.get(p + to.len()).copied().unwrap_or(b' ');
         let wchar = after.is_ascii_alphanumeric() || after == b'_' || after == b'!';
-        (word(&mut p, to) && !wchar).then_some(tag)
+        word(&mut p, to) && !wchar
     }
 
     /// The `+` line continuing the statement whose line ends at `nl`: past

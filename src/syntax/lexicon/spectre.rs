@@ -104,7 +104,7 @@ pub const SPECTRE: Lexicon = Lexicon {
     devices: &[device::SPECTRE],
     masters: MASTERS,
     analyses: &[],
-    lang_spice: Some(&HSPICE),
+    regions: &[("spice", &HSPICE)],
 };
 
 /// §2.4: P T G M K/k `_` %/c m u n p f a.

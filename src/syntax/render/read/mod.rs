@@ -27,7 +27,7 @@
 //!   `enum Elem`, `enum Raw`, `struct Cond`, `struct Section`, `enum Func`
 //! - `Block::elements(&self) -> Vec<Elem>`
 //! - `fn read(ast: &Ast, t: &Tokens, d: Dialect, name: &str, kit: Option<(&Kit, FileId)>) -> (Rd, Deck)`
-//! - `Rd::role`, `Rd::kit_split`, `Rd::master_name`, `Rd::named`, `Rd::tag`, `Rd::main`, `Rd::fields`, `Rd::body`,
+//! - `Rd::text_dialect`, `Rd::role`, `Rd::kit_split`, `Rd::master_name`, `Rd::named`, `Rd::tag`, `Rd::main`, `Rd::fields`, `Rd::body`,
 //!   `Rd::ttag`, `Rd::raw`, `Rd::unparsed`, `Rd::keep`, `Rd::card`, `Rd::section`, `Rd::if_head_ok`
 //! - `fn unwrapped(t: &str) -> String`
 
@@ -328,6 +328,16 @@ pub(in crate::syntax::render) fn read<'a>(
 }
 
 impl<'a> Rd<'a> {
+    /// The dialect the text at token `tok` is in: a SPICE file's region's
+    /// (`simulator lang=`), else the file's (a Spectre file's SPICE region
+    /// is the file's, as the old reader kept it).
+    pub(in crate::syntax::render) fn text_dialect(&self, tok: u32) -> Dialect {
+        match self.named() {
+            true => self.d,
+            false => self.t.lexicon_at(tok).dialect,
+        }
+    }
+
     pub(in crate::syntax::render) fn named(&self) -> bool {
         matches!(self.d, Dialect::Spectre | Dialect::Vacask)
     }
@@ -478,6 +488,13 @@ impl<'a> Rd<'a> {
         match self.tag(n) {
             Tag::Title | Tag::End => {}
             Tag::Verbatim | Tag::Line => self.unparsed(n, here),
+            // A region of another dialect's text (`lexicon::NGSPICE_GIVEN`):
+            // kept as that dialect's text, which only it writes.
+            Tag::Region => {
+                for &k in self.body(n) {
+                    here.raw.push(Raw::Lines(k));
+                }
+            }
             Tag::Subckt => match self.subckt_head(n) {
                 Some(_) => return Some(Opened::Subckt(n)),
                 // quirk: a `.subckt` head the old SPICE grammar does not read is

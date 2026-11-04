@@ -35,12 +35,14 @@ pub enum Tag {
     Title,
     /// Zero width, at the end of a logical statement's last token line.
     EndOfStatement,
-    /// Zero width, after a Spectre `simulator lang=spice` statement: the
+    /// Zero width, after a `simulator lang=<name>` statement that opens a
+    /// region (Spectre's `lang=spice`; one of [`Lexicon::regions`]): the
     /// tokens up to the next [`Tag::LangSpectre`] are lexed by the
-    /// lexicon's [`Lexicon::lang_spice`].
+    /// region's lexicon.
     LangSpice,
-    /// Zero width, after a `simulator lang=spectre` statement in a SPICE
-    /// region: back to the file's own lexicon.
+    /// Zero width, after the statement that closes a region (`simulator
+    /// lang=spectre` in a Spectre file, `lang=spice` in a SPICE one): back
+    /// to the file's own lexicon.
     LangSpectre,
     /// One byte no rule reads (a control byte); the parser reports it.
     Invalid,
@@ -278,6 +280,8 @@ pub struct Tokens<'s> {
     /// lexicon's number grammar does not read (`1k5` in Spectre).
     pub(super) number_values: Vec<f64>,
     pub(super) switches: Vec<u32>,
+    /// The lexicon in force after each switch, by `switches` index.
+    pub(super) switch_lexicons: Vec<&'static Lexicon>,
 }
 
 /// A position for a diagnostic, both 1-based; the column counts bytes.
@@ -420,16 +424,13 @@ impl<'s> Tokens<'s> {
         }
     }
 
-    /// The lexicon token `i` was lexed by: the file's, or its `lang_spice`
-    /// inside a `simulator lang=spice` region.
+    /// The lexicon token `i` was lexed by: the file's, or a region's
+    /// inside a `simulator lang=` region.
     pub fn lexicon_at(&self, i: u32) -> &'static Lexicon {
         let before = self.switches.partition_point(|&s| s < i);
-        match before
-            .checked_sub(1)
-            .map(|k| self.tags[self.switches[k] as usize])
-        {
-            Some(Tag::LangSpice) => self.lexicon.lang_spice.unwrap_or(self.lexicon),
-            _ => self.lexicon,
+        match before.checked_sub(1) {
+            Some(k) => self.switch_lexicons[k],
+            None => self.lexicon,
         }
     }
 }

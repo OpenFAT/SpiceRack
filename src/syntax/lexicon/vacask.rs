@@ -108,7 +108,7 @@ pub const VACASK: Lexicon = Lexicon {
     devices: &[],
     masters: &[],
     analyses: ANALYSES,
-    lang_spice: None,
+    regions: &[],
 };
 
 /// L594-L693, in the old VACASK grammar's order.

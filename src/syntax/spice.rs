@@ -27,6 +27,10 @@ impl Parser<'_, '_> {
     pub(super) fn spice(&mut self, in_tag: Tag) -> Head {
         let first = self.i;
         let lex = self.t.lexicon_at(first);
+        // `simulator lang=<dialect>` opens a region (`Lexicon::regions`).
+        if self.t.tags().get(self.end as usize + 1) == Some(&T::LangSpice) {
+            return Head::Open(self.head_only(Tag::Region, Mode::Fields));
+        }
         match self.t.tags()[first as usize] {
             T::Title => {
                 self.i = self.end;

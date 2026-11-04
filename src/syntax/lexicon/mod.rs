@@ -5,7 +5,7 @@
 //!
 //! The table is data. The two rules data cannot say are the tokenizer's
 //! hooks: HSPICE's `$` ([`Dollar::Hspice`]) and
-//! Spectre's `simulator lang=` switch ([`Lexicon::lang_spice`]).
+//! the `simulator lang=` switch ([`Lexicon::regions`]).
 //!
 //! Cites: ESPice's per-dialect constants (`ESPice/src/frontend/lines.zig:45-51`); the line stage and the
 //! `Num` rule of each old PEG grammar, which this replaced and whose manual
@@ -137,9 +137,12 @@ pub struct Lexicon {
     pub masters: &'static [(&'static str, Statement)],
     /// The kinds `analysis name kind` names (VACASK; empty elsewhere).
     pub analyses: &'static [(&'static str, Analysis)],
-    /// The lexicon a `simulator lang=spice` statement switches to, and the
-    /// one `simulator lang=spectre` switches back from: Spectre's hook.
-    pub lang_spice: Option<&'static Lexicon>,
+    /// The regions a `simulator lang=<name>` statement opens, each read by
+    /// its lexicon until the statement that switches back (`simulator
+    /// lang=spectre` in a Spectre file, `simulator lang=spice` in a SPICE
+    /// one): Spectre's `spice` (the old Spectre grammar's hook), and in
+    /// [`NGSPICE_GIVEN`] each target dialect's own.
+    pub regions: &'static [(&'static str, &'static Lexicon)],
 }
 
 /// Which open brackets carry a statement past its line's end.

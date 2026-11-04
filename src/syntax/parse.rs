@@ -320,7 +320,7 @@ impl<'s> Parser<'_, 's> {
         let first = self.i;
         if in_tag == Tag::Region {
             // the old Spectre grammar's `SpiceRegion`: a region ends at the switch back, or
-            // where its section or library ends.
+            // (in a Spectre file) where its section or library ends.
             let word = self.t.text(first);
             if word == "endsection" || word == "endlibrary" {
                 let f = stack.pop().expect("a region is open");

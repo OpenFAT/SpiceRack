@@ -92,7 +92,7 @@ pub const HSPICE: Lexicon = Lexicon {
     devices: &[device::SPICE],
     masters: &[],
     analyses: &[],
-    lang_spice: None,
+    regions: &[],
 };
 
 /// T2, L6: `'…'` and `"…"` protect `$`, have no escapes, and continue across
